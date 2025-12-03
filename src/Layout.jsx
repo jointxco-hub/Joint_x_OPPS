@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { createPageUrl } from "./utils";
 import { 
   LayoutDashboard, Package, ClipboardList, Calculator, 
-  Building2, Search, Menu, X, Shirt, ShoppingCart, Boxes
+  Building2, Search, Menu, X, Shirt, ShoppingCart, Boxes,
+  Store
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -20,8 +21,8 @@ const navItems = [
 export default function Layout({ children, currentPageName }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Client tracking page has its own layout
-  if (currentPageName === "TrackOrder") {
+  // Pages with their own layout
+  if (currentPageName === "TrackOrder" || currentPageName === "ClientCatalog") {
     return <>{children}</>;
   }
 
@@ -64,12 +65,18 @@ export default function Layout({ children, currentPageName }) {
             })}
           </nav>
 
-          {/* Client Portal Link */}
-          <div className="p-4 border-t border-slate-100">
+          {/* Bottom Links */}
+          <div className="p-4 border-t border-slate-100 space-y-2">
+            <Link to={createPageUrl("ClientCatalog")}>
+              <Button variant="outline" className="w-full justify-start gap-2">
+                <Store className="w-4 h-4" />
+                Client Catalog
+              </Button>
+            </Link>
             <Link to={createPageUrl("TrackOrder")}>
               <Button variant="outline" className="w-full justify-start gap-2">
                 <Search className="w-4 h-4" />
-                Client Portal
+                Order Tracking
               </Button>
             </Link>
           </div>
@@ -117,14 +124,24 @@ export default function Layout({ children, currentPageName }) {
                   </Link>
                 );
               })}
-              <Link
-                to={createPageUrl("TrackOrder")}
-                onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
-              >
-                <Search className="w-5 h-5" />
-                Client Portal
-              </Link>
+              <div className="border-t border-slate-100 pt-2 mt-2">
+                <Link
+                  to={createPageUrl("ClientCatalog")}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  <Store className="w-5 h-5" />
+                  Client Catalog
+                </Link>
+                <Link
+                  to={createPageUrl("TrackOrder")}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
+                >
+                  <Search className="w-5 h-5" />
+                  Order Tracking
+                </Link>
+              </div>
             </nav>
           </div>
         )}

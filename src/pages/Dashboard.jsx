@@ -14,6 +14,7 @@ import ActiveOrderCard from "@/components/dashboard/ActiveOrderCard";
 import TaskItem from "@/components/dashboard/TaskItem";
 import PendingPOCard from "@/components/dashboard/PendingPOCard";
 import LowStockAlert from "@/components/dashboard/LowStockAlert";
+import FocusView from "@/components/dashboard/FocusView";
 import TypeformOrderForm from "@/components/orders/TypeformOrderForm";
 import TypeformTaskForm from "@/components/tasks/TypeformTaskForm";
 import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
@@ -25,7 +26,7 @@ export default function Dashboard() {
   const [showPOForm, setShowPOForm] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
-  const [prefillPOItem, setPrefillPOItem] = useState(null);
+  const [focusMode, setFocusMode] = useState("all");
   const queryClient = useQueryClient();
 
   const { data: orders = [] } = useQuery({
@@ -88,7 +89,6 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setShowPOForm(false);
-      setPrefillPOItem(null);
     }
   });
 
@@ -97,7 +97,7 @@ export default function Dashboard() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] })
   });
 
-  // Check for low stock and auto-generate POs
+  // Auto-generate POs for low stock
   useEffect(() => {
     const checkLowStock = async () => {
       const lowStockItems = inventory.filter(
@@ -105,7 +105,6 @@ export default function Dashboard() {
       );
 
       for (const item of lowStockItems) {
-        // Check if there's already a pending PO for this item
         const existingPO = purchaseOrders.find(
           po => po.trigger_item_id === item.id && 
                ['draft', 'pending', 'approved', 'ordered'].includes(po.status)
@@ -125,11 +124,11 @@ export default function Dashboard() {
                 sku: item.sku || "",
                 quantity: item.reorder_quantity || 10,
                 unit: item.unit || "pieces",
-                unit_price: item.unit_cost || 0,
-                total: (item.reorder_quantity || 10) * (item.unit_cost || 0)
+                unit_price: item.cost_price || item.unit_cost || 0,
+                total: (item.reorder_quantity || 10) * (item.cost_price || item.unit_cost || 0)
               }],
-              subtotal: (item.reorder_quantity || 10) * (item.unit_cost || 0),
-              total: (item.reorder_quantity || 10) * (item.unit_cost || 0),
+              subtotal: (item.reorder_quantity || 10) * (item.cost_price || item.unit_cost || 0),
+              total: (item.reorder_quantity || 10) * (item.cost_price || item.unit_cost || 0),
               auto_generated: true,
               trigger_item_id: item.id,
               order_date: new Date().toISOString().split('T')[0]
@@ -173,7 +172,6 @@ export default function Dashboard() {
   };
 
   const handleCreatePOFromItem = (item) => {
-    setPrefillPOItem(item);
     setShowPOForm(true);
   };
 
@@ -206,10 +204,7 @@ export default function Dashboard() {
         suppliers={suppliers}
         inventoryItems={inventory}
         onSubmit={(data) => createPOMutation.mutateAsync(data)}
-        onCancel={() => {
-          setShowPOForm(false);
-          setPrefillPOItem(null);
-        }}
+        onCancel={() => setShowPOForm(false)}
       />
     );
   }
@@ -232,11 +227,23 @@ export default function Dashboard() {
     );
   }
 
+  // Filter content based on focus mode
+  const showOrders = focusMode === "all" || focusMode === "orders" || focusMode === "urgent" || focusMode === "delivery";
+  const showTasks = focusMode === "all" || focusMode === "tasks";
+  const showPurchasing = focusMode === "all" || focusMode === "purchasing";
+  const showLowStock = focusMode === "all" || focusMode === "purchasing";
+
+  const displayOrders = focusMode === "urgent" 
+    ? urgentOrders 
+    : focusMode === "delivery" 
+      ? readyForDelivery 
+      : activeOrders;
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900">Dashboard</h1>
             <p className="text-slate-500 mt-1">Manage your orders, tasks & inventory</p>
@@ -254,8 +261,16 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Focus View */}
+        <Card className="mb-6 p-4 bg-white border-0 shadow-sm">
+          <div className="flex items-center gap-4 flex-wrap">
+            <span className="text-sm font-medium text-slate-500">Focus:</span>
+            <FocusView activeMode={focusMode} onModeChange={setFocusMode} />
+          </div>
+        </Card>
+
         {/* Low Stock Alerts */}
-        {lowStockItems.length > 0 && (
+        {showLowStock && lowStockItems.length > 0 && (
           <div className="mb-6 space-y-3">
             <h2 className="text-sm font-semibold text-red-600 uppercase tracking-wide flex items-center gap-2">
               <AlertTriangle className="w-4 h-4" />
@@ -306,40 +321,45 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Active Orders */}
-          <div className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">Active Orders</h2>
-              <Link to={createPageUrl("Orders")} className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                View all <ArrowRight className="w-4 h-4" />
-              </Link>
+          {/* Orders Section */}
+          {showOrders && (
+            <div className="lg:col-span-2">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {focusMode === "urgent" ? "Urgent Orders" : 
+                   focusMode === "delivery" ? "Ready for Delivery" : "Active Orders"}
+                </h2>
+                <Link to={createPageUrl("Orders")} className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                  View all <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+              
+              {displayOrders.length === 0 ? (
+                <div className="bg-white rounded-xl p-8 text-center">
+                  <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                  <p className="text-slate-500">No orders to show</p>
+                  <Button onClick={() => setShowOrderForm(true)} className="mt-4">
+                    Create Order
+                  </Button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {displayOrders.slice(0, 6).map(order => (
+                    <ActiveOrderCard 
+                      key={order.id} 
+                      order={order} 
+                      onClick={setSelectedOrder}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
-            
-            {activeOrders.length === 0 ? (
-              <div className="bg-white rounded-xl p-8 text-center">
-                <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-slate-500">No active orders</p>
-                <Button onClick={() => setShowOrderForm(true)} className="mt-4">
-                  Create First Order
-                </Button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {activeOrders.slice(0, 6).map(order => (
-                  <ActiveOrderCard 
-                    key={order.id} 
-                    order={order} 
-                    onClick={setSelectedOrder}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Right Column */}
-          <div className="space-y-6">
-            {/* Pending Purchase Orders */}
-            {pendingPOs.length > 0 && (
+          <div className={`space-y-6 ${!showOrders ? 'lg:col-span-3' : ''}`}>
+            {/* Purchase Orders */}
+            {showPurchasing && pendingPOs.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold text-slate-900">Purchase Orders</h2>
@@ -347,8 +367,8 @@ export default function Dashboard() {
                     View all
                   </Link>
                 </div>
-                <div className="space-y-3">
-                  {pendingPOs.slice(0, 3).map(po => (
+                <div className={`grid gap-3 ${!showOrders ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : ''}`}>
+                  {pendingPOs.slice(0, showOrders ? 3 : 6).map(po => (
                     <PendingPOCard 
                       key={po.id} 
                       po={po} 
@@ -361,31 +381,33 @@ export default function Dashboard() {
             )}
 
             {/* Tasks */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-slate-900">Today's Tasks</h2>
-                <Button variant="ghost" size="sm" onClick={() => setShowTaskForm(true)}>
-                  <Plus className="w-4 h-4" />
-                </Button>
+            {showTasks && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold text-slate-900">Today's Tasks</h2>
+                  <Button variant="ghost" size="sm" onClick={() => setShowTaskForm(true)}>
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+                
+                {pendingTasks.length === 0 ? (
+                  <div className="bg-white rounded-xl p-6 text-center">
+                    <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
+                    <p className="text-slate-500 text-sm">All caught up!</p>
+                  </div>
+                ) : (
+                  <div className={`space-y-3 ${!showOrders ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 space-y-0' : ''}`}>
+                    {pendingTasks.slice(0, showOrders ? 5 : 9).map(task => (
+                      <TaskItem 
+                        key={task.id} 
+                        task={task} 
+                        onStatusChange={handleTaskStatusChange}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-              
-              {pendingTasks.length === 0 ? (
-                <div className="bg-white rounded-xl p-6 text-center">
-                  <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-                  <p className="text-slate-500 text-sm">All caught up!</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {pendingTasks.slice(0, 5).map(task => (
-                    <TaskItem 
-                      key={task.id} 
-                      task={task} 
-                      onStatusChange={handleTaskStatusChange}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </div>
