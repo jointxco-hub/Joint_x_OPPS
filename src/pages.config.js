@@ -6,6 +6,7 @@ import TrackOrder from './pages/TrackOrder';
 import Suppliers from './pages/Suppliers';
 import PurchaseOrders from './pages/PurchaseOrders';
 import Inventory from './pages/Inventory';
+import ClientCatalog from './pages/ClientCatalog';
 import __Layout from './Layout.jsx';
 
 
@@ -18,6 +19,7 @@ export const PAGES = {
     "Suppliers": Suppliers,
     "PurchaseOrders": PurchaseOrders,
     "Inventory": Inventory,
+    "ClientCatalog": ClientCatalog,
 }
 
 export const pagesConfig = {
