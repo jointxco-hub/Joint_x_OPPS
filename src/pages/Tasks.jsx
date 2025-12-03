@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Plus, CheckCircle2, Clock, MapPin } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TaskItem from "@/components/dashboard/TaskItem";
-import TaskForm from "@/components/tasks/TaskForm";
+import TypeformTaskForm from "@/components/tasks/TypeformTaskForm";
 
 export default function Tasks() {
   const [showForm, setShowForm] = useState(false);
@@ -40,11 +40,11 @@ export default function Tasks() {
     }
   });
 
-  const handleSubmit = (data) => {
+  const handleSubmit = async (data) => {
     if (editingTask) {
-      updateMutation.mutate({ id: editingTask.id, data });
+      await updateMutation.mutateAsync({ id: editingTask.id, data });
     } else {
-      createMutation.mutate(data);
+      await createMutation.mutateAsync(data);
     }
   };
 
@@ -56,7 +56,6 @@ export default function Tasks() {
   const inProgressTasks = tasks.filter(t => t.status === 'in_progress');
   const completedTasks = tasks.filter(t => t.status === 'completed');
 
-  // Group tasks by location for route planning
   const tasksByLocation = {};
   pendingTasks.forEach(task => {
     const loc = task.location || 'other';
@@ -66,19 +65,15 @@ export default function Tasks() {
 
   if (showForm || editingTask) {
     return (
-      <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-        <div className="max-w-2xl mx-auto">
-          <TaskForm 
-            task={editingTask}
-            orders={orders}
-            onSubmit={handleSubmit}
-            onCancel={() => {
-              setShowForm(false);
-              setEditingTask(null);
-            }}
-          />
-        </div>
-      </div>
+      <TypeformTaskForm 
+        task={editingTask}
+        orders={orders}
+        onSubmit={handleSubmit}
+        onCancel={() => {
+          setShowForm(false);
+          setEditingTask(null);
+        }}
+      />
     );
   }
 
@@ -133,12 +128,7 @@ export default function Tasks() {
                 <p className="font-medium text-slate-800">Route Optimization</p>
                 <p className="text-sm text-slate-600 mt-1">
                   You have tasks at {Object.keys(tasksByLocation).length} different locations. 
-                  Consider grouping pickups: 
-                  {Object.entries(tasksByLocation).map(([loc, tasks]) => (
-                    <span key={loc} className="ml-1 font-medium">
-                      {loc.replace(/_/g, ' ')} ({tasks.length})
-                    </span>
-                  )).reduce((prev, curr, i) => [prev, i === 0 ? '' : ', ', curr])}
+                  Consider grouping pickups.
                 </p>
               </div>
             </div>

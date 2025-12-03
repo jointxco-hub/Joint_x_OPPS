@@ -3,12 +3,10 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { 
-  Plus, Search, Filter, Package
-} from "lucide-react";
+import { Plus, Search, Package } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ActiveOrderCard from "@/components/dashboard/ActiveOrderCard";
-import OrderForm from "@/components/orders/OrderForm";
+import TypeformOrderForm from "@/components/orders/TypeformOrderForm";
 import OrderDetails from "@/components/orders/OrderDetails";
 
 export default function Orders() {
@@ -41,11 +39,11 @@ export default function Orders() {
     }
   });
 
-  const handleSubmit = (data) => {
+  const handleSubmit = async (data) => {
     if (editingOrder) {
-      updateMutation.mutate({ id: editingOrder.id, data });
+      await updateMutation.mutateAsync({ id: editingOrder.id, data });
     } else {
-      createMutation.mutate(data);
+      await createMutation.mutateAsync(data);
     }
   };
 
@@ -59,18 +57,14 @@ export default function Orders() {
 
   if (showForm || editingOrder) {
     return (
-      <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-        <div className="max-w-3xl mx-auto">
-          <OrderForm 
-            order={editingOrder}
-            onSubmit={handleSubmit}
-            onCancel={() => {
-              setShowForm(false);
-              setEditingOrder(null);
-            }}
-          />
-        </div>
-      </div>
+      <TypeformOrderForm 
+        order={editingOrder}
+        onSubmit={handleSubmit}
+        onCancel={() => {
+          setShowForm(false);
+          setEditingOrder(null);
+        }}
+      />
     );
   }
 
