@@ -9,13 +9,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Plus, Package, AlertTriangle, X, Trash2, 
-  Edit, ShoppingCart
+  Edit, TrendingUp
 } from "lucide-react";
 
 const categoryColors = {
   vinyl: "bg-blue-100 text-blue-700",
   blanks: "bg-emerald-100 text-emerald-700",
   ink: "bg-purple-100 text-purple-700",
+  labels: "bg-pink-100 text-pink-700",
+  packaging: "bg-orange-100 text-orange-700",
   other: "bg-slate-100 text-slate-700"
 };
 
@@ -30,7 +32,8 @@ export default function Inventory() {
     unit: "meters",
     reorder_point: 10,
     reorder_quantity: 20,
-    unit_cost: 0,
+    cost_price: 0,
+    selling_price: 0,
     preferred_supplier_id: "",
     location: ""
   });
@@ -72,7 +75,8 @@ export default function Inventory() {
     setEditingItem(null);
     setFormData({
       name: "", sku: "", category: "vinyl", current_stock: 0, unit: "meters",
-      reorder_point: 10, reorder_quantity: 20, unit_cost: 0, preferred_supplier_id: "", location: ""
+      reorder_point: 10, reorder_quantity: 20, cost_price: 0, selling_price: 0,
+      preferred_supplier_id: "", location: ""
     });
   };
 
@@ -86,7 +90,8 @@ export default function Inventory() {
       unit: item.unit || "meters",
       reorder_point: item.reorder_point || 10,
       reorder_quantity: item.reorder_quantity || 20,
-      unit_cost: item.unit_cost || 0,
+      cost_price: item.cost_price || item.unit_cost || 0,
+      selling_price: item.selling_price || 0,
       preferred_supplier_id: item.preferred_supplier_id || "",
       location: item.location || ""
     });
@@ -113,6 +118,11 @@ export default function Inventory() {
     return acc;
   }, {});
 
+  const calculateMargin = (cost, sell) => {
+    if (!cost || !sell || sell === 0) return 0;
+    return ((sell - cost) / sell) * 100;
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-6xl mx-auto p-4 md:p-8">
@@ -120,7 +130,7 @@ export default function Inventory() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
-            <p className="text-slate-500">Track your materials and stock levels</p>
+            <p className="text-slate-500">Track materials with cost & selling prices</p>
           </div>
           <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
             <Plus className="w-4 h-4 mr-2" /> Add Item
@@ -184,6 +194,8 @@ export default function Inventory() {
                           <SelectItem value="vinyl">Vinyl</SelectItem>
                           <SelectItem value="blanks">Blanks</SelectItem>
                           <SelectItem value="ink">Ink</SelectItem>
+                          <SelectItem value="labels">Labels</SelectItem>
+                          <SelectItem value="packaging">Packaging</SelectItem>
                           <SelectItem value="other">Other</SelectItem>
                         </SelectContent>
                       </Select>
@@ -209,6 +221,24 @@ export default function Inventory() {
                       </Select>
                     </div>
                     <div className="space-y-2">
+                      <Label>Cost Price (R)</Label>
+                      <Input
+                        type="number"
+                        value={formData.cost_price}
+                        onChange={(e) => setFormData({...formData, cost_price: parseFloat(e.target.value) || 0})}
+                        placeholder="What you pay"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Selling Price (R)</Label>
+                      <Input
+                        type="number"
+                        value={formData.selling_price}
+                        onChange={(e) => setFormData({...formData, selling_price: parseFloat(e.target.value) || 0})}
+                        placeholder="What you charge"
+                      />
+                    </div>
+                    <div className="space-y-2">
                       <Label>Reorder Point</Label>
                       <Input
                         type="number"
@@ -224,15 +254,7 @@ export default function Inventory() {
                         onChange={(e) => setFormData({...formData, reorder_quantity: parseFloat(e.target.value) || 0})}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label>Unit Cost (R)</Label>
-                      <Input
-                        type="number"
-                        value={formData.unit_cost}
-                        onChange={(e) => setFormData({...formData, unit_cost: parseFloat(e.target.value) || 0})}
-                      />
-                    </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2 col-span-2">
                       <Label>Preferred Supplier</Label>
                       <Select 
                         value={formData.preferred_supplier_id} 
@@ -256,6 +278,18 @@ export default function Inventory() {
                       />
                     </div>
                   </div>
+
+                  {/* Margin Preview */}
+                  {formData.cost_price > 0 && formData.selling_price > 0 && (
+                    <div className="bg-emerald-50 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-emerald-600" />
+                        <span className="text-sm font-medium text-emerald-700">
+                          Profit Margin: {calculateMargin(formData.cost_price, formData.selling_price).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex gap-3 pt-4">
                     <Button type="button" variant="outline" onClick={resetForm} className="flex-1">
@@ -297,6 +331,9 @@ export default function Inventory() {
                     const stockPercent = item.reorder_point 
                       ? Math.min((item.current_stock / item.reorder_point) * 100, 100)
                       : 100;
+                    const costPrice = item.cost_price || item.unit_cost || 0;
+                    const sellingPrice = item.selling_price || 0;
+                    const margin = calculateMargin(costPrice, sellingPrice);
                     
                     return (
                       <Card 
@@ -315,9 +352,10 @@ export default function Inventory() {
                           </div>
 
                           <div className="space-y-3">
+                            {/* Stock Level */}
                             <div>
                               <div className="flex justify-between text-sm mb-1">
-                                <span className="text-slate-500">Stock Level</span>
+                                <span className="text-slate-500">Stock</span>
                                 <span className="font-medium">
                                   {item.current_stock} {item.unit}
                                 </span>
@@ -328,17 +366,29 @@ export default function Inventory() {
                                   style={{ width: `${stockPercent}%` }}
                                 />
                               </div>
-                              {item.reorder_point && (
-                                <p className="text-xs text-slate-400 mt-1">
-                                  Reorder at {item.reorder_point} {item.unit}
-                                </p>
-                              )}
                             </div>
 
-                            {item.unit_cost > 0 && (
-                              <div className="flex justify-between text-sm">
-                                <span className="text-slate-500">Unit Cost</span>
-                                <span>R{item.unit_cost.toFixed(2)}/{item.unit}</span>
+                            {/* Pricing */}
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                              <div className="bg-slate-50 rounded p-2">
+                                <p className="text-xs text-slate-500">Cost</p>
+                                <p className="font-semibold">R{costPrice.toFixed(2)}</p>
+                              </div>
+                              <div className="bg-emerald-50 rounded p-2">
+                                <p className="text-xs text-slate-500">Sell</p>
+                                <p className="font-semibold text-emerald-700">
+                                  R{sellingPrice > 0 ? sellingPrice.toFixed(2) : '-'}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Margin */}
+                            {margin > 0 && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <TrendingUp className={`w-4 h-4 ${margin >= 30 ? 'text-emerald-500' : 'text-amber-500'}`} />
+                                <span className={margin >= 30 ? 'text-emerald-600' : 'text-amber-600'}>
+                                  {margin.toFixed(1)}% margin
+                                </span>
                               </div>
                             )}
                           </div>

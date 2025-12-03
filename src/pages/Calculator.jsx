@@ -1,15 +1,15 @@
 import React from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Info } from "lucide-react";
-import JobCalculator from "@/components/calculator/JobCalculator";
+import MultiPrintCalculator from "@/components/calculator/MultiPrintCalculator";
 
 export default function Calculator() {
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="max-w-3xl mx-auto p-4 md:p-8">
+      <div className="max-w-4xl mx-auto p-4 md:p-8">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-slate-900">Job Calculator</h1>
-          <p className="text-slate-500 mt-1">Calculate costs and profit margins</p>
+          <p className="text-slate-500 mt-1">Calculate costs and profit margins for orders</p>
         </div>
 
         {/* Price Reference Card */}
@@ -21,45 +21,57 @@ export default function Calculator() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <p className="text-slate-400">DTF (Randburg)</p>
+                <p className="text-lg font-semibold">R212.75/m</p>
+              </div>
+              <div>
+                <p className="text-slate-400">DTF (Joburg)</p>
+                <p className="text-lg font-semibold">R170/m</p>
+              </div>
               <div>
                 <p className="text-slate-400">Vinyl Videoflex</p>
                 <p className="text-lg font-semibold">R110/m</p>
               </div>
               <div>
-                <p className="text-slate-400">DTF Randburg (Quality)</p>
-                <p className="text-lg font-semibold">R212.75/m</p>
+                <p className="text-slate-400">DTF A4 Print</p>
+                <p className="text-lg font-semibold">R80</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4 pt-4 border-t border-slate-700">
+              <div>
+                <p className="text-slate-400">JV1 T-Shirt</p>
+                <p className="font-semibold">R95</p>
               </div>
               <div>
-                <p className="text-slate-400">DTF Joburg</p>
-                <p className="text-lg font-semibold">R170/m</p>
+                <p className="text-slate-400">JET T-Shirt</p>
+                <p className="font-semibold">R155</p>
               </div>
               <div>
-                <p className="text-slate-400">Vinyl Flock</p>
-                <p className="text-lg font-semibold">~R150/m</p>
+                <p className="text-slate-400">JHG T-Shirt</p>
+                <p className="font-semibold">R229</p>
               </div>
               <div>
-                <p className="text-slate-400">Vinyl Silicon</p>
-                <p className="text-lg font-semibold">~R180/m</p>
-              </div>
-              <div>
-                <p className="text-slate-400 text-xs">Vinyl is cut in-house</p>
-                <p className="text-xs text-slate-500">Blanks from Joburg</p>
+                <p className="text-slate-400">Embroidery Setup</p>
+                <p className="font-semibold">R300</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <JobCalculator />
+        <MultiPrintCalculator />
 
         {/* Tips */}
         <Card className="mt-6 bg-amber-50 border-0">
           <CardContent className="p-4">
-            <h4 className="font-medium text-amber-800 mb-2">💡 Remember</h4>
+            <h4 className="font-medium text-amber-800 mb-2">💡 Pricing Tips</h4>
             <ul className="text-sm text-amber-700 space-y-1">
-              <li>• DTF Randburg offers better quality but costs more</li>
-              <li>• Factor in transport costs (Uber, petrol) for each job</li>
-              <li>• Delivery via Pep Paxi at Riverside View</li>
+              <li>• <strong>Bulk discounts:</strong> 50+ items = 10% off, 100+ items = 15% off</li>
+              <li>• Extra R15 for sizes above 2XL</li>
+              <li>• Rush order fee: R420</li>
+              <li>• Screen printing requires minimum 50 pieces</li>
+              <li>• Setup fees are once-off per design (don't charge again for repeats)</li>
               <li>• Aim for at least 30% profit margin</li>
             </ul>
           </CardContent>
