@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { createPageUrl } from "./utils";
 import { 
   LayoutDashboard, Package, ClipboardList, Calculator, 
-  Building2, Search, Menu, X, Shirt
+  Building2, Search, Menu, X, Shirt, ShoppingCart, Boxes
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -11,6 +11,8 @@ const navItems = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
   { name: "Orders", page: "Orders", icon: Package },
   { name: "Tasks", page: "Tasks", icon: ClipboardList },
+  { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
+  { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Calculator", page: "Calculator", icon: Calculator },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
 ];
@@ -40,7 +42,7 @@ export default function Layout({ children, currentPageName }) {
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-3 py-4 space-y-1">
+          <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
             {navItems.map(item => {
               const isActive = currentPageName === item.page;
               return (
@@ -94,7 +96,7 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="absolute top-full left-0 right-0 bg-white border-b border-slate-200 shadow-lg">
+          <div className="absolute top-full left-0 right-0 bg-white border-b border-slate-200 shadow-lg max-h-[70vh] overflow-y-auto">
             <nav className="p-2 space-y-1">
               {navItems.map(item => {
                 const isActive = currentPageName === item.page;

@@ -9,25 +9,40 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
-  Plus, Building2, Phone, MapPin, Star, X, Trash2
+  Plus, Building2, Phone, MapPin, Star, X, Trash2,
+  Mail, Clock, Edit, ChevronRight
 } from "lucide-react";
+import TypeformWrapper from "@/components/forms/TypeformWrapper";
+import TypeformInput from "@/components/forms/TypeformInput";
 
 const typeColors = {
   vinyl: "bg-blue-100 text-blue-700",
   dtf_printing: "bg-purple-100 text-purple-700",
   blanks: "bg-emerald-100 text-emerald-700",
-  delivery: "bg-orange-100 text-orange-700"
+  delivery: "bg-orange-100 text-orange-700",
+  other: "bg-slate-100 text-slate-700"
 };
 
 const typeLabels = {
   vinyl: "Vinyl",
   dtf_printing: "DTF Printing",
   blanks: "Blanks",
-  delivery: "Delivery"
+  delivery: "Delivery",
+  other: "Other"
+};
+
+const paymentTermLabels = {
+  cod: "Cash on Delivery",
+  net_7: "Net 7 Days",
+  net_14: "Net 14 Days",
+  net_30: "Net 30 Days",
+  prepaid: "Prepaid"
 };
 
 export default function Suppliers() {
   const [showForm, setShowForm] = useState(false);
+  const [editingSupplier, setEditingSupplier] = useState(null);
+  const [currentStep, setCurrentStep] = useState(0);
   const [formData, setFormData] = useState({
     name: "",
     type: "vinyl",
@@ -35,8 +50,12 @@ export default function Suppliers() {
     address: "",
     contact_name: "",
     contact_phone: "",
+    contact_email: "",
     notes: "",
-    is_preferred: false
+    is_preferred: false,
+    payment_terms: "cod",
+    lead_time_days: 1,
+    products: []
   });
   const queryClient = useQueryClient();
 
@@ -49,7 +68,14 @@ export default function Suppliers() {
     mutationFn: (data) => base44.entities.Supplier.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['suppliers'] });
-      setShowForm(false);
+      resetForm();
+    }
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.Supplier.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] });
       resetForm();
     }
   });
@@ -60,15 +86,46 @@ export default function Suppliers() {
   });
 
   const resetForm = () => {
+    setShowForm(false);
+    setEditingSupplier(null);
+    setCurrentStep(0);
     setFormData({
       name: "", type: "vinyl", location: "", address: "",
-      contact_name: "", contact_phone: "", notes: "", is_preferred: false
+      contact_name: "", contact_phone: "", contact_email: "",
+      notes: "", is_preferred: false, payment_terms: "cod",
+      lead_time_days: 1, products: []
     });
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    createMutation.mutate(formData);
+  const handleEdit = (supplier) => {
+    setEditingSupplier(supplier);
+    setFormData({
+      name: supplier.name || "",
+      type: supplier.type || "vinyl",
+      location: supplier.location || "",
+      address: supplier.address || "",
+      contact_name: supplier.contact_name || "",
+      contact_phone: supplier.contact_phone || "",
+      contact_email: supplier.contact_email || "",
+      notes: supplier.notes || "",
+      is_preferred: supplier.is_preferred || false,
+      payment_terms: supplier.payment_terms || "cod",
+      lead_time_days: supplier.lead_time_days || 1,
+      products: supplier.products || []
+    });
+    setShowForm(true);
+  };
+
+  const handleSubmit = async () => {
+    if (editingSupplier) {
+      await updateMutation.mutateAsync({ id: editingSupplier.id, data: formData });
+    } else {
+      await createMutation.mutateAsync(formData);
+    }
+  };
+
+  const handleChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const groupedSuppliers = suppliers.reduce((acc, supplier) => {
@@ -78,166 +135,270 @@ export default function Suppliers() {
     return acc;
   }, {});
 
+  const typeOptions = [
+    { value: "vinyl", label: "Vinyl Supplier" },
+    { value: "dtf_printing", label: "DTF Printing Partner" },
+    { value: "blanks", label: "Blanks Supplier" },
+    { value: "delivery", label: "Delivery Service" },
+    { value: "other", label: "Other" }
+  ];
+
+  const paymentOptions = [
+    { value: "cod", label: "Cash on Delivery (COD)" },
+    { value: "net_7", label: "Net 7 Days" },
+    { value: "net_14", label: "Net 14 Days" },
+    { value: "net_30", label: "Net 30 Days" },
+    { value: "prepaid", label: "Prepaid" }
+  ];
+
+  const preferredOptions = [
+    { value: "true", label: "Yes, this is a preferred supplier" },
+    { value: "false", label: "No, regular supplier" }
+  ];
+
+  if (showForm) {
+    const steps = [
+      <TypeformInput
+        key="name"
+        type="text"
+        label="What's the supplier name?"
+        value={formData.name}
+        onChange={(v) => handleChange("name", v)}
+        placeholder="e.g., JG Electronics"
+        required
+        isActive={currentStep === 0}
+        questionNumber="1"
+      />,
+      <TypeformInput
+        key="type"
+        type="select"
+        label="What type of supplier?"
+        value={formData.type}
+        onChange={(v) => handleChange("type", v)}
+        options={typeOptions}
+        required
+        isActive={currentStep === 1}
+        questionNumber="2"
+      />,
+      <TypeformInput
+        key="location"
+        type="text"
+        label="Where are they located?"
+        subtitle="City or area"
+        value={formData.location}
+        onChange={(v) => handleChange("location", v)}
+        placeholder="e.g., Randburg"
+        isActive={currentStep === 2}
+        questionNumber="3"
+      />,
+      <TypeformInput
+        key="address"
+        type="text"
+        label="Full address"
+        subtitle="Street address for pickups/deliveries"
+        value={formData.address}
+        onChange={(v) => handleChange("address", v)}
+        placeholder="123 Main Street, Randburg"
+        isActive={currentStep === 3}
+        questionNumber="4"
+      />,
+      <TypeformInput
+        key="contact_name"
+        type="text"
+        label="Contact person's name"
+        value={formData.contact_name}
+        onChange={(v) => handleChange("contact_name", v)}
+        placeholder="John Smith"
+        isActive={currentStep === 4}
+        questionNumber="5"
+      />,
+      <TypeformInput
+        key="contact_phone"
+        type="text"
+        label="Phone number"
+        value={formData.contact_phone}
+        onChange={(v) => handleChange("contact_phone", v)}
+        placeholder="082 123 4567"
+        isActive={currentStep === 5}
+        questionNumber="6"
+      />,
+      <TypeformInput
+        key="contact_email"
+        type="email"
+        label="Email address"
+        value={formData.contact_email}
+        onChange={(v) => handleChange("contact_email", v)}
+        isActive={currentStep === 6}
+        questionNumber="7"
+      />,
+      <TypeformInput
+        key="payment_terms"
+        type="select"
+        label="What are the payment terms?"
+        value={formData.payment_terms}
+        onChange={(v) => handleChange("payment_terms", v)}
+        options={paymentOptions}
+        isActive={currentStep === 7}
+        questionNumber="8"
+      />,
+      <TypeformInput
+        key="lead_time"
+        type="number"
+        label="Average lead time"
+        subtitle="How many days to receive orders?"
+        value={formData.lead_time_days}
+        onChange={(v) => handleChange("lead_time_days", v)}
+        unit="days"
+        isActive={currentStep === 8}
+        questionNumber="9"
+      />,
+      <TypeformInput
+        key="preferred"
+        type="select"
+        label="Is this a preferred supplier?"
+        subtitle="Preferred suppliers are used for auto-generated purchase orders"
+        value={formData.is_preferred ? "true" : "false"}
+        onChange={(v) => handleChange("is_preferred", v === "true")}
+        options={preferredOptions}
+        isActive={currentStep === 9}
+        questionNumber="10"
+      />,
+      <TypeformInput
+        key="notes"
+        type="textarea"
+        label="Any notes about this supplier?"
+        subtitle="Pricing info, special instructions, etc."
+        value={formData.notes}
+        onChange={(v) => handleChange("notes", v)}
+        placeholder="e.g., Videoflex R110/m, best quality vinyl..."
+        isActive={currentStep === 10}
+        questionNumber="11"
+      />
+    ];
+
+    return (
+      <div className="fixed inset-0 z-50 bg-white">
+        <button 
+          onClick={resetForm}
+          className="fixed top-6 right-6 z-50 text-slate-400 hover:text-slate-600 text-sm"
+        >
+          ✕ Close
+        </button>
+        
+        <TypeformWrapper
+          currentStep={currentStep}
+          setCurrentStep={setCurrentStep}
+          totalSteps={steps.length}
+          onSubmit={handleSubmit}
+          submitLabel={editingSupplier ? "Update Supplier" : "Add Supplier"}
+          isSubmitting={createMutation.isPending || updateMutation.isPending}
+        >
+          {steps[currentStep]}
+        </TypeformWrapper>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-5xl mx-auto p-4 md:p-8">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">Suppliers</h1>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Suppliers</h1>
+            <p className="text-slate-500">Manage your suppliers and partners</p>
+          </div>
           <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
             <Plus className="w-4 h-4 mr-2" /> Add Supplier
           </Button>
         </div>
 
-        {/* Form Modal */}
-        {showForm && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <Card className="w-full max-w-md bg-white border-0 shadow-2xl">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle>Add Supplier</CardTitle>
-                <Button variant="ghost" size="icon" onClick={() => setShowForm(false)}>
-                  <X className="w-5 h-5" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Supplier Name *</Label>
-                    <Input
-                      value={formData.name}
-                      onChange={(e) => setFormData({...formData, name: e.target.value})}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Type</Label>
-                    <Select value={formData.type} onValueChange={(v) => setFormData({...formData, type: v})}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="vinyl">Vinyl</SelectItem>
-                        <SelectItem value="dtf_printing">DTF Printing</SelectItem>
-                        <SelectItem value="blanks">Blanks</SelectItem>
-                        <SelectItem value="delivery">Delivery</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Location</Label>
-                    <Input
-                      value={formData.location}
-                      onChange={(e) => setFormData({...formData, location: e.target.value})}
-                      placeholder="e.g., Randburg, Joburg"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Address</Label>
-                    <Input
-                      value={formData.address}
-                      onChange={(e) => setFormData({...formData, address: e.target.value})}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Contact Name</Label>
-                      <Input
-                        value={formData.contact_name}
-                        onChange={(e) => setFormData({...formData, contact_name: e.target.value})}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Phone</Label>
-                      <Input
-                        value={formData.contact_phone}
-                        onChange={(e) => setFormData({...formData, contact_phone: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Notes</Label>
-                    <Textarea
-                      value={formData.notes}
-                      onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                      rows={2}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="preferred"
-                      checked={formData.is_preferred}
-                      onChange={(e) => setFormData({...formData, is_preferred: e.target.checked})}
-                      className="rounded"
-                    />
-                    <Label htmlFor="preferred" className="cursor-pointer">Preferred supplier</Label>
-                  </div>
-                  <div className="flex gap-3 pt-2">
-                    <Button type="button" variant="outline" onClick={() => setShowForm(false)} className="flex-1">
-                      Cancel
-                    </Button>
-                    <Button type="submit" className="flex-1 bg-slate-900">
-                      Add Supplier
-                    </Button>
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
         {/* Suppliers List */}
         {Object.keys(groupedSuppliers).length === 0 ? (
-          <Card className="p-8 text-center bg-white border-0">
-            <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <h3 className="font-medium text-slate-700 mb-2">No suppliers yet</h3>
-            <p className="text-slate-500 mb-4 text-sm">Add your first supplier to get started</p>
-            <Button onClick={() => setShowForm(true)}>Add Supplier</Button>
+          <Card className="p-12 text-center bg-white border-0">
+            <Building2 className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-slate-700 mb-2">No suppliers yet</h3>
+            <p className="text-slate-500 mb-4">Add your first supplier to get started</p>
+            <Button onClick={() => setShowForm(true)}>
+              <Plus className="w-4 h-4 mr-2" /> Add Supplier
+            </Button>
           </Card>
         ) : (
-          <div className="space-y-6">
+          <div className="space-y-8">
             {Object.entries(groupedSuppliers).map(([type, items]) => (
               <div key={type}>
-                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
-                  {typeLabels[type] || type}
+                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                  <Badge className={`${typeColors[type]} border-0`}>
+                    {typeLabels[type] || type}
+                  </Badge>
+                  <span>({items.length})</span>
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {items.map(supplier => (
                     <Card key={supplier.id} className="bg-white border-0 shadow-sm hover:shadow-md transition-shadow">
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-3">
+                      <CardContent className="p-5">
+                        <div className="flex items-start justify-between mb-4">
                           <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-slate-900">{supplier.name}</h3>
+                            <h3 className="font-semibold text-slate-900 text-lg">{supplier.name}</h3>
                             {supplier.is_preferred && (
                               <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
                             )}
                           </div>
-                          <Badge className={`${typeColors[supplier.type]} border-0`}>
-                            {typeLabels[supplier.type]}
-                          </Badge>
                         </div>
                         
-                        {supplier.location && (
-                          <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
-                            <MapPin className="w-4 h-4" />
-                            <span>{supplier.location}</span>
-                          </div>
-                        )}
-                        
-                        {supplier.contact_phone && (
-                          <div className="flex items-center gap-2 text-sm text-slate-600">
-                            <Phone className="w-4 h-4" />
-                            <span>{supplier.contact_phone}</span>
-                            {supplier.contact_name && (
-                              <span className="text-slate-400">({supplier.contact_name})</span>
-                            )}
-                          </div>
+                        <div className="space-y-2 mb-4">
+                          {supplier.location && (
+                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                              <MapPin className="w-4 h-4 text-slate-400" />
+                              <span>{supplier.location}</span>
+                            </div>
+                          )}
+                          
+                          {supplier.contact_phone && (
+                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                              <Phone className="w-4 h-4 text-slate-400" />
+                              <span>{supplier.contact_phone}</span>
+                              {supplier.contact_name && (
+                                <span className="text-slate-400">({supplier.contact_name})</span>
+                              )}
+                            </div>
+                          )}
+
+                          {supplier.contact_email && (
+                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                              <Mail className="w-4 h-4 text-slate-400" />
+                              <span>{supplier.contact_email}</span>
+                            </div>
+                          )}
+
+                          {supplier.lead_time_days && (
+                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                              <Clock className="w-4 h-4 text-slate-400" />
+                              <span>{supplier.lead_time_days} day lead time</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {supplier.payment_terms && (
+                          <Badge variant="outline" className="mb-3">
+                            {paymentTermLabels[supplier.payment_terms] || supplier.payment_terms}
+                          </Badge>
                         )}
 
                         {supplier.notes && (
-                          <p className="text-sm text-slate-500 mt-2 bg-slate-50 p-2 rounded">
+                          <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg mb-4">
                             {supplier.notes}
                           </p>
                         )}
 
-                        <div className="mt-3 pt-3 border-t flex justify-end">
+                        <div className="flex gap-2 pt-3 border-t">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleEdit(supplier)}
+                            className="flex-1"
+                          >
+                            <Edit className="w-4 h-4 mr-1" /> Edit
+                          </Button>
                           <Button 
                             variant="ghost" 
                             size="sm"
