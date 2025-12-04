@@ -94,7 +94,7 @@ export default function Suppliers() {
       name: "", type: "vinyl", location: "", address: "",
       contacts: [{ name: "", role: "", phone: "", email: "", is_primary: true }],
       notes: "", is_preferred: false, payment_terms: "cod",
-      lead_time_days: 1, products: []
+      lead_time_days: 1, avg_uber_fee: 0, avg_errand_time: 0, products: []
     });
   };
 
@@ -120,6 +120,8 @@ export default function Suppliers() {
       is_preferred: supplier.is_preferred || false,
       payment_terms: supplier.payment_terms || "cod",
       lead_time_days: supplier.lead_time_days || 1,
+      avg_uber_fee: supplier.avg_uber_fee || 0,
+      avg_errand_time: supplier.avg_errand_time || 0,
       products: supplier.products || []
     });
     setShowForm(true);
@@ -359,6 +361,24 @@ export default function Suppliers() {
                           type="number"
                           value={formData.lead_time_days}
                           onChange={(e) => setFormData({...formData, lead_time_days: parseInt(e.target.value) || 1})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Avg Uber/Transport Fee (R)</Label>
+                        <Input
+                          type="number"
+                          value={formData.avg_uber_fee || 0}
+                          onChange={(e) => setFormData({...formData, avg_uber_fee: parseFloat(e.target.value) || 0})}
+                          placeholder="e.g., 80"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Avg Errand Time (min)</Label>
+                        <Input
+                          type="number"
+                          value={formData.avg_errand_time || 0}
+                          onChange={(e) => setFormData({...formData, avg_errand_time: parseInt(e.target.value) || 0})}
+                          placeholder="e.g., 45"
                         />
                       </div>
                     </div>

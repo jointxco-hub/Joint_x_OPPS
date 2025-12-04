@@ -5,11 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Plus, Search, ShoppingCart, Check, X, 
-  Truck, Package, AlertTriangle, Eye
+  Truck, Package, AlertTriangle, MapPin, Clock, Car
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, addDays, differenceInDays } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
 
@@ -28,6 +29,8 @@ export default function PurchaseOrders() {
   const [selectedPO, setSelectedPO] = useState(null);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("active");
+  const [locationFilter, setLocationFilter] = useState("all");
+  const [urgencyFilter, setUrgencyFilter] = useState("all");
   const queryClient = useQueryClient();
 
   const { data: purchaseOrders = [] } = useQuery({
@@ -62,18 +65,58 @@ export default function PurchaseOrders() {
     updateMutation.mutate({ id: po.id, data: { status: newStatus } });
   };
 
-  const activePOs = purchaseOrders.filter(po => 
+  // Get unique locations from suppliers
+  const supplierLocations = [...new Set(suppliers.map(s => s.location).filter(Boolean))];
+
+  // Enrich POs with supplier info
+  const enrichedPOs = purchaseOrders.map(po => {
+    const supplier = suppliers.find(s => s.id === po.supplier_id);
+    return {
+      ...po,
+      supplierLocation: supplier?.location,
+      avgUberFee: supplier?.avg_uber_fee || 0,
+      avgErrandTime: supplier?.avg_errand_time || 0,
+      leadTimeDays: supplier?.lead_time_days || 3
+    };
+  });
+
+  // Calculate urgency based on expected delivery
+  const getUrgency = (po) => {
+    if (!po.expected_delivery) return "normal";
+    const daysUntil = differenceInDays(new Date(po.expected_delivery), new Date());
+    if (daysUntil < 0) return "overdue";
+    if (daysUntil <= 2) return "urgent";
+    if (daysUntil <= 7) return "soon";
+    return "normal";
+  };
+
+  const activePOs = enrichedPOs.filter(po => 
     ['draft', 'pending', 'approved', 'ordered', 'partial'].includes(po.status)
   );
-  const completedPOs = purchaseOrders.filter(po => 
+  const completedPOs = enrichedPOs.filter(po => 
     ['received', 'cancelled'].includes(po.status)
   );
 
-  const filteredPOs = (activeTab === 'active' ? activePOs : completedPOs).filter(po => 
-    !search || 
-    po.po_number?.toLowerCase().includes(search.toLowerCase()) ||
-    po.supplier_name?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredPOs = (activeTab === 'active' ? activePOs : completedPOs).filter(po => {
+    const matchesSearch = !search || 
+      po.po_number?.toLowerCase().includes(search.toLowerCase()) ||
+      po.supplier_name?.toLowerCase().includes(search.toLowerCase());
+    const matchesLocation = locationFilter === "all" || po.supplierLocation === locationFilter;
+    const urgency = getUrgency(po);
+    const matchesUrgency = urgencyFilter === "all" || urgency === urgencyFilter;
+    return matchesSearch && matchesLocation && matchesUrgency;
+  });
+
+  // Group by location for route planning
+  const posByLocation = {};
+  activePOs.forEach(po => {
+    const loc = po.supplierLocation || "Unknown";
+    if (!posByLocation[loc]) posByLocation[loc] = [];
+    posByLocation[loc].push(po);
+  });
+
+  // Calculate estimated total transport cost
+  const totalEstimatedTransport = activePOs.reduce((sum, po) => sum + (po.avgUberFee || 0), 0);
 
   if (showForm) {
     return (
@@ -87,6 +130,8 @@ export default function PurchaseOrders() {
   }
 
   if (selectedPO) {
+    const supplier = suppliers.find(s => s.id === selectedPO.supplier_id);
+    
     return (
       <div className="min-h-screen bg-slate-50 p-4 md:p-8">
         <div className="max-w-3xl mx-auto">
@@ -99,9 +144,7 @@ export default function PurchaseOrders() {
                     {statusConfig[selectedPO.status]?.label}
                   </Badge>
                   {selectedPO.auto_generated && (
-                    <Badge className="bg-amber-50 text-amber-600 border-amber-200">
-                      Auto-generated
-                    </Badge>
+                    <Badge className="bg-amber-50 text-amber-600 border-amber-200">Auto-generated</Badge>
                   )}
                 </div>
                 <p className="text-slate-500">{selectedPO.supplier_name}</p>
@@ -111,6 +154,39 @@ export default function PurchaseOrders() {
               </Button>
             </CardHeader>
             <CardContent className="space-y-6">
+              {/* Supplier Info */}
+              {supplier && (
+                <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+                  <h3 className="font-semibold text-slate-700">Supplier Details</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    {supplier.location && (
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-slate-400" />
+                        <span>{supplier.location}</span>
+                      </div>
+                    )}
+                    {supplier.lead_time_days && (
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-slate-400" />
+                        <span>{supplier.lead_time_days} day lead time</span>
+                      </div>
+                    )}
+                    {supplier.avg_uber_fee > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Car className="w-4 h-4 text-slate-400" />
+                        <span>~R{supplier.avg_uber_fee} transport</span>
+                      </div>
+                    )}
+                    {supplier.avg_errand_time > 0 && (
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-slate-400" />
+                        <span>~{supplier.avg_errand_time} min trip</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Dates */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-slate-50 rounded-lg p-4">
@@ -160,7 +236,6 @@ export default function PurchaseOrders() {
                 </div>
               </div>
 
-              {/* Notes */}
               {selectedPO.notes && (
                 <div>
                   <h3 className="font-semibold text-slate-700 mb-2">Notes</h3>
@@ -219,18 +294,58 @@ export default function PurchaseOrders() {
           </Button>
         </div>
 
-        {/* Search */}
-        <div className="bg-white rounded-xl p-4 mb-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input 
-              placeholder="Search purchase orders..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
+        {/* Transport Estimate Banner */}
+        {activePOs.length > 0 && totalEstimatedTransport > 0 && (
+          <Card className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 border-0">
+            <div className="flex items-center gap-3">
+              <Car className="w-5 h-5 text-blue-600" />
+              <div>
+                <p className="font-medium text-slate-800">Estimated Transport Costs</p>
+                <p className="text-sm text-slate-600">
+                  ~R{totalEstimatedTransport} for {activePOs.length} pending POs across {Object.keys(posByLocation).length} locations
+                </p>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Filters */}
+        <Card className="mb-6 p-4 bg-white border-0 shadow-sm">
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input 
+                placeholder="Search purchase orders..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={locationFilter} onValueChange={setLocationFilter}>
+              <SelectTrigger className="w-full md:w-44">
+                <MapPin className="w-4 h-4 mr-2 text-slate-400" />
+                <SelectValue placeholder="Location" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Locations</SelectItem>
+                {supplierLocations.map(loc => (
+                  <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={urgencyFilter} onValueChange={setUrgencyFilter}>
+              <SelectTrigger className="w-full md:w-36">
+                <SelectValue placeholder="Urgency" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="overdue">Overdue</SelectItem>
+                <SelectItem value="urgent">Urgent (2 days)</SelectItem>
+                <SelectItem value="soon">This Week</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        </div>
+        </Card>
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -252,7 +367,7 @@ export default function PurchaseOrders() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredPOs.map(po => (
-                  <POCard key={po.id} po={po} onClick={() => setSelectedPO(po)} />
+                  <POCard key={po.id} po={po} onClick={() => setSelectedPO(po)} getUrgency={getUrgency} />
                 ))}
               </div>
             )}
@@ -266,7 +381,7 @@ export default function PurchaseOrders() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredPOs.map(po => (
-                  <POCard key={po.id} po={po} onClick={() => setSelectedPO(po)} />
+                  <POCard key={po.id} po={po} onClick={() => setSelectedPO(po)} getUrgency={getUrgency} />
                 ))}
               </div>
             )}
@@ -277,13 +392,21 @@ export default function PurchaseOrders() {
   );
 }
 
-function POCard({ po, onClick }) {
+function POCard({ po, onClick, getUrgency }) {
   const config = statusConfig[po.status] || statusConfig.draft;
   const StatusIcon = config.icon;
+  const urgency = getUrgency(po);
+  
+  const urgencyColors = {
+    overdue: "ring-2 ring-red-400",
+    urgent: "ring-2 ring-orange-400",
+    soon: "ring-2 ring-amber-300",
+    normal: ""
+  };
   
   return (
     <Card 
-      className="bg-white border-0 shadow-sm hover:shadow-md transition-all cursor-pointer"
+      className={`bg-white border-0 shadow-sm hover:shadow-md transition-all cursor-pointer ${urgencyColors[urgency]}`}
       onClick={onClick}
     >
       <CardContent className="p-4">
@@ -296,6 +419,12 @@ function POCard({ po, onClick }) {
               )}
             </div>
             <p className="text-sm text-slate-500">{po.supplier_name}</p>
+            {po.supplierLocation && (
+              <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+                <MapPin className="w-3 h-3" />
+                {po.supplierLocation}
+              </p>
+            )}
           </div>
           <Badge className={`${config.className} border-0`}>
             <StatusIcon className="w-3 h-3 mr-1" />
@@ -312,10 +441,18 @@ function POCard({ po, onClick }) {
             <span className="text-slate-500">Total</span>
             <span className="font-semibold">R{(po.total || 0).toFixed(2)}</span>
           </div>
+          {po.avgUberFee > 0 && (
+            <div className="flex justify-between text-slate-400">
+              <span className="flex items-center gap-1"><Car className="w-3 h-3" /> Transport</span>
+              <span>~R{po.avgUberFee}</span>
+            </div>
+          )}
           {po.expected_delivery && (
             <div className="flex justify-between">
               <span className="text-slate-500">Expected</span>
-              <span>{format(new Date(po.expected_delivery), "dd MMM")}</span>
+              <span className={urgency === 'overdue' ? 'text-red-600 font-medium' : urgency === 'urgent' ? 'text-orange-600' : ''}>
+                {format(new Date(po.expected_delivery), "dd MMM")}
+              </span>
             </div>
           )}
         </div>
