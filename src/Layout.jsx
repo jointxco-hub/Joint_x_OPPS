@@ -33,11 +33,13 @@ export default function Layout({ children, currentPageName }) {
         <div className="flex flex-col flex-1 bg-white border-r border-slate-200">
           {/* Logo */}
           <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
-            <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center">
-              <Shirt className="w-5 h-5 text-white" />
-            </div>
+            <img 
+              src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/6930c24147ae0b4b6b9366fc/ec83cd269_Joint_xLogo.png" 
+              alt="Joint X" 
+              className="w-10 h-10 object-contain"
+            />
             <div>
-              <h1 className="font-bold text-slate-900">PrintFlow</h1>
+              <h1 className="font-bold text-slate-900">Joint X</h1>
               <p className="text-xs text-slate-500">Order Management</p>
             </div>
           </div>
@@ -54,8 +56,8 @@ export default function Layout({ children, currentPageName }) {
                     flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium
                     transition-all duration-200
                     ${isActive 
-                      ? 'bg-slate-900 text-white' 
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}
+                            ? 'bg-[#0F9B8E] text-white' 
+                            : 'text-slate-600 hover:bg-[#0F9B8E]/10 hover:text-[#0F9B8E]'}
                   `}
                 >
                   <item.icon className="w-5 h-5" />
@@ -87,11 +89,13 @@ export default function Layout({ children, currentPageName }) {
       <div className="lg:hidden sticky top-0 z-40 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-slate-900 rounded-lg flex items-center justify-center">
-              <Shirt className="w-4 h-4 text-white" />
+              <img 
+                src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/6930c24147ae0b4b6b9366fc/ec83cd269_Joint_xLogo.png" 
+                alt="Joint X" 
+                className="w-9 h-9 object-contain"
+              />
+              <span className="font-bold text-slate-900">Joint X</span>
             </div>
-            <span className="font-bold text-slate-900">PrintFlow</span>
-          </div>
           <Button 
             variant="ghost" 
             size="icon"
@@ -115,8 +119,8 @@ export default function Layout({ children, currentPageName }) {
                     className={`
                       flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium
                       ${isActive 
-                        ? 'bg-slate-900 text-white' 
-                        : 'text-slate-600 hover:bg-slate-100'}
+                          ? 'bg-[#0F9B8E] text-white' 
+                          : 'text-slate-600 hover:bg-[#0F9B8E]/10'}
                     `}
                   >
                     <item.icon className="w-5 h-5" />
