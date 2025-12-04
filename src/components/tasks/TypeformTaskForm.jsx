@@ -11,6 +11,18 @@ const taskTypes = [
   { value: "other", label: "Other Task" }
 ];
 
+const phases = [
+  { value: "design", label: "Design" },
+  { value: "mockup", label: "Mockup" },
+  { value: "sourcing", label: "Sourcing" },
+  { value: "cutting", label: "Cutting" },
+  { value: "printing", label: "Printing" },
+  { value: "pressing", label: "Pressing" },
+  { value: "finishing", label: "Finishing" },
+  { value: "packing", label: "Packing" },
+  { value: "delivery", label: "Delivery" }
+];
+
 const locations = [
   { value: "jg_electronics_randburg", label: "JG Electronics, Randburg" },
   { value: "dtf_randburg", label: "DTF Printer, Randburg" },
@@ -35,12 +47,15 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
     title: "",
     description: "",
     type: "other",
+    phase: "",
     location: "",
     order_id: "",
     assigned_to: "",
     status: "pending",
     priority: "normal",
     due_date: "",
+    due_week: null,
+    estimated_time_hours: null,
     notes: ""
   });
 
@@ -84,6 +99,17 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       questionNumber="2"
     />,
     <TypeformInput
+      key="phase"
+      type="select"
+      label="Which production phase?"
+      subtitle="Helps track workflow progress"
+      value={formData.phase}
+      onChange={(v) => handleChange("phase", v)}
+      options={phases}
+      isActive={currentStep === 2}
+      questionNumber="3"
+    />,
+    <TypeformInput
       key="location"
       type="select"
       label="Where does this happen?"
@@ -91,8 +117,8 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       value={formData.location}
       onChange={(v) => handleChange("location", v)}
       options={locations}
-      isActive={currentStep === 2}
-      questionNumber="3"
+      isActive={currentStep === 3}
+      questionNumber="4"
     />,
     <TypeformInput
       key="priority"
@@ -101,8 +127,8 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       value={formData.priority}
       onChange={(v) => handleChange("priority", v)}
       options={priorities}
-      isActive={currentStep === 3}
-      questionNumber="4"
+      isActive={currentStep === 4}
+      questionNumber="5"
     />,
     <TypeformInput
       key="due_date"
@@ -110,8 +136,19 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       label="When should this be done?"
       value={formData.due_date}
       onChange={(v) => handleChange("due_date", v)}
-      isActive={currentStep === 4}
-      questionNumber="5"
+      isActive={currentStep === 5}
+      questionNumber="6"
+    />,
+    <TypeformInput
+      key="estimated_time"
+      type="number"
+      label="Estimated time (hours)?"
+      subtitle="How long will this task take?"
+      value={formData.estimated_time_hours}
+      onChange={(v) => handleChange("estimated_time_hours", v)}
+      placeholder="e.g., 2"
+      isActive={currentStep === 6}
+      questionNumber="7"
     />,
     <TypeformInput
       key="assigned_to"
@@ -121,8 +158,8 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       value={formData.assigned_to}
       onChange={(v) => handleChange("assigned_to", v)}
       placeholder="Team member name..."
-      isActive={currentStep === 5}
-      questionNumber="6"
+      isActive={currentStep === 7}
+      questionNumber="8"
     />,
     <TypeformInput
       key="notes"
@@ -131,8 +168,8 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       value={formData.notes}
       onChange={(v) => handleChange("notes", v)}
       placeholder="Extra details..."
-      isActive={currentStep === 6}
-      questionNumber="7"
+      isActive={currentStep === 8}
+      questionNumber="9"
     />
   ];
 
