@@ -2,7 +2,8 @@ import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { 
   Package, ClipboardList, Truck, CheckCircle2, 
   Plus, AlertTriangle, ShoppingCart, ArrowRight
@@ -12,7 +13,7 @@ import { createPageUrl } from "@/utils";
 import StatsCard from "@/components/dashboard/StatsCard";
 import ActiveOrderCard from "@/components/dashboard/ActiveOrderCard";
 import TaskItem from "@/components/dashboard/TaskItem";
-import PendingPOCard from "@/components/dashboard/PendingPOCard";
+import POModal from "@/components/purchaseorders/POModal";
 import LowStockAlert from "@/components/dashboard/LowStockAlert";
 import FocusView from "@/components/dashboard/FocusView";
 import TypeformOrderForm from "@/components/orders/TypeformOrderForm";
@@ -27,6 +28,7 @@ export default function Dashboard() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
   const [focusMode, setFocusMode] = useState("all");
+  const [selectedPO, setSelectedPO] = useState(null);
   const queryClient = useQueryClient();
 
   const { data: orders = [] } = useQuery({
@@ -167,8 +169,9 @@ export default function Dashboard() {
     updateTaskMutation.mutate({ id: taskId, data: { status } });
   };
 
-  const handleApprovePO = (po) => {
-    updatePOMutation.mutate({ id: po.id, data: { status: 'approved' } });
+  const handlePOStatusChange = (po, status) => {
+    updatePOMutation.mutate({ id: po.id, data: { status } });
+    setSelectedPO(null);
   };
 
   const handleCreatePOFromItem = (item) => {
@@ -240,7 +243,17 @@ export default function Dashboard() {
       : activeOrders;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+      {/* PO Modal */}
+      {selectedPO && (
+        <POModal 
+          po={selectedPO}
+          supplier={suppliers.find(s => s.id === selectedPO.supplier_id)}
+          onClose={() => setSelectedPO(null)}
+          onStatusChange={handlePOStatusChange}
+        />
+      )}
+
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -369,11 +382,10 @@ export default function Dashboard() {
                 </div>
                 <div className={`grid gap-3 ${!showOrders ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : ''}`}>
                   {pendingPOs.slice(0, showOrders ? 3 : 6).map(po => (
-                    <PendingPOCard 
+                    <DashboardPOCard 
                       key={po.id} 
                       po={po} 
-                      onApprove={handleApprovePO}
-                      onView={() => {}}
+                      onClick={() => setSelectedPO(po)}
                     />
                   ))}
                 </div>
@@ -412,5 +424,38 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Dashboard PO Card Component
+function DashboardPOCard({ po, onClick }) {
+  const statusColors = {
+    draft: "bg-slate-100 text-slate-700",
+    pending: "bg-amber-100 text-amber-700",
+    approved: "bg-blue-100 text-blue-700",
+    ordered: "bg-purple-100 text-purple-700"
+  };
+
+  return (
+    <Card 
+      className="border-0 bg-white/90 backdrop-blur shadow-sm hover:shadow-md transition-all cursor-pointer rounded-2xl"
+      onClick={onClick}
+    >
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <p className="font-semibold text-slate-900">{po.po_number}</p>
+            <p className="text-sm text-slate-500">{po.supplier_name}</p>
+          </div>
+          <Badge className={`${statusColors[po.status] || statusColors.draft} border-0 rounded-full text-xs`}>
+            {po.status}
+          </Badge>
+        </div>
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100 mt-2">
+          <span className="text-xs text-slate-500">{po.items?.length || 0} items</span>
+          <span className="font-semibold">R{(po.total || 0).toLocaleString()}</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

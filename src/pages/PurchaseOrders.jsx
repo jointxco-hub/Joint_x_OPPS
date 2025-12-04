@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,11 +8,14 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Plus, Search, ShoppingCart, Check, X, 
-  Truck, Package, AlertTriangle, MapPin, Clock, Car
+  Truck, Package, AlertTriangle, MapPin, Clock, Car,
+  Filter, BarChart3, Layers
 } from "lucide-react";
-import { format, addDays, differenceInDays } from "date-fns";
+import { format, differenceInDays } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
+import POModal from "@/components/purchaseorders/POModal";
+import StockDemandPanel from "@/components/purchaseorders/StockDemandPanel";
 
 const statusConfig = {
   draft: { label: "Draft", className: "bg-slate-100 text-slate-700", icon: Package },
@@ -30,7 +33,8 @@ export default function PurchaseOrders() {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("active");
   const [locationFilter, setLocationFilter] = useState("all");
-  const [urgencyFilter, setUrgencyFilter] = useState("all");
+  const [productFilter, setProductFilter] = useState("all");
+  const [showDemand, setShowDemand] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: purchaseOrders = [] } = useQuery({
@@ -48,6 +52,11 @@ export default function PurchaseOrders() {
     queryFn: () => base44.entities.InventoryItem.list('name', 100)
   });
 
+  const { data: orders = [] } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => base44.entities.Order.list('-created_date', 100)
+  });
+
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.PurchaseOrder.create(data),
     onSuccess: () => {
@@ -58,15 +67,45 @@ export default function PurchaseOrders() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => base44.entities.PurchaseOrder.update(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      setSelectedPO(null);
+    }
   });
 
   const handleStatusChange = (po, newStatus) => {
     updateMutation.mutate({ id: po.id, data: { status: newStatus } });
   };
 
-  // Get unique locations from suppliers
+  // Get unique locations and products
   const supplierLocations = [...new Set(suppliers.map(s => s.location).filter(Boolean))];
+  
+  const allProducts = useMemo(() => {
+    const products = new Set();
+    purchaseOrders.forEach(po => {
+      po.items?.forEach(item => {
+        if (item.name) products.add(item.name);
+      });
+    });
+    return [...products].sort();
+  }, [purchaseOrders]);
+
+  // Product demand aggregation
+  const productDemand = useMemo(() => {
+    const demand = {};
+    purchaseOrders
+      .filter(po => ['pending', 'approved', 'ordered'].includes(po.status))
+      .forEach(po => {
+        po.items?.forEach(item => {
+          if (!demand[item.name]) {
+            demand[item.name] = { total: 0, pos: [] };
+          }
+          demand[item.name].total += item.quantity || 0;
+          demand[item.name].pos.push(po.po_number);
+        });
+      });
+    return demand;
+  }, [purchaseOrders]);
 
   // Enrich POs with supplier info
   const enrichedPOs = purchaseOrders.map(po => {
@@ -75,12 +114,10 @@ export default function PurchaseOrders() {
       ...po,
       supplierLocation: supplier?.location,
       avgUberFee: supplier?.avg_uber_fee || 0,
-      avgErrandTime: supplier?.avg_errand_time || 0,
-      leadTimeDays: supplier?.lead_time_days || 3
+      supplier
     };
   });
 
-  // Calculate urgency based on expected delivery
   const getUrgency = (po) => {
     if (!po.expected_delivery) return "normal";
     const daysUntil = differenceInDays(new Date(po.expected_delivery), new Date());
@@ -102,20 +139,11 @@ export default function PurchaseOrders() {
       po.po_number?.toLowerCase().includes(search.toLowerCase()) ||
       po.supplier_name?.toLowerCase().includes(search.toLowerCase());
     const matchesLocation = locationFilter === "all" || po.supplierLocation === locationFilter;
-    const urgency = getUrgency(po);
-    const matchesUrgency = urgencyFilter === "all" || urgency === urgencyFilter;
-    return matchesSearch && matchesLocation && matchesUrgency;
+    const matchesProduct = productFilter === "all" || 
+      po.items?.some(item => item.name === productFilter);
+    return matchesSearch && matchesLocation && matchesProduct;
   });
 
-  // Group by location for route planning
-  const posByLocation = {};
-  activePOs.forEach(po => {
-    const loc = po.supplierLocation || "Unknown";
-    if (!posByLocation[loc]) posByLocation[loc] = [];
-    posByLocation[loc].push(po);
-  });
-
-  // Calculate estimated total transport cost
   const totalEstimatedTransport = activePOs.reduce((sum, po) => sum + (po.avgUberFee || 0), 0);
 
   if (showForm) {
@@ -129,238 +157,184 @@ export default function PurchaseOrders() {
     );
   }
 
-  if (selectedPO) {
-    const supplier = suppliers.find(s => s.id === selectedPO.supplier_id);
-    
-    return (
-      <div className="min-h-screen bg-slate-50 p-4 md:p-8">
-        <div className="max-w-3xl mx-auto">
-          <Card className="bg-white border-0 shadow-lg">
-            <CardHeader className="flex flex-row items-start justify-between">
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <CardTitle>{selectedPO.po_number}</CardTitle>
-                  <Badge className={`${statusConfig[selectedPO.status]?.className} border-0`}>
-                    {statusConfig[selectedPO.status]?.label}
-                  </Badge>
-                  {selectedPO.auto_generated && (
-                    <Badge className="bg-amber-50 text-amber-600 border-amber-200">Auto-generated</Badge>
-                  )}
-                </div>
-                <p className="text-slate-500">{selectedPO.supplier_name}</p>
-              </div>
-              <Button variant="ghost" size="icon" onClick={() => setSelectedPO(null)}>
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+      {/* PO Modal */}
+      {selectedPO && (
+        <POModal 
+          po={selectedPO}
+          supplier={selectedPO.supplier}
+          onClose={() => setSelectedPO(null)}
+          onStatusChange={handleStatusChange}
+        />
+      )}
+
+      {/* Demand Panel */}
+      {showDemand && (
+        <div 
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowDemand(false)}
+        >
+          <div 
+            className="bg-white rounded-3xl w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold">Stock & Demand Analysis</h2>
+              <button 
+                onClick={() => setShowDemand(false)}
+                className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center"
+              >
                 <X className="w-5 h-5" />
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Supplier Info */}
-              {supplier && (
-                <div className="bg-slate-50 rounded-lg p-4 space-y-2">
-                  <h3 className="font-semibold text-slate-700">Supplier Details</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    {supplier.location && (
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-slate-400" />
-                        <span>{supplier.location}</span>
-                      </div>
-                    )}
-                    {supplier.lead_time_days && (
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-slate-400" />
-                        <span>{supplier.lead_time_days} day lead time</span>
-                      </div>
-                    )}
-                    {supplier.avg_uber_fee > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Car className="w-4 h-4 text-slate-400" />
-                        <span>~R{supplier.avg_uber_fee} transport</span>
-                      </div>
-                    )}
-                    {supplier.avg_errand_time > 0 && (
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-slate-400" />
-                        <span>~{supplier.avg_errand_time} min trip</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              </button>
+            </div>
+            <StockDemandPanel 
+              orders={orders}
+              inventory={inventory}
+              purchaseOrders={purchaseOrders}
+            />
+          </div>
+        </div>
+      )}
 
-              {/* Dates */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 rounded-lg p-4">
-                  <p className="text-xs text-slate-500 mb-1">Order Date</p>
-                  <p className="font-medium">
-                    {selectedPO.order_date ? format(new Date(selectedPO.order_date), "dd MMM yyyy") : "-"}
-                  </p>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-4">
-                  <p className="text-xs text-slate-500 mb-1">Expected Delivery</p>
-                  <p className="font-medium">
-                    {selectedPO.expected_delivery ? format(new Date(selectedPO.expected_delivery), "dd MMM yyyy") : "-"}
-                  </p>
-                </div>
+      <div className="max-w-6xl mx-auto p-4 md:p-8">
+        {/* Premium Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Purchase Orders</h1>
+            <p className="text-slate-500 mt-1">Manage supplier orders and stock</p>
+          </div>
+          <div className="flex gap-3">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDemand(true)}
+              className="rounded-xl border-slate-200"
+            >
+              <BarChart3 className="w-4 h-4 mr-2" /> Stock Analysis
+            </Button>
+            <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800 rounded-xl h-11 px-6">
+              <Plus className="w-4 h-4 mr-2" /> New PO
+            </Button>
+          </div>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+            <CardContent className="p-5">
+              <p className="text-sm text-slate-500">Active POs</p>
+              <p className="text-3xl font-bold text-slate-900 mt-1">{activePOs.length}</p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+            <CardContent className="p-5">
+              <p className="text-sm text-slate-500">Pending Approval</p>
+              <p className="text-3xl font-bold text-amber-600 mt-1">
+                {activePOs.filter(p => p.status === 'pending').length}
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+            <CardContent className="p-5">
+              <p className="text-sm text-slate-500">Total Value</p>
+              <p className="text-3xl font-bold text-slate-900 mt-1">
+                R{activePOs.reduce((sum, po) => sum + (po.total || 0), 0).toLocaleString()}
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2">
+                <Car className="w-4 h-4 text-slate-400" />
+                <p className="text-sm text-slate-500">Est. Transport</p>
               </div>
-
-              {/* Items */}
-              <div>
-                <h3 className="font-semibold text-slate-700 mb-3">Items</h3>
-                <div className="border rounded-lg overflow-hidden">
-                  <table className="w-full">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="text-left p-3 text-xs font-medium text-slate-500">Item</th>
-                        <th className="text-right p-3 text-xs font-medium text-slate-500">Qty</th>
-                        <th className="text-right p-3 text-xs font-medium text-slate-500">Unit Price</th>
-                        <th className="text-right p-3 text-xs font-medium text-slate-500">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedPO.items?.map((item, i) => (
-                        <tr key={i} className="border-t">
-                          <td className="p-3">{item.name}</td>
-                          <td className="p-3 text-right">{item.quantity} {item.unit}</td>
-                          <td className="p-3 text-right">R{(item.unit_price || 0).toFixed(2)}</td>
-                          <td className="p-3 text-right font-medium">R{(item.total || 0).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-slate-900 text-white">
-                      <tr>
-                        <td colSpan={3} className="p-3 text-right font-medium">Total</td>
-                        <td className="p-3 text-right font-bold">R{(selectedPO.total || 0).toFixed(2)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-
-              {selectedPO.notes && (
-                <div>
-                  <h3 className="font-semibold text-slate-700 mb-2">Notes</h3>
-                  <p className="text-slate-600 bg-slate-50 rounded-lg p-4">{selectedPO.notes}</p>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex flex-wrap gap-3 pt-4 border-t">
-                {selectedPO.status === 'draft' && (
-                  <>
-                    <Button onClick={() => handleStatusChange(selectedPO, 'pending')} className="flex-1">
-                      Submit for Approval
-                    </Button>
-                    <Button variant="outline" onClick={() => handleStatusChange(selectedPO, 'cancelled')}>
-                      Cancel
-                    </Button>
-                  </>
-                )}
-                {selectedPO.status === 'pending' && (
-                  <>
-                    <Button onClick={() => handleStatusChange(selectedPO, 'approved')} className="flex-1 bg-emerald-600 hover:bg-emerald-700">
-                      <Check className="w-4 h-4 mr-2" /> Approve
-                    </Button>
-                    <Button variant="outline" onClick={() => handleStatusChange(selectedPO, 'draft')}>
-                      Back to Draft
-                    </Button>
-                  </>
-                )}
-                {selectedPO.status === 'approved' && (
-                  <Button onClick={() => handleStatusChange(selectedPO, 'ordered')} className="flex-1 bg-purple-600 hover:bg-purple-700">
-                    <Truck className="w-4 h-4 mr-2" /> Mark as Ordered
-                  </Button>
-                )}
-                {selectedPO.status === 'ordered' && (
-                  <Button onClick={() => handleStatusChange(selectedPO, 'received')} className="flex-1 bg-emerald-600 hover:bg-emerald-700">
-                    <Package className="w-4 h-4 mr-2" /> Mark as Received
-                  </Button>
-                )}
-              </div>
+              <p className="text-3xl font-bold text-slate-900 mt-1">~R{totalEstimatedTransport}</p>
             </CardContent>
           </Card>
         </div>
-      </div>
-    );
-  }
 
-  return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-6xl mx-auto p-4 md:p-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">Purchase Orders</h1>
-          <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
-            <Plus className="w-4 h-4 mr-2" /> New Purchase Order
-          </Button>
-        </div>
-
-        {/* Transport Estimate Banner */}
-        {activePOs.length > 0 && totalEstimatedTransport > 0 && (
-          <Card className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 border-0">
-            <div className="flex items-center gap-3">
-              <Car className="w-5 h-5 text-blue-600" />
-              <div>
-                <p className="font-medium text-slate-800">Estimated Transport Costs</p>
-                <p className="text-sm text-slate-600">
-                  ~R{totalEstimatedTransport} for {activePOs.length} pending POs across {Object.keys(posByLocation).length} locations
-                </p>
+        {/* Product Demand Summary */}
+        {Object.keys(productDemand).length > 0 && (
+          <Card className="mb-6 border-0 bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl overflow-hidden">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Layers className="w-5 h-5 text-slate-400" />
+                <p className="font-medium">Items on Order</p>
               </div>
-            </div>
+              <div className="flex flex-wrap gap-3">
+                {Object.entries(productDemand).slice(0, 8).map(([product, data]) => (
+                  <button
+                    key={product}
+                    onClick={() => setProductFilter(productFilter === product ? "all" : product)}
+                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                      productFilter === product
+                        ? 'bg-white text-slate-900'
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    {product.split(' ')[0]} <span className="opacity-70">×{data.total}</span>
+                  </button>
+                ))}
+              </div>
+            </CardContent>
           </Card>
         )}
 
         {/* Filters */}
-        <Card className="mb-6 p-4 bg-white border-0 shadow-sm">
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input 
-                placeholder="Search purchase orders..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10"
-              />
+        <Card className="mb-6 border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input 
+                  placeholder="Search orders..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-11 h-11 rounded-xl border-slate-200 bg-slate-50"
+                />
+              </div>
+              <Select value={locationFilter} onValueChange={setLocationFilter}>
+                <SelectTrigger className="w-full md:w-44 h-11 rounded-xl border-slate-200">
+                  <MapPin className="w-4 h-4 mr-2 text-slate-400" />
+                  <SelectValue placeholder="Location" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Locations</SelectItem>
+                  {supplierLocations.map(loc => (
+                    <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={productFilter} onValueChange={setProductFilter}>
+                <SelectTrigger className="w-full md:w-48 h-11 rounded-xl border-slate-200">
+                  <Package className="w-4 h-4 mr-2 text-slate-400" />
+                  <SelectValue placeholder="Product" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Products</SelectItem>
+                  {allProducts.map(prod => (
+                    <SelectItem key={prod} value={prod}>{prod}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <Select value={locationFilter} onValueChange={setLocationFilter}>
-              <SelectTrigger className="w-full md:w-44">
-                <MapPin className="w-4 h-4 mr-2 text-slate-400" />
-                <SelectValue placeholder="Location" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Locations</SelectItem>
-                {supplierLocations.map(loc => (
-                  <SelectItem key={loc} value={loc}>{loc}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={urgencyFilter} onValueChange={setUrgencyFilter}>
-              <SelectTrigger className="w-full md:w-36">
-                <SelectValue placeholder="Urgency" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="overdue">Overdue</SelectItem>
-                <SelectItem value="urgent">Urgent (2 days)</SelectItem>
-                <SelectItem value="soon">This Week</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          </CardContent>
         </Card>
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-4">
-            <TabsTrigger value="active">Active ({activePOs.length})</TabsTrigger>
-            <TabsTrigger value="completed">Completed ({completedPOs.length})</TabsTrigger>
+          <TabsList className="mb-6 bg-slate-100 p-1 rounded-xl">
+            <TabsTrigger value="active" className="rounded-lg">Active ({activePOs.length})</TabsTrigger>
+            <TabsTrigger value="completed" className="rounded-lg">Completed ({completedPOs.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="active">
             {filteredPOs.length === 0 ? (
-              <Card className="p-12 text-center bg-white border-0">
+              <Card className="p-16 text-center border-0 bg-white/80 backdrop-blur rounded-3xl">
                 <ShoppingCart className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-slate-700 mb-2">No active purchase orders</h3>
-                <p className="text-slate-500 mb-4">Create a purchase order to restock inventory</p>
-                <Button onClick={() => setShowForm(true)}>
+                <h3 className="text-lg font-medium text-slate-700 mb-2">No purchase orders</h3>
+                <p className="text-slate-500 mb-6">Create a PO to restock inventory</p>
+                <Button onClick={() => setShowForm(true)} className="rounded-xl">
                   <Plus className="w-4 h-4 mr-2" /> Create PO
                 </Button>
               </Card>
@@ -375,8 +349,8 @@ export default function PurchaseOrders() {
 
           <TabsContent value="completed">
             {filteredPOs.length === 0 ? (
-              <Card className="p-12 text-center bg-white border-0">
-                <p className="text-slate-500">No completed purchase orders</p>
+              <Card className="p-16 text-center border-0 bg-white/80 rounded-3xl">
+                <p className="text-slate-500">No completed orders</p>
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -397,25 +371,25 @@ function POCard({ po, onClick, getUrgency }) {
   const StatusIcon = config.icon;
   const urgency = getUrgency(po);
   
-  const urgencyColors = {
-    overdue: "ring-2 ring-red-400",
-    urgent: "ring-2 ring-orange-400",
-    soon: "ring-2 ring-amber-300",
+  const urgencyStyles = {
+    overdue: "ring-2 ring-red-300",
+    urgent: "ring-2 ring-orange-300",
+    soon: "",
     normal: ""
   };
   
   return (
     <Card 
-      className={`bg-white border-0 shadow-sm hover:shadow-md transition-all cursor-pointer ${urgencyColors[urgency]}`}
+      className={`border-0 bg-white/90 backdrop-blur shadow-sm hover:shadow-lg transition-all cursor-pointer rounded-2xl overflow-hidden ${urgencyStyles[urgency]}`}
       onClick={onClick}
     >
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between mb-3">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between mb-4">
           <div>
             <div className="flex items-center gap-2">
               <p className="font-semibold text-slate-900">{po.po_number}</p>
               {po.auto_generated && (
-                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                <span className="w-2 h-2 rounded-full bg-amber-400" title="Auto-generated" />
               )}
             </div>
             <p className="text-sm text-slate-500">{po.supplier_name}</p>
@@ -426,35 +400,34 @@ function POCard({ po, onClick, getUrgency }) {
               </p>
             )}
           </div>
-          <Badge className={`${config.className} border-0`}>
-            <StatusIcon className="w-3 h-3 mr-1" />
+          <Badge className={`${config.className} border-0 rounded-full`}>
             {config.label}
           </Badge>
         </div>
         
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-slate-500">Items</span>
-            <span>{po.items?.length || 0}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-500">Total</span>
-            <span className="font-semibold">R{(po.total || 0).toFixed(2)}</span>
-          </div>
-          {po.avgUberFee > 0 && (
-            <div className="flex justify-between text-slate-400">
-              <span className="flex items-center gap-1"><Car className="w-3 h-3" /> Transport</span>
-              <span>~R{po.avgUberFee}</span>
-            </div>
+        {/* Items Preview */}
+        <div className="flex flex-wrap gap-1 mb-4">
+          {po.items?.slice(0, 3).map((item, i) => (
+            <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
+              {item.name?.split(' ')[0]} ×{item.quantity}
+            </span>
+          ))}
+          {po.items?.length > 3 && (
+            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full">
+              +{po.items.length - 3}
+            </span>
           )}
-          {po.expected_delivery && (
-            <div className="flex justify-between">
-              <span className="text-slate-500">Expected</span>
-              <span className={urgency === 'overdue' ? 'text-red-600 font-medium' : urgency === 'urgent' ? 'text-orange-600' : ''}>
+        </div>
+
+        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+          <div className="text-sm text-slate-500">
+            {po.expected_delivery && (
+              <span className={urgency === 'overdue' ? 'text-red-600 font-medium' : ''}>
                 {format(new Date(po.expected_delivery), "dd MMM")}
               </span>
-            </div>
-          )}
+            )}
+          </div>
+          <p className="text-lg font-bold text-slate-900">R{(po.total || 0).toLocaleString()}</p>
         </div>
       </CardContent>
     </Card>
