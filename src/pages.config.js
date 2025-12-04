@@ -7,6 +7,7 @@ import Suppliers from './pages/Suppliers';
 import PurchaseOrders from './pages/PurchaseOrders';
 import Inventory from './pages/Inventory';
 import ClientCatalog from './pages/ClientCatalog';
+import Executive from './pages/Executive';
 import __Layout from './Layout.jsx';
 
 
@@ -20,6 +21,7 @@ export const PAGES = {
     "PurchaseOrders": PurchaseOrders,
     "Inventory": Inventory,
     "ClientCatalog": ClientCatalog,
+    "Executive": Executive,
 }
 
 export const pagesConfig = {
