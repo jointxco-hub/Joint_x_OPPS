@@ -123,6 +123,8 @@ export default function Orders() {
     );
   }
 
+  const pendingClientOrders = clientOrders.filter(o => o.status === 'pending' || o.status === 'confirmed');
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="max-w-7xl mx-auto p-4 md:p-8">
@@ -134,54 +136,148 @@ export default function Orders() {
           </Button>
         </div>
 
-        {/* Filters */}
-        <div className="bg-white rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <Input 
-              placeholder="Search orders..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-full md:w-48">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="received">Received</SelectItem>
-              <SelectItem value="materials_needed">Materials Needed</SelectItem>
-              <SelectItem value="in_production">In Production</SelectItem>
-              <SelectItem value="ready">Ready</SelectItem>
-              <SelectItem value="out_for_delivery">Out for Delivery</SelectItem>
-              <SelectItem value="delivered">Delivered</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
+          <TabsList className="bg-white p-1 rounded-xl">
+            <TabsTrigger value="production" className="rounded-lg">
+              <Package className="w-4 h-4 mr-2" />
+              Production ({orders.length})
+            </TabsTrigger>
+            <TabsTrigger value="shop" className="rounded-lg">
+              <Store className="w-4 h-4 mr-2" />
+              Shop Orders ({pendingClientOrders.length})
+              {pendingClientOrders.length > 0 && (
+                <span className="ml-2 w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+              )}
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Orders Grid */}
-        {filteredOrders.length === 0 ? (
-          <div className="bg-white rounded-xl p-12 text-center">
-            <Package className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-slate-700 mb-2">No orders found</h3>
-            <p className="text-slate-500 mb-4">Create your first order to get started</p>
-            <Button onClick={() => setShowForm(true)}>
-              <Plus className="w-4 h-4 mr-2" /> Create Order
-            </Button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredOrders.map(order => (
-              <ActiveOrderCard 
-                key={order.id} 
-                order={order} 
-                onClick={setSelectedOrder}
-              />
-            ))}
-          </div>
-        )}
+          <TabsContent value="production">
+            {/* Filters */}
+            <div className="bg-white rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input 
+                  placeholder="Search orders..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full md:w-48">
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="received">Received</SelectItem>
+                  <SelectItem value="materials_needed">Materials Needed</SelectItem>
+                  <SelectItem value="in_production">In Production</SelectItem>
+                  <SelectItem value="ready">Ready</SelectItem>
+                  <SelectItem value="out_for_delivery">Out for Delivery</SelectItem>
+                  <SelectItem value="delivered">Delivered</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Orders Grid */}
+            {filteredOrders.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center">
+                <Package className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-slate-700 mb-2">No orders found</h3>
+                <p className="text-slate-500 mb-4">Create your first order to get started</p>
+                <Button onClick={() => setShowForm(true)}>
+                  <Plus className="w-4 h-4 mr-2" /> Create Order
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredOrders.map(order => (
+                  <ActiveOrderCard 
+                    key={order.id} 
+                    order={order} 
+                    onClick={setSelectedOrder}
+                  />
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="shop">
+            {pendingClientOrders.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center">
+                <Store className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-slate-700 mb-2">No shop orders</h3>
+                <p className="text-slate-500">Orders from the client catalog will appear here</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pendingClientOrders.map(order => (
+                  <Card key={order.id} className="bg-white border-0 shadow-sm rounded-2xl overflow-hidden">
+                    <CardContent className="p-5">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <p className="font-semibold text-slate-900">{order.order_number}</p>
+                          <p className="text-sm text-slate-500">{order.client_name}</p>
+                          {order.company_name && (
+                            <p className="text-xs text-slate-400">{order.company_name}</p>
+                          )}
+                        </div>
+                        <Badge className={order.status === 'confirmed' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}>
+                          {order.status}
+                        </Badge>
+                      </div>
+
+                      <div className="text-sm text-slate-600 mb-3">
+                        <p>{order.client_phone}</p>
+                        {order.client_email && <p className="text-slate-400">{order.client_email}</p>}
+                      </div>
+
+                      <div className="bg-slate-50 rounded-xl p-3 mb-3 max-h-32 overflow-y-auto">
+                        <p className="text-xs text-slate-500 mb-2">Items ({order.items?.length || 0})</p>
+                        {order.items?.map((item, i) => (
+                          <div key={i} className="text-sm flex justify-between">
+                            <span>{item.quantity}x {item.name} ({item.size}, {item.color})</span>
+                            <span className="text-slate-500">R{item.total}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                        <div>
+                          <p className="text-xs text-slate-500">Total</p>
+                          <p className="text-xl font-bold text-emerald-600">R{(order.total || 0).toFixed(2)}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button 
+                            size="sm"
+                            onClick={() => convertToProductionMutation.mutate(order)}
+                            disabled={convertToProductionMutation.isPending}
+                            className="bg-emerald-600 hover:bg-emerald-700"
+                          >
+                            <CheckCircle2 className="w-4 h-4 mr-1" />
+                            Convert to Order
+                          </Button>
+                        </div>
+                      </div>
+
+                      {order.notes && (
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <p className="text-xs text-slate-500">Notes</p>
+                          <p className="text-sm text-slate-600">{order.notes}</p>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-400 mt-2">
+                        {format(new Date(order.created_date), "dd MMM yyyy 'at' HH:mm")}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
