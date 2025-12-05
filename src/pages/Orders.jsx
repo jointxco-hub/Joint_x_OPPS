@@ -21,9 +21,42 @@ export default function Orders() {
   const [statusFilter, setStatusFilter] = useState("all");
   const queryClient = useQueryClient();
 
+  const [activeTab, setActiveTab] = useState("production");
+
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['orders'],
     queryFn: () => base44.entities.Order.list('-created_date', 200)
+  });
+
+  const { data: clientOrders = [] } = useQuery({
+    queryKey: ['clientOrders'],
+    queryFn: () => base44.entities.ClientOrder.list('-created_date', 200)
+  });
+
+  const convertToProductionMutation = useMutation({
+    mutationFn: async (clientOrder) => {
+      // Create production order from client order
+      const productionOrder = {
+        order_number: clientOrder.order_number,
+        client_name: clientOrder.client_name,
+        client_email: clientOrder.client_email,
+        client_phone: clientOrder.client_phone,
+        description: clientOrder.items?.map(i => `${i.quantity}x ${i.name} (${i.size}, ${i.color})`).join(', '),
+        quantity: clientOrder.items?.reduce((sum, i) => sum + (i.quantity || 0), 0) || 0,
+        print_type: "dtf_randburg",
+        status: "received",
+        priority: "normal",
+        quoted_price: clientOrder.total,
+        deposit_paid: 0,
+        notes: clientOrder.notes
+      };
+      await base44.entities.Order.create(productionOrder);
+      await base44.entities.ClientOrder.update(clientOrder.id, { status: "converted" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['clientOrders'] });
+    }
   });
 
   const createMutation = useMutation({
