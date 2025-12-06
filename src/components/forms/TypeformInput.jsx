@@ -40,7 +40,7 @@ export default function TypeformInput({
         )}
       </div>
 
-      {type === "text" && (
+      {type === "text" && isActive && (
         <div className="relative">
           <Input
             type="text"
@@ -55,7 +55,7 @@ export default function TypeformInput({
         </div>
       )}
 
-      {type === "number" && (
+      {type === "number" && isActive && (
         <div className="relative">
           <Input
             type="number"
@@ -70,7 +70,7 @@ export default function TypeformInput({
         </div>
       )}
 
-      {type === "email" && (
+      {type === "email" && isActive && (
         <Input
           type="email"
           value={value || ""}
@@ -80,7 +80,7 @@ export default function TypeformInput({
         />
       )}
 
-      {type === "textarea" && (
+      {type === "textarea" && isActive && (
         <Textarea
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
@@ -120,7 +120,7 @@ export default function TypeformInput({
         </div>
       )}
 
-      {type === "date" && (
+      {type === "date" && isActive && (
         <Input
           type="date"
           value={value || ""}

@@ -26,22 +26,9 @@ const GARMENT_PRICES = {
 const SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 
 const PRINT_OPTIONS = {
-  dtf_a4: { name: "DTF A4", price: 80 },
-  dtf_a3: { name: "DTF A3", price: 120 },
-  dtf_epic_400x1000: { name: "DTF Epic (400mm x 1000mm)", price: 212.75 },
-  dtf_kandy_570x1000: { name: "DTF Kandy (570mm x 1000mm)", price: 170 },
-  vinyl_500x1000: { name: "Vinyl (500mm x 1000mm)", price: 120 },
-  front_logo: { name: "Front Logo (DTF)", price: 40 },
-  back_print: { name: "Back Print (DTF)", price: 60 },
-  neck_tag: { name: "Neck Tag Print", price: 20 },
-  vinyl_small: { name: "Vinyl Heat Transfer", price: 50 },
-  vinyl_large: { name: "Vinyl Large", price: 80 },
-  embroidery_small: { name: "Small Embroidery", price: 50 },
-  embroidery_large: { name: "Large Embroidery", price: 100 },
-  embroidery_setup: { name: "Embroidery Setup (once-off)", price: 300, once: true },
-  screen_print: { name: "Screen Printing (per item, 50+ min)", price: 25 },
-  label_application: { name: "Label Application", price: 3 },
-  design_setup: { name: "Design Setup Fee", price: 175, once: true }
+  dtf_epic_400x1000: { name: "DTF Epic Distribution (Randburg) - 400mm x 1000mm", price: 212.75 },
+  dtf_kandy_570x1000: { name: "DTF Kandy (Jozi) - 570mm x 1000mm", price: 170 },
+  vinyl_500x1000: { name: "Vinyl (JG Electronic Randburg) - 500mm x 1000mm", price: 120 }
 };
 
 const ERRAND_PRESETS = [
@@ -56,9 +43,10 @@ export default function MultiPrintCalculator() {
     id: 1,
     garmentType: "jet",
     sizeQuantities: {},
-    selectedPrints: [],
+    selectedPrints: {},
     useCustomBlankPrice: false,
-    customBlankPrice: 0
+    customBlankPrice: 0,
+    showDetails: true
   }]);
   const [transportCost, setTransportCost] = useState(0);
   const [additionalCosts, setAdditionalCosts] = useState([]);
@@ -69,9 +57,10 @@ export default function MultiPrintCalculator() {
       id: Date.now(),
       garmentType: "jet",
       sizeQuantities: {},
-      selectedPrints: [],
+      selectedPrints: {},
       useCustomBlankPrice: false,
-      customBlankPrice: 0
+      customBlankPrice: 0,
+      showDetails: true
     }]);
   };
 
@@ -113,13 +102,16 @@ export default function MultiPrintCalculator() {
     }));
   };
 
-  const togglePrint = (itemId, printKey) => {
+  const updatePrintQuantity = (itemId, printKey, qty) => {
     setItems(items.map(item => {
       if (item.id !== itemId) return item;
-      const prints = item.selectedPrints.includes(printKey)
-        ? item.selectedPrints.filter(p => p !== printKey)
-        : [...item.selectedPrints, printKey];
-      return { ...item, selectedPrints: prints };
+      const updated = { ...item.selectedPrints };
+      if (qty > 0) {
+        updated[printKey] = qty;
+      } else {
+        delete updated[printKey];
+      }
+      return { ...item, selectedPrints: updated };
     }));
   };
 
@@ -152,18 +144,12 @@ export default function MultiPrintCalculator() {
       : GARMENT_PRICES[item.garmentType]?.price || 0;
     totalGarmentCost += garmentUnitCost * itemQty;
 
-    let printCostPerItem = 0;
-    item.selectedPrints.forEach(printKey => {
+    Object.entries(item.selectedPrints).forEach(([printKey, qty]) => {
       const print = PRINT_OPTIONS[printKey];
-      if (print) {
-        if (print.once) {
-          onceOffCosts += print.price;
-        } else {
-          printCostPerItem += print.price;
-        }
+      if (print && qty > 0) {
+        totalPrintCost += print.price * qty;
       }
     });
-    totalPrintCost += printCostPerItem * itemQty;
   });
 
   const totalAdditional = additionalCosts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
@@ -187,103 +173,147 @@ export default function MultiPrintCalculator() {
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Items */}
-        {items.map((item, index) => (
-          <div key={item.id} className="border rounded-xl p-4 space-y-4 bg-slate-50">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-slate-700">Product {index + 1}</h3>
-              {items.length > 1 && (
-                <Button variant="ghost" size="sm" onClick={() => removeItem(item.id)}>
-                  <Trash2 className="w-4 h-4 text-red-500" />
-                </Button>
+        {items.map((item, index) => {
+          const itemQty = Object.values(item.sizeQuantities).reduce((sum, q) => sum + q, 0);
+          const garment = GARMENT_PRICES[item.garmentType];
+          
+          return (
+            <div key={item.id} className="border rounded-xl p-4 space-y-4 bg-slate-50">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-slate-700">Product {index + 1}</h3>
+                <div className="flex gap-2">
+                  {itemQty > 0 && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => updateItem(item.id, 'showDetails', !item.showDetails)}
+                    >
+                      {item.showDetails ? 'Collapse' : 'Expand'}
+                    </Button>
+                  )}
+                  {items.length > 1 && (
+                    <Button variant="ghost" size="sm" onClick={() => removeItem(item.id)}>
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Compact Summary when collapsed */}
+              {!item.showDetails && itemQty > 0 && (
+                <div className="bg-white rounded-lg p-3 text-sm">
+                  <p className="font-medium">{garment.name}</p>
+                  <p className="text-slate-600">{itemQty} items • R{garment.price} each</p>
+                </div>
               )}
-            </div>
 
-            {/* Garment Type */}
-            <div className="space-y-2">
-              <Label className="text-sm">Garment Type</Label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {Object.entries(GARMENT_PRICES).map(([key, val]) => (
-                  <button
-                    key={key}
-                    onClick={() => updateItem(item.id, 'garmentType', key)}
-                    className={`p-2 rounded-lg border-2 text-left text-xs transition-all ${
-                      item.garmentType === key 
-                        ? 'border-blue-500 bg-blue-50' 
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <p className="font-medium truncate">{val.name}</p>
-                    <p className="text-slate-500">R{val.price}</p>
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-2 mt-2">
-                <Checkbox 
-                  checked={item.useCustomBlankPrice}
-                  onCheckedChange={(checked) => updateItem(item.id, 'useCustomBlankPrice', checked)}
-                />
-                <Label className="text-xs">Custom price</Label>
-                {item.useCustomBlankPrice && (
-                  <Input
-                    type="number"
-                    value={item.customBlankPrice}
-                    onChange={(e) => updateItem(item.id, 'customBlankPrice', parseFloat(e.target.value) || 0)}
-                    className="w-20 h-7 text-xs"
-                    placeholder="R"
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Size Quantities */}
-            <div className="space-y-2">
-              <Label className="text-sm">Sizes & Quantities</Label>
-              <div className="grid grid-cols-7 gap-1">
-                {SIZES.map(size => (
-                  <div key={size} className="text-center">
-                    <p className="text-xs font-medium mb-1">{size}</p>
-                    <Input
-                      type="number"
-                      min="0"
-                      value={item.sizeQuantities[size] || 0}
-                      onChange={(e) => setSizeQtyDirect(item.id, size, e.target.value)}
-                      className="h-8 text-center text-xs p-1"
-                    />
+              {/* Full details when expanded or empty */}
+              {item.showDetails && (
+                <>
+                  {/* Garment Type */}
+                  <div className="space-y-2">
+                    <Label className="text-sm">Garment Type</Label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {Object.entries(GARMENT_PRICES).map(([key, val]) => (
+                        <button
+                          key={key}
+                          onClick={() => {
+                            updateItem(item.id, 'garmentType', key);
+                            if (itemQty > 0) updateItem(item.id, 'showDetails', false);
+                          }}
+                          className={`p-2 rounded-lg border-2 text-left text-xs transition-all ${
+                            item.garmentType === key 
+                              ? 'border-blue-500 bg-blue-50' 
+                              : 'border-slate-200 hover:border-slate-300 bg-white'
+                          }`}
+                        >
+                          <p className="font-medium truncate">{val.name}</p>
+                          <p className="text-slate-500">R{val.price}</p>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Checkbox 
+                        checked={item.useCustomBlankPrice}
+                        onCheckedChange={(checked) => updateItem(item.id, 'useCustomBlankPrice', checked)}
+                      />
+                      <Label className="text-xs">Custom price</Label>
+                      {item.useCustomBlankPrice && (
+                        <Input
+                          type="number"
+                          value={item.customBlankPrice}
+                          onChange={(e) => updateItem(item.id, 'customBlankPrice', parseFloat(e.target.value) || 0)}
+                          className="w-20 h-7 text-xs"
+                          placeholder="R"
+                        />
+                      )}
+                    </div>
                   </div>
-                ))}
-              </div>
-              {Object.values(item.sizeQuantities).reduce((sum, q) => sum + q, 0) > 0 && (
-                <p className="text-xs text-blue-600 font-medium">
-                  Total: {Object.values(item.sizeQuantities).reduce((sum, q) => sum + q, 0)} items
-                </p>
+
+                  {/* Size Quantities */}
+                  <div className="space-y-2">
+                    <Label className="text-sm">Sizes & Quantities</Label>
+                    <div className="grid grid-cols-7 gap-1">
+                      {SIZES.map(size => (
+                        <div key={size} className="text-center">
+                          <p className="text-xs font-medium mb-1">{size}</p>
+                          <Input
+                            type="number"
+                            min="0"
+                            value={item.sizeQuantities[size] || 0}
+                            onChange={(e) => setSizeQtyDirect(item.id, size, e.target.value)}
+                            className="h-8 text-center text-xs p-1"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    {itemQty > 0 && (
+                      <p className="text-xs text-blue-600 font-medium">
+                        Total: {itemQty} items
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Print Options */}
+                  <div className="space-y-2">
+                    <Label className="text-sm">Print & Branding</Label>
+                    <div className="space-y-2">
+                      {Object.entries(PRINT_OPTIONS).map(([key, val]) => (
+                        <div key={key} className="flex items-center gap-2 bg-white rounded-lg p-3">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{val.name}</p>
+                            <p className="text-xs text-slate-500">R{val.price} each</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => updatePrintQuantity(item.id, key, Math.max(0, (item.selectedPrints[key] || 0) - 1))}
+                              className="h-7 w-7 p-0"
+                            >
+                              -
+                            </Button>
+                            <span className="w-8 text-center text-sm font-medium">
+                              {item.selectedPrints[key] || 0}
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => updatePrintQuantity(item.id, key, (item.selectedPrints[key] || 0) + 1)}
+                              className="h-7 w-7 p-0"
+                            >
+                              +
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
-
-            {/* Print Options */}
-            <div className="space-y-2">
-              <Label className="text-sm">Print & Branding</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {Object.entries(PRINT_OPTIONS).map(([key, val]) => (
-                  <button
-                    key={key}
-                    onClick={() => togglePrint(item.id, key)}
-                    className={`p-2 rounded-lg border-2 text-left text-xs transition-all flex justify-between items-center ${
-                      item.selectedPrints.includes(key) 
-                        ? 'border-emerald-500 bg-emerald-50' 
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <span className="truncate">{val.name}</span>
-                    <span className="text-slate-500 ml-1">
-                      R{val.price}{val.once ? '*' : ''}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-slate-500">* once-off fee</p>
-            </div>
-          </div>
-        ))}
+          );
+        })}
 
         {/* Transport with Presets */}
         <div className="space-y-3">

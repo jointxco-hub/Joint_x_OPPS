@@ -57,30 +57,48 @@ export default function TypeformPOForm({
   const handleInventorySelect = (index, inventoryId) => {
     const item = inventoryItems.find(i => i.id === inventoryId);
     if (item) {
-      handleItemChange(index, "inventory_item_id", inventoryId);
-      handleItemChange(index, "name", item.name);
-      handleItemChange(index, "unit", item.unit);
-      handleItemChange(index, "unit_price", item.cost_price || 0);
-      handleItemChange(index, "is_custom", false);
+      setFormData(prev => {
+        const newItems = [...prev.items];
+        newItems[index] = {
+          ...newItems[index],
+          inventory_item_id: inventoryId,
+          name: item.name,
+          unit: item.unit,
+          unit_price: item.cost_price || 0,
+          is_custom: false,
+          total: (newItems[index].quantity || 0) * (item.cost_price || 0)
+        };
+        
+        const subtotal = newItems.reduce((sum, item) => sum + (item.total || 0), 0);
+        
+        return {
+          ...prev,
+          items: newItems,
+          subtotal,
+          total: subtotal + (prev.tax || 0)
+        };
+      });
     }
   };
 
   const handleItemChange = (index, field, value) => {
-    const newItems = [...formData.items];
-    newItems[index] = { ...newItems[index], [field]: value };
-    
-    if (field === "quantity" || field === "unit_price") {
-      newItems[index].total = (newItems[index].quantity || 0) * (newItems[index].unit_price || 0);
-    }
-    
-    const subtotal = newItems.reduce((sum, item) => sum + (item.total || 0), 0);
-    
-    setFormData(prev => ({
-      ...prev,
-      items: newItems,
-      subtotal,
-      total: subtotal + (prev.tax || 0)
-    }));
+    setFormData(prev => {
+      const newItems = [...prev.items];
+      newItems[index] = { ...newItems[index], [field]: value };
+      
+      if (field === "quantity" || field === "unit_price") {
+        newItems[index].total = (newItems[index].quantity || 0) * (newItems[index].unit_price || 0);
+      }
+      
+      const subtotal = newItems.reduce((sum, item) => sum + (item.total || 0), 0);
+      
+      return {
+        ...prev,
+        items: newItems,
+        subtotal,
+        total: subtotal + (prev.tax || 0)
+      };
+    });
   };
 
   const addItem = () => {
