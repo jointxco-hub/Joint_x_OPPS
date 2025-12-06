@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import TypeformWrapper from "../forms/TypeformWrapper";
 import TypeformInput from "../forms/TypeformInput";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Upload } from "lucide-react";
 
 const printTypes = [
   { value: "vinyl_videoflex", label: "Vinyl (Videoflex) - R110/m" },
@@ -20,6 +23,7 @@ const priorities = [
 export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [invoiceFile, setInvoiceFile] = useState(null);
   const [formData, setFormData] = useState(order || {
     client_name: "",
     client_email: "",
@@ -35,6 +39,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     quoted_price: 0,
     deposit_paid: 0,
     notes: "",
+    invoice_number: "",
     tracking_code: Math.random().toString(36).substring(2, 8).toUpperCase()
   });
 
@@ -183,7 +188,60 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       placeholder="Internal notes..."
       isActive={currentStep === 11}
       questionNumber="12"
-    />
+    />,
+    <div key="invoice" className={currentStep === 12 ? '' : 'hidden'}>
+      <div className="mb-6">
+        <span className="text-sm text-slate-400 mb-1 block">13 →</span>
+        <h2 className="text-2xl md:text-3xl font-medium text-slate-900">
+          Upload Invoice (Optional)
+        </h2>
+        <p className="text-slate-500 mt-2">Attach invoice from Zoho Books if available</p>
+      </div>
+      
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm text-slate-600 mb-2 block">Invoice Number</label>
+          <Input
+            value={formData.invoice_number}
+            onChange={(e) => handleChange("invoice_number", e.target.value)}
+            placeholder="e.g. INV-000138"
+            className="text-lg h-12"
+          />
+        </div>
+        
+        <div>
+          <label className="text-sm text-slate-600 mb-2 block">Upload Invoice</label>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => document.getElementById('order-invoice-upload').click()}
+            className="w-full h-12"
+          >
+            <Upload className="w-5 h-5 mr-2" />
+            {invoiceFile ? invoiceFile.name : "Choose Invoice File"}
+          </Button>
+          <input
+            id="order-invoice-upload"
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                setInvoiceFile(file);
+                const match = file.name.match(/INV-\d+/i);
+                if (match && !formData.invoice_number) {
+                  handleChange("invoice_number", match[0].toUpperCase());
+                }
+              }
+            }}
+            className="hidden"
+          />
+          {invoiceFile && (
+            <p className="text-sm text-slate-500 mt-2">Selected: {invoiceFile.name}</p>
+          )}
+        </div>
+      </div>
+    </div>
   ];
 
   return (
