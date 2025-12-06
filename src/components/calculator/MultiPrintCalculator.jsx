@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Calculator, Plus, Trash2, Car } from "lucide-react";
+import { Calculator, Plus, Trash2, Car, Upload, FileText } from "lucide-react";
 
 const GARMENT_PRICES = {
   jv1: { name: "JV1 T-Shirt (180gsm)", price: 95 },
@@ -39,6 +39,10 @@ const ERRAND_PRESETS = [
 ];
 
 export default function MultiPrintCalculator() {
+  const [clientName, setClientName] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [orderReference, setOrderReference] = useState("");
+  const [invoiceFile, setInvoiceFile] = useState(null);
   const [items, setItems] = useState([{
     id: 1,
     garmentType: "jet",
@@ -46,8 +50,10 @@ export default function MultiPrintCalculator() {
     selectedPrints: {},
     useCustomBlankPrice: false,
     customBlankPrice: 0,
-    showDetails: true
+    showDetails: true,
+    notes: ""
   }]);
+  const [printItems, setPrintItems] = useState([]);
   const [transportCost, setTransportCost] = useState(0);
   const [additionalCosts, setAdditionalCosts] = useState([]);
   const [quotedPrice, setQuotedPrice] = useState(0);
@@ -60,8 +66,28 @@ export default function MultiPrintCalculator() {
       selectedPrints: {},
       useCustomBlankPrice: false,
       customBlankPrice: 0,
-      showDetails: true
+      showDetails: true,
+      notes: ""
     }]);
+  };
+
+  const addPrintItem = () => {
+    setPrintItems([...printItems, {
+      id: Date.now(),
+      printType: "dtf_epic_400x1000",
+      quantity: 1,
+      notes: ""
+    }]);
+  };
+
+  const removePrintItem = (id) => {
+    setPrintItems(printItems.filter(item => item.id !== id));
+  };
+
+  const updatePrintItem = (id, field, value) => {
+    setPrintItems(printItems.map(item =>
+      item.id === id ? { ...item, [field]: value } : item
+    ));
   };
 
   const removeItem = (id) => {
@@ -152,6 +178,13 @@ export default function MultiPrintCalculator() {
     });
   });
 
+  printItems.forEach(item => {
+    const print = PRINT_OPTIONS[item.printType];
+    if (print) {
+      totalPrintCost += print.price * (item.quantity || 0);
+    }
+  });
+
   const totalAdditional = additionalCosts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   const totalCost = totalGarmentCost + totalPrintCost + onceOffCosts + parseFloat(transportCost || 0) + totalAdditional;
   const costPerItem = totalQuantity > 0 ? totalCost / totalQuantity : 0;
@@ -172,6 +205,68 @@ export default function MultiPrintCalculator() {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Client & Invoice Info */}
+        <div className="bg-blue-50 rounded-xl p-4 space-y-3">
+          <h4 className="font-semibold text-slate-700">Client & Invoice Info</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label className="text-sm">Client Name</Label>
+              <Input
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                placeholder="Enter client name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm">Order Reference</Label>
+              <Input
+                value={orderReference}
+                onChange={(e) => setOrderReference(e.target.value)}
+                placeholder="e.g. ORD-001"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label className="text-sm">Invoice Number</Label>
+              <Input
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
+                placeholder="e.g. INV-000138"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm">Upload Invoice (Optional)</Label>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => document.getElementById('invoice-upload').click()}
+                  className="flex-1"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  {invoiceFile ? invoiceFile.name : "Choose file"}
+                </Button>
+                <input
+                  id="invoice-upload"
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setInvoiceFile(file);
+                      // Auto-extract invoice number if filename matches pattern
+                      const match = file.name.match(/INV-\d+/i);
+                      if (match && !invoiceNumber) {
+                        setInvoiceNumber(match[0].toUpperCase());
+                      }
+                    }
+                  }}
+                  className="hidden"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
         {/* Items */}
         {items.map((item, index) => {
           const itemQty = Object.values(item.sizeQuantities).reduce((sum, q) => sum + q, 0);
@@ -274,46 +369,93 @@ export default function MultiPrintCalculator() {
                     )}
                   </div>
 
-                  {/* Print Options */}
+                  {/* Notes */}
                   <div className="space-y-2">
-                    <Label className="text-sm">Print & Branding</Label>
-                    <div className="space-y-2">
-                      {Object.entries(PRINT_OPTIONS).map(([key, val]) => (
-                        <div key={key} className="flex items-center gap-2 bg-white rounded-lg p-3">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{val.name}</p>
-                            <p className="text-xs text-slate-500">R{val.price} each</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => updatePrintQuantity(item.id, key, Math.max(0, (item.selectedPrints[key] || 0) - 1))}
-                              className="h-7 w-7 p-0"
-                            >
-                              -
-                            </Button>
-                            <span className="w-8 text-center text-sm font-medium">
-                              {item.selectedPrints[key] || 0}
-                            </span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => updatePrintQuantity(item.id, key, (item.selectedPrints[key] || 0) + 1)}
-                              className="h-7 w-7 p-0"
-                            >
-                              +
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    <Label className="text-sm">Item Notes</Label>
+                    <Textarea
+                      value={item.notes}
+                      onChange={(e) => updateItem(item.id, 'notes', e.target.value)}
+                      placeholder="Add notes for this item..."
+                      rows={2}
+                      className="bg-white"
+                    />
                   </div>
                 </>
               )}
             </div>
           );
         })}
+
+        {/* Separate Print & Branding Section */}
+        <div className="border-t pt-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-slate-700">Print & Branding (Separate)</h3>
+            <Button onClick={addPrintItem} variant="outline" size="sm">
+              <Plus className="w-4 h-4 mr-1" /> Add Print Job
+            </Button>
+          </div>
+
+          {printItems.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-4">No separate print jobs added</p>
+          ) : (
+            <div className="space-y-4">
+              {printItems.map(printItem => (
+                <div key={printItem.id} className="border rounded-xl p-4 bg-slate-50 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold">Print Job</Label>
+                    <Button variant="ghost" size="sm" onClick={() => removePrintItem(printItem.id)}>
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm">Print Type</Label>
+                      <select
+                        value={printItem.printType}
+                        onChange={(e) => updatePrintItem(printItem.id, 'printType', e.target.value)}
+                        className="w-full h-10 px-3 rounded-lg border border-slate-200 bg-white text-sm"
+                      >
+                        {Object.entries(PRINT_OPTIONS).map(([key, val]) => (
+                          <option key={key} value={key}>{val.name} - R{val.price}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-sm">Quantity</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={printItem.quantity}
+                        onChange={(e) => updatePrintItem(printItem.id, 'quantity', parseInt(e.target.value) || 0)}
+                        className="bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">Notes</Label>
+                    <Textarea
+                      value={printItem.notes}
+                      onChange={(e) => updatePrintItem(printItem.id, 'notes', e.target.value)}
+                      placeholder="Details about this print job..."
+                      rows={2}
+                      className="bg-white"
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                    <span className="text-sm text-slate-600">Print Cost</span>
+                    <span className="font-semibold">
+                      R{(PRINT_OPTIONS[printItem.printType].price * (printItem.quantity || 0)).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Transport with Presets */}
         <div className="space-y-3">

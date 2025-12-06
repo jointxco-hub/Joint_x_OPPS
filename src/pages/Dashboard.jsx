@@ -29,6 +29,7 @@ export default function Dashboard() {
   const [editingOrder, setEditingOrder] = useState(null);
   const [focusMode, setFocusMode] = useState("all");
   const [selectedPO, setSelectedPO] = useState(null);
+  const [hideLowStockAlerts, setHideLowStockAlerts] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: orders = [] } = useQuery({
@@ -283,12 +284,22 @@ export default function Dashboard() {
         </Card>
 
         {/* Low Stock Alerts */}
-        {showLowStock && lowStockItems.length > 0 && (
+        {showLowStock && lowStockItems.length > 0 && !hideLowStockAlerts && (
           <div className="mb-6 space-y-3">
-            <h2 className="text-sm font-semibold text-red-600 uppercase tracking-wide flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" />
-              Low Stock Alerts
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-red-600 uppercase tracking-wide flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                Low Stock Alerts
+              </h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setHideLowStockAlerts(true)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                Hide
+              </Button>
+            </div>
             {lowStockItems.slice(0, 3).map(item => (
               <LowStockAlert 
                 key={item.id} 
@@ -296,6 +307,19 @@ export default function Dashboard() {
                 onCreatePO={handleCreatePOFromItem}
               />
             ))}
+          </div>
+        )}
+        {hideLowStockAlerts && lowStockItems.length > 0 && (
+          <div className="mb-6">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHideLowStockAlerts(false)}
+              className="w-full"
+            >
+              <AlertTriangle className="w-4 h-4 mr-2 text-amber-500" />
+              Show {lowStockItems.length} Low Stock Alert{lowStockItems.length > 1 ? 's' : ''}
+            </Button>
           </div>
         )}
 
