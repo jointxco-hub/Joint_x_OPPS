@@ -11,7 +11,9 @@ import {
   ShoppingCart, Plus, Minus, Trash2, 
   Shirt, Send, X, ChevronRight, Tag, Percent
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import FloatingCart from "@/components/catalog/FloatingCart";
 
 const CATALOG = {
   tshirts: {
@@ -55,14 +57,21 @@ const CATALOG = {
   }
 };
 
-const PRINT_OPTIONS = [
-  { id: "dtf_front", name: "Front Print (DTF)", price: 40 },
-  { id: "dtf_back", name: "Back Print (DTF)", price: 60 },
-  { id: "dtf_a3", name: "Large Print (A3)", price: 120 },
-  { id: "embroidery", name: "Embroidery", price: 50 },
-  { id: "vinyl", name: "Vinyl Transfer", price: 50 },
-  { id: "neck_tag", name: "Neck Tag", price: 20 }
-];
+// Print material costs (we'll add 100% margin for client pricing)
+const PRINT_MATERIALS = {
+  dtf_epic: { name: "DTF Epic (400mm x 1000mm)", cost: 212.75, type: "dtf" },
+  dtf_kandy: { name: "DTF Kandy (570mm x 1000mm)", cost: 170, type: "dtf" },
+  vinyl: { name: "Vinyl (500mm x 1000mm)", cost: 120, type: "vinyl" },
+  embroidery: { name: "Embroidery", cost: 50, type: "embroidery" },
+  neck_tag: { name: "Neck Tag", cost: 20, type: "other" }
+};
+
+const PRINT_LOCATIONS = ["Front", "Back", "Left Chest", "Right Chest", "Sleeve", "Neck Tag"];
+
+// Calculate client price with 100% profit margin
+function calculateClientPrice(cost) {
+  return cost * 2; // 100% markup
+}
 
 const SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 const COLORS = ["Black", "White", "Navy", "Grey", "Red", "Green", "Beige", "Brown"];
@@ -87,7 +96,7 @@ export default function ClientCatalog() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedColor, setSelectedColor] = useState("Black");
   const [sizeQuantities, setSizeQuantities] = useState({});
-  const [printOptions, setPrintOptions] = useState([]);
+  const [printConfigs, setPrintConfigs] = useState([]);
   const [clientInfo, setClientInfo] = useState({
     name: "", email: "", phone: "", company: "", notes: ""
   });
@@ -116,12 +125,39 @@ export default function ClientCatalog() {
     }));
   };
 
-  const togglePrintOption = (optionId) => {
-    if (printOptions.includes(optionId)) {
-      setPrintOptions(printOptions.filter(id => id !== optionId));
-    } else {
-      setPrintOptions([...printOptions, optionId]);
-    }
+  const addPrintConfig = () => {
+    setPrintConfigs([...printConfigs, {
+      id: Date.now(),
+      material: "dtf_epic",
+      location: "Front",
+      customWidth: 400,
+      customHeight: 400
+    }]);
+  };
+
+  const removePrintConfig = (id) => {
+    setPrintConfigs(printConfigs.filter(p => p.id !== id));
+  };
+
+  const updatePrintConfig = (id, field, value) => {
+    setPrintConfigs(printConfigs.map(p =>
+      p.id === id ? { ...p, [field]: value } : p
+    ));
+  };
+
+  const calculatePrintCost = (config) => {
+    const material = PRINT_MATERIALS[config.material];
+    if (!material) return 0;
+    
+    // Calculate area ratio (client size vs standard size)
+    const standardArea = 400 * 1000; // Standard 400mm x 1000mm
+    const clientArea = (config.customWidth || 400) * (config.customHeight || 400);
+    const areaRatio = clientArea / standardArea;
+    
+    // Calculate cost based on area
+    const materialCost = material.cost * areaRatio;
+    // Return client price with 100% markup
+    return calculateClientPrice(materialCost);
   };
 
   const itemTotalQty = Object.values(sizeQuantities).reduce((sum, q) => sum + q, 0);
@@ -129,21 +165,24 @@ export default function ClientCatalog() {
   const addToCart = () => {
     if (!selectedItem || itemTotalQty === 0) return;
     
-    const printTotal = printOptions.reduce((sum, pId) => {
-      const p = PRINT_OPTIONS.find(o => o.id === pId);
-      return sum + (p?.price || 0);
-    }, 0);
+    const printTotal = printConfigs.reduce((sum, config) => sum + calculatePrintCost(config), 0);
 
     // Create cart items for each size with qty > 0
     const newItems = Object.entries(sizeQuantities)
       .filter(([_, qty]) => qty > 0)
       .map(([size, quantity]) => ({
         id: `${selectedItem.id}-${selectedColor}-${size}-${Date.now()}`,
+        name: selectedItem.name,
         catalogItem: selectedItem,
         size,
         color: selectedColor,
         quantity,
-        printOptions: printOptions.map(pId => PRINT_OPTIONS.find(o => o.id === pId)),
+        printOptions: printConfigs.map(config => ({
+          type: PRINT_MATERIALS[config.material].name,
+          location: config.location,
+          customSize: `${config.customWidth}mm x ${config.customHeight}mm`,
+          price: calculatePrintCost(config)
+        })),
         basePrice: selectedItem.price,
         printCost: printTotal,
         unitPrice: selectedItem.price + printTotal,
@@ -153,19 +192,19 @@ export default function ClientCatalog() {
     setCart([...cart, ...newItems]);
     setSelectedItem(null);
     setSizeQuantities({});
-    setPrintOptions([]);
+    setPrintConfigs([]);
     setSelectedColor("Black");
     toast.success(`Added ${itemTotalQty} items to cart!`);
   };
 
-  const removeFromCart = (itemId) => {
-    setCart(cart.filter(item => item.id !== itemId));
+  const removeFromCart = (index) => {
+    setCart(cart.filter((_, i) => i !== index));
   };
 
-  const updateQuantity = (itemId, delta) => {
-    setCart(cart.map(item => {
-      if (item.id === itemId) {
-        const newQty = Math.max(1, item.quantity + delta);
+  const updateCartQuantity = (index, newQty) => {
+    if (newQty < 1) return;
+    setCart(cart.map((item, i) => {
+      if (i === index) {
         return { ...item, quantity: newQty, total: item.unitPrice * newQty };
       }
       return item;
@@ -206,10 +245,7 @@ export default function ClientCatalog() {
 
   // Item Configuration with Multi-Size Selection
   if (selectedItem) {
-    const printTotal = printOptions.reduce((sum, pId) => {
-      const p = PRINT_OPTIONS.find(o => o.id === pId);
-      return sum + (p?.price || 0);
-    }, 0);
+    const printTotal = printConfigs.reduce((sum, config) => sum + calculatePrintCost(config), 0);
     const unitPrice = selectedItem.price + printTotal;
     const itemTotal = unitPrice * itemTotalQty;
     const currentBulkTier = getBulkDiscount(cartQty + itemTotalQty);
@@ -297,25 +333,91 @@ export default function ClientCatalog() {
                 )}
               </div>
 
-              {/* Print Options */}
+              {/* Print Options with Custom Sizes */}
               <div className="space-y-3">
-                <Label className="text-white">Print & Branding (optional)</Label>
-                <div className="space-y-2">
-                  {PRINT_OPTIONS.map(option => (
-                    <button
-                      key={option.id}
-                      onClick={() => togglePrintOption(option.id)}
-                      className={`w-full p-3 rounded-lg border-2 text-left flex justify-between items-center transition-all ${
-                        printOptions.includes(option.id) 
-                          ? 'border-emerald-500 bg-emerald-500/20' 
-                          : 'border-slate-600 hover:border-slate-500'
-                      }`}
-                    >
-                      <span>{option.name}</span>
-                      <span className="text-slate-400">+R{option.price}</span>
-                    </button>
-                  ))}
+                <div className="flex items-center justify-between">
+                  <Label className="text-white">Print & Branding (optional)</Label>
+                  <Button onClick={addPrintConfig} size="sm" variant="outline" className="text-emerald-400 border-emerald-600">
+                    <Plus className="w-4 h-4 mr-1" /> Add Print
+                  </Button>
                 </div>
+                
+                {printConfigs.length === 0 ? (
+                  <p className="text-sm text-slate-400">No prints added. Click "Add Print" to add custom prints.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {printConfigs.map((config, index) => (
+                      <div key={config.id} className="bg-slate-800 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-emerald-400">Print {index + 1}</span>
+                          <button
+                            onClick={() => removePrintConfig(config.id)}
+                            className="text-red-400 hover:text-red-300"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label className="text-xs text-slate-400">Material</Label>
+                            <Select value={config.material} onValueChange={(v) => updatePrintConfig(config.id, "material", v)}>
+                              <SelectTrigger className="bg-slate-900 border-slate-700 text-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(PRINT_MATERIALS).map(([key, mat]) => (
+                                  <SelectItem key={key} value={key}>{mat.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-xs text-slate-400">Location</Label>
+                            <Select value={config.location} onValueChange={(v) => updatePrintConfig(config.id, "location", v)}>
+                              <SelectTrigger className="bg-slate-900 border-slate-700 text-white">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {PRINT_LOCATIONS.map(loc => (
+                                  <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-xs text-slate-400">Width (mm)</Label>
+                            <Input
+                              type="number"
+                              value={config.customWidth}
+                              onChange={(e) => updatePrintConfig(config.id, "customWidth", parseInt(e.target.value) || 0)}
+                              className="bg-slate-900 border-slate-700 text-white"
+                              min="10"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label className="text-xs text-slate-400">Height (mm)</Label>
+                            <Input
+                              type="number"
+                              value={config.customHeight}
+                              onChange={(e) => updatePrintConfig(config.id, "customHeight", parseInt(e.target.value) || 0)}
+                              className="bg-slate-900 border-slate-700 text-white"
+                              min="10"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between items-center pt-2 border-t border-slate-700">
+                          <span className="text-xs text-slate-400">Print Cost</span>
+                          <span className="font-semibold text-emerald-400">R{calculatePrintCost(config).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Bulk Discount Indicator */}
@@ -470,82 +572,13 @@ export default function ClientCatalog() {
         </div>
       </header>
 
-      {/* Cart Drawer */}
-      {showCart && cart.length > 0 && (
-        <div className="fixed inset-0 z-50 bg-black/50" onClick={() => setShowCart(false)}>
-          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-slate-900 p-6 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-white">Your Cart ({cartQty} items)</h2>
-              <Button variant="ghost" size="icon" onClick={() => setShowCart(false)}>
-                <X className="w-5 h-5 text-white" />
-              </Button>
-            </div>
-
-            {/* Bulk Discount Banner */}
-            {bulkTier.discount > 0 && (
-              <div className="bg-emerald-900/50 border border-emerald-500/30 rounded-lg p-3 mb-4 flex items-center gap-2">
-                <Tag className="w-5 h-5 text-emerald-400" />
-                <span className="text-emerald-300 font-medium">{bulkTier.discount}% Bulk Discount Applied!</span>
-              </div>
-            )}
-
-            <div className="space-y-4 mb-6">
-              {cart.map(item => (
-                <div key={item.id} className="bg-slate-800 rounded-lg p-4">
-                  <div className="flex justify-between mb-2">
-                    <div>
-                      <p className="font-medium text-white">{item.catalogItem.name}</p>
-                      <p className="text-sm text-slate-400">{item.size} • {item.color}</p>
-                      {item.printOptions.length > 0 && (
-                        <p className="text-xs text-emerald-400 mt-1">
-                          {item.printOptions.map(p => p.name).join(", ")}
-                        </p>
-                      )}
-                    </div>
-                    <Button variant="ghost" size="icon" onClick={() => removeFromCart(item.id)}>
-                      <Trash2 className="w-4 h-4 text-red-400" />
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => updateQuantity(item.id, -1)} className="w-8 h-8 rounded border border-slate-600 flex items-center justify-center text-white">
-                        <Minus className="w-3 h-3" />
-                      </button>
-                      <span className="w-8 text-center text-white">{item.quantity}</span>
-                      <button onClick={() => updateQuantity(item.id, 1)} className="w-8 h-8 rounded border border-slate-600 flex items-center justify-center text-white">
-                        <Plus className="w-3 h-3" />
-                      </button>
-                    </div>
-                    <span className="font-semibold text-white">R{item.total}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="border-t border-slate-700 pt-4">
-              <div className="space-y-2 mb-4">
-                <div className="flex justify-between text-slate-400">
-                  <span>Subtotal</span>
-                  <span>R{cartSubtotal.toFixed(2)}</span>
-                </div>
-                {bulkTier.discount > 0 && (
-                  <div className="flex justify-between text-emerald-400">
-                    <span>Bulk Discount ({bulkTier.discount}%)</span>
-                    <span>-R{discountAmount.toFixed(2)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-xl font-bold text-white">
-                  <span>Total</span>
-                  <span className="text-emerald-400">R{cartTotal.toFixed(2)}</span>
-                </div>
-              </div>
-              <Button onClick={() => { setShowCart(false); setShowCheckout(true); }} className="w-full bg-emerald-600 hover:bg-emerald-700 h-12">
-                Checkout <ChevronRight className="w-5 h-5 ml-2" />
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Floating Cart */}
+      <FloatingCart 
+        cart={cart}
+        onRemove={removeFromCart}
+        onCheckout={() => setShowCheckout(true)}
+        onUpdateQuantity={updateCartQuantity}
+      />
 
       {/* Hero */}
       <div className="bg-gradient-to-r from-emerald-600 to-teal-600 py-12 px-4">
