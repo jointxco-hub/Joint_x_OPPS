@@ -9,8 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Plus, Package, AlertTriangle, X, Trash2, 
-  Edit, TrendingUp
+  Edit, TrendingUp, Grid3x3, List, CheckSquare, Square
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import LowStockAlert from "@/components/dashboard/LowStockAlert";
 
 const categoryColors = {
   vinyl: "bg-blue-100 text-blue-700",
@@ -24,6 +26,9 @@ const categoryColors = {
 export default function Inventory() {
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [viewMode, setViewMode] = useState("grid");
+  const [selectedItems, setSelectedItems] = useState([]);
+  const [showLowStock, setShowLowStock] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
     sku: "",
@@ -49,6 +54,11 @@ export default function Inventory() {
     queryFn: () => base44.entities.Supplier.list('name', 100)
   });
 
+  const createPOMutation = useMutation({
+    mutationFn: (data) => base44.entities.PurchaseOrder.create(data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] })
+  });
+
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.InventoryItem.create(data),
     onSuccess: () => {
@@ -69,6 +79,30 @@ export default function Inventory() {
     mutationFn: (id) => base44.entities.InventoryItem.delete(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inventory'] })
   });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids) => {
+      await Promise.all(ids.map(id => base44.entities.InventoryItem.delete(id)));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      setSelectedItems([]);
+    }
+  });
+
+  const toggleSelectItem = (itemId) => {
+    setSelectedItems(prev => 
+      prev.includes(itemId) ? prev.filter(id => id !== itemId) : [...prev, itemId]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedItems.length === inventory.length) {
+      setSelectedItems([]);
+    } else {
+      setSelectedItems(inventory.map(i => i.id));
+    }
+  };
 
   const resetForm = () => {
     setShowForm(false);
@@ -132,25 +166,92 @@ export default function Inventory() {
             <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
             <p className="text-slate-500">Track materials with cost & selling prices</p>
           </div>
-          <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
-            <Plus className="w-4 h-4 mr-2" /> Add Item
-          </Button>
+          <div className="flex gap-2">
+            {selectedItems.length > 0 && (
+              <Button 
+                variant="outline" 
+                onClick={() => bulkDeleteMutation.mutate(selectedItems)}
+                className="text-red-600"
+              >
+                <Trash2 className="w-4 h-4 mr-2" /> Delete ({selectedItems.length})
+              </Button>
+            )}
+            <div className="flex gap-1 bg-white rounded-lg p-1">
+              <Button 
+                variant={viewMode === "grid" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode("grid")}
+              >
+                <Grid3x3 className="w-4 h-4" />
+              </Button>
+              <Button 
+                variant={viewMode === "list" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode("list")}
+              >
+                <List className="w-4 h-4" />
+              </Button>
+            </div>
+            <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
+              <Plus className="w-4 h-4 mr-2" /> Add Item
+            </Button>
+          </div>
         </div>
 
         {/* Low Stock Alert */}
-        {lowStockItems.length > 0 && (
+        {lowStockItems.length > 0 && showLowStock && (
           <Card className="mb-6 bg-gradient-to-r from-red-50 to-orange-50 border-red-100">
             <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
-                <div>
-                  <p className="font-semibold text-red-700">
-                    {lowStockItems.length} items below reorder point
-                  </p>
-                  <p className="text-sm text-red-600">
-                    {lowStockItems.map(i => i.name).join(", ")}
-                  </p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3 flex-1">
+                  <AlertTriangle className="w-5 h-5 text-red-600 mt-1" />
+                  <div className="flex-1">
+                    <p className="font-semibold text-red-700 mb-2">
+                      {lowStockItems.length} items need restocking
+                    </p>
+                    <div className="space-y-2">
+                      {lowStockItems.slice(0, 3).map(item => (
+                        <LowStockAlert 
+                          key={item.id} 
+                          item={item}
+                          onCreatePO={(item) => {
+                            const supplier = suppliers.find(s => s.id === item.preferred_supplier_id);
+                            const newPO = {
+                              po_number: `PO-${Date.now().toString(36).toUpperCase()}`,
+                              supplier_id: item.preferred_supplier_id,
+                              supplier_name: supplier?.name || "Unknown Supplier",
+                              status: "draft",
+                              items: [{
+                                inventory_item_id: item.id,
+                                name: item.name,
+                                sku: item.sku,
+                                quantity: item.reorder_quantity || 20,
+                                unit: item.unit,
+                                unit_price: item.cost_price || 0,
+                                total: (item.reorder_quantity || 20) * (item.cost_price || 0)
+                              }],
+                              subtotal: (item.reorder_quantity || 20) * (item.cost_price || 0),
+                              tax: 0,
+                              total: (item.reorder_quantity || 20) * (item.cost_price || 0),
+                              notes: `Auto-generated for low stock: ${item.name}`,
+                              order_date: new Date().toISOString().split('T')[0],
+                              auto_generated: true,
+                              trigger_item_id: item.id
+                            };
+                            createPOMutation.mutate(newPO);
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
                 </div>
+                <Button 
+                  variant="ghost" 
+                  size="icon"
+                  onClick={() => setShowLowStock(false)}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -317,16 +418,17 @@ export default function Inventory() {
           </Card>
         ) : (
           <div className="space-y-8">
-            {Object.entries(groupedInventory).map(([category, items]) => (
-              <div key={category}>
-                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
-                  <Badge className={`${categoryColors[category]} border-0`}>
-                    {category}
-                  </Badge>
-                  <span>({items.length} items)</span>
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {items.map(item => {
+            {viewMode === "grid" ? (
+              Object.entries(groupedInventory).map(([category, items]) => (
+                <div key={category}>
+                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+                    <Badge className={`${categoryColors[category]} border-0`}>
+                      {category}
+                    </Badge>
+                    <span>({items.length} items)</span>
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {items.map(item => {
                     const isLowStock = item.reorder_point && item.current_stock <= item.reorder_point;
                     const stockPercent = item.reorder_point 
                       ? Math.min((item.current_stock / item.reorder_point) * 100, 100)
@@ -338,9 +440,14 @@ export default function Inventory() {
                     return (
                       <Card 
                         key={item.id} 
-                        className={`bg-white border-0 shadow-sm hover:shadow-md transition-all ${isLowStock ? 'ring-2 ring-red-200' : ''}`}
+                        className={`bg-white border-0 shadow-sm hover:shadow-md transition-all ${isLowStock ? 'ring-2 ring-red-200' : ''} ${selectedItems.includes(item.id) ? 'ring-2 ring-blue-500' : ''}`}
                       >
                         <CardContent className="p-4">
+                          <Checkbox
+                            checked={selectedItems.includes(item.id)}
+                            onCheckedChange={() => toggleSelectItem(item.id)}
+                            className="mb-2"
+                          />
                           <div className="flex items-start justify-between mb-3">
                             <div>
                               <h3 className="font-semibold text-slate-900">{item.name}</h3>
@@ -415,9 +522,95 @@ export default function Inventory() {
                       </Card>
                     );
                   })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <Card className="bg-white">
+                <CardContent className="p-0">
+                  <table className="w-full">
+                    <thead className="bg-slate-50 border-b">
+                      <tr>
+                        <th className="p-3 text-left">
+                          <Checkbox
+                            checked={selectedItems.length === inventory.length}
+                            onCheckedChange={toggleSelectAll}
+                          />
+                        </th>
+                        <th className="p-3 text-left text-sm font-medium">Name</th>
+                        <th className="p-3 text-left text-sm font-medium">Category</th>
+                        <th className="p-3 text-left text-sm font-medium">Stock</th>
+                        <th className="p-3 text-left text-sm font-medium">Cost</th>
+                        <th className="p-3 text-left text-sm font-medium">Sell</th>
+                        <th className="p-3 text-left text-sm font-medium">Margin</th>
+                        <th className="p-3 text-left text-sm font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventory.map(item => {
+                        const isLowStock = item.reorder_point && item.current_stock <= item.reorder_point;
+                        const costPrice = item.cost_price || item.unit_cost || 0;
+                        const sellingPrice = item.selling_price || 0;
+                        const margin = calculateMargin(costPrice, sellingPrice);
+                        
+                        return (
+                          <tr key={item.id} className={`border-b hover:bg-slate-50 ${isLowStock ? 'bg-red-50' : ''}`}>
+                            <td className="p-3">
+                              <Checkbox
+                                checked={selectedItems.includes(item.id)}
+                                onCheckedChange={() => toggleSelectItem(item.id)}
+                              />
+                            </td>
+                            <td className="p-3">
+                              <div>
+                                <p className="font-medium text-slate-900">{item.name}</p>
+                                {item.sku && <p className="text-xs text-slate-400">{item.sku}</p>}
+                              </div>
+                            </td>
+                            <td className="p-3">
+                              <Badge className={`${categoryColors[item.category]} border-0 text-xs`}>
+                                {item.category}
+                              </Badge>
+                            </td>
+                            <td className="p-3">
+                              <span className={isLowStock ? 'text-red-600 font-medium' : ''}>
+                                {item.current_stock} {item.unit}
+                              </span>
+                            </td>
+                            <td className="p-3 text-sm">R{costPrice.toFixed(2)}</td>
+                            <td className="p-3 text-sm text-emerald-600">
+                              R{sellingPrice > 0 ? sellingPrice.toFixed(2) : '-'}
+                            </td>
+                            <td className="p-3 text-sm">
+                              {margin > 0 ? `${margin.toFixed(1)}%` : '-'}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex gap-2">
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => handleEdit(item)}
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => deleteMutation.mutate(item.id)}
+                                  className="text-red-500"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
       </div>

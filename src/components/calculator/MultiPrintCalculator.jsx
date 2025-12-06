@@ -28,6 +28,9 @@ const SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 const PRINT_OPTIONS = {
   dtf_a4: { name: "DTF A4", price: 80 },
   dtf_a3: { name: "DTF A3", price: 120 },
+  dtf_epic_400x1000: { name: "DTF Epic (400mm x 1000mm)", price: 212.75 },
+  dtf_kandy_570x1000: { name: "DTF Kandy (570mm x 1000mm)", price: 170 },
+  vinyl_500x1000: { name: "Vinyl (500mm x 1000mm)", price: 120 },
   front_logo: { name: "Front Logo (DTF)", price: 40 },
   back_print: { name: "Back Print (DTF)", price: 60 },
   neck_tag: { name: "Neck Tag Print", price: 20 },
