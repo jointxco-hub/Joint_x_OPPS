@@ -36,16 +36,26 @@ export default function TrackOrder() {
     setError("");
     setOrder(null);
 
-    const orders = await base44.entities.Order.filter({
-      tracking_code: trackingCode.trim().toUpperCase()
+    const searchValue = trackingCode.trim().toUpperCase();
+
+    // Try searching by tracking code first
+    let orders = await base44.entities.Order.filter({
+      tracking_code: searchValue
     });
+
+    // If not found, try searching by invoice number
+    if (orders.length === 0) {
+      orders = await base44.entities.Order.filter({
+        invoice_number: searchValue
+      });
+    }
 
     setLoading(false);
 
     if (orders.length > 0) {
       setOrder(orders[0]);
     } else {
-      setError("No order found with this tracking code. Please check and try again.");
+      setError("No order found with this tracking code or invoice number. Please check and try again.");
     }
   };
 
@@ -60,7 +70,7 @@ export default function TrackOrder() {
             <Shirt className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white mb-2">Track Your Order</h1>
-          <p className="text-slate-400">Enter your tracking code to see order status</p>
+          <p className="text-slate-400">Enter your tracking code or invoice number</p>
         </div>
 
         {/* Search */}
@@ -70,7 +80,7 @@ export default function TrackOrder() {
               <div className="relative flex-1">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <Input
-                  placeholder="Enter tracking code (e.g., ABC123)"
+                  placeholder="Enter tracking code or invoice number"
                   value={trackingCode}
                   onChange={(e) => setTrackingCode(e.target.value.toUpperCase())}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}

@@ -221,6 +221,7 @@ export default function ClientCatalog() {
   const handleSubmitOrder = () => {
     const orderData = {
       order_number: `CLT-${Date.now().toString(36).toUpperCase()}`,
+      tracking_code: Math.random().toString(36).substring(2, 8).toUpperCase(),
       client_name: clientInfo.name,
       client_email: clientInfo.email,
       client_phone: clientInfo.phone,
@@ -238,6 +239,7 @@ export default function ClientCatalog() {
       discount: discountAmount,
       total: cartTotal,
       notes: clientInfo.notes,
+      special_instructions: clientInfo.notes,
       status: "pending"
     };
     submitOrderMutation.mutate(orderData);
