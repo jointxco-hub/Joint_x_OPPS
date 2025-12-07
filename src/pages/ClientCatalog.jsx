@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,6 +103,12 @@ export default function ClientCatalog() {
   const [designFiles, setDesignFiles] = useState([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
+  // Fetch catalog items from database
+  const { data: catalogItems = [], isLoading: catalogLoading } = useQuery({
+    queryKey: ['catalogItems'],
+    queryFn: () => base44.entities.CatalogItem.list('name', 200)
+  });
+
   const submitOrderMutation = useMutation({
     mutationFn: (data) => base44.entities.ClientOrder.create(data),
     onSuccess: (newOrder) => {
@@ -168,6 +174,7 @@ export default function ClientCatalog() {
     if (!selectedItem || itemTotalQty === 0) return;
     
     const printTotal = printConfigs.reduce((sum, config) => sum + calculatePrintCost(config), 0);
+    const itemPrice = selectedItem.base_price || selectedItem.price;
 
     // Create cart items for each size with qty > 0
     const newItems = Object.entries(sizeQuantities)
@@ -185,10 +192,10 @@ export default function ClientCatalog() {
           customSize: `${config.customWidth}mm x ${config.customHeight}mm`,
           price: calculatePrintCost(config)
         })),
-        basePrice: selectedItem.price,
+        basePrice: itemPrice,
         printCost: printTotal,
-        unitPrice: selectedItem.price + printTotal,
-        total: (selectedItem.price + printTotal) * quantity
+        unitPrice: itemPrice + printTotal,
+        total: (itemPrice + printTotal) * quantity
       }));
 
     setCart([...cart, ...newItems]);
@@ -275,7 +282,8 @@ export default function ClientCatalog() {
   // Item Configuration with Multi-Size Selection
   if (selectedItem) {
     const printTotal = printConfigs.reduce((sum, config) => sum + calculatePrintCost(config), 0);
-    const unitPrice = selectedItem.price + printTotal;
+    const itemPrice = selectedItem.base_price || selectedItem.price;
+    const unitPrice = itemPrice + printTotal;
     const itemTotal = unitPrice * itemTotalQty;
     const currentBulkTier = getBulkDiscount(cartQty + itemTotalQty);
 
@@ -288,14 +296,18 @@ export default function ClientCatalog() {
 
           <div className="grid md:grid-cols-2 gap-8">
             <div>
-              <img src={selectedItem.image} alt={selectedItem.name} className="w-full aspect-square object-cover rounded-2xl" />
+              <img 
+                src={selectedItem.image_url || selectedItem.image || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400"} 
+                alt={selectedItem.name} 
+                className="w-full aspect-square object-cover rounded-2xl" 
+              />
             </div>
             
             <div className="space-y-6">
               <div>
                 <h1 className="text-3xl font-bold">{selectedItem.name}</h1>
                 {selectedItem.code && <p className="text-slate-400">Code: {selectedItem.code}</p>}
-                <p className="text-2xl font-bold text-emerald-400 mt-2">R{selectedItem.price} per item</p>
+                <p className="text-2xl font-bold text-emerald-400 mt-2">R{selectedItem.base_price || selectedItem.price} per item</p>
               </div>
 
               <div className="space-y-2 text-sm text-slate-400">
@@ -649,6 +661,18 @@ export default function ClientCatalog() {
     );
   }
 
+  // Group catalog items by category
+  const groupedCatalog = catalogItems
+    .filter(item => item.is_active !== false)
+    .reduce((acc, item) => {
+      const category = item.category || 'other';
+      if (!acc[category]) {
+        acc[category] = { name: category.charAt(0).toUpperCase() + category.slice(1), items: [] };
+      }
+      acc[category].items.push(item);
+      return acc;
+    }, {});
+
   // Main Catalog
   return (
     <div className="min-h-screen bg-slate-900">
@@ -699,23 +723,36 @@ export default function ClientCatalog() {
 
       {/* Catalog */}
       <div className="max-w-7xl mx-auto px-4 py-12">
-        {Object.entries(CATALOG).map(([key, category]) => (
-          <div key={key} className="mb-12">
-            <h3 className="text-2xl font-bold text-white mb-6">{category.name}</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {category.items.map(item => (
-                <Card key={item.id} className="bg-slate-800 border-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all" onClick={() => setSelectedItem(item)}>
-                  <img src={item.image} alt={item.name} className="w-full aspect-square object-cover" />
-                  <CardContent className="p-4">
-                    <h4 className="font-semibold text-white">{item.name}</h4>
-                    {item.gsm && <p className="text-xs text-slate-400">{item.gsm}</p>}
-                    <p className="text-lg font-bold text-emerald-400 mt-2">R{item.price}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+        {catalogLoading ? (
+          <div className="text-center text-white py-12">Loading catalog...</div>
+        ) : Object.keys(groupedCatalog).length === 0 ? (
+          <div className="text-center text-white py-12">
+            <p className="text-xl mb-2">No products available yet</p>
+            <p className="text-slate-400">Check back soon!</p>
           </div>
-        ))}
+        ) : (
+          Object.entries(groupedCatalog).map(([key, category]) => (
+            <div key={key} className="mb-12">
+              <h3 className="text-2xl font-bold text-white mb-6">{category.name}</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {category.items.map(item => (
+                  <Card key={item.id} className="bg-slate-800 border-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all" onClick={() => setSelectedItem(item)}>
+                    <img 
+                      src={item.image_url || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400"} 
+                      alt={item.name} 
+                      className="w-full aspect-square object-cover" 
+                    />
+                    <CardContent className="p-4">
+                      <h4 className="font-semibold text-white">{item.name}</h4>
+                      {item.gsm && <p className="text-xs text-slate-400">{item.gsm}</p>}
+                      <p className="text-lg font-bold text-emerald-400 mt-2">R{item.base_price}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       <footer className="bg-slate-800 py-8 px-4">

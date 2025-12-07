@@ -8,6 +8,7 @@ import PurchaseOrders from './pages/PurchaseOrders';
 import Inventory from './pages/Inventory';
 import ClientCatalog from './pages/ClientCatalog';
 import Executive from './pages/Executive';
+import CatalogManagement from './pages/CatalogManagement';
 import __Layout from './Layout.jsx';
 
 
@@ -22,6 +23,7 @@ export const PAGES = {
     "Inventory": Inventory,
     "ClientCatalog": ClientCatalog,
     "Executive": Executive,
+    "CatalogManagement": CatalogManagement,
 }
 
 export const pagesConfig = {

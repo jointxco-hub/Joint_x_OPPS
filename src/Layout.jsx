@@ -17,6 +17,7 @@ const navItems = [
   { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Calculator", page: "Calculator", icon: Calculator },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
+  { name: "Catalog", page: "CatalogManagement", icon: Store },
 ];
 
 export default function Layout({ children, currentPageName }) {
