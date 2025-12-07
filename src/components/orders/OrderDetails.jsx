@@ -25,7 +25,7 @@ const priorityColors = {
   urgent: "bg-red-100 text-red-700"
 };
 
-export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus }) {
+export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, onArchive, onDelete }) {
   const [copied, setCopied] = useState(false);
 
   const copyTrackingCode = () => {

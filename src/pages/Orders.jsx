@@ -3,7 +3,8 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Package, Store, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Search, Package, Store, CheckCircle2, XCircle, Archive, Trash2 } from "lucide-react";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,6 +20,7 @@ export default function Orders() {
   const [editingOrder, setEditingOrder] = useState(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, type: null, order: null });
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState("production");
@@ -76,6 +78,22 @@ export default function Orders() {
     }
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: (id) => base44.entities.Order.update(id, { status: "archived" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setConfirmDialog({ open: false, type: null, order: null });
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Order.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setConfirmDialog({ open: false, type: null, order: null });
+    }
+  });
+
   const handleSubmit = async (data) => {
     if (editingOrder) {
       await updateMutation.mutateAsync({ id: editingOrder.id, data });
@@ -89,8 +107,37 @@ export default function Orders() {
       order.client_name?.toLowerCase().includes(search.toLowerCase()) ||
       order.order_number?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || order.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const notArchived = order.status !== "archived";
+    return matchesSearch && matchesStatus && notArchived;
   });
+
+  const handleArchive = (order) => {
+    setConfirmDialog({
+      open: true,
+      type: "archive",
+      order,
+      title: "Archive Order?",
+      description: `Are you sure you want to archive order ${order.order_number}? You can still view it in archived orders.`
+    });
+  };
+
+  const handleDelete = (order) => {
+    setConfirmDialog({
+      open: true,
+      type: "delete",
+      order,
+      title: "Delete Order?",
+      description: `Are you sure you want to permanently delete order ${order.order_number}? This action cannot be undone.`
+    });
+  };
+
+  const handleConfirm = () => {
+    if (confirmDialog.type === "archive") {
+      archiveMutation.mutate(confirmDialog.order.id);
+    } else if (confirmDialog.type === "delete") {
+      deleteMutation.mutate(confirmDialog.order.id);
+    }
+  };
 
   if (showForm || editingOrder) {
     return (
@@ -127,6 +174,16 @@ export default function Orders() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onOpenChange={(open) => setConfirmDialog({ ...confirmDialog, open })}
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        onConfirm={handleConfirm}
+        confirmText={confirmDialog.type === "delete" ? "Delete" : "Archive"}
+        variant={confirmDialog.type === "delete" ? "destructive" : "default"}
+      />
+      
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">

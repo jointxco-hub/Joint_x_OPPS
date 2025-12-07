@@ -6,11 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Upload } from "lucide-react";
 
 const printTypes = [
-  { value: "vinyl_videoflex", label: "Vinyl (Videoflex) - R110/m" },
-  { value: "vinyl_flock", label: "Vinyl (Flock)" },
-  { value: "vinyl_silicon", label: "Vinyl (Silicon)" },
-  { value: "dtf_randburg", label: "DTF Randburg (Quality) - R212.75/m" },
-  { value: "dtf_joburg", label: "DTF Joburg - R170/m" }
+  { value: "dtf", label: "DTF (Direct to Film)" },
+  { value: "vinyl", label: "Vinyl" },
+  { value: "embroidery", label: "Embroidery" },
+  { value: "none", label: "No Printing" }
 ];
 
 const priorities = [
