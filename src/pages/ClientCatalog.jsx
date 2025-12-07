@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { 
   ShoppingCart, Plus, Minus, Trash2, 
-  Shirt, Send, X, ChevronRight, Tag, Percent
+  Shirt, Send, X, ChevronRight, Tag, Percent, Upload, FileText, Check
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
@@ -98,8 +98,10 @@ export default function ClientCatalog() {
   const [sizeQuantities, setSizeQuantities] = useState({});
   const [printConfigs, setPrintConfigs] = useState([]);
   const [clientInfo, setClientInfo] = useState({
-    name: "", email: "", phone: "", company: "", notes: ""
+    name: "", email: "", phone: "", company: "", notes: "", specialInstructions: ""
   });
+  const [designFiles, setDesignFiles] = useState([]);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
   const submitOrderMutation = useMutation({
     mutationFn: (data) => base44.entities.ClientOrder.create(data),
@@ -218,6 +220,30 @@ export default function ClientCatalog() {
   const discountAmount = cartSubtotal * (bulkTier.discount / 100);
   const cartTotal = cartSubtotal - discountAmount;
 
+  const handleFileUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setUploadingFiles(true);
+    const uploadedUrls = [];
+
+    for (const file of files) {
+      try {
+        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        uploadedUrls.push(file_url);
+      } catch (error) {
+        console.error("Upload failed:", error);
+      }
+    }
+
+    setDesignFiles([...designFiles, ...uploadedUrls]);
+    setUploadingFiles(false);
+  };
+
+  const removeFile = (index) => {
+    setDesignFiles(designFiles.filter((_, i) => i !== index));
+  };
+
   const handleSubmitOrder = () => {
     const orderData = {
       order_number: `CLT-${Date.now().toString(36).toUpperCase()}`,
@@ -239,7 +265,8 @@ export default function ClientCatalog() {
       discount: discountAmount,
       total: cartTotal,
       notes: clientInfo.notes,
-      special_instructions: clientInfo.notes,
+      special_instructions: clientInfo.specialInstructions,
+      design_files: designFiles,
       status: "pending"
     };
     submitOrderMutation.mutate(orderData);
@@ -496,8 +523,55 @@ export default function ClientCatalog() {
                 <Input value={clientInfo.company} onChange={(e) => setClientInfo({...clientInfo, company: e.target.value})} className="bg-slate-800 border-slate-700" />
               </div>
               <div className="space-y-2">
-                <Label>Additional Notes</Label>
-                <Textarea value={clientInfo.notes} onChange={(e) => setClientInfo({...clientInfo, notes: e.target.value})} className="bg-slate-800 border-slate-700" placeholder="Design details..." rows={3} />
+                <Label>Special Instructions *</Label>
+                <Textarea 
+                  value={clientInfo.specialInstructions} 
+                  onChange={(e) => setClientInfo({...clientInfo, specialInstructions: e.target.value})} 
+                  className="bg-slate-800 border-slate-700" 
+                  placeholder="Placement details, colors, sizes, etc..." 
+                  rows={3} 
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Upload Artwork / Designs</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => document.getElementById('design-files-upload').click()}
+                  disabled={uploadingFiles}
+                  className="w-full bg-slate-800 border-slate-700 hover:bg-slate-700"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  {uploadingFiles ? "Uploading..." : "Choose Files"}
+                </Button>
+                <input
+                  id="design-files-upload"
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.ai,.eps,.svg"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                {designFiles.length > 0 && (
+                  <div className="space-y-2 mt-2">
+                    {designFiles.map((url, index) => (
+                      <div key={index} className="flex items-center gap-2 bg-slate-800 rounded-lg p-2">
+                        <FileText className="w-4 h-4 text-emerald-400" />
+                        <span className="text-sm flex-1 truncate">File {index + 1}</span>
+                        <button
+                          onClick={() => removeFile(index)}
+                          className="text-red-400 hover:text-red-300"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>Additional Notes (Optional)</Label>
+                <Textarea value={clientInfo.notes} onChange={(e) => setClientInfo({...clientInfo, notes: e.target.value})} className="bg-slate-800 border-slate-700" placeholder="Any other information..." rows={2} />
               </div>
             </div>
 
@@ -532,7 +606,7 @@ export default function ClientCatalog() {
 
             <Button 
               onClick={handleSubmitOrder}
-              disabled={!clientInfo.name || !clientInfo.phone || submitOrderMutation.isPending}
+              disabled={!clientInfo.name || !clientInfo.phone || !clientInfo.specialInstructions || submitOrderMutation.isPending}
               className="w-full bg-emerald-600 hover:bg-emerald-700 h-12 text-lg"
             >
               <Send className="w-5 h-5 mr-2" /> 
