@@ -103,8 +103,8 @@ export default function ClientCatalog() {
 
   const submitOrderMutation = useMutation({
     mutationFn: (data) => base44.entities.ClientOrder.create(data),
-    onSuccess: () => {
-      toast.success("Order submitted! We'll contact you shortly.");
+    onSuccess: (newOrder) => {
+      toast.success("Order submitted! Save your tracking code.");
       setCart([]);
       setShowCheckout(false);
       setClientInfo({ name: "", email: "", phone: "", company: "", notes: "" });
@@ -544,6 +544,33 @@ export default function ClientCatalog() {
             </p>
           </div>
         </div>
+
+        {/* Success Modal */}
+        {submitOrderMutation.isSuccess && submitOrderMutation.data && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-800 rounded-2xl p-8 max-w-md text-center border border-emerald-500/20">
+              <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Check className="w-8 h-8 text-emerald-400" />
+              </div>
+              <h3 className="text-2xl font-bold mb-2">Order Submitted!</h3>
+              <p className="text-slate-400 mb-4">Your tracking code is:</p>
+              <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 mb-4">
+                <p className="text-3xl font-mono font-bold text-emerald-400">
+                  {submitOrderMutation.data.tracking_code}
+                </p>
+              </div>
+              <p className="text-sm text-slate-500 mb-6">
+                Save this code to track your order status
+              </p>
+              <Button 
+                onClick={() => window.location.reload()}
+                className="w-full bg-emerald-600 hover:bg-emerald-700"
+              >
+                Got it!
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

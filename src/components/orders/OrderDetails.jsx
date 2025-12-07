@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { 
   X, User, Phone, Mail, Calendar, Shirt, 
-  FileText, DollarSign, Truck, Copy, Check
+  FileText, DollarSign, Truck, Copy, Check, Archive, Trash2
 } from "lucide-react";
 import OrderStatusBadge from "../dashboard/OrderStatusBadge";
 import { useState } from "react";
@@ -158,22 +158,40 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
         )}
 
         {/* Actions */}
-        <div className="flex gap-3 mt-6 pt-6 border-t">
-          <Button variant="outline" onClick={() => onEdit(order)} className="flex-1">
-            Edit Order
-          </Button>
-          <select 
-            className="flex-1 px-4 py-2 border rounded-lg bg-white"
-            value={order.status}
-            onChange={(e) => onUpdateStatus(order.id, e.target.value)}
-          >
-            <option value="received">Received</option>
-            <option value="materials_needed">Materials Needed</option>
-            <option value="in_production">In Production</option>
-            <option value="ready">Ready</option>
-            <option value="out_for_delivery">Out for Delivery</option>
-            <option value="delivered">Delivered</option>
-          </select>
+        <div className="space-y-3 mt-6 pt-6 border-t">
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => onEdit(order)} className="flex-1">
+              Edit Order
+            </Button>
+            <select 
+              className="flex-1 px-4 py-2 border rounded-lg bg-white"
+              value={order.status}
+              onChange={(e) => onUpdateStatus(order.id, e.target.value)}
+            >
+              <option value="received">Received</option>
+              <option value="materials_needed">Materials Needed</option>
+              <option value="in_production">In Production</option>
+              <option value="ready">Ready</option>
+              <option value="out_for_delivery">Out for Delivery</option>
+              <option value="delivered">Delivered</option>
+            </select>
+          </div>
+          <div className="flex gap-3">
+            <Button 
+              variant="outline" 
+              onClick={() => onArchive?.(order)}
+              className="flex-1"
+            >
+              <Archive className="w-4 h-4 mr-2" /> Archive
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => onDelete?.(order)}
+              className="flex-1 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300"
+            >
+              <Trash2 className="w-4 h-4 mr-2" /> Delete
+            </Button>
+          </div>
         </div>
       </div>
     </Card>
