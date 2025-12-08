@@ -8,6 +8,7 @@ import {
   FileText, DollarSign, Truck, Copy, Check, Archive, Trash2
 } from "lucide-react";
 import OrderStatusBadge from "../dashboard/OrderStatusBadge";
+import ClientAssetsPanel from "./ClientAssetsPanel";
 import { useState } from "react";
 
 const printTypeLabels = {
@@ -149,6 +150,23 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
           </div>
         )}
 
+        {/* Delivery Estimate */}
+        {(order.estimated_delivery_date || order.estimated_delivery_time) && (
+          <div className="mt-4">
+            <h3 className="font-semibold text-slate-700 mb-2">Estimated Delivery</h3>
+            <div className="bg-emerald-50 rounded-lg p-4 space-y-1">
+              {order.estimated_delivery_date && (
+                <p className="text-sm text-emerald-800">
+                  📅 {format(new Date(order.estimated_delivery_date), "dd MMM yyyy")}
+                </p>
+              )}
+              {order.estimated_delivery_time && (
+                <p className="text-sm text-emerald-700">⏱️ {order.estimated_delivery_time}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Notes */}
         {order.notes && (
           <div className="mt-4">
@@ -156,6 +174,11 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
             <p className="text-sm text-slate-600 bg-amber-50 rounded-lg p-4">{order.notes}</p>
           </div>
         )}
+
+        {/* Client Assets */}
+        <div className="mt-6">
+          <ClientAssetsPanel orderId={order.id} clientName={order.client_name} />
+        </div>
 
         {/* Actions */}
         <div className="space-y-3 mt-6 pt-6 border-t">

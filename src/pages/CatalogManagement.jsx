@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, Pencil, X, Image as ImageIcon } from "lucide-react";
+import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video } from "lucide-react";
 import { toast } from "sonner";
 
 const CATEGORIES = [
@@ -23,6 +23,7 @@ const CATEGORIES = [
 export default function CatalogManagement() {
   const [editingItem, setEditingItem] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingMultiple, setUploadingMultiple] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: catalogItems = [], isLoading } = useQuery({
@@ -60,6 +61,36 @@ export default function CatalogManagement() {
 
   const handleUpdate = async (item) => {
     await updateMutation.mutateAsync({ id: item.id, data: item });
+  };
+
+  const handleMultipleImageUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setUploadingMultiple(true);
+    const uploadedUrls = [];
+
+    for (const file of files) {
+      try {
+        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        uploadedUrls.push(file_url);
+      } catch (error) {
+        console.error("Upload failed:", error);
+      }
+    }
+
+    setEditingItem({
+      ...editingItem,
+      images: [...(editingItem.images || []), ...uploadedUrls]
+    });
+    setUploadingMultiple(false);
+    toast.success(`${uploadedUrls.length} images uploaded!`);
+  };
+
+  const removeImage = (index) => {
+    const newImages = [...(editingItem.images || [])];
+    newImages.splice(index, 1);
+    setEditingItem({ ...editingItem, images: newImages });
   };
 
   const groupedItems = catalogItems.reduce((acc, item) => {
@@ -229,7 +260,7 @@ export default function CatalogManagement() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Current Image</Label>
+                    <Label>Primary Image</Label>
                     {editingItem.image_url && (
                       <img 
                         src={editingItem.image_url} 
@@ -244,7 +275,7 @@ export default function CatalogManagement() {
                       className="w-full"
                     >
                       <Upload className="w-4 h-4 mr-2" />
-                      {uploadingImage ? "Uploading..." : "Upload New Image"}
+                      {uploadingImage ? "Uploading..." : "Upload Primary Image"}
                     </Button>
                     <input
                       id={`edit-upload-${editingItem.id}`}
@@ -253,6 +284,87 @@ export default function CatalogManagement() {
                       onChange={(e) => handleImageUpload(e, editingItem)}
                       className="hidden"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Additional Images</Label>
+                    {editingItem.images && editingItem.images.length > 0 && (
+                      <div className="grid grid-cols-3 gap-2 mb-2">
+                        {editingItem.images.map((img, idx) => (
+                          <div key={idx} className="relative group">
+                            <img 
+                              src={img} 
+                              alt={`${editingItem.name} ${idx + 1}`}
+                              className="w-full h-24 object-cover rounded"
+                            />
+                            <button
+                              onClick={() => removeImage(idx)}
+                              className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => document.getElementById(`multi-upload-${editingItem.id}`).click()}
+                      disabled={uploadingMultiple}
+                      className="w-full"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      {uploadingMultiple ? "Uploading..." : "Add More Images"}
+                    </Button>
+                    <input
+                      id={`multi-upload-${editingItem.id}`}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={handleMultipleImageUpload}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Video URLs (Optional)</Label>
+                    <p className="text-xs text-slate-500">Add YouTube or Vimeo links</p>
+                    {editingItem.videos?.map((video, idx) => (
+                      <div key={idx} className="flex gap-2">
+                        <Input
+                          value={video}
+                          onChange={(e) => {
+                            const newVideos = [...(editingItem.videos || [])];
+                            newVideos[idx] = e.target.value;
+                            setEditingItem({ ...editingItem, videos: newVideos });
+                          }}
+                          placeholder="https://youtube.com/..."
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const newVideos = [...(editingItem.videos || [])];
+                            newVideos.splice(idx, 1);
+                            setEditingItem({ ...editingItem, videos: newVideos });
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4 text-red-400" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingItem({
+                        ...editingItem,
+                        videos: [...(editingItem.videos || []), ""]
+                      })}
+                      className="w-full"
+                    >
+                      <Video className="w-4 h-4 mr-2" />
+                      Add Video
+                    </Button>
                   </div>
 
                   <div className="flex gap-3 pt-4">
