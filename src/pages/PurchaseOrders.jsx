@@ -476,7 +476,16 @@ export default function PurchaseOrders() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredPOs.map(po => (
-                  <POCard key={po.id} po={po} onClick={() => setSelectedPO(po)} getUrgency={getUrgency} />
+                  <div key={po.id} className="relative group">
+                    <Checkbox 
+                      checked={selectedPOs.includes(po.id)}
+                      onCheckedChange={() => togglePOSelection(po.id)}
+                      className="absolute top-3 left-3 z-10 bg-white border-2"
+                    />
+                    <div onClick={() => setSelectedPO(po)}>
+                      <POCard po={po} onClick={() => setSelectedPO(po)} getUrgency={getUrgency} />
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
