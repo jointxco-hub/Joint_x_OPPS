@@ -22,13 +22,23 @@ const CATEGORIES = [
 
 export default function CatalogManagement() {
   const [editingItem, setEditingItem] = useState(null);
+  const [creatingNew, setCreatingNew] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingMultiple, setUploadingMultiple] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: catalogItems = [], isLoading } = useQuery({
     queryKey: ['catalogItems'],
-    queryFn: () => base44.entities.CatalogItem.list('name', 200)
+    queryFn: () => base44.entities.CatalogItem.list('display_order', 200)
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data) => base44.entities.CatalogItem.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['catalogItems'] });
+      setCreatingNew(false);
+      toast.success("Product created!");
+    }
   });
 
   const updateMutation = useMutation({
@@ -61,6 +71,19 @@ export default function CatalogManagement() {
 
   const handleUpdate = async (item) => {
     await updateMutation.mutateAsync({ id: item.id, data: item });
+  };
+
+  const handleCreate = async (item) => {
+    await createMutation.mutateAsync(item);
+  };
+
+  const moveItem = async (item, direction) => {
+    const currentOrder = item.display_order || 0;
+    const newOrder = direction === 'up' ? currentOrder - 1 : currentOrder + 1;
+    await updateMutation.mutateAsync({ 
+      id: item.id, 
+      data: { ...item, display_order: newOrder } 
+    });
   };
 
   const handleMultipleImageUpload = async (e) => {
@@ -107,9 +130,15 @@ export default function CatalogManagement() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-slate-900">Catalog Management</h1>
-          <p className="text-slate-500 mt-1">Update product photos and details</p>
+        <div className="mb-8 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">Catalog Management</h1>
+            <p className="text-slate-500 mt-1">Update product photos and details</p>
+          </div>
+          <Button onClick={() => setCreatingNew(true)} className="bg-emerald-600 hover:bg-emerald-700">
+            <Plus className="w-4 h-4 mr-2" />
+            New Product
+          </Button>
         </div>
 
         {Object.entries(groupedItems).map(([category, items]) => (
@@ -153,13 +182,31 @@ export default function CatalogManagement() {
                         <h3 className="font-semibold text-slate-900">{item.name}</h3>
                         {item.code && <p className="text-sm text-slate-500">Code: {item.code}</p>}
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setEditingItem(item)}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => moveItem(item, 'up')}
+                          className="h-8 w-8"
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => moveItem(item, 'down')}
+                          className="h-8 w-8"
+                        >
+                          ↓
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setEditingItem(item)}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                     
                     <div className="space-y-1 text-sm text-slate-600">
@@ -175,6 +222,79 @@ export default function CatalogManagement() {
             </div>
           </div>
         ))}
+
+        {/* Create Modal */}
+        {creatingNew && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white rounded-2xl">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-xl font-bold">Create New Product</h2>
+                  <Button variant="ghost" size="icon" onClick={() => setCreatingNew(false)}>
+                    <X className="w-5 h-5" />
+                  </Button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Product Name *</Label>
+                    <Input
+                      placeholder="e.g. JV1 T-Shirt"
+                      onChange={(e) => setCreatingNew({ ...creatingNew, name: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Category *</Label>
+                    <Select onValueChange={(v) => setCreatingNew({...creatingNew, category: v})}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.map(cat => (
+                          <SelectItem key={cat.value} value={cat.value}>
+                            {cat.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Product Code</Label>
+                      <Input
+                        placeholder="JV1"
+                        onChange={(e) => setCreatingNew({...creatingNew, code: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Base Price (R) *</Label>
+                      <Input
+                        type="number"
+                        placeholder="95"
+                        onChange={(e) => setCreatingNew({...creatingNew, base_price: parseFloat(e.target.value)})}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <Button variant="outline" onClick={() => setCreatingNew(false)} className="flex-1">
+                      Cancel
+                    </Button>
+                    <Button 
+                      onClick={() => handleCreate(creatingNew)} 
+                      disabled={createMutation.isPending || !creatingNew.name || !creatingNew.category || !creatingNew.base_price}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+                    >
+                      Create Product
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Edit Modal */}
         {editingItem && (
