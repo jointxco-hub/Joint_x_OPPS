@@ -9,8 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { 
   Plus, Search, ShoppingCart, Check, X, 
   Truck, Package, AlertTriangle, MapPin, Clock, Car,
-  Filter, BarChart3, Layers
+  Filter, BarChart3, Layers, Archive, Trash2
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { toast } from "sonner";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { format, differenceInDays } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
@@ -35,6 +38,8 @@ export default function PurchaseOrders() {
   const [locationFilter, setLocationFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
   const [showDemand, setShowDemand] = useState(false);
+  const [selectedPOs, setSelectedPOs] = useState([]);
+  const [confirmDialog, setConfirmDialog] = useState({ open: false, type: null });
   const queryClient = useQueryClient();
 
   const { data: purchaseOrders = [] } = useQuery({
@@ -73,8 +78,75 @@ export default function PurchaseOrders() {
     }
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: (id) => base44.entities.PurchaseOrder.update(id, { status: "archived" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      setSelectedPOs([]);
+    }
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.PurchaseOrder.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      setSelectedPOs([]);
+    }
+  });
+
+  const bulkArchiveMutation = useMutation({
+    mutationFn: async (ids) => {
+      for (const id of ids) {
+        await base44.entities.PurchaseOrder.update(id, { status: "archived" });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      setSelectedPOs([]);
+      toast.success(`Archived ${selectedPOs.length} POs`);
+    }
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids) => {
+      for (const id of ids) {
+        await base44.entities.PurchaseOrder.delete(id);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      setSelectedPOs([]);
+      toast.success(`Deleted ${selectedPOs.length} POs`);
+    }
+  });
+
   const handleStatusChange = (po, newStatus) => {
     updateMutation.mutate({ id: po.id, data: { status: newStatus } });
+  };
+
+  const togglePOSelection = (poId) => {
+    setSelectedPOs(prev => 
+      prev.includes(poId) 
+        ? prev.filter(id => id !== poId)
+        : [...prev, poId]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedPOs.length === filteredPOs.length) {
+      setSelectedPOs([]);
+    } else {
+      setSelectedPOs(filteredPOs.map(po => po.id));
+    }
+  };
+
+  const handleConfirm = () => {
+    if (confirmDialog.type === "bulk_archive") {
+      bulkArchiveMutation.mutate(selectedPOs);
+    } else if (confirmDialog.type === "bulk_delete") {
+      bulkDeleteMutation.mutate(selectedPOs);
+    }
+    setConfirmDialog({ open: false, type: null });
   };
 
   // Get unique locations and products
@@ -159,6 +231,16 @@ export default function PurchaseOrders() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+      <ConfirmDialog
+        open={confirmDialog.open}
+        onOpenChange={(open) => setConfirmDialog({ ...confirmDialog, open })}
+        title={confirmDialog.title}
+        description={confirmDialog.description}
+        onConfirm={handleConfirm}
+        confirmText={confirmDialog.type === "bulk_delete" ? "Delete" : "Archive"}
+        variant={confirmDialog.type === "bulk_delete" ? "destructive" : "default"}
+      />
+
       {/* PO Modal */}
       {selectedPO && (
         <POModal 
@@ -200,9 +282,41 @@ export default function PurchaseOrders() {
       <div className="max-w-6xl mx-auto p-4 md:p-8">
         {/* Premium Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Purchase Orders</h1>
-            <p className="text-slate-500 mt-1">Manage supplier orders and stock</p>
+          <div className="flex items-center gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Purchase Orders</h1>
+              <p className="text-slate-500 mt-1">Manage supplier orders and stock</p>
+            </div>
+            {selectedPOs.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-500">{selectedPOs.length} selected</span>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => setConfirmDialog({
+                    open: true,
+                    type: "bulk_archive",
+                    title: "Archive Selected POs?",
+                    description: `Archive ${selectedPOs.length} purchase orders?`
+                  })}
+                >
+                  <Archive className="w-4 h-4 mr-1" /> Archive
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => setConfirmDialog({
+                    open: true,
+                    type: "bulk_delete",
+                    title: "Delete Selected POs?",
+                    description: `Permanently delete ${selectedPOs.length} purchase orders?`
+                  })}
+                  className="text-red-600 border-red-200"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" /> Delete
+                </Button>
+              </div>
+            )}
           </div>
           <div className="flex gap-3">
             <Button 
@@ -284,6 +398,13 @@ export default function PurchaseOrders() {
         <Card className="mb-6 border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
           <CardContent className="p-4">
             <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex items-center gap-3">
+                <Checkbox 
+                  checked={selectedPOs.length === filteredPOs.length && filteredPOs.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+                <span className="text-sm text-slate-500">Select all</span>
+              </div>
               <div className="relative flex-1">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <Input 
