@@ -3,8 +3,9 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Package, Store, CheckCircle2, XCircle, Archive, Trash2 } from "lucide-react";
+import { Plus, Search, Package, Store, CheckCircle2, XCircle, Archive, Trash2, Check } from "lucide-react";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,6 +22,7 @@ export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [confirmDialog, setConfirmDialog] = useState({ open: false, type: null, order: null });
+  const [selectedOrders, setSelectedOrders] = useState([]);
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState("production");
@@ -91,6 +93,33 @@ export default function Orders() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       setConfirmDialog({ open: false, type: null, order: null });
+      setSelectedOrders([]);
+    }
+  });
+
+  const bulkArchiveMutation = useMutation({
+    mutationFn: async (ids) => {
+      for (const id of ids) {
+        await base44.entities.Order.update(id, { status: "archived" });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setSelectedOrders([]);
+      toast.success(`Archived ${selectedOrders.length} orders`);
+    }
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids) => {
+      for (const id of ids) {
+        await base44.entities.Order.delete(id);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setSelectedOrders([]);
+      toast.success(`Deleted ${selectedOrders.length} orders`);
     }
   });
 
@@ -136,6 +165,26 @@ export default function Orders() {
       archiveMutation.mutate(confirmDialog.order.id);
     } else if (confirmDialog.type === "delete") {
       deleteMutation.mutate(confirmDialog.order.id);
+    } else if (confirmDialog.type === "bulk_archive") {
+      bulkArchiveMutation.mutate(selectedOrders);
+    } else if (confirmDialog.type === "bulk_delete") {
+      bulkDeleteMutation.mutate(selectedOrders);
+    }
+  };
+
+  const toggleOrderSelection = (orderId) => {
+    setSelectedOrders(prev => 
+      prev.includes(orderId) 
+        ? prev.filter(id => id !== orderId)
+        : [...prev, orderId]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedOrders.length === filteredOrders.length) {
+      setSelectedOrders([]);
+    } else {
+      setSelectedOrders(filteredOrders.map(o => o.id));
     }
   };
 
@@ -187,7 +236,39 @@ export default function Orders() {
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
+            {selectedOrders.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-500">{selectedOrders.length} selected</span>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => setConfirmDialog({
+                    open: true,
+                    type: "bulk_archive",
+                    title: "Archive Selected Orders?",
+                    description: `Archive ${selectedOrders.length} orders?`
+                  })}
+                >
+                  <Archive className="w-4 h-4 mr-1" /> Archive
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline"
+                  onClick={() => setConfirmDialog({
+                    open: true,
+                    type: "bulk_delete",
+                    title: "Delete Selected Orders?",
+                    description: `Permanently delete ${selectedOrders.length} orders?`
+                  })}
+                  className="text-red-600 border-red-200"
+                >
+                  <Trash2 className="w-4 h-4 mr-1" /> Delete
+                </Button>
+              </div>
+            )}
+          </div>
           <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
             <Plus className="w-4 h-4 mr-2" /> New Order
           </Button>
@@ -212,6 +293,13 @@ export default function Orders() {
           <TabsContent value="production">
             {/* Filters */}
             <div className="bg-white rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-4">
+              <div className="flex items-center gap-3">
+                <Checkbox 
+                  checked={selectedOrders.length === filteredOrders.length && filteredOrders.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+                <span className="text-sm text-slate-500">Select all</span>
+              </div>
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <Input 
@@ -250,11 +338,19 @@ export default function Orders() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredOrders.map(order => (
-                  <ActiveOrderCard 
-                    key={order.id} 
-                    order={order} 
-                    onClick={setSelectedOrder}
-                  />
+                  <div key={order.id} className="relative group">
+                    <Checkbox 
+                      checked={selectedOrders.includes(order.id)}
+                      onCheckedChange={() => toggleOrderSelection(order.id)}
+                      className="absolute top-3 left-3 z-10 bg-white border-2"
+                    />
+                    <div onClick={() => setSelectedOrder(order)}>
+                      <ActiveOrderCard 
+                        order={order} 
+                        onClick={setSelectedOrder}
+                      />
+                    </div>
+                  </div>
                 ))}
               </div>
             )}

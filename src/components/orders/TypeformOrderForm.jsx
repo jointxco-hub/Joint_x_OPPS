@@ -4,6 +4,8 @@ import TypeformInput from "../forms/TypeformInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload } from "lucide-react";
+import { base44 } from "@/api/base44Client";
+import { toast } from "sonner";
 
 const printTypes = [
   { value: "dtf", label: "DTF (Direct to Film)" },
@@ -23,6 +25,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [invoiceFile, setInvoiceFile] = useState(null);
+  const [uploadingInvoice, setUploadingInvoice] = useState(false);
   const [formData, setFormData] = useState(order || {
     client_name: "",
     client_email: "",
@@ -39,7 +42,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     deposit_paid: 0,
     notes: "",
     invoice_number: "",
-    tracking_code: Math.random().toString(36).substring(2, 8).toUpperCase()
+    invoice_url: "",
+    tracking_code: order?.tracking_code || Math.random().toString(36).substring(2, 8).toUpperCase()
   });
 
   const handleChange = (field, value) => {
@@ -214,29 +218,41 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
             type="button"
             variant="outline"
             onClick={() => document.getElementById('order-invoice-upload').click()}
+            disabled={uploadingInvoice}
             className="w-full h-12"
           >
             <Upload className="w-5 h-5 mr-2" />
-            {invoiceFile ? invoiceFile.name : "Choose Invoice File"}
+            {uploadingInvoice ? "Uploading..." : invoiceFile ? invoiceFile.name : "Choose Invoice File"}
           </Button>
           <input
             id="order-invoice-upload"
             type="file"
             accept=".pdf,.png,.jpg,.jpeg"
-            onChange={(e) => {
+            onChange={async (e) => {
               const file = e.target.files?.[0];
               if (file) {
                 setInvoiceFile(file);
                 const match = file.name.match(/INV-\d+/i);
-                if (match && !formData.invoice_number) {
+                if (match) {
                   handleChange("invoice_number", match[0].toUpperCase());
+                }
+                
+                setUploadingInvoice(true);
+                try {
+                  const { file_url } = await base44.integrations.Core.UploadFile({ file });
+                  handleChange("invoice_url", file_url);
+                  toast.success("Invoice uploaded!");
+                } catch (error) {
+                  toast.error("Upload failed");
+                } finally {
+                  setUploadingInvoice(false);
                 }
               }
             }}
             className="hidden"
           />
           {invoiceFile && (
-            <p className="text-sm text-slate-500 mt-2">Selected: {invoiceFile.name}</p>
+            <p className="text-sm text-slate-500 mt-2">✓ Uploaded: {invoiceFile.name}</p>
           )}
         </div>
       </div>
