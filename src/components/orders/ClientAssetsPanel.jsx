@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Upload, FileText, Image as ImageIcon, Eye, EyeOff, 
-  Trash2, Plus, X, Download, File, Video
+  Trash2, Plus, X, Download, File, Video,
+  CheckCircle, XCircle, AlertCircle, Clock
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,6 +26,13 @@ const ASSET_TYPES = [
   { value: "other", label: "Other", icon: File }
 ];
 
+const approvalStatusConfig = {
+  pending: { label: "Pending Review", color: "bg-amber-100 text-amber-700", icon: Clock },
+  approved: { label: "Approved", color: "bg-green-100 text-green-700", icon: CheckCircle },
+  rejected: { label: "Rejected", color: "bg-red-100 text-red-700", icon: XCircle },
+  needs_revision: { label: "Needs Revision", color: "bg-orange-100 text-orange-700", icon: AlertCircle }
+};
+
 export default function ClientAssetsPanel({ orderId, clientName }) {
   const [showForm, setShowForm] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -33,7 +41,8 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
     description: "",
     asset_type: "mockup",
     is_client_visible: false,
-    file_url: ""
+    file_url: "",
+    approval_status: "pending"
   });
 
   const queryClient = useQueryClient();
@@ -54,7 +63,8 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
         description: "",
         asset_type: "mockup",
         is_client_visible: false,
-        file_url: ""
+        file_url: "",
+        approval_status: "pending"
       });
       toast.success("Asset added!");
     }
@@ -73,6 +83,15 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
       base44.entities.ClientAsset.update(id, { is_client_visible: visible }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId] });
+    }
+  });
+
+  const updateApprovalMutation = useMutation({
+    mutationFn: ({ id, status }) => 
+      base44.entities.ClientAsset.update(id, { approval_status: status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId] });
+      toast.success("Approval status updated");
     }
   });
 
@@ -220,6 +239,9 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {assets.map(asset => {
             const Icon = getAssetIcon(asset.asset_type);
+            const approvalConfig = approvalStatusConfig[asset.approval_status || 'pending'];
+            const ApprovalIcon = approvalConfig.icon;
+            
             return (
               <Card key={asset.id} className="bg-white">
                 <CardContent className="p-4">
@@ -257,6 +279,16 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
                     </div>
                   </div>
                   
+                  {/* Approval Status Badge */}
+                  {asset.asset_type === 'artwork' && (
+                    <div className="mb-2">
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${approvalConfig.color}`}>
+                        <ApprovalIcon className="w-3 h-3" />
+                        {approvalConfig.label}
+                      </span>
+                    </div>
+                  )}
+                  
                   {asset.description && (
                     <p className="text-xs text-slate-600 mb-2">{asset.description}</p>
                   )}
@@ -265,11 +297,40 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
                     href={asset.file_url} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-sm text-emerald-600 hover:text-emerald-700"
+                    className="flex items-center gap-2 text-sm text-emerald-600 hover:text-emerald-700 mb-3"
                   >
                     <Download className="w-3 h-3" />
                     View/Download
                   </a>
+
+                  {/* Approval Actions for Artwork */}
+                  {asset.asset_type === 'artwork' && (
+                    <div className="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
+                      <Button 
+                        size="sm" 
+                        onClick={() => updateApprovalMutation.mutate({ id: asset.id, status: 'approved' })}
+                        className="bg-green-600 hover:bg-green-700 text-white h-7 text-xs px-2"
+                      >
+                        <CheckCircle className="w-3 h-3 mr-1" /> Approve
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => updateApprovalMutation.mutate({ id: asset.id, status: 'needs_revision' })}
+                        className="h-7 text-xs px-2"
+                      >
+                        <AlertCircle className="w-3 h-3 mr-1" /> Revision
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => updateApprovalMutation.mutate({ id: asset.id, status: 'rejected' })}
+                        className="text-red-600 border-red-200 h-7 text-xs px-2"
+                      >
+                        <XCircle className="w-3 h-3 mr-1" /> Reject
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             );
