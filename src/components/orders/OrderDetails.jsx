@@ -5,11 +5,14 @@ import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { 
   X, User, Phone, Mail, Calendar, Shirt, 
-  FileText, DollarSign, Truck, Copy, Check, Archive, Trash2
+  FileText, DollarSign, Truck, Copy, Check, Archive, Trash2,
+  AlertCircle, MessageCircle
 } from "lucide-react";
 import OrderStatusBadge from "../dashboard/OrderStatusBadge";
 import ClientAssetsPanel from "./ClientAssetsPanel";
 import { useState } from "react";
+import { base44 } from "@/api/base44Client";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const printTypeLabels = {
   vinyl_videoflex: "Vinyl (Videoflex)",
@@ -26,8 +29,17 @@ const priorityColors = {
   urgent: "bg-red-100 text-red-700"
 };
 
+const stuckReasons = {
+  none: { label: "No blockers", color: "bg-slate-100 text-slate-600", show: false },
+  waiting_on_payment: { label: "Waiting on Payment", color: "bg-red-100 text-red-700", show: true },
+  waiting_on_materials: { label: "Waiting on Materials", color: "bg-orange-100 text-orange-700", show: true },
+  waiting_on_approval: { label: "Waiting on Approval", color: "bg-amber-100 text-amber-700", show: true },
+  waiting_on_vendor: { label: "Waiting on Vendor", color: "bg-purple-100 text-purple-700", show: true }
+};
+
 export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, onArchive, onDelete }) {
   const [copied, setCopied] = useState(false);
+  const [stuckReason, setStuckReason] = useState(order.stuck_reason || "none");
 
   const copyTrackingCode = () => {
     navigator.clipboard.writeText(order.tracking_code);
@@ -35,25 +47,60 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleStuckReasonChange = async (newReason) => {
+    setStuckReason(newReason);
+    await onUpdateStatus(order.id, order.status, { stuck_reason: newReason });
+  };
+
+  const whatsappUrl = base44.agents.getWhatsAppConnectURL('order_assistant');
   const balance = (order.quoted_price || 0) - (order.deposit_paid || 0);
+  const currentStuckConfig = stuckReasons[stuckReason] || stuckReasons.none;
 
   return (
     <Card className="bg-white border-0 shadow-lg">
       <div className="p-6">
         <div className="flex items-start justify-between mb-6">
           <div>
-            <div className="flex items-center gap-3 mb-2">
+            <div className="flex items-center gap-3 mb-2 flex-wrap">
               <h2 className="text-xl font-bold text-slate-900">{order.order_number}</h2>
               <OrderStatusBadge status={order.status} />
               <Badge className={`${priorityColors[order.priority]} border-0`}>
                 {order.priority.charAt(0).toUpperCase() + order.priority.slice(1)}
               </Badge>
+              {currentStuckConfig.show && (
+                <Badge className={`${currentStuckConfig.color} border-0 flex items-center gap-1`}>
+                  <AlertCircle className="w-3 h-3" />
+                  {currentStuckConfig.label}
+                </Badge>
+              )}
             </div>
             <p className="text-slate-500">{order.client_name}</p>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="w-5 h-5" />
           </Button>
+        </div>
+
+        {/* Stuck Reason Selector */}
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-amber-900 mb-2">Order Blocker Status</h3>
+              <Select value={stuckReason} onValueChange={handleStuckReasonChange}>
+                <SelectTrigger className="bg-white border-amber-300">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">✓ No blockers</SelectItem>
+                  <SelectItem value="waiting_on_payment">💰 Waiting on Payment</SelectItem>
+                  <SelectItem value="waiting_on_materials">📦 Waiting on Materials</SelectItem>
+                  <SelectItem value="waiting_on_approval">✋ Waiting on Approval</SelectItem>
+                  <SelectItem value="waiting_on_vendor">🏢 Waiting on Vendor</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -122,12 +169,12 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
             </div>
           </div>
 
-          {/* Tracking */}
+          {/* Tracking & WhatsApp */}
           <div className="space-y-4">
             <h3 className="font-semibold text-slate-700">Client Tracking</h3>
             <div className="bg-slate-900 text-white rounded-lg p-4">
               <p className="text-xs text-slate-400 mb-1">Tracking Code</p>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-3">
                 <span className="text-2xl font-mono font-bold">{order.tracking_code}</span>
                 <Button 
                   variant="ghost" 
@@ -138,6 +185,15 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
                   {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                 </Button>
               </div>
+              <a 
+                href={whatsappUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg px-4 py-2 text-sm transition-colors"
+              >
+                <MessageCircle className="w-4 h-4" />
+                WhatsApp Order Updates
+              </a>
             </div>
           </div>
         </div>
