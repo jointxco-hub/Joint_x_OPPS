@@ -10,14 +10,14 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
-  { name: "Executive", page: "Executive", icon: BarChart2 },
+  { name: "Projects", page: "Projects", icon: Shirt },
   { name: "Orders", page: "Orders", icon: Package },
-  { name: "Tasks", page: "Tasks", icon: ClipboardList },
+  { name: "Production", page: "Tasks", icon: ClipboardList },
   { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
   { name: "Inventory", page: "Inventory", icon: Boxes },
-  { name: "Calculator", page: "Calculator", icon: Calculator },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
   { name: "Catalog", page: "CatalogManagement", icon: Store },
+  { name: "Calculator", page: "Calculator", icon: Calculator },
 ];
 
 export default function Layout({ children, currentPageName }) {
