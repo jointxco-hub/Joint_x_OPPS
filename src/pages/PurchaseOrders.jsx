@@ -232,7 +232,7 @@ export default function PurchaseOrders() {
   if (showForm || editingPO) {
     return (
       <TypeformPOForm 
-        po={editingPO}
+        purchaseOrder={editingPO}
         suppliers={suppliers}
         inventoryItems={inventory}
         onSubmit={handleSubmit}
