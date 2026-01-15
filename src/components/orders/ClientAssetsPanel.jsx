@@ -33,7 +33,7 @@ const approvalStatusConfig = {
   needs_revision: { label: "Needs Revision", color: "bg-orange-100 text-orange-700", icon: AlertCircle }
 };
 
-export default function ClientAssetsPanel({ orderId, clientName }) {
+export default function ClientAssetsPanel({ orderId, projectId, clientName, filterType }) {
   const [showForm, setShowForm] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [newAsset, setNewAsset] = useState({
@@ -48,15 +48,22 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
   const queryClient = useQueryClient();
 
   const { data: assets = [], isLoading } = useQuery({
-    queryKey: ['clientAssets', orderId],
-    queryFn: () => base44.entities.ClientAsset.filter({ order_id: orderId }, '-created_date', 100),
-    enabled: !!orderId
+    queryKey: ['clientAssets', orderId, projectId],
+    queryFn: async () => {
+      if (orderId) {
+        return base44.entities.ClientAsset.filter({ order_id: orderId }, '-created_date', 100);
+      } else if (projectId) {
+        return base44.entities.ClientAsset.filter({ project_id: projectId }, '-created_date', 100);
+      }
+      return [];
+    },
+    enabled: !!(orderId || projectId)
   });
 
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.ClientAsset.create(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId] });
+      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       setShowForm(false);
       setNewAsset({
         title: "",
@@ -73,7 +80,7 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
   const deleteMutation = useMutation({
     mutationFn: (id) => base44.entities.ClientAsset.delete(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId] });
+      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       toast.success("Asset deleted");
     }
   });
@@ -82,7 +89,7 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
     mutationFn: ({ id, visible }) => 
       base44.entities.ClientAsset.update(id, { is_client_visible: visible }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId] });
+      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
     }
   });
 
@@ -90,7 +97,7 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
     mutationFn: ({ id, status }) => 
       base44.entities.ClientAsset.update(id, { approval_status: status }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId] });
+      queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       toast.success("Approval status updated");
     }
   });
@@ -119,6 +126,7 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
     createMutation.mutate({
       ...newAsset,
       order_id: orderId,
+      project_id: projectId,
       client_name: clientName
     });
   };
@@ -237,7 +245,7 @@ export default function ClientAssetsPanel({ orderId, clientName }) {
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {assets.map(asset => {
+          {assets.filter(a => !filterType || a.asset_type === filterType).map(asset => {
             const Icon = getAssetIcon(asset.asset_type);
             const approvalConfig = approvalStatusConfig[asset.approval_status || 'pending'];
             const ApprovalIcon = approvalConfig.icon;

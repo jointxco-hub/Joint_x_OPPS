@@ -40,7 +40,7 @@ const priorities = [
   { value: "high", label: "High priority" }
 ];
 
-export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel }) {
+export default function TypeformTaskForm({ task, orders = [], projects = [], suppliers = [], onSubmit, onCancel }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState(task || {
@@ -50,6 +50,8 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
     phase: "",
     location: "",
     order_id: "",
+    project_id: "",
+    supplier_id: "",
     assigned_to: "",
     status: "pending",
     priority: "normal",
@@ -72,6 +74,16 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
   const orderOptions = [
     { value: "", label: "No related order" },
     ...orders.map(o => ({ value: o.id, label: `${o.order_number} - ${o.client_name}` }))
+  ];
+
+  const projectOptions = [
+    { value: "", label: "No project" },
+    ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.client_name})` }))
+  ];
+
+  const supplierOptions = [
+    { value: "", label: "No supplier" },
+    ...suppliers.map(s => ({ value: s.id, label: s.name }))
   ];
 
   const steps = [
@@ -151,6 +163,39 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       questionNumber="7"
     />,
     <TypeformInput
+      key="project"
+      type="select"
+      label="Link to project?"
+      subtitle="Optional - helps organize tasks"
+      value={formData.project_id}
+      onChange={(v) => handleChange("project_id", v)}
+      options={projectOptions}
+      isActive={currentStep === 7}
+      questionNumber="8"
+    />,
+    <TypeformInput
+      key="order"
+      type="select"
+      label="Link to order?"
+      subtitle="Optional - link this task to an order"
+      value={formData.order_id}
+      onChange={(v) => handleChange("order_id", v)}
+      options={orderOptions}
+      isActive={currentStep === 8}
+      questionNumber="9"
+    />,
+    <TypeformInput
+      key="supplier"
+      type="select"
+      label="Related supplier?"
+      subtitle="If this involves a supplier"
+      value={formData.supplier_id}
+      onChange={(v) => handleChange("supplier_id", v)}
+      options={supplierOptions}
+      isActive={currentStep === 9}
+      questionNumber="10"
+    />,
+    <TypeformInput
       key="assigned_to"
       type="text"
       label="Who's doing this?"
@@ -158,8 +203,8 @@ export default function TypeformTaskForm({ task, orders = [], onSubmit, onCancel
       value={formData.assigned_to}
       onChange={(v) => handleChange("assigned_to", v)}
       placeholder="Team member name..."
-      isActive={currentStep === 7}
-      questionNumber="8"
+      isActive={currentStep === 10}
+      questionNumber="11"
     />,
     <TypeformInput
       key="notes"

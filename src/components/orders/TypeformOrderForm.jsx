@@ -1,9 +1,10 @@
 import React, { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import TypeformWrapper from "../forms/TypeformWrapper";
 import TypeformInput from "../forms/TypeformInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Upload } from "lucide-react";
+import { Upload, Plus } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { toast } from "sonner";
 
@@ -26,14 +27,30 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [invoiceFile, setInvoiceFile] = useState(null);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
+  const [showNewClient, setShowNewClient] = useState(false);
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients'],
+    queryFn: () => base44.entities.Client.list('name', 100)
+  });
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => base44.entities.Project.list('name', 100)
+  });
+
+  const queryClient = useQueryClient();
+
   const [formData, setFormData] = useState(order || {
     client_name: "",
     client_email: "",
     client_phone: "",
+    client_id: "",
+    project_id: "",
     order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
     description: "",
     quantity: 1,
-    print_type: "vinyl_videoflex",
+    print_type: "dtf",
     blank_type: "",
     status: "received",
     priority: "normal",
@@ -50,45 +67,113 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  const createClientMutation = useMutation({
+    mutationFn: (data) => base44.entities.Client.create(data),
+    onSuccess: (newClient) => {
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      handleChange('client_id', newClient.id);
+      handleChange('client_name', newClient.name);
+      handleChange('client_email', newClient.email);
+      handleChange('client_phone', newClient.phone);
+      setShowNewClient(false);
+      toast.success("Client added!");
+    }
+  });
+
   const handleSubmit = async () => {
     setIsSubmitting(true);
+    // Auto-create client if new
+    if (formData.client_name && !formData.client_id) {
+      const newClient = await base44.entities.Client.create({
+        name: formData.client_name,
+        email: formData.client_email,
+        phone: formData.client_phone
+      });
+      formData.client_id = newClient.id;
+    }
     await onSubmit(formData);
     setIsSubmitting(false);
   };
 
+  const handleClientSelect = (clientId) => {
+    const client = clients.find(c => c.id === clientId);
+    if (client) {
+      handleChange('client_id', client.id);
+      handleChange('client_name', client.name);
+      handleChange('client_email', client.email || '');
+      handleChange('client_phone', client.phone || '');
+    } else if (clientId === 'new') {
+      setShowNewClient(true);
+    }
+  };
+
+  const clientOptions = [
+    { value: 'new', label: '+ Add New Client' },
+    ...clients.map(c => ({ value: c.id, label: c.name }))
+  ];
+
+  const projectOptions = [
+    { value: '', label: 'No Project' },
+    ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.client_name})` }))
+  ];
+
   const steps = [
     <TypeformInput
-      key="client_name"
-      type="text"
-      label="What's the client or brand name?"
-      subtitle="This helps us keep track of who we're working with"
-      value={formData.client_name}
-      onChange={(v) => handleChange("client_name", v)}
-      placeholder="Type client name..."
+      key="client_select"
+      type="select"
+      label="Select client"
+      subtitle="Choose existing client or add new"
+      value={formData.client_id || 'new'}
+      onChange={handleClientSelect}
+      options={clientOptions}
       required
       isActive={currentStep === 0}
       questionNumber="1"
     />,
+    ...(showNewClient ? [
+      <TypeformInput
+        key="new_client_name"
+        type="text"
+        label="Client name"
+        value={formData.client_name}
+        onChange={(v) => handleChange("client_name", v)}
+        placeholder="Enter client name..."
+        required
+        isActive={currentStep === 1}
+        questionNumber="1b"
+      />
+    ] : []),
+    ...(showNewClient ? [
+      <TypeformInput
+        key="new_client_phone"
+        type="text"
+        label="Client phone number"
+        value={formData.client_phone}
+        onChange={(v) => handleChange("client_phone", v)}
+        placeholder="e.g., 082 123 4567"
+        isActive={currentStep === 2}
+        questionNumber="1c"
+      />,
+      <TypeformInput
+        key="new_client_email"
+        type="email"
+        label="Client email (optional)"
+        value={formData.client_email}
+        onChange={(v) => handleChange("client_email", v)}
+        isActive={currentStep === 3}
+        questionNumber="1d"
+      />
+    ] : []),
     <TypeformInput
-      key="client_contact"
-      type="text"
-      label="Client phone number"
-      subtitle="For order updates and delivery coordination"
-      value={formData.client_phone}
-      onChange={(v) => handleChange("client_phone", v)}
-      placeholder="e.g., 082 123 4567"
-      isActive={currentStep === 1}
+      key="project_select"
+      type="select"
+      label="Link to project?"
+      subtitle="Optional - helps organize orders"
+      value={formData.project_id}
+      onChange={(v) => handleChange("project_id", v)}
+      options={projectOptions}
+      isActive={currentStep === (showNewClient ? 4 : 1)}
       questionNumber="2"
-    />,
-    <TypeformInput
-      key="client_email"
-      type="email"
-      label="Client email address"
-      subtitle="Optional - for sending order confirmations"
-      value={formData.client_email}
-      onChange={(v) => handleChange("client_email", v)}
-      isActive={currentStep === 2}
-      questionNumber="3"
     />,
     <TypeformInput
       key="print_type"
@@ -99,8 +184,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       onChange={(v) => handleChange("print_type", v)}
       options={printTypes}
       required
-      isActive={currentStep === 3}
-      questionNumber="4"
+      isActive={currentStep === (showNewClient ? 5 : 2)}
+      questionNumber="3"
     />,
     <TypeformInput
       key="quantity"
@@ -112,8 +197,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       placeholder="1"
       unit="pieces"
       required
-      isActive={currentStep === 4}
-      questionNumber="5"
+      isActive={currentStep === (showNewClient ? 6 : 3)}
+      questionNumber="4"
     />,
     <TypeformInput
       key="blank_type"
@@ -123,8 +208,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.blank_type}
       onChange={(v) => handleChange("blank_type", v)}
       placeholder="Type of garment..."
-      isActive={currentStep === 5}
-      questionNumber="6"
+      isActive={currentStep === (showNewClient ? 7 : 4)}
+      questionNumber="5"
     />,
     <TypeformInput
       key="priority"
@@ -133,8 +218,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.priority}
       onChange={(v) => handleChange("priority", v)}
       options={priorities}
-      isActive={currentStep === 6}
-      questionNumber="7"
+      isActive={currentStep === (showNewClient ? 8 : 5)}
+      questionNumber="6"
     />,
     <TypeformInput
       key="due_date"
@@ -143,8 +228,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       subtitle="Expected delivery date to client"
       value={formData.due_date}
       onChange={(v) => handleChange("due_date", v)}
-      isActive={currentStep === 7}
-      questionNumber="8"
+      isActive={currentStep === (showNewClient ? 9 : 6)}
+      questionNumber="7"
     />,
     <TypeformInput
       key="quoted_price"
@@ -155,8 +240,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       onChange={(v) => handleChange("quoted_price", v)}
       placeholder="0"
       unit="R"
-      isActive={currentStep === 8}
-      questionNumber="9"
+      isActive={currentStep === (showNewClient ? 10 : 7)}
+      questionNumber="8"
     />,
     <TypeformInput
       key="deposit_paid"
@@ -167,8 +252,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       onChange={(v) => handleChange("deposit_paid", v)}
       placeholder="0"
       unit="R"
-      isActive={currentStep === 9}
-      questionNumber="10"
+      isActive={currentStep === (showNewClient ? 11 : 8)}
+      questionNumber="9"
     />,
     <TypeformInput
       key="description"
@@ -178,8 +263,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.description}
       onChange={(v) => handleChange("description", v)}
       placeholder="Describe the order..."
-      isActive={currentStep === 10}
-      questionNumber="11"
+      isActive={currentStep === (showNewClient ? 12 : 9)}
+      questionNumber="10"
     />,
     <TypeformInput
       key="notes"
@@ -189,12 +274,12 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.notes}
       onChange={(v) => handleChange("notes", v)}
       placeholder="Internal notes..."
-      isActive={currentStep === 11}
-      questionNumber="12"
+      isActive={currentStep === (showNewClient ? 13 : 10)}
+      questionNumber="11"
     />,
-    <div key="invoice" className={currentStep === 12 ? '' : 'hidden'}>
+    <div key="invoice" className={currentStep === (showNewClient ? 14 : 11) ? '' : 'hidden'}>
       <div className="mb-6">
-        <span className="text-sm text-slate-400 mb-1 block">13 →</span>
+        <span className="text-sm text-slate-400 mb-1 block">12 →</span>
         <h2 className="text-2xl md:text-3xl font-medium text-slate-900">
           Upload Invoice (Optional)
         </h2>

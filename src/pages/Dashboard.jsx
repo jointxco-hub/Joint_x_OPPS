@@ -6,8 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { 
   Package, ClipboardList, Truck, CheckCircle2, 
-  Plus, AlertTriangle, ShoppingCart, ArrowRight
+  Plus, AlertTriangle, ShoppingCart, ArrowRight, RefreshCw
 } from "lucide-react";
+import { toast } from "sonner";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import StatsCard from "@/components/dashboard/StatsCard";
@@ -55,6 +56,11 @@ export default function Dashboard() {
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers'],
     queryFn: () => base44.entities.Supplier.list('name', 100)
+  });
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects'],
+    queryFn: () => base44.entities.Project.list('name', 100)
   });
 
   const createOrderMutation = useMutation({
@@ -196,6 +202,8 @@ export default function Dashboard() {
     return (
       <TypeformTaskForm 
         orders={orders}
+        projects={projects}
+        suppliers={suppliers}
         onSubmit={(data) => createTaskMutation.mutateAsync(data)}
         onCancel={() => setShowTaskForm(false)}
       />
@@ -263,6 +271,16 @@ export default function Dashboard() {
             <p className="text-slate-500 mt-1">Manage your orders, tasks & inventory</p>
           </div>
           <div className="flex gap-3">
+            <Button 
+              onClick={() => {
+                queryClient.invalidateQueries();
+                toast.success("Refreshed!");
+              }} 
+              variant="ghost"
+              size="icon"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
             <Button onClick={() => setShowTaskForm(true)} variant="outline">
               <Plus className="w-4 h-4 mr-2" /> Task
             </Button>
@@ -325,44 +343,55 @@ export default function Dashboard() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-          <StatsCard 
-            title="Active Orders" 
-            value={activeOrders.length} 
-            icon={Package}
-            color="blue"
-          />
-          <StatsCard 
-            title="Pending Tasks" 
-            value={pendingTasks.length} 
-            icon={ClipboardList}
-            color="orange"
-          />
-          <StatsCard 
-            title="Ready for Delivery" 
-            value={readyForDelivery.length} 
-            icon={Truck}
-            color="green"
-          />
-          <StatsCard 
-            title="Pending POs" 
-            value={pendingPOs.length} 
-            icon={ShoppingCart}
-            color="purple"
-          />
-          <StatsCard 
-            title="Urgent" 
-            value={urgentOrders.length} 
-            icon={AlertTriangle}
-            color="red"
-          />
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200">
+            <StatsCard 
+              title="Active Orders" 
+              value={activeOrders.length} 
+              icon={Package}
+              color="blue"
+            />
+          </div>
+          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl border border-orange-200">
+            <StatsCard 
+              title="Pending Tasks" 
+              value={pendingTasks.length} 
+              icon={ClipboardList}
+              color="orange"
+            />
+          </div>
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-2xl border border-green-200">
+            <StatsCard 
+              title="Ready for Delivery" 
+              value={readyForDelivery.length} 
+              icon={Truck}
+              color="green"
+            />
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl border border-purple-200">
+            <StatsCard 
+              title="Pending POs" 
+              value={pendingPOs.length} 
+              icon={ShoppingCart}
+              color="purple"
+            />
+          </div>
+          <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-2xl border border-red-200">
+            <StatsCard 
+              title="Urgent" 
+              value={urgentOrders.length} 
+              icon={AlertTriangle}
+              color="red"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Orders Section */}
           {showOrders && (
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 bg-blue-50/30 rounded-3xl p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-slate-900">
+                <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                  <div className="w-1 h-6 bg-blue-600 rounded-full"></div>
                   {focusMode === "urgent" ? "Urgent Orders" : 
                    focusMode === "delivery" ? "Ready for Delivery" : "Active Orders"}
                 </h2>
@@ -397,9 +426,12 @@ export default function Dashboard() {
           <div className={`space-y-6 ${!showOrders ? 'lg:col-span-3' : ''}`}>
             {/* Purchase Orders */}
             {showPurchasing && pendingPOs.length > 0 && (
-              <div>
+              <div className="bg-purple-50/30 rounded-3xl p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-slate-900">Purchase Orders</h2>
+                  <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <div className="w-1 h-6 bg-purple-600 rounded-full"></div>
+                    Purchase Orders
+                  </h2>
                   <Link to={createPageUrl("PurchaseOrders")} className="text-sm text-blue-600 hover:text-blue-700">
                     View all
                   </Link>
@@ -418,9 +450,12 @@ export default function Dashboard() {
 
             {/* Tasks */}
             {showTasks && (
-              <div>
+              <div className="bg-orange-50/30 rounded-3xl p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-slate-900">Today's Tasks</h2>
+                  <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <div className="w-1 h-6 bg-orange-600 rounded-full"></div>
+                    Today's Tasks
+                  </h2>
                   <Button variant="ghost" size="sm" onClick={() => setShowTaskForm(true)}>
                     <Plus className="w-4 h-4" />
                   </Button>
