@@ -212,7 +212,9 @@ export default function Orders() {
               setSelectedOrder(null);
               setEditingOrder(order);
             }}
-            onUpdateStatus={(id, status) => updateMutation.mutate({ id, data: { status } })}
+            onUpdateStatus={(id, status, extraData = {}) => updateMutation.mutate({ id, data: { status, ...extraData } })}
+            onArchive={handleArchive}
+            onDelete={handleDelete}
           />
         </div>
       </div>

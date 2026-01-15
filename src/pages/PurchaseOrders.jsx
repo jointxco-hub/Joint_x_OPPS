@@ -32,6 +32,7 @@ const statusConfig = {
 
 export default function PurchaseOrders() {
   const [showForm, setShowForm] = useState(false);
+  const [editingPO, setEditingPO] = useState(null);
   const [selectedPO, setSelectedPO] = useState(null);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("active");
@@ -67,6 +68,7 @@ export default function PurchaseOrders() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setShowForm(false);
+      setEditingPO(null);
     }
   });
 
@@ -75,6 +77,7 @@ export default function PurchaseOrders() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setSelectedPO(null);
+      setEditingPO(null);
     }
   });
 
@@ -218,13 +221,25 @@ export default function PurchaseOrders() {
 
   const totalEstimatedTransport = activePOs.reduce((sum, po) => sum + (po.avgUberFee || 0), 0);
 
-  if (showForm) {
+  const handleSubmit = async (data) => {
+    if (editingPO) {
+      await updateMutation.mutateAsync({ id: editingPO.id, data });
+    } else {
+      await createMutation.mutateAsync(data);
+    }
+  };
+
+  if (showForm || editingPO) {
     return (
       <TypeformPOForm 
+        po={editingPO}
         suppliers={suppliers}
         inventoryItems={inventory}
-        onSubmit={(data) => createMutation.mutateAsync(data)}
-        onCancel={() => setShowForm(false)}
+        onSubmit={handleSubmit}
+        onCancel={() => {
+          setShowForm(false);
+          setEditingPO(null);
+        }}
       />
     );
   }
@@ -248,6 +263,10 @@ export default function PurchaseOrders() {
           supplier={selectedPO.supplier}
           onClose={() => setSelectedPO(null)}
           onStatusChange={handleStatusChange}
+          onEdit={(po) => {
+            setEditingPO(po);
+            setSelectedPO(null);
+          }}
         />
       )}
 

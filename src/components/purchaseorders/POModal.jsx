@@ -15,7 +15,7 @@ const statusConfig = {
   cancelled: { label: "Cancelled", className: "bg-red-100 text-red-700", icon: X }
 };
 
-export default function POModal({ po, supplier, onClose, onStatusChange }) {
+export default function POModal({ po, supplier, onClose, onStatusChange, onEdit }) {
   if (!po) return null;
 
   const config = statusConfig[po.status] || statusConfig.draft;
@@ -137,6 +137,15 @@ export default function POModal({ po, supplier, onClose, onStatusChange }) {
 
         {/* Actions */}
         <div className="sticky bottom-0 bg-white border-t border-slate-100 p-6 pt-4 rounded-b-3xl">
+          {onEdit && (
+            <Button 
+              onClick={() => onEdit(po)} 
+              variant="outline"
+              className="w-full mb-3 h-12 rounded-xl"
+            >
+              Edit Purchase Order
+            </Button>
+          )}
           <div className="flex gap-3">
             {po.status === 'draft' && (
               <>
