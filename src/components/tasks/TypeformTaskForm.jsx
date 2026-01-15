@@ -213,8 +213,8 @@ export default function TypeformTaskForm({ task, orders = [], projects = [], sup
       value={formData.notes}
       onChange={(v) => handleChange("notes", v)}
       placeholder="Extra details..."
-      isActive={currentStep === 8}
-      questionNumber="9"
+      isActive={currentStep === 11}
+      questionNumber="12"
     />
   ];
 
