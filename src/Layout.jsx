@@ -4,14 +4,16 @@ import { createPageUrl } from "./utils";
 import { 
   LayoutDashboard, Package, ClipboardList, Calculator, 
   Building2, Search, Menu, X, Shirt, ShoppingCart, Boxes,
-  Store, BarChart2
+  Store, BarChart2, Users
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const navItems = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
+  { name: "Executive", page: "Executive", icon: BarChart2 },
   { name: "Projects", page: "Projects", icon: Shirt },
   { name: "Orders", page: "Orders", icon: Package },
+  { name: "Clients", page: "Clients", icon: Users },
   { name: "Production", page: "Tasks", icon: ClipboardList },
   { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
   { name: "Inventory", page: "Inventory", icon: Boxes },
