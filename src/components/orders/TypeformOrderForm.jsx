@@ -82,14 +82,29 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
-    // Auto-create client if new
+    // Auto-create or update client
     if (formData.client_name && !formData.client_id) {
       const newClient = await base44.entities.Client.create({
         name: formData.client_name,
         email: formData.client_email,
-        phone: formData.client_phone
+        phone: formData.client_phone,
+        status: 'active',
+        total_orders: 1,
+        total_revenue: formData.quoted_price || 0,
+        last_activity_date: new Date().toISOString().split('T')[0]
       });
       formData.client_id = newClient.id;
+    } else if (formData.client_id) {
+      // Update existing client stats
+      const client = clients.find(c => c.id === formData.client_id);
+      if (client) {
+        await base44.entities.Client.update(formData.client_id, {
+          total_orders: (client.total_orders || 0) + 1,
+          total_revenue: (client.total_revenue || 0) + (formData.quoted_price || 0),
+          last_activity_date: new Date().toISOString().split('T')[0],
+          status: 'active'
+        });
+      }
     }
     await onSubmit(formData);
     setIsSubmitting(false);

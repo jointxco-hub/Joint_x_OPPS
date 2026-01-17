@@ -3,7 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Package, Store, CheckCircle2, XCircle, Archive, Trash2, Check } from "lucide-react";
+import { Plus, Search, Package, Store, CheckCircle2, XCircle, Archive, Trash2, Check, RefreshCw } from "lucide-react";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -272,9 +272,21 @@ export default function Orders() {
               </div>
             )}
           </div>
-          <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
-            <Plus className="w-4 h-4 mr-2" /> New Order
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={() => {
+                queryClient.invalidateQueries();
+                toast.success("Refreshed!");
+              }} 
+              variant="ghost"
+              size="icon"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+            <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
+              <Plus className="w-4 h-4 mr-2" /> New Order
+            </Button>
+          </div>
         </div>
 
         {/* Tabs */}
