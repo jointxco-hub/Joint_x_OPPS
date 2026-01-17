@@ -8,11 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { 
   ArrowLeft, AlertCircle, Package, FileText, 
-  Image, Type, Clipboard, Users, DollarSign, TrendingUp
+  Image, Type, Clipboard, Users, DollarSign, TrendingUp, Plus
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "../utils";
 import ClientAssetsPanel from "@/components/orders/ClientAssetsPanel";
+import TypeformOrderForm from "@/components/orders/TypeformOrderForm";
 
 export default function ProjectHub() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -94,7 +95,7 @@ export default function ProjectHub() {
           </TabsContent>
 
           <TabsContent value="orders">
-            <OrdersTab orders={orders} />
+            <OrdersTab orders={orders} projectId={projectId} clientName={project.client_name} />
           </TabsContent>
 
           <TabsContent value="people">
@@ -231,9 +232,36 @@ function FilesTab({ projectId, clientName, assetType }) {
   );
 }
 
-function OrdersTab({ orders }) {
+function OrdersTab({ orders, projectId, clientName }) {
+  const [showOrderForm, setShowOrderForm] = useState(false);
+  const queryClient = useQueryClient();
+
+  const createOrderMutation = useMutation({
+    mutationFn: (data) => base44.entities.Order.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projectOrders', projectId] });
+      setShowOrderForm(false);
+    }
+  });
+
+  if (showOrderForm) {
+    return (
+      <div className="fixed inset-0 z-50 bg-white">
+        <TypeformOrderForm 
+          order={{ project_id: projectId, client_name: clientName }}
+          onSubmit={(data) => createOrderMutation.mutateAsync(data)}
+          onCancel={() => setShowOrderForm(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      <Button onClick={() => setShowOrderForm(true)} className="w-full">
+        <Plus className="w-4 h-4 mr-2" /> New Order for This Project
+      </Button>
+      
       {orders.length === 0 ? (
         <Card className="p-12 text-center">
           <Package className="w-12 h-12 text-slate-300 mx-auto mb-3" />
