@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { 
   Plus, Search, Folder, AlertCircle, CheckCircle2,
-  Clock, TrendingUp, Users, Package
+  Clock, TrendingUp, Users, Package, RefreshCw
 } from "lucide-react";
 import { createPageUrl } from "../utils";
 import { Link } from "react-router-dom";
@@ -31,6 +31,7 @@ const priorityColors = {
 export default function Projects() {
   const [search, setSearch] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ['projects'],
@@ -76,9 +77,21 @@ export default function Projects() {
             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Projects</h1>
             <p className="text-slate-500 mt-1">Manage client projects and deliverables</p>
           </div>
-          <Button onClick={() => setShowNewProject(true)} className="bg-slate-900 hover:bg-slate-800 rounded-xl h-11 px-6">
-            <Plus className="w-4 h-4 mr-2" /> New Project
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={() => {
+                queryClient.invalidateQueries();
+                toast.success("Refreshed!");
+              }} 
+              variant="ghost"
+              size="icon"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+            <Button onClick={() => setShowNewProject(true)} className="bg-slate-900 hover:bg-slate-800 rounded-xl h-11 px-6">
+              <Plus className="w-4 h-4 mr-2" /> New Project
+            </Button>
+          </div>
         </div>
 
         {/* Stats */}
