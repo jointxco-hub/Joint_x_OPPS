@@ -1,6 +1,7 @@
 import Calculator from './pages/Calculator';
 import CatalogManagement from './pages/CatalogManagement';
 import ClientCatalog from './pages/ClientCatalog';
+import Clients from './pages/Clients';
 import Dashboard from './pages/Dashboard';
 import Executive from './pages/Executive';
 import Home from './pages/Home';
@@ -12,7 +13,6 @@ import PurchaseOrders from './pages/PurchaseOrders';
 import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
-import Clients from './pages/Clients';
 import __Layout from './Layout.jsx';
 
 
@@ -20,6 +20,7 @@ export const PAGES = {
     "Calculator": Calculator,
     "CatalogManagement": CatalogManagement,
     "ClientCatalog": ClientCatalog,
+    "Clients": Clients,
     "Dashboard": Dashboard,
     "Executive": Executive,
     "Home": Home,
@@ -31,7 +32,6 @@ export const PAGES = {
     "Suppliers": Suppliers,
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
-    "Clients": Clients,
 }
 
 export const pagesConfig = {

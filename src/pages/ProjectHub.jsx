@@ -14,7 +14,7 @@ import {
 import { Link } from "react-router-dom";
 import { createPageUrl } from "../utils";
 import ClientAssetsPanel from "@/components/orders/ClientAssetsPanel";
-import TypeformOrderForm from "@/components/orders/TypeformOrderForm";
+import OrderLinker from "@/components/projects/OrderLinker";
 
 export default function ProjectHub() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -234,33 +234,12 @@ function FilesTab({ projectId, clientName, assetType }) {
 }
 
 function OrdersTab({ orders, projectId, clientName }) {
-  const [showOrderForm, setShowOrderForm] = useState(false);
-  const queryClient = useQueryClient();
-
-  const createOrderMutation = useMutation({
-    mutationFn: (data) => base44.entities.Order.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projectOrders', projectId] });
-      setShowOrderForm(false);
-    }
-  });
-
-  if (showOrderForm) {
-    return (
-      <div className="fixed inset-0 z-50 bg-white">
-        <TypeformOrderForm 
-          order={{ project_id: projectId, client_name: clientName }}
-          onSubmit={(data) => createOrderMutation.mutateAsync(data)}
-          onCancel={() => setShowOrderForm(false)}
-        />
-      </div>
-    );
-  }
+  const [showOrderLinker, setShowOrderLinker] = useState(false);
 
   return (
     <div className="space-y-4">
-      <Button onClick={() => setShowOrderForm(true)} className="w-full">
-        <Plus className="w-4 h-4 mr-2" /> New Order for This Project
+      <Button onClick={() => setShowOrderLinker(true)} className="w-full">
+        <Plus className="w-4 h-4 mr-2" /> Add Order to Project
       </Button>
       
       {orders.length === 0 ? (
@@ -284,6 +263,14 @@ function OrdersTab({ orders, projectId, clientName }) {
             </Card>
           </Link>
         ))
+      )}
+
+      {showOrderLinker && (
+        <OrderLinker 
+          projectId={projectId}
+          clientName={clientName}
+          onClose={() => setShowOrderLinker(false)}
+        />
       )}
     </div>
   );
