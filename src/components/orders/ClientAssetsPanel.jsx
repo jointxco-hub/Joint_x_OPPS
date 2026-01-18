@@ -36,10 +36,17 @@ const approvalStatusConfig = {
 export default function ClientAssetsPanel({ orderId, projectId, clientName, filterType }) {
   const [showForm, setShowForm] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
+  
+  const getDefaultAssetType = () => {
+    if (filterType === 'document') return 'document';
+    if (filterType === 'artwork') return 'artwork';
+    return 'mockup';
+  };
+  
   const [newAsset, setNewAsset] = useState({
     title: "",
     description: "",
-    asset_type: "mockup",
+    asset_type: getDefaultAssetType(),
     is_client_visible: false,
     file_url: "",
     approval_status: "pending"
@@ -62,8 +69,10 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
 
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.ClientAsset.create(data),
-    onSuccess: () => {
+    onSuccess: (newAsset) => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
+      // Force refetch to ensure new file shows immediately
+      queryClient.refetchQueries({ queryKey: ['clientAssets', orderId, projectId] });
       setShowForm(false);
       setNewAsset({
         title: "",
@@ -73,7 +82,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
         file_url: "",
         approval_status: "pending"
       });
-      toast.success("Asset added!");
+      toast.success("Asset added and visible!");
     }
   });
 
@@ -159,7 +168,16 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ASSET_TYPES.map(type => (
+                  {ASSET_TYPES.filter(type => {
+                    if (!filterType) return true;
+                    if (filterType === 'document') {
+                      return ['document', 'tech_pack', 'project_file', 'invoice', 'note', 'other'].includes(type.value);
+                    }
+                    if (filterType === 'artwork') {
+                      return ['artwork', 'mockup', 'photo'].includes(type.value);
+                    }
+                    return type.value === filterType;
+                  }).map(type => (
                     <SelectItem key={type.value} value={type.value}>
                       {type.label}
                     </SelectItem>
@@ -245,7 +263,16 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {assets.filter(a => !filterType || a.asset_type === filterType).map(asset => {
+          {assets.filter(a => {
+            if (!filterType) return true;
+            if (filterType === 'document') {
+              return ['document', 'tech_pack', 'project_file', 'invoice', 'note', 'other'].includes(a.asset_type);
+            }
+            if (filterType === 'artwork') {
+              return ['artwork', 'mockup', 'photo'].includes(a.asset_type);
+            }
+            return a.asset_type === filterType;
+          }).map(asset => {
             const Icon = getAssetIcon(asset.asset_type);
             const approvalConfig = approvalStatusConfig[asset.approval_status || 'pending'];
             const ApprovalIcon = approvalConfig.icon;
