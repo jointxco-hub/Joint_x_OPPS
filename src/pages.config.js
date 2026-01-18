@@ -13,6 +13,7 @@ import PurchaseOrders from './pages/PurchaseOrders';
 import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
+import FileManager from './pages/FileManager';
 import __Layout from './Layout.jsx';
 
 
@@ -32,6 +33,7 @@ export const PAGES = {
     "Suppliers": Suppliers,
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
+    "FileManager": FileManager,
 }
 
 export const pagesConfig = {
