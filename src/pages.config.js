@@ -4,6 +4,7 @@ import ClientCatalog from './pages/ClientCatalog';
 import Clients from './pages/Clients';
 import Dashboard from './pages/Dashboard';
 import Executive from './pages/Executive';
+import FileManager from './pages/FileManager';
 import Home from './pages/Home';
 import Inventory from './pages/Inventory';
 import Orders from './pages/Orders';
@@ -13,7 +14,9 @@ import PurchaseOrders from './pages/PurchaseOrders';
 import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
-import FileManager from './pages/FileManager';
+import Operations from './pages/Operations';
+import SOPLibrary from './pages/SOPLibrary';
+import RolesManagement from './pages/RolesManagement';
 import __Layout from './Layout.jsx';
 
 
@@ -24,6 +27,7 @@ export const PAGES = {
     "Clients": Clients,
     "Dashboard": Dashboard,
     "Executive": Executive,
+    "FileManager": FileManager,
     "Home": Home,
     "Inventory": Inventory,
     "Orders": Orders,
@@ -33,7 +37,9 @@ export const PAGES = {
     "Suppliers": Suppliers,
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
-    "FileManager": FileManager,
+    "Operations": Operations,
+    "SOPLibrary": SOPLibrary,
+    "RolesManagement": RolesManagement,
 }
 
 export const pagesConfig = {
