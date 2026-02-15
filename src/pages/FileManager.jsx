@@ -9,10 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { 
   Folder, FolderPlus, File, Trash2, Edit2, MoreVertical,
-  ArrowLeft, Upload, RefreshCw, Search, FolderOpen
+  ArrowLeft, Upload, RefreshCw, Search, FolderOpen, Eye
 } from "lucide-react";
 import { toast } from "sonner";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
+import FileThumbnail from "@/components/files/FileThumbnail";
+import FileLightbox from "@/components/files/FileLightbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +37,7 @@ export default function FileManager() {
   const [showEditFolder, setShowEditFolder] = useState(null);
   const [showMoveFile, setShowMoveFile] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [lightboxFile, setLightboxFile] = useState(null);
   const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
 
@@ -265,29 +268,48 @@ export default function FileManager() {
               <p className="text-slate-500">No files in this location</p>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {currentFiles.map(file => (
-                <Card key={file.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <File className="w-8 h-8 text-slate-400" />
+                <Card key={file.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setLightboxFile(file)}>
+                  <CardContent className="p-3">
+                    <FileThumbnail 
+                      fileUrl={file.file_url}
+                      fileType={file.file_type}
+                      title={file.title}
+                      className="w-full h-32 mb-2"
+                    />
+                    <h4 className="font-medium text-sm mb-1 truncate">{file.title}</h4>
+                    <p className="text-xs text-slate-500 capitalize mb-2">{file.asset_type}</p>
+                    <div className="flex items-center gap-1">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-6 w-6"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLightboxFile(file);
+                        }}
+                      >
+                        <Eye className="w-3 h-3" />
+                      </Button>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                           <Button variant="ghost" size="icon" className="h-6 w-6">
-                            <MoreVertical className="w-4 h-4" />
+                            <MoreVertical className="w-3 h-3" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setShowMoveFile(file)}>
-                            <FolderOpen className="w-4 h-4 mr-2" /> Move to Folder
+                          <DropdownMenuItem onClick={(e) => {
+                            e.stopPropagation();
+                            setShowMoveFile(file);
+                          }}>
+                            <FolderOpen className="w-4 h-4 mr-2" /> Move
                           </DropdownMenuItem>
                           <DropdownMenuItem 
-                            onClick={() => window.open(file.file_url, '_blank')}
-                          >
-                            <Upload className="w-4 h-4 mr-2" /> View
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => setDeleteConfirm({ type: 'file', item: file })}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteConfirm({ type: 'file', item: file });
+                            }}
                             className="text-red-600"
                           >
                             <Trash2 className="w-4 h-4 mr-2" /> Delete
@@ -295,8 +317,6 @@ export default function FileManager() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
-                    <h4 className="font-medium text-sm mb-1 truncate">{file.title}</h4>
-                    <p className="text-xs text-slate-500 capitalize">{file.asset_type}</p>
                   </CardContent>
                 </Card>
               ))}
@@ -363,6 +383,13 @@ export default function FileManager() {
           }}
           variant="destructive"
         />
+
+        {lightboxFile && (
+          <FileLightbox 
+            file={lightboxFile}
+            onClose={() => setLightboxFile(null)}
+          />
+        )}
       </div>
     </div>
   );
