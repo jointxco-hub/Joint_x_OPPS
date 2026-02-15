@@ -69,6 +69,8 @@ import TrackOrder from './pages/TrackOrder';
 import SOPEditor from './pages/SOPEditor';
 import SOPView from './pages/SOPView';
 import OnboardingManagement from './pages/OnboardingManagement';
+import WeeklyCalendar from './pages/WeeklyCalendar';
+import NotesHub from './pages/NotesHub';
 import __Layout from './Layout.jsx';
 
 
@@ -95,6 +97,8 @@ export const PAGES = {
     "SOPEditor": SOPEditor,
     "SOPView": SOPView,
     "OnboardingManagement": OnboardingManagement,
+    "WeeklyCalendar": WeeklyCalendar,
+    "NotesHub": NotesHub,
 }
 
 export const pagesConfig = {
