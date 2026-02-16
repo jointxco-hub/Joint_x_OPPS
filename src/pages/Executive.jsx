@@ -27,6 +27,16 @@ export default function Executive() {
     queryFn: () => base44.entities.Project.list('-created_date', 500)
   });
 
+  const { data: inventory = [] } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => base44.entities.InventoryItem.list('-created_date', 500)
+  });
+
+  const { data: purchaseOrders = [] } = useQuery({
+    queryKey: ['purchaseOrders'],
+    queryFn: () => base44.entities.PurchaseOrder.list('-created_date', 500)
+  });
+
   // Calculate metrics
   const now = new Date();
   const daysAgo = parseInt(dateRange);
@@ -48,6 +58,27 @@ export default function Executive() {
   const ordersCompleted = orders.filter(o => o.status === 'delivered').length;
 
   const avgOrderValue = orders.length > 0 ? totalRevenue / orders.length : 0;
+
+  // Finance calculations
+  const totalExpenses = orders.reduce((sum, o) => 
+    sum + (o.materials_cost || 0) + (o.transport_cost || 0), 0
+  );
+  const pendingPOValue = purchaseOrders
+    .filter(po => !['received', 'cancelled', 'archived'].includes(po.status))
+    .reduce((sum, po) => sum + (po.total || 0), 0);
+  const inventoryValue = inventory.reduce((sum, item) => 
+    sum + (item.current_stock || 0) * (item.cost_price || 0), 0
+  );
+  const profitMargin = totalRevenue > 0 
+    ? ((totalRevenue - totalExpenses) / totalRevenue) * 100 
+    : 0;
+  const cashPosition = totalRevenue - totalExpenses - pendingPOValue;
+  
+  // Deposits & Outstanding
+  const totalDeposits = orders.reduce((sum, o) => sum + (o.deposit_paid || 0), 0);
+  const outstandingPayments = orders
+    .filter(o => o.status !== 'archived')
+    .reduce((sum, o) => sum + Math.max(0, (o.quoted_price || 0) - (o.deposit_paid || 0)), 0);
 
   // Top clients by revenue
   const topClients = clients
@@ -123,70 +154,131 @@ export default function Executive() {
         </div>
 
         {/* Key Metrics */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4 mb-6">
           <Card>
-            <CardContent className="p-6">
+            <CardContent className="p-4 md:p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-slate-500">Total Clients</p>
-                <Users className="w-5 h-5 text-blue-500" />
+                <p className="text-xs md:text-sm text-slate-500">Total Revenue</p>
+                <DollarSign className="w-4 h-4 md:w-5 md:h-5 text-green-500" />
               </div>
-              <p className="text-3xl font-bold text-slate-900">{clients.length}</p>
-              <p className="text-sm text-green-600 mt-1">+{newClientsThisMonth} this month</p>
+              <p className="text-xl md:text-2xl font-bold text-slate-900">R{totalRevenue.toLocaleString()}</p>
+              <p className="text-xs text-slate-600 mt-1">R{revenueThisPeriod.toLocaleString()} period</p>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="p-6">
+            <CardContent className="p-4 md:p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-slate-500">Total Revenue</p>
-                <DollarSign className="w-5 h-5 text-green-500" />
+                <p className="text-xs md:text-sm text-slate-500">Total Expenses</p>
+                <Package className="w-4 h-4 md:w-5 md:h-5 text-red-500" />
               </div>
-              <p className="text-3xl font-bold text-slate-900">R{totalRevenue.toLocaleString()}</p>
-              <p className="text-sm text-slate-600 mt-1">R{revenueThisPeriod.toLocaleString()} in period</p>
+              <p className="text-xl md:text-2xl font-bold text-slate-900">R{totalExpenses.toLocaleString()}</p>
+              <p className="text-xs text-slate-600 mt-1">Materials + Transport</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-to-br from-emerald-500 to-emerald-600">
+            <CardContent className="p-4 md:p-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs md:text-sm text-white/90">Gross Profit</p>
+                <TrendingUp className="w-4 h-4 md:w-5 md:h-5 text-white" />
+              </div>
+              <p className="text-xl md:text-2xl font-bold text-white">R{(totalRevenue - totalExpenses).toLocaleString()}</p>
+              <p className="text-xs text-white/80 mt-1">{profitMargin.toFixed(1)}% margin</p>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="p-6">
+            <CardContent className="p-4 md:p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-slate-500">Active Orders</p>
-                <Package className="w-5 h-5 text-orange-500" />
+                <p className="text-xs md:text-sm text-slate-500">Deposits Received</p>
+                <DollarSign className="w-4 h-4 md:w-5 md:h-5 text-blue-500" />
               </div>
-              <p className="text-3xl font-bold text-slate-900">{ordersInProgress}</p>
-              <p className="text-sm text-slate-600 mt-1">{ordersCompleted} completed</p>
+              <p className="text-xl md:text-2xl font-bold text-slate-900">R{totalDeposits.toLocaleString()}</p>
+              <p className="text-xs text-slate-600 mt-1">From {orders.filter(o => o.deposit_paid > 0).length} orders</p>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="p-6">
+            <CardContent className="p-4 md:p-6">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm text-slate-500">Avg Order Value</p>
-                <TrendingUp className="w-5 h-5 text-purple-500" />
+                <p className="text-xs md:text-sm text-slate-500">Outstanding</p>
+                <TrendingUp className="w-4 h-4 md:w-5 md:h-5 text-orange-500" />
               </div>
-              <p className="text-3xl font-bold text-slate-900">R{Math.round(avgOrderValue).toLocaleString()}</p>
-              <p className="text-sm text-slate-600 mt-1">{orders.length} total orders</p>
+              <p className="text-xl md:text-2xl font-bold text-slate-900">R{outstandingPayments.toLocaleString()}</p>
+              <p className="text-xs text-slate-600 mt-1">Pending payments</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-4 md:p-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs md:text-sm text-slate-500">Pending POs</p>
+                <Package className="w-4 h-4 md:w-5 md:h-5 text-purple-500" />
+              </div>
+              <p className="text-xl md:text-2xl font-bold text-slate-900">R{pendingPOValue.toLocaleString()}</p>
+              <p className="text-xs text-slate-600 mt-1">To be paid</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Client Status */}
-        <div className="grid md:grid-cols-3 gap-4 mb-6">
+        {/* Cash Position Card */}
+        <Card className="mb-6 bg-gradient-to-br from-slate-800 to-slate-900">
+          <CardContent className="p-4 md:p-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <p className="text-sm text-white/70 mb-2">Estimated Cash Position</p>
+                <p className={`text-3xl md:text-4xl font-bold ${cashPosition >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  R{cashPosition.toLocaleString()}
+                </p>
+                <p className="text-xs text-white/60 mt-2">
+                  Revenue (R{totalRevenue.toLocaleString()}) - Expenses (R{totalExpenses.toLocaleString()}) - Pending POs (R{pendingPOValue.toLocaleString()})
+                </p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-1 gap-3">
+                <div className="bg-white/10 rounded-lg p-3">
+                  <p className="text-xs text-white/70">Inventory Value</p>
+                  <p className="text-lg font-semibold text-white">R{inventoryValue.toLocaleString()}</p>
+                </div>
+                <div className="bg-white/10 rounded-lg p-3">
+                  <p className="text-xs text-white/70">Active Clients</p>
+                  <p className="text-lg font-semibold text-white">{activeClients}</p>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Financial Health */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
           <Card>
-            <CardContent className="p-6">
-              <p className="text-sm text-slate-500 mb-2">Active Clients</p>
-              <p className="text-2xl font-bold text-green-600">{activeClients}</p>
+            <CardContent className="p-4 md:p-6">
+              <p className="text-xs md:text-sm text-slate-500 mb-2">Active Clients</p>
+              <p className="text-xl md:text-2xl font-bold text-green-600">{activeClients}</p>
+              <p className="text-xs text-slate-500 mt-1">{clients.length} total</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-6">
-              <p className="text-sm text-slate-500 mb-2">Dormant Clients</p>
-              <p className="text-2xl font-bold text-amber-600">{dormantClients}</p>
+            <CardContent className="p-4 md:p-6">
+              <p className="text-xs md:text-sm text-slate-500 mb-2">Active Orders</p>
+              <p className="text-xl md:text-2xl font-bold text-orange-600">{ordersInProgress}</p>
+              <p className="text-xs text-slate-500 mt-1">{ordersCompleted} completed</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="p-6">
-              <p className="text-sm text-slate-500 mb-2">Active Projects</p>
-              <p className="text-2xl font-bold text-blue-600">{projects.filter(p => p.status === 'active').length}</p>
+            <CardContent className="p-4 md:p-6">
+              <p className="text-xs md:text-sm text-slate-500 mb-2">Active Projects</p>
+              <p className="text-xl md:text-2xl font-bold text-blue-600">{projects.filter(p => p.status === 'active').length}</p>
+              <p className="text-xs text-slate-500 mt-1">{projects.length} total</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4 md:p-6">
+              <p className="text-xs md:text-sm text-slate-500 mb-2">Low Stock Items</p>
+              <p className="text-xl md:text-2xl font-bold text-red-600">
+                {inventory.filter(i => i.current_stock <= (i.reorder_point || 0)).length}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">{inventory.length} items tracked</p>
             </CardContent>
           </Card>
         </div>
