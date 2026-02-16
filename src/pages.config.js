@@ -56,21 +56,21 @@ import Executive from './pages/Executive';
 import FileManager from './pages/FileManager';
 import Home from './pages/Home';
 import Inventory from './pages/Inventory';
+import NotesHub from './pages/NotesHub';
+import OnboardingManagement from './pages/OnboardingManagement';
 import Operations from './pages/Operations';
 import Orders from './pages/Orders';
 import ProjectHub from './pages/ProjectHub';
 import Projects from './pages/Projects';
 import PurchaseOrders from './pages/PurchaseOrders';
 import RolesManagement from './pages/RolesManagement';
+import SOPEditor from './pages/SOPEditor';
 import SOPLibrary from './pages/SOPLibrary';
+import SOPView from './pages/SOPView';
 import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
-import SOPEditor from './pages/SOPEditor';
-import SOPView from './pages/SOPView';
-import OnboardingManagement from './pages/OnboardingManagement';
 import WeeklyCalendar from './pages/WeeklyCalendar';
-import NotesHub from './pages/NotesHub';
 import __Layout from './Layout.jsx';
 
 
@@ -84,21 +84,21 @@ export const PAGES = {
     "FileManager": FileManager,
     "Home": Home,
     "Inventory": Inventory,
+    "NotesHub": NotesHub,
+    "OnboardingManagement": OnboardingManagement,
     "Operations": Operations,
     "Orders": Orders,
     "ProjectHub": ProjectHub,
     "Projects": Projects,
     "PurchaseOrders": PurchaseOrders,
     "RolesManagement": RolesManagement,
+    "SOPEditor": SOPEditor,
     "SOPLibrary": SOPLibrary,
+    "SOPView": SOPView,
     "Suppliers": Suppliers,
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
-    "SOPEditor": SOPEditor,
-    "SOPView": SOPView,
-    "OnboardingManagement": OnboardingManagement,
     "WeeklyCalendar": WeeklyCalendar,
-    "NotesHub": NotesHub,
 }
 
 export const pagesConfig = {
