@@ -28,7 +28,22 @@ export default function Executive() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const queryClient = useQueryClient();
 
-  // Data queries
+  // Data queries - sync with operational data
+  const { data: orders = [] } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => base44.entities.Order.list('-created_date', 500)
+  });
+
+  const { data: purchaseOrders = [] } = useQuery({
+    queryKey: ['purchaseOrders'],
+    queryFn: () => base44.entities.PurchaseOrder.list('-created_date', 500)
+  });
+
+  const { data: inventory = [] } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => base44.entities.InventoryItem.list('name', 500)
+  });
+
   const { data: expenses = [] } = useQuery({
     queryKey: ['expenses'],
     queryFn: () => base44.entities.Expense.list('-date', 500)
@@ -75,15 +90,34 @@ export default function Executive() {
     const monthStart = startOfMonth(now);
     const monthEnd = endOfMonth(now);
 
-    // This month expenses
+    // Revenue from Orders (this month)
+    const monthOrders = orders.filter(o => {
+      const orderDate = new Date(o.created_date);
+      return orderDate >= monthStart && orderDate <= monthEnd;
+    });
+
+    const totalRevenue = monthOrders.reduce((sum, o) => sum + (o.quoted_price || 0), 0);
+    const paidRevenue = monthOrders.reduce((sum, o) => sum + (o.deposit_paid || 0), 0);
+    
+    // Expenses from Purchase Orders (this month)
+    const monthPOs = purchaseOrders.filter(po => {
+      const poDate = new Date(po.created_date);
+      return poDate >= monthStart && poDate <= monthEnd && po.status === 'received';
+    });
+
+    const poExpenses = monthPOs.reduce((sum, po) => sum + (po.total || 0), 0);
+
+    // Manual expenses
     const monthExpenses = expenses.filter(e => {
       const expDate = new Date(e.date);
       return expDate >= monthStart && expDate <= monthEnd;
     });
 
-    const totalExpenses = monthExpenses
+    const manualExpenses = monthExpenses
       .filter(e => e.category !== 'owner_drawings')
       .reduce((sum, e) => sum + (e.amount || 0), 0);
+
+    const totalExpenses = poExpenses + manualExpenses;
 
     const ownerDrawings = monthExpenses
       .filter(e => e.category === 'owner_drawings')
@@ -91,35 +125,49 @@ export default function Executive() {
 
     const vatPaid = monthExpenses.reduce((sum, e) => sum + (e.vat_amount || 0), 0);
 
-    // This month income
+    // Income from Invoices
     const monthInvoices = invoices.filter(i => {
       const invDate = new Date(i.invoice_date);
       return invDate >= monthStart && invDate <= monthEnd;
     });
 
-    const totalRevenue = monthInvoices.reduce((sum, i) => sum + (i.gross_amount || 0), 0);
-    const paidRevenue = monthInvoices
+    const invoiceRevenue = monthInvoices.reduce((sum, i) => sum + (i.gross_amount || 0), 0);
+    const paidInvoices = monthInvoices
       .filter(i => i.payment_status === 'paid')
       .reduce((sum, i) => sum + (i.gross_amount || 0), 0);
     const vatCollected = monthInvoices.reduce((sum, i) => sum + (i.vat_amount || 0), 0);
 
-    // Inventory value
+    // Combine revenue sources
+    const combinedRevenue = totalRevenue + invoiceRevenue;
+    const combinedPaidRevenue = paidRevenue + paidInvoices;
+
+    // Inventory value from InventoryItem
+    const inventoryValue = inventory.reduce((sum, item) => {
+      return sum + ((item.current_stock || 0) * (item.cost_price || 0));
+    }, 0);
+
+    // Add raw/finished stock value
     const rawValue = rawStock.reduce((sum, r) => sum + ((r.quantity_remaining || 0) * (r.cost_per_unit || 0)), 0);
     const finishedValue = finishedStock.reduce((sum, f) => sum + ((f.quantity_available || 0) * (f.cost_per_unit || 0)), 0);
-    const inventoryValue = rawValue + finishedValue;
+    const totalInventoryValue = inventoryValue + rawValue + finishedValue;
 
     // Net profit
-    const netProfit = paidRevenue - totalExpenses;
+    const netProfit = combinedPaidRevenue - totalExpenses;
 
     // VAT owed
     const vatOwed = vatCollected - vatPaid;
 
+    // Pending POs value
+    const pendingPOValue = purchaseOrders
+      .filter(po => ['draft', 'pending', 'approved', 'ordered'].includes(po.status))
+      .reduce((sum, po) => sum + (po.total || 0), 0);
+
     // Cash balance (paid revenue - expenses - owner drawings)
-    const cashBalance = paidRevenue - totalExpenses - ownerDrawings;
+    const cashBalance = combinedPaidRevenue - totalExpenses - ownerDrawings;
 
     // Assets value (with depreciation)
     const assetsValue = assets.reduce((sum, a) => {
-      if (a.category === 'inventory') return sum + inventoryValue;
+      if (a.category === 'inventory') return sum + totalInventoryValue;
       if (a.category === 'cash') return sum + cashBalance;
       
       // Calculate depreciation
@@ -150,12 +198,12 @@ export default function Executive() {
       .reduce((sum, m) => sum + (m.cost_value || 0), 0);
 
     return {
-      totalRevenue,
-      paidRevenue,
+      totalRevenue: combinedRevenue,
+      paidRevenue: combinedPaidRevenue,
       totalExpenses,
       netProfit,
       vatOwed,
-      inventoryValue,
+      inventoryValue: totalInventoryValue,
       cashBalance,
       netWorth,
       vatCollected,
@@ -163,9 +211,12 @@ export default function Executive() {
       assetsValue,
       liabilitiesTotal,
       cogs,
-      ownerDrawings
+      ownerDrawings,
+      pendingPOValue,
+      poExpenses,
+      manualExpenses
     };
-  }, [expenses, invoices, rawStock, finishedStock, assets, liabilities, stockMovements]);
+  }, [orders, purchaseOrders, inventory, expenses, invoices, rawStock, finishedStock, assets, liabilities, stockMovements]);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -324,7 +375,7 @@ function DashboardView({ metrics }) {
         <MetricCard 
           title="Expenses (This Month)"
           value={`R${metrics.totalExpenses.toLocaleString()}`}
-          subtitle="Operating costs"
+          subtitle={`POs: R${metrics.poExpenses.toLocaleString()} + Manual: R${metrics.manualExpenses.toLocaleString()}`}
           icon={TrendingDown}
           color="red"
         />
@@ -345,7 +396,7 @@ function DashboardView({ metrics }) {
         <MetricCard 
           title="Inventory Value"
           value={`R${metrics.inventoryValue.toLocaleString()}`}
-          subtitle="Raw + Finished"
+          subtitle={`Pending POs: R${metrics.pendingPOValue.toLocaleString()}`}
           icon={Package}
           color="purple"
         />
