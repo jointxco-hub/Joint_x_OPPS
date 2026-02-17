@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 const navItems = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
   { name: "Executive", page: "Executive", icon: BarChart2 },
+  { name: "Alethea Brand OS", page: "AletheaBrandOS", icon: Target },
   { name: "Operations", page: "Operations", icon: Target },
   { name: "Calendar", page: "WeeklyCalendar", icon: Calendar },
   { name: "Projects", page: "Projects", icon: Shirt },
@@ -30,7 +31,7 @@ export default function Layout({ children, currentPageName }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Pages with their own layout
-  if (currentPageName === "TrackOrder" || currentPageName === "ClientCatalog") {
+  if (currentPageName === "TrackOrder" || currentPageName === "ClientCatalog" || currentPageName === "AletheaClientPortal") {
     return <>{children}</>;
   }
 
