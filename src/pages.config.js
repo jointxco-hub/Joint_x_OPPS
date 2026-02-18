@@ -47,6 +47,10 @@
  *
  * The mainPage value must match a key in the PAGES object exactly.
  */
+import AletheaBrandOS from './pages/AletheaBrandOS';
+import AletheaClientPortal from './pages/AletheaClientPortal';
+import AletheaProjectBuilder from './pages/AletheaProjectBuilder';
+import AletheaProjectView from './pages/AletheaProjectView';
 import Calculator from './pages/Calculator';
 import CatalogManagement from './pages/CatalogManagement';
 import ClientCatalog from './pages/ClientCatalog';
@@ -71,14 +75,14 @@ import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
 import WeeklyCalendar from './pages/WeeklyCalendar';
-import AletheaBrandOS from './pages/AletheaBrandOS';
-import AletheaProjectView from './pages/AletheaProjectView';
-import AletheaProjectBuilder from './pages/AletheaProjectBuilder';
-import AletheaClientPortal from './pages/AletheaClientPortal';
 import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
+    "AletheaBrandOS": AletheaBrandOS,
+    "AletheaClientPortal": AletheaClientPortal,
+    "AletheaProjectBuilder": AletheaProjectBuilder,
+    "AletheaProjectView": AletheaProjectView,
     "Calculator": Calculator,
     "CatalogManagement": CatalogManagement,
     "ClientCatalog": ClientCatalog,
@@ -103,10 +107,6 @@ export const PAGES = {
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
     "WeeklyCalendar": WeeklyCalendar,
-    "AletheaBrandOS": AletheaBrandOS,
-    "AletheaProjectView": AletheaProjectView,
-    "AletheaProjectBuilder": AletheaProjectBuilder,
-    "AletheaClientPortal": AletheaClientPortal,
 }
 
 export const pagesConfig = {
