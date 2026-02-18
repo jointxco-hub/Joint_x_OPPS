@@ -98,27 +98,28 @@ export default function AletheaBrandOS() {
         <TabsContent value="completed">
           <ProjectGrid projects={completedProjects} clients={clients} />
         </TabsContent>
-      </Tabs>
-      
-      {/* Bottom Navigation Tabs */}
-      <div className="fixed bottom-0 left-0 right-0 bg-[#0A0A0A] border-t border-[#2A2A2A] lg:pl-64">
-        <div className="max-w-4xl mx-auto flex items-center justify-around py-3">
-          <Link to={createPageUrl("Dashboard")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
-            <Users className="w-5 h-5" />
-            <span className="text-xs">Dashboard</span>
-          </Link>
-          <button className="flex flex-col items-center gap-1 text-indigo-500">
-            <Calendar className="w-5 h-5" />
-            <span className="text-xs">Phases</span>
-          </button>
-          <Link to={createPageUrl("Projects")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
-            <Settings className="w-5 h-5" />
-            <span className="text-xs">Timeline</span>
-          </Link>
-          <Link to={createPageUrl("Clients")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
-            <Users className="w-5 h-5" />
-            <span className="text-xs">Team</span>
-          </Link>
+        </Tabs>
+        
+        {/* Bottom Navigation Tabs */}
+        <div className="fixed bottom-0 left-0 right-0 bg-[#0A0A0A] border-t border-[#2A2A2A] lg:pl-64">
+          <div className="max-w-4xl mx-auto flex items-center justify-around py-3">
+            <Link to={createPageUrl("Dashboard")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
+              <Users className="w-5 h-5" />
+              <span className="text-xs">Dashboard</span>
+            </Link>
+            <button className="flex flex-col items-center gap-1 text-indigo-500">
+              <Calendar className="w-5 h-5" />
+              <span className="text-xs">Phases</span>
+            </button>
+            <Link to={createPageUrl("Projects")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
+              <Settings className="w-5 h-5" />
+              <span className="text-xs">Timeline</span>
+            </Link>
+            <Link to={createPageUrl("Clients")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
+              <Users className="w-5 h-5" />
+              <span className="text-xs">Team</span>
+            </Link>
+          </div>
         </div>
       </div>
     </div>
