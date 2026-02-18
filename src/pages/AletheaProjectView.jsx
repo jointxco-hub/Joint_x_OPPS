@@ -1,13 +1,13 @@
-import React, { useState, useMemo } from "react";
+import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { 
-  Lock, CheckCircle, Clock, DollarSign, FileText, 
-  AlertCircle, ChevronDown, ChevronRight, ArrowLeft
+  Lightbulb, Palette, ShoppingCart, Share2, Mail, Settings, 
+  Wrench, ChevronLeft, ChevronRight, User, Users, Clock, FileText
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "../utils";
@@ -48,168 +48,109 @@ export default function AletheaProjectView() {
     }
   });
 
+  const phaseColors = [
+    { bg: 'from-indigo-600 to-indigo-700', iconBg: 'bg-indigo-600', text: 'text-indigo-400', label: 'text-indigo-400' },
+    { bg: 'from-pink-600 to-pink-700', iconBg: 'bg-pink-600', text: 'text-pink-400', label: 'text-pink-400' },
+    { bg: 'from-green-600 to-green-700', iconBg: 'bg-green-600', text: 'text-green-400', label: 'text-green-400' },
+    { bg: 'from-orange-600 to-orange-700', iconBg: 'bg-orange-600', text: 'text-orange-400', label: 'text-orange-400' },
+    { bg: 'from-purple-600 to-purple-700', iconBg: 'bg-purple-600', text: 'text-purple-400', label: 'text-purple-400' },
+    { bg: 'from-teal-600 to-teal-700', iconBg: 'bg-teal-600', text: 'text-teal-400', label: 'text-teal-400' },
+    { bg: 'from-red-600 to-red-700', iconBg: 'bg-red-600', text: 'text-red-400', label: 'text-red-400' }
+  ];
+
+  const phaseIcons = [Lightbulb, Palette, ShoppingCart, Share2, Mail, Settings, Wrench];
+
   if (!project) {
     return (
-      <div className="p-6">
+      <div className="min-h-screen bg-[#0A0A0A] text-white p-6 flex items-center justify-center">
         <p>Loading...</p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <Link to={createPageUrl("AletheaBrandOS")}>
-          <Button variant="ghost" size="sm" className="mb-3">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Projects
-          </Button>
-        </Link>
-        
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-2">{project.name}</h1>
-            <p className="text-slate-500">{client?.name || 'Client'}</p>
-          </div>
-          <Badge className={
-            project.status === 'active' ? 'bg-green-100 text-green-700' :
-            project.status === 'completed' ? 'bg-blue-100 text-blue-700' :
-            'bg-orange-100 text-orange-700'
-          }>
-            {project.status}
-          </Badge>
+    <div className="min-h-screen bg-[#0A0A0A] text-white">
+      <div className="max-w-4xl mx-auto pb-24">
+        {/* Header */}
+        <div className="p-6">
+          <Link to={createPageUrl("AletheaBrandOS")}>
+            <Button variant="ghost" size="sm" className="text-white hover:bg-[#1A1A1A] mb-4">
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              Back
+            </Button>
+          </Link>
         </div>
 
-        {/* Progress */}
-        <div className="mt-4">
-          <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
-            <span>Overall Progress</span>
-            <span>{project.progress_percentage || 0}%</span>
-          </div>
-          <Progress value={project.progress_percentage || 0} className="h-3" />
+        {/* Phases List */}
+        <div className="px-6 space-y-3">
+          {phases.map((phase, index) => {
+            const colors = phaseColors[index % phaseColors.length];
+            const Icon = phaseIcons[index % phaseIcons.length];
+            
+            return (
+              <Link key={phase.id} to={createPageUrl(`AletheaProjectView?id=${project.id}&phase=${phase.id}`)}>
+                <Card className="bg-[#1A1A1A] border-[#2A2A2A] hover:bg-[#222] transition-all">
+                  <CardContent className="p-4">
+                    <div className="flex items-center gap-4">
+                      {/* Icon */}
+                      <div className={`w-14 h-14 rounded-xl ${colors.iconBg} flex items-center justify-center shrink-0`}>
+                        <Icon className="w-7 h-7 text-white" />
+                      </div>
+                      
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs font-medium mb-1 ${colors.label}`}>Phase {phase.order}</p>
+                            <h3 className="text-white font-semibold text-lg leading-tight">{phase.name}</h3>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs text-slate-500 mb-1">Week {phase.order}</p>
+                            <ChevronRight className="w-5 h-5 text-slate-500 ml-auto" />
+                          </div>
+                        </div>
+                        
+                        {/* Progress Bar */}
+                        <div className="mt-3">
+                          <div className="h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full bg-gradient-to-r ${colors.bg} transition-all`}
+                              style={{ width: `${phase.completion_percentage || 0}%` }}
+                            />
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1 text-right">{phase.completion_percentage || 0}%</p>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       </div>
-
-      {/* Phases */}
-      <div className="space-y-4">
-        {phases.map((phase, index) => {
-          const invoice = invoices.find(i => i.id === phase.linked_invoice_id);
-          const isLocked = phase.status === 'locked';
-          const isActive = phase.status === 'active';
-          const isCompleted = phase.status === 'completed';
-
-          return (
-            <PhaseCard 
-              key={phase.id}
-              phase={phase}
-              invoice={invoice}
-              isLocked={isLocked}
-              isActive={isActive}
-              isCompleted={isCompleted}
-              onUnlock={() => unlockPhaseMutation.mutate({ phaseId: phase.id })}
-            />
-          );
-        })}
+      
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-[#0A0A0A] border-t border-[#2A2A2A] lg:pl-64">
+        <div className="max-w-4xl mx-auto flex items-center justify-around py-3">
+          <Link to={createPageUrl("Dashboard")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
+            <Users className="w-5 h-5" />
+            <span className="text-xs">Dashboard</span>
+          </Link>
+          <button className="flex flex-col items-center gap-1 text-indigo-500">
+            <FileText className="w-5 h-5" />
+            <span className="text-xs">Phases</span>
+          </button>
+          <Link to={createPageUrl("Projects")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
+            <Clock className="w-5 h-5" />
+            <span className="text-xs">Timeline</span>
+          </Link>
+          <Link to={createPageUrl("Clients")} className="flex flex-col items-center gap-1 text-slate-400 hover:text-white">
+            <Users className="w-5 h-5" />
+            <span className="text-xs">Team</span>
+          </Link>
+        </div>
       </div>
     </div>
-  );
-}
-
-function PhaseCard({ phase, invoice, isLocked, isActive, isCompleted, onUnlock }) {
-  const [expanded, setExpanded] = useState(false);
-
-  const statusIcon = isCompleted ? (
-    <CheckCircle className="w-5 h-5 text-green-600" />
-  ) : isLocked ? (
-    <Lock className="w-5 h-5 text-slate-400" />
-  ) : (
-    <Clock className="w-5 h-5 text-blue-600" />
-  );
-
-  const canUnlock = isLocked && phase.payment_required && invoice?.payment_status === 'paid';
-
-  return (
-    <Card className={`${isLocked ? 'opacity-60' : ''}`}>
-      <CardHeader 
-        className="cursor-pointer hover:bg-slate-50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {statusIcon}
-            <div>
-              <CardTitle className="text-lg">{phase.name}</CardTitle>
-              <p className="text-sm text-slate-500">Phase {phase.order}</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            {phase.payment_required && (
-              <Badge variant="outline" className="gap-1">
-                <DollarSign className="w-3 h-3" />
-                Payment Required
-              </Badge>
-            )}
-            {expanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-          </div>
-        </div>
-      </CardHeader>
-
-      {expanded && (
-        <CardContent>
-          <div className="space-y-4">
-            {/* Payment Info */}
-            {phase.payment_required && (
-              <div className="p-4 bg-amber-50 rounded-lg border border-amber-200">
-                <div className="flex items-start gap-3">
-                  <DollarSign className="w-5 h-5 text-amber-600 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="font-medium text-amber-900 mb-1">Payment Required</p>
-                    <p className="text-sm text-amber-700">
-                      Type: {phase.payment_type || 'Full'}
-                      {phase.payment_percentage && ` (${phase.payment_percentage}%)`}
-                    </p>
-                    {invoice && (
-                      <div className="mt-2">
-                        <Badge className={
-                          invoice.payment_status === 'paid' 
-                            ? 'bg-green-100 text-green-700' 
-                            : 'bg-red-100 text-red-700'
-                        }>
-                          {invoice.payment_status === 'paid' ? 'Paid' : 'Unpaid'}
-                        </Badge>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Unlock Button */}
-            {canUnlock && (
-              <Button onClick={onUnlock} className="w-full">
-                <Lock className="w-4 h-4 mr-2" />
-                Unlock Phase
-              </Button>
-            )}
-
-            {/* Phase Details */}
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <span className="text-slate-500">Unlock Condition:</span>
-                <p className="font-medium">{phase.unlock_condition}</p>
-              </div>
-              {phase.phase_owner_id && (
-                <div>
-                  <span className="text-slate-500">Phase Owner:</span>
-                  <p className="font-medium">Role ID: {phase.phase_owner_id}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      )}
-    </Card>
   );
 }
