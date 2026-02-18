@@ -75,6 +75,7 @@ import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
 import WeeklyCalendar from './pages/WeeklyCalendar';
+import AletheaPhaseDetail from './pages/AletheaPhaseDetail';
 import __Layout from './Layout.jsx';
 
 
@@ -107,6 +108,7 @@ export const PAGES = {
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
     "WeeklyCalendar": WeeklyCalendar,
+    "AletheaPhaseDetail": AletheaPhaseDetail,
 }
 
 export const pagesConfig = {

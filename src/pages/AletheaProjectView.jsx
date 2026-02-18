@@ -88,7 +88,7 @@ export default function AletheaProjectView() {
             const Icon = phaseIcons[index % phaseIcons.length];
             
             return (
-              <Link key={phase.id} to={createPageUrl(`AletheaProjectView?id=${project.id}&phase=${phase.id}`)}>
+              <Link key={phase.id} to={createPageUrl(`AletheaPhaseDetail?id=${phase.id}&project=${project.id}`)}>
                 <Card className="bg-[#1A1A1A] border-[#2A2A2A] hover:bg-[#222] transition-all">
                   <CardContent className="p-4">
                     <div className="flex items-center gap-4">
