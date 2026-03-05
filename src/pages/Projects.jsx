@@ -182,9 +182,18 @@ export default function Projects() {
                           <h3 className="font-semibold text-slate-900 mb-1">{project.name}</h3>
                           <p className="text-sm text-slate-500">{project.client_name}</p>
                         </div>
-                        {health === 'blocked' && (
-                          <AlertCircle className="w-5 h-5 text-red-500" />
-                        )}
+                        <div className="flex items-center gap-2">
+                          {health === 'blocked' && (
+                            <AlertCircle className="w-5 h-5 text-red-500" />
+                          )}
+                          <button
+                            onClick={(e) => handleDelete(e, project.id)}
+                            className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors"
+                            title="Delete project"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap gap-2 mb-4">
