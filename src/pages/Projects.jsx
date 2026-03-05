@@ -43,6 +43,22 @@ export default function Projects() {
     queryFn: () => base44.entities.Order.list('-created_date', 200)
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id) => base44.entities.Project.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      toast.success("Project deleted");
+    }
+  });
+
+  const handleDelete = (e, projectId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirm("Are you sure you want to delete this project? This cannot be undone.")) {
+      deleteMutation.mutate(projectId);
+    }
+  };
+
   const filteredProjects = projects.filter(p => 
     p.status !== 'archived' && 
     (!search || 
