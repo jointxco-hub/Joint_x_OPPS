@@ -49,6 +49,7 @@
  */
 import AletheaBrandOS from './pages/AletheaBrandOS';
 import AletheaClientPortal from './pages/AletheaClientPortal';
+import AletheaPhaseDetail from './pages/AletheaPhaseDetail';
 import AletheaProjectBuilder from './pages/AletheaProjectBuilder';
 import AletheaProjectView from './pages/AletheaProjectView';
 import Calculator from './pages/Calculator';
@@ -75,13 +76,13 @@ import Suppliers from './pages/Suppliers';
 import Tasks from './pages/Tasks';
 import TrackOrder from './pages/TrackOrder';
 import WeeklyCalendar from './pages/WeeklyCalendar';
-import AletheaPhaseDetail from './pages/AletheaPhaseDetail';
 import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
     "AletheaBrandOS": AletheaBrandOS,
     "AletheaClientPortal": AletheaClientPortal,
+    "AletheaPhaseDetail": AletheaPhaseDetail,
     "AletheaProjectBuilder": AletheaProjectBuilder,
     "AletheaProjectView": AletheaProjectView,
     "Calculator": Calculator,
@@ -108,7 +109,6 @@ export const PAGES = {
     "Tasks": Tasks,
     "TrackOrder": TrackOrder,
     "WeeklyCalendar": WeeklyCalendar,
-    "AletheaPhaseDetail": AletheaPhaseDetail,
 }
 
 export const pagesConfig = {
