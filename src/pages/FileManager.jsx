@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
-import FileThumbnail from "@/components/files/FileThumbnail.jsx";
+import FileThumbnail from "@/components/files/FileThumbnail";
 import FileLightbox from "@/components/files/FileLightbox";
 import {
   DropdownMenu,

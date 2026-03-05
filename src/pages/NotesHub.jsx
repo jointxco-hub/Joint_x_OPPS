@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Bug, Lightbulb, Plus, Upload, Calendar } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import FileThumbnail from "@/components/files/FileThumbnail.jsx";
+import FileThumbnail from "@/components/files/FileThumbnail";
 
 const bugPriorityColors = {
   low: "bg-slate-100 text-slate-700",
