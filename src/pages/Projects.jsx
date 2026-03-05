@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { 
   Plus, Search, Folder, AlertCircle, CheckCircle2,
-  Clock, TrendingUp, Users, Package, RefreshCw
+  Clock, TrendingUp, Users, Package, RefreshCw, Trash2
 } from "lucide-react";
 import { createPageUrl } from "../utils";
 import { Link } from "react-router-dom";
