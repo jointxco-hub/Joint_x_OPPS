@@ -4,7 +4,8 @@ import { createPageUrl } from "./utils";
 import { 
   LayoutDashboard, Package, ClipboardList, Calculator, 
   Building2, Search, Menu, X, Shirt, ShoppingCart, Boxes,
-  Store, BarChart2, Users, Folder, Target, Calendar, Lightbulb
+  Store, BarChart2, Users, Folder, Target, Calendar, Lightbulb,
+  CalendarDays, UserCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -25,6 +26,8 @@ const navItems = [
   { name: "Catalog", page: "CatalogManagement", icon: Store },
   { name: "Calculator", page: "Calculator", icon: Calculator },
   { name: "Notes", page: "NotesHub", icon: Lightbulb },
+  { name: "Ops Calendar", page: "OpsCalendar", icon: CalendarDays },
+  { name: "Team", page: "TeamProfiles", icon: UserCircle },
 ];
 
 export default function Layout({ children, currentPageName }) {
