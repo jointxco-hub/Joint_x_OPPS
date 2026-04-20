@@ -120,3 +120,5 @@ export const pagesConfig = {
     Pages: PAGES,
     Layout: __Layout,
 };
+
+// NOTE: Dashboard is the main page and loads at "/"

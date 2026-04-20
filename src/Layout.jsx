@@ -1,170 +1,186 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "./utils";
-import { 
-  LayoutDashboard, Package, ClipboardList, Calculator, 
-  Building2, Search, Menu, X, Shirt, ShoppingCart, Boxes,
-  Store, BarChart2, Users, Folder, Target, Calendar, Lightbulb,
-  CalendarDays, UserCircle
+import {
+  LayoutDashboard, Package, ClipboardList, BarChart2,
+  Menu, X, ChevronRight, Boxes, Building2, Calculator,
+  CreditCard, Archive, Settings, MoreHorizontal, Target,
+  Search, Bell, User, ChevronDown
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { base44 } from "@/api/base44Client";
 
-const navItems = [
+const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
-  { name: "Executive", page: "Executive", icon: BarChart2 },
-  { name: "Alethea Brand OS", page: "AletheaBrandOS", icon: Target },
-  { name: "Operations", page: "Operations", icon: Target },
-  { name: "Calendar", page: "WeeklyCalendar", icon: Calendar },
-  { name: "Projects", page: "Projects", icon: Shirt },
   { name: "Orders", page: "Orders", icon: Package },
-  { name: "Clients", page: "Clients", icon: Users },
-  { name: "Files", page: "FileManager", icon: Folder },
-  { name: "Production", page: "Tasks", icon: ClipboardList },
-  { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
+  { name: "Tasks", page: "Tasks", icon: ClipboardList },
+];
+
+const moreNav = [
+  { name: "Finance", page: "Executive", icon: BarChart2 },
   { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
-  { name: "Catalog", page: "CatalogManagement", icon: Store },
   { name: "Calculator", page: "Calculator", icon: Calculator },
-  { name: "Notes", page: "NotesHub", icon: Lightbulb },
-  { name: "Ops Calendar", page: "OpsCalendar", icon: CalendarDays },
-  { name: "Team", page: "TeamProfiles", icon: UserCircle },
+  { name: "Archive", page: "Operations", icon: Archive },
+  { name: "Settings", page: "RolesManagement", icon: Settings },
 ];
+
+const STANDALONE_PAGES = ["TrackOrder", "ClientCatalog", "AletheaClientPortal"];
 
 export default function Layout({ children, currentPageName }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const location = useLocation();
 
-  // Pages with their own layout
-  if (currentPageName === "TrackOrder" || currentPageName === "ClientCatalog" || currentPageName === "AletheaClientPortal") {
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setMoreOpen(false);
+  }, [location]);
+
+  if (STANDALONE_PAGES.includes(currentPageName)) {
     return <>{children}</>;
   }
 
+  const allNav = [...primaryNav, ...moreNav];
+  const isMoreActive = moreNav.some(n => n.page === currentPageName);
+
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-background font-inter">
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
-        <div className="flex flex-col flex-1 bg-white border-r border-slate-200">
+      <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-[220px] lg:flex-col z-40">
+        <div className="flex flex-col flex-1 bg-card border-r border-border shadow-apple-sm">
           {/* Logo */}
-          <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
-            <img 
-              src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/6930c24147ae0b4b6b9366fc/ec83cd269_Joint_xLogo.png" 
-              alt="Joint X" 
-              className="w-10 h-10 object-contain"
-            />
+          <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
+            <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-apple-sm">
+              <span className="text-white font-bold text-sm">JX</span>
+            </div>
             <div>
-              <h1 className="font-bold text-slate-900">Joint X</h1>
-              <p className="text-xs text-slate-500">Order Management</p>
+              <h1 className="font-bold text-foreground text-sm">Joint X</h1>
+              <p className="text-xs text-muted-foreground">Operations OS</p>
             </div>
           </div>
 
-          {/* Navigation */}
-          <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-            {navItems.map(item => {
+          {/* Primary Nav */}
+          <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-3 pb-2">Main</p>
+            {primaryNav.map(item => {
               const isActive = currentPageName === item.page;
               return (
-                <Link
-                  key={item.page}
-                  to={createPageUrl(item.page)}
-                  className={`
-                    flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium
-                    transition-all duration-200
-                    ${isActive 
-                            ? 'bg-[#0F9B8E] text-white' 
-                            : 'text-slate-600 hover:bg-[#0F9B8E]/10 hover:text-[#0F9B8E]'}
-                  `}
+                <Link key={item.page} to={createPageUrl(item.page)}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group
+                    ${isActive ? 'bg-primary text-primary-foreground shadow-apple-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                 >
-                  <item.icon className="w-5 h-5" />
+                  <item.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'}`} />
+                  {item.name}
+                </Link>
+              );
+            })}
+
+            <div className="pt-4 pb-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-3 pb-2">More</p>
+            </div>
+            {moreNav.map(item => {
+              const isActive = currentPageName === item.page;
+              return (
+                <Link key={item.page} to={createPageUrl(item.page)}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group
+                    ${isActive ? 'bg-primary text-primary-foreground shadow-apple-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                >
+                  <item.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'}`} />
                   {item.name}
                 </Link>
               );
             })}
           </nav>
 
-          {/* Bottom Links */}
-          <div className="p-4 border-t border-slate-100 space-y-2">
-            <Link to={createPageUrl("ClientCatalog")}>
-              <Button variant="outline" className="w-full justify-start gap-2">
-                <Store className="w-4 h-4" />
-                Client Catalog
-              </Button>
-            </Link>
-            <Link to={createPageUrl("TrackOrder")}>
-              <Button variant="outline" className="w-full justify-start gap-2">
-                <Search className="w-4 h-4" />
-                Order Tracking
-              </Button>
-            </Link>
-          </div>
+          {/* User Profile */}
+          {user && (
+            <div className="p-3 border-t border-border">
+              <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary cursor-pointer transition-all">
+                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <span className="text-primary text-xs font-bold">
+                    {(user.full_name || user.email || 'U').charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground truncate">{user.full_name || 'User'}</p>
+                  <p className="text-xs text-muted-foreground capitalize truncate">{user.role || 'user'}</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 
-      {/* Mobile Header */}
-      <div className="lg:hidden sticky top-0 z-40 bg-white border-b border-slate-200">
+      {/* Mobile Top Bar */}
+      <div className="lg:hidden sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-              <img 
-                src="https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/6930c24147ae0b4b6b9366fc/ec83cd269_Joint_xLogo.png" 
-                alt="Joint X" 
-                className="w-9 h-9 object-contain"
-              />
-              <span className="font-bold text-slate-900">Joint X</span>
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shadow-apple-sm">
+              <span className="text-white font-bold text-xs">JX</span>
             </div>
-          <Button 
-            variant="ghost" 
-            size="icon"
+            <span className="font-bold text-foreground text-sm">Joint X</span>
+          </div>
+          <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="w-8 h-8 flex items-center justify-center rounded-xl bg-secondary text-foreground"
           >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </Button>
+            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
         </div>
 
-        {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="absolute top-full left-0 right-0 bg-white border-b border-slate-200 shadow-lg max-h-[70vh] overflow-y-auto">
-            <nav className="p-2 space-y-1">
-              {navItems.map(item => {
+          <div className="absolute top-full left-0 right-0 bg-card border-b border-border shadow-apple-lg max-h-[80vh] overflow-y-auto animate-slide-in-up">
+            <nav className="p-3 grid grid-cols-2 gap-1">
+              {allNav.map(item => {
                 const isActive = currentPageName === item.page;
                 return (
-                  <Link
-                    key={item.page}
-                    to={createPageUrl(item.page)}
-                    onClick={() => setMobileMenuOpen(false)}
-                    className={`
-                      flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium
-                      ${isActive 
-                          ? 'bg-[#0F9B8E] text-white' 
-                          : 'text-slate-600 hover:bg-[#0F9B8E]/10'}
-                    `}
+                  <Link key={item.page} to={createPageUrl(item.page)}
+                    className={`flex items-center gap-2.5 px-3 py-3 rounded-xl text-sm font-medium transition-all
+                      ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                   >
-                    <item.icon className="w-5 h-5" />
+                    <item.icon className="w-4 h-4 flex-shrink-0" />
                     {item.name}
                   </Link>
                 );
               })}
-              <div className="border-t border-slate-100 pt-2 mt-2">
-                <Link
-                  to={createPageUrl("ClientCatalog")}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
-                >
-                  <Store className="w-5 h-5" />
-                  Client Catalog
-                </Link>
-                <Link
-                  to={createPageUrl("TrackOrder")}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
-                >
-                  <Search className="w-5 h-5" />
-                  Order Tracking
-                </Link>
-              </div>
             </nav>
           </div>
         )}
       </div>
 
+      {/* Mobile Bottom Nav */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/90 backdrop-blur-xl border-t border-border safe-area-bottom">
+        <div className="flex items-center justify-around px-2 py-2">
+          {primaryNav.map(item => {
+            const isActive = currentPageName === item.page;
+            return (
+              <Link key={item.page} to={createPageUrl(item.page)}
+                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all
+                  ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
+              >
+                <item.icon className={`w-5 h-5 ${isActive ? 'text-primary' : ''}`} />
+                <span className={`text-xs font-medium ${isActive ? 'text-primary' : ''}`}>{item.name}</span>
+              </Link>
+            );
+          })}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all
+              ${isMoreActive ? 'text-primary' : 'text-muted-foreground'}`}
+          >
+            <MoreHorizontal className="w-5 h-5" />
+            <span className="text-xs font-medium">More</span>
+          </button>
+        </div>
+      </div>
+
       {/* Main Content */}
-      <main className="lg:pl-64">
+      <main className="lg:pl-[220px] pb-20 lg:pb-0">
         {children}
       </main>
     </div>

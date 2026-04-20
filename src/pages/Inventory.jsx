@@ -1,619 +1,168 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Plus, Search, Boxes, AlertTriangle, TrendingDown, Edit2, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { 
-  Plus, Package, AlertTriangle, X, Trash2, 
-  Edit, TrendingUp, Grid3x3, List, CheckSquare, Square
-} from "lucide-react";
-import { Checkbox } from "@/components/ui/checkbox";
-import LowStockAlert from "@/components/dashboard/LowStockAlert";
-
-const categoryColors = {
-  vinyl: "bg-blue-100 text-blue-700",
-  blanks: "bg-emerald-100 text-emerald-700",
-  ink: "bg-purple-100 text-purple-700",
-  labels: "bg-pink-100 text-pink-700",
-  packaging: "bg-orange-100 text-orange-700",
-  other: "bg-slate-100 text-slate-700"
-};
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 
 export default function Inventory() {
+  const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [viewMode, setViewMode] = useState("grid");
-  const [selectedItems, setSelectedItems] = useState([]);
-  const [showLowStock, setShowLowStock] = useState(true);
-  const [formData, setFormData] = useState({
-    name: "",
-    sku: "",
-    category: "vinyl",
-    current_stock: 0,
-    unit: "meters",
-    reorder_point: 10,
-    reorder_quantity: 20,
-    cost_price: 0,
-    selling_price: 0,
-    preferred_supplier_id: "",
-    location: ""
-  });
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState({});
   const queryClient = useQueryClient();
 
-  const { data: inventory = [] } = useQuery({
+  const { data: inventory = [], isLoading } = useQuery({
     queryKey: ['inventory'],
     queryFn: () => base44.entities.InventoryItem.list('name', 200)
-  });
-
-  const { data: suppliers = [] } = useQuery({
-    queryKey: ['suppliers'],
-    queryFn: () => base44.entities.Supplier.list('name', 100)
-  });
-
-  const createPOMutation = useMutation({
-    mutationFn: (data) => base44.entities.PurchaseOrder.create(data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] })
-  });
-
-  const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.InventoryItem.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      resetForm();
-    }
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => base44.entities.InventoryItem.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      resetForm();
+      setEditingId(null);
+      toast.success("Updated");
     }
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.InventoryItem.delete(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['inventory'] })
-  });
-
-  const bulkDeleteMutation = useMutation({
-    mutationFn: async (ids) => {
-      await Promise.all(ids.map(id => base44.entities.InventoryItem.delete(id)));
-    },
+  const createMutation = useMutation({
+    mutationFn: (data) => base44.entities.InventoryItem.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
-      setSelectedItems([]);
+      setShowForm(false);
+      toast.success("Item added");
     }
   });
 
-  const toggleSelectItem = (itemId) => {
-    setSelectedItems(prev => 
-      prev.includes(itemId) ? prev.filter(id => id !== itemId) : [...prev, itemId]
-    );
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedItems.length === inventory.length) {
-      setSelectedItems([]);
-    } else {
-      setSelectedItems(inventory.map(i => i.id));
-    }
-  };
-
-  const resetForm = () => {
-    setShowForm(false);
-    setEditingItem(null);
-    setFormData({
-      name: "", sku: "", category: "vinyl", current_stock: 0, unit: "meters",
-      reorder_point: 10, reorder_quantity: 20, cost_price: 0, selling_price: 0,
-      preferred_supplier_id: "", location: ""
-    });
-  };
-
-  const handleEdit = (item) => {
-    setEditingItem(item);
-    setFormData({
-      name: item.name || "",
-      sku: item.sku || "",
-      category: item.category || "vinyl",
-      current_stock: item.current_stock || 0,
-      unit: item.unit || "meters",
-      reorder_point: item.reorder_point || 10,
-      reorder_quantity: item.reorder_quantity || 20,
-      cost_price: item.cost_price || item.unit_cost || 0,
-      selling_price: item.selling_price || 0,
-      preferred_supplier_id: item.preferred_supplier_id || "",
-      location: item.location || ""
-    });
-    setShowForm(true);
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (editingItem) {
-      updateMutation.mutate({ id: editingItem.id, data: formData });
-    } else {
-      createMutation.mutate(formData);
-    }
-  };
-
-  const lowStockItems = inventory.filter(item => 
-    item.reorder_point && item.current_stock <= item.reorder_point
+  const filtered = inventory.filter(i =>
+    !search || i.name?.toLowerCase().includes(search.toLowerCase()) || i.sku?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const groupedInventory = inventory.reduce((acc, item) => {
-    const cat = item.category || 'other';
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(item);
-    return acc;
-  }, {});
-
-  const calculateMargin = (cost, sell) => {
-    if (!cost || !sell || sell === 0) return 0;
-    return ((sell - cost) / sell) * 100;
-  };
+  const lowStock = inventory.filter(i => i.reorder_point && i.current_stock <= i.reorder_point);
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-6xl mx-auto p-4 md:p-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+    <div className="min-h-screen bg-background">
+      <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
+        <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Inventory</h1>
-            <p className="text-slate-500">Track materials with cost & selling prices</p>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Inventory</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">{inventory.length} items tracked</p>
           </div>
-          <div className="flex gap-2">
-            {selectedItems.length > 0 && (
-              <Button 
-                variant="outline" 
-                onClick={() => bulkDeleteMutation.mutate(selectedItems)}
-                className="text-red-600"
-              >
-                <Trash2 className="w-4 h-4 mr-2" /> Delete ({selectedItems.length})
-              </Button>
-            )}
-            <div className="flex gap-1 bg-white rounded-lg p-1">
-              <Button 
-                variant={viewMode === "grid" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("grid")}
-              >
-                <Grid3x3 className="w-4 h-4" />
-              </Button>
-              <Button 
-                variant={viewMode === "list" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode("list")}
-              >
-                <List className="w-4 h-4" />
-              </Button>
-            </div>
-            <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
-              <Plus className="w-4 h-4 mr-2" /> Add Item
-            </Button>
-          </div>
+          <Button onClick={() => setShowForm(true)} className="gap-2 shadow-apple-sm">
+            <Plus className="w-4 h-4" /> Add Item
+          </Button>
         </div>
 
-        {/* Low Stock Alert */}
-        {lowStockItems.length > 0 && showLowStock && (
-          <Card className="mb-6 bg-gradient-to-r from-red-50 to-orange-50 border-red-100">
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 flex-1">
-                  <AlertTriangle className="w-5 h-5 text-red-600 mt-1" />
-                  <div className="flex-1">
-                    <p className="font-semibold text-red-700 mb-2">
-                      {lowStockItems.length} items need restocking
-                    </p>
-                    <div className="space-y-2">
-                      {lowStockItems.slice(0, 3).map(item => (
-                        <LowStockAlert 
-                          key={item.id} 
-                          item={item}
-                          onCreatePO={(item) => {
-                            const supplier = suppliers.find(s => s.id === item.preferred_supplier_id);
-                            const newPO = {
-                              po_number: `PO-${Date.now().toString(36).toUpperCase()}`,
-                              supplier_id: item.preferred_supplier_id,
-                              supplier_name: supplier?.name || "Unknown Supplier",
-                              status: "draft",
-                              items: [{
-                                inventory_item_id: item.id,
-                                name: item.name,
-                                sku: item.sku,
-                                quantity: item.reorder_quantity || 20,
-                                unit: item.unit,
-                                unit_price: item.cost_price || 0,
-                                total: (item.reorder_quantity || 20) * (item.cost_price || 0)
-                              }],
-                              subtotal: (item.reorder_quantity || 20) * (item.cost_price || 0),
-                              tax: 0,
-                              total: (item.reorder_quantity || 20) * (item.cost_price || 0),
-                              notes: `Auto-generated for low stock: ${item.name}`,
-                              order_date: new Date().toISOString().split('T')[0],
-                              auto_generated: true,
-                              trigger_item_id: item.id
-                            };
-                            createPOMutation.mutate(newPO);
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => setShowLowStock(false)}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Form Modal */}
-        {showForm && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <Card className="w-full max-w-lg bg-white border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle>{editingItem ? "Edit Item" : "Add Inventory Item"}</CardTitle>
-                <Button variant="ghost" size="icon" onClick={resetForm}>
-                  <X className="w-5 h-5" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2 col-span-2">
-                      <Label>Item Name *</Label>
-                      <Input
-                        value={formData.name}
-                        onChange={(e) => setFormData({...formData, name: e.target.value})}
-                        placeholder="e.g., Videoflex Vinyl"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>SKU</Label>
-                      <Input
-                        value={formData.sku}
-                        onChange={(e) => setFormData({...formData, sku: e.target.value})}
-                        placeholder="VNL-VF-001"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Category</Label>
-                      <Select value={formData.category} onValueChange={(v) => setFormData({...formData, category: v})}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="vinyl">Vinyl</SelectItem>
-                          <SelectItem value="blanks">Blanks</SelectItem>
-                          <SelectItem value="ink">Ink</SelectItem>
-                          <SelectItem value="labels">Labels</SelectItem>
-                          <SelectItem value="packaging">Packaging</SelectItem>
-                          <SelectItem value="other">Other</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Current Stock</Label>
-                      <Input
-                        type="number"
-                        value={formData.current_stock}
-                        onChange={(e) => setFormData({...formData, current_stock: parseFloat(e.target.value) || 0})}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Unit</Label>
-                      <Select value={formData.unit} onValueChange={(v) => setFormData({...formData, unit: v})}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="meters">Meters</SelectItem>
-                          <SelectItem value="pieces">Pieces</SelectItem>
-                          <SelectItem value="rolls">Rolls</SelectItem>
-                          <SelectItem value="liters">Liters</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Cost Price (R)</Label>
-                      <Input
-                        type="number"
-                        value={formData.cost_price}
-                        onChange={(e) => setFormData({...formData, cost_price: parseFloat(e.target.value) || 0})}
-                        placeholder="What you pay"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Selling Price (R)</Label>
-                      <Input
-                        type="number"
-                        value={formData.selling_price}
-                        onChange={(e) => setFormData({...formData, selling_price: parseFloat(e.target.value) || 0})}
-                        placeholder="What you charge"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Reorder Point</Label>
-                      <Input
-                        type="number"
-                        value={formData.reorder_point}
-                        onChange={(e) => setFormData({...formData, reorder_point: parseFloat(e.target.value) || 0})}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Reorder Quantity</Label>
-                      <Input
-                        type="number"
-                        value={formData.reorder_quantity}
-                        onChange={(e) => setFormData({...formData, reorder_quantity: parseFloat(e.target.value) || 0})}
-                      />
-                    </div>
-                    <div className="space-y-2 col-span-2">
-                      <Label>Preferred Supplier</Label>
-                      <Select 
-                        value={formData.preferred_supplier_id} 
-                        onValueChange={(v) => setFormData({...formData, preferred_supplier_id: v})}
-                      >
-                        <SelectTrigger><SelectValue placeholder="Select supplier" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={null}>None</SelectItem>
-                          {suppliers.map(s => (
-                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2 col-span-2">
-                      <Label>Storage Location</Label>
-                      <Input
-                        value={formData.location}
-                        onChange={(e) => setFormData({...formData, location: e.target.value})}
-                        placeholder="e.g., Warehouse A, Shelf 3"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Margin Preview */}
-                  {formData.cost_price > 0 && formData.selling_price > 0 && (
-                    <div className="bg-emerald-50 rounded-lg p-3">
-                      <div className="flex items-center gap-2">
-                        <TrendingUp className="w-4 h-4 text-emerald-600" />
-                        <span className="text-sm font-medium text-emerald-700">
-                          Profit Margin: {calculateMargin(formData.cost_price, formData.selling_price).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-3 pt-4">
-                    <Button type="button" variant="outline" onClick={resetForm} className="flex-1">
-                      Cancel
-                    </Button>
-                    <Button type="submit" className="flex-1 bg-slate-900">
-                      {editingItem ? "Update" : "Add Item"}
-                    </Button>
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
+        {lowStock.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-800">{lowStock.length} item{lowStock.length > 1 ? 's' : ''} running low</p>
+              <p className="text-xs text-red-600 mt-0.5">{lowStock.map(i => i.name).join(', ')}</p>
+            </div>
           </div>
         )}
 
-        {/* Inventory Grid */}
-        {inventory.length === 0 ? (
-          <Card className="p-12 text-center bg-white border-0">
-            <Package className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-slate-700 mb-2">No inventory items</h3>
-            <p className="text-slate-500 mb-4">Add your first inventory item to get started</p>
-            <Button onClick={() => setShowForm(true)}>
-              <Plus className="w-4 h-4 mr-2" /> Add Item
-            </Button>
-          </Card>
+        <div className="relative mb-5">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
+            className="pl-9 bg-card rounded-xl h-10" />
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-16 bg-card rounded-2xl animate-pulse" />)}</div>
         ) : (
-          <div className="space-y-8">
-            {viewMode === "grid" ? (
-              Object.entries(groupedInventory).map(([category, items]) => (
-                <div key={category}>
-                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
-                    <Badge className={`${categoryColors[category]} border-0`}>
-                      {category}
-                    </Badge>
-                    <span>({items.length} items)</span>
-                  </h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {items.map(item => {
-                    const isLowStock = item.reorder_point && item.current_stock <= item.reorder_point;
-                    const stockPercent = item.reorder_point 
-                      ? Math.min((item.current_stock / item.reorder_point) * 100, 100)
-                      : 100;
-                    const costPrice = item.cost_price || item.unit_cost || 0;
-                    const sellingPrice = item.selling_price || 0;
-                    const margin = calculateMargin(costPrice, sellingPrice);
-                    
-                    return (
-                      <Card 
-                        key={item.id} 
-                        className={`bg-white border-0 shadow-sm hover:shadow-md transition-all ${isLowStock ? 'ring-2 ring-red-200' : ''} ${selectedItems.includes(item.id) ? 'ring-2 ring-blue-500' : ''}`}
-                      >
-                        <CardContent className="p-4">
-                          <Checkbox
-                            checked={selectedItems.includes(item.id)}
-                            onCheckedChange={() => toggleSelectItem(item.id)}
-                            className="mb-2"
-                          />
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <h3 className="font-semibold text-slate-900">{item.name}</h3>
-                              {item.sku && <p className="text-xs text-slate-400">{item.sku}</p>}
-                            </div>
-                            {isLowStock && (
-                              <AlertTriangle className="w-5 h-5 text-red-500" />
-                            )}
-                          </div>
-
-                          <div className="space-y-3">
-                            {/* Stock Level */}
-                            <div>
-                              <div className="flex justify-between text-sm mb-1">
-                                <span className="text-slate-500">Stock</span>
-                                <span className="font-medium">
-                                  {item.current_stock} {item.unit}
-                                </span>
-                              </div>
-                              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full ${isLowStock ? 'bg-red-500' : 'bg-emerald-500'}`}
-                                  style={{ width: `${stockPercent}%` }}
-                                />
-                              </div>
-                            </div>
-
-                            {/* Pricing */}
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                              <div className="bg-slate-50 rounded p-2">
-                                <p className="text-xs text-slate-500">Cost</p>
-                                <p className="font-semibold">R{costPrice.toFixed(2)}</p>
-                              </div>
-                              <div className="bg-emerald-50 rounded p-2">
-                                <p className="text-xs text-slate-500">Sell</p>
-                                <p className="font-semibold text-emerald-700">
-                                  R{sellingPrice > 0 ? sellingPrice.toFixed(2) : '-'}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Margin */}
-                            {margin > 0 && (
-                              <div className="flex items-center gap-2 text-sm">
-                                <TrendingUp className={`w-4 h-4 ${margin >= 30 ? 'text-emerald-500' : 'text-amber-500'}`} />
-                                <span className={margin >= 30 ? 'text-emerald-600' : 'text-amber-600'}>
-                                  {margin.toFixed(1)}% margin
-                                </span>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2 mt-4 pt-3 border-t">
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              onClick={() => handleEdit(item)}
-                              className="flex-1"
-                            >
-                              <Edit className="w-4 h-4 mr-1" /> Edit
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => deleteMutation.mutate(item.id)}
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
+          <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
+            <div className="grid grid-cols-5 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-5 py-3 border-b border-border bg-secondary/30">
+              <span className="col-span-2">Item</span>
+              <span className="text-center">Stock</span>
+              <span className="text-center">Reorder At</span>
+              <span className="text-center">Status</span>
+            </div>
+            {filtered.length === 0 ? (
+              <div className="text-center py-12">
+                <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No inventory items</p>
+              </div>
+            ) : filtered.map(item => {
+              const isLow = item.reorder_point && item.current_stock <= item.reorder_point;
+              const isEditing = editingId === item.id;
+              return (
+                <div key={item.id} className={`grid grid-cols-5 items-center px-5 py-4 border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? 'bg-red-50/30' : ''}`}>
+                  <div className="col-span-2">
+                    <p className="text-sm font-medium text-foreground">{item.name}</p>
+                    {item.sku && <p className="text-xs text-muted-foreground">SKU: {item.sku}</p>}
+                  </div>
+                  <div className="text-center">
+                    {isEditing ? (
+                      <div className="flex items-center gap-1 justify-center">
+                        <Input type="number" value={editValue.current_stock ?? item.current_stock}
+                          onChange={e => setEditValue({...editValue, current_stock: parseInt(e.target.value)})}
+                          className="h-7 w-16 text-xs text-center rounded-lg" />
+                        <button onClick={() => updateMutation.mutate({ id: item.id, data: editValue })}
+                          className="text-green-600 hover:text-green-700"><Check className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setEditingId(null)} className="text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setEditingId(item.id); setEditValue({ current_stock: item.current_stock }); }}
+                        className={`text-sm font-bold hover:text-primary transition-all ${isLow ? 'text-red-600' : 'text-foreground'}`}>
+                        {item.current_stock ?? 0} {item.unit || ''}
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-center">
+                    <span className="text-xs text-muted-foreground">{item.reorder_point ?? '—'}</span>
+                  </div>
+                  <div className="flex justify-center">
+                    {isLow ? (
+                      <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
+                    )}
                   </div>
                 </div>
-              ))
-            ) : (
-              <Card className="bg-white">
-                <CardContent className="p-0">
-                  <table className="w-full">
-                    <thead className="bg-slate-50 border-b">
-                      <tr>
-                        <th className="p-3 text-left">
-                          <Checkbox
-                            checked={selectedItems.length === inventory.length}
-                            onCheckedChange={toggleSelectAll}
-                          />
-                        </th>
-                        <th className="p-3 text-left text-sm font-medium">Name</th>
-                        <th className="p-3 text-left text-sm font-medium">Category</th>
-                        <th className="p-3 text-left text-sm font-medium">Stock</th>
-                        <th className="p-3 text-left text-sm font-medium">Cost</th>
-                        <th className="p-3 text-left text-sm font-medium">Sell</th>
-                        <th className="p-3 text-left text-sm font-medium">Margin</th>
-                        <th className="p-3 text-left text-sm font-medium">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {inventory.map(item => {
-                        const isLowStock = item.reorder_point && item.current_stock <= item.reorder_point;
-                        const costPrice = item.cost_price || item.unit_cost || 0;
-                        const sellingPrice = item.selling_price || 0;
-                        const margin = calculateMargin(costPrice, sellingPrice);
-                        
-                        return (
-                          <tr key={item.id} className={`border-b hover:bg-slate-50 ${isLowStock ? 'bg-red-50' : ''}`}>
-                            <td className="p-3">
-                              <Checkbox
-                                checked={selectedItems.includes(item.id)}
-                                onCheckedChange={() => toggleSelectItem(item.id)}
-                              />
-                            </td>
-                            <td className="p-3">
-                              <div>
-                                <p className="font-medium text-slate-900">{item.name}</p>
-                                {item.sku && <p className="text-xs text-slate-400">{item.sku}</p>}
-                              </div>
-                            </td>
-                            <td className="p-3">
-                              <Badge className={`${categoryColors[item.category]} border-0 text-xs`}>
-                                {item.category}
-                              </Badge>
-                            </td>
-                            <td className="p-3">
-                              <span className={isLowStock ? 'text-red-600 font-medium' : ''}>
-                                {item.current_stock} {item.unit}
-                              </span>
-                            </td>
-                            <td className="p-3 text-sm">R{costPrice.toFixed(2)}</td>
-                            <td className="p-3 text-sm text-emerald-600">
-                              R{sellingPrice > 0 ? sellingPrice.toFixed(2) : '-'}
-                            </td>
-                            <td className="p-3 text-sm">
-                              {margin > 0 ? `${margin.toFixed(1)}%` : '-'}
-                            </td>
-                            <td className="p-3">
-                              <div className="flex gap-2">
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm"
-                                  onClick={() => handleEdit(item)}
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm"
-                                  onClick={() => deleteMutation.mutate(item.id)}
-                                  className="text-red-500"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-            )}
+              );
+            })}
           </div>
         )}
+
+        {showForm && <AddItemModal onClose={() => setShowForm(false)} onCreate={(d) => createMutation.mutate(d)} />}
       </div>
     </div>
+  );
+}
+
+function AddItemModal({ onClose, onCreate }) {
+  const [form, setForm] = useState({ name: '', sku: '', current_stock: 0, reorder_point: 10, unit: 'pieces' });
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+    onCreate(form);
+  };
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+        <div className="bg-card rounded-2xl shadow-apple-xl border border-border p-6 w-full max-w-sm animate-slide-in-up">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="font-semibold text-foreground">Add Inventory Item</h2>
+            <button onClick={onClose}><X className="w-4 h-4 text-muted-foreground" /></button>
+          </div>
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <Input value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="Item name *" className="rounded-xl" required />
+            <Input value={form.sku} onChange={e => setForm({...form, sku: e.target.value})} placeholder="SKU (optional)" className="rounded-xl" />
+            <div className="grid grid-cols-2 gap-2">
+              <Input type="number" value={form.current_stock} onChange={e => setForm({...form, current_stock: parseInt(e.target.value)})} placeholder="Current stock" className="rounded-xl" />
+              <Input type="number" value={form.reorder_point} onChange={e => setForm({...form, reorder_point: parseInt(e.target.value)})} placeholder="Reorder at" className="rounded-xl" />
+            </div>
+            <Input value={form.unit} onChange={e => setForm({...form, unit: e.target.value})} placeholder="Unit (pieces, kg, etc.)" className="rounded-xl" />
+            <Button type="submit" className="w-full rounded-xl mt-2">Add Item</Button>
+          </form>
+        </div>
+      </div>
+    </>
   );
 }

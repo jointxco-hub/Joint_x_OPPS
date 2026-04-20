@@ -1,0 +1,109 @@
+{
+  "name": "Task",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Task title"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Assigned user email"
+    },
+    "assigned_to_name": {
+      "type": "string",
+      "description": "Assigned user display name"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date",
+      "description": "Due date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "done",
+        "overdue"
+      ],
+      "default": "pending"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "default": "medium"
+    },
+    "department": {
+      "type": "string",
+      "enum": [
+        "operations",
+        "design",
+        "production",
+        "sales",
+        "finance",
+        "admin"
+      ],
+      "description": "Which department this belongs to"
+    },
+    "linked_order_id": {
+      "type": "string",
+      "description": "Linked order ID"
+    },
+    "linked_goal_id": {
+      "type": "string",
+      "description": "Linked 12-week goal ID"
+    },
+    "file_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Proof of work files"
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "week_number": {
+      "type": "integer",
+      "description": "Which week this task belongs to"
+    },
+    "is_archived": {
+      "type": "boolean",
+      "default": false
+    },
+    "archived_at": {
+      "type": "string"
+    },
+    "archived_by": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "status"
+  ]
+}

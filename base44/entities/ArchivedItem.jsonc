@@ -1,0 +1,45 @@
+{
+  "name": "ArchivedItem",
+  "type": "object",
+  "properties": {
+    "original_id": {
+      "type": "string",
+      "description": "Original entity ID"
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": [
+        "order",
+        "task",
+        "client",
+        "supplier",
+        "file",
+        "payment"
+      ],
+      "description": "What kind of entity this is"
+    },
+    "data": {
+      "type": "object",
+      "description": "Full original data snapshot"
+    },
+    "deleted_by": {
+      "type": "string",
+      "description": "Email of who deleted it"
+    },
+    "deleted_by_name": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Reason for deletion"
+    },
+    "is_permanently_deleted": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "entity_type",
+    "data"
+  ]
+}
