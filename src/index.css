@@ -6,79 +6,83 @@
 
 @layer base {
   :root {
-    /* Apple-style color system */
-    --background: 220 20% 97%;
-    --foreground: 220 25% 8%;
+    /* Joint X brand color system */
+    /* Primary: Teal #1a7a5e → hsl(162, 64%, 29%) */
+    /* Accent: Lavender #c0a4e0 → hsl(275, 45%, 76%) */
+    /* Highlight: Terracotta #b83a1a → hsl(14, 75%, 41%) */
+
+    --background: 160 12% 97%;
+    --foreground: 165 25% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 220 25% 8%;
+    --card-foreground: 165 25% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 25% 8%;
-    --primary: 221 83% 53%;
+    --popover-foreground: 165 25% 8%;
+    --primary: 162 64% 29%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 15% 94%;
-    --secondary-foreground: 220 25% 20%;
-    --muted: 220 15% 95%;
-    --muted-foreground: 220 10% 50%;
-    --accent: 221 83% 96%;
-    --accent-foreground: 221 83% 40%;
-    --destructive: 0 84% 60%;
+    --secondary: 160 12% 93%;
+    --secondary-foreground: 162 20% 22%;
+    --muted: 160 10% 94%;
+    --muted-foreground: 160 8% 48%;
+    --accent: 275 45% 93%;
+    --accent-foreground: 275 40% 38%;
+    --destructive: 14 75% 41%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 15% 90%;
-    --input: 220 15% 90%;
-    --ring: 221 83% 53%;
+    --border: 160 12% 88%;
+    --input: 160 12% 88%;
+    --ring: 162 64% 29%;
     --radius: 0.75rem;
 
-    --success: 142 72% 40%;
+    --success: 162 64% 29%;
     --warning: 38 92% 50%;
-    --info: 199 89% 48%;
+    --info: 275 45% 60%;
 
-    --chart-1: 221 83% 53%;
-    --chart-2: 142 72% 40%;
-    --chart-3: 38 92% 50%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 0 84% 60%;
+    --chart-1: 162 64% 29%;
+    --chart-2: 275 45% 60%;
+    --chart-3: 14 75% 41%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 162 40% 55%;
 
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 220 25% 30%;
-    --sidebar-primary: 221 83% 53%;
+    --sidebar-foreground: 165 20% 28%;
+    --sidebar-primary: 162 64% 29%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 221 83% 96%;
-    --sidebar-accent-foreground: 221 83% 40%;
-    --sidebar-border: 220 15% 92%;
-    --sidebar-ring: 221 83% 53%;
+    --sidebar-accent: 275 45% 93%;
+    --sidebar-accent-foreground: 275 40% 38%;
+    --sidebar-border: 160 12% 90%;
+    --sidebar-ring: 162 64% 29%;
 
     --font-inter: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 
   .dark {
-    --background: 220 20% 6%;
-    --foreground: 220 15% 95%;
-    --card: 220 20% 9%;
-    --card-foreground: 220 15% 95%;
-    --popover: 220 20% 9%;
-    --popover-foreground: 220 15% 95%;
-    --primary: 221 83% 58%;
+    --background: 165 20% 6%;
+    --foreground: 160 15% 95%;
+    --card: 165 20% 9%;
+    --card-foreground: 160 15% 95%;
+    --popover: 165 20% 9%;
+    --popover-foreground: 160 15% 95%;
+    --primary: 162 55% 42%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 15% 14%;
-    --secondary-foreground: 220 15% 85%;
-    --muted: 220 15% 13%;
-    --muted-foreground: 220 10% 55%;
-    --accent: 221 83% 15%;
-    --accent-foreground: 221 83% 70%;
-    --destructive: 0 62% 50%;
+    --secondary: 165 15% 14%;
+    --secondary-foreground: 160 15% 85%;
+    --muted: 165 15% 13%;
+    --muted-foreground: 160 10% 55%;
+    --accent: 275 30% 18%;
+    --accent-foreground: 275 45% 75%;
+    --destructive: 14 65% 45%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 15% 16%;
-    --input: 220 15% 16%;
-    --ring: 221 83% 58%;
+    --border: 165 15% 16%;
+    --input: 165 15% 16%;
+    --ring: 162 55% 42%;
 
-    --sidebar-background: 220 20% 8%;
-    --sidebar-foreground: 220 15% 80%;
-    --sidebar-primary: 221 83% 58%;
+    --sidebar-background: 165 20% 8%;
+    --sidebar-foreground: 160 15% 80%;
+    --sidebar-primary: 162 55% 42%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 221 83% 15%;
-    --sidebar-accent-foreground: 221 83% 70%;
-    --sidebar-border: 220 15% 14%;
-    --sidebar-ring: 221 83% 58%;
+    --sidebar-accent: 275 30% 18%;
+    --sidebar-accent-foreground: 275 45% 75%;
+    --sidebar-border: 165 15% 14%;
+    --sidebar-ring: 162 55% 42%;
   }
 }
 

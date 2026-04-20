@@ -56,8 +56,13 @@ export default function Layout({ children, currentPageName }) {
         <div className="flex flex-col flex-1 bg-card border-r border-border shadow-apple-sm">
           {/* Logo */}
           <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
-            <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-apple-sm">
-              <span className="text-white font-bold text-sm">JX</span>
+            <div className="w-9 h-9 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
+              {/* Brand dots — mirroring the logo */}
+              <div className="relative w-6 h-6">
+                <span className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-[#1a7a5e]" />
+                <span className="absolute bottom-0 left-0 w-2.5 h-2.5 rounded-full bg-[#b83a1a]" />
+                <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#c0a4e0]" />
+              </div>
             </div>
             <div>
               <h1 className="font-bold text-foreground text-sm">Joint X</h1>
@@ -102,8 +107,8 @@ export default function Layout({ children, currentPageName }) {
           {user && (
             <div className="p-3 border-t border-border">
               <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary cursor-pointer transition-all">
-                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <span className="text-primary text-xs font-bold">
+                <div className="w-7 h-7 rounded-full bg-[#1a7a5e]/12 flex items-center justify-center flex-shrink-0">
+                  <span className="text-[#1a7a5e] text-xs font-bold">
                     {(user.full_name || user.email || 'U').charAt(0).toUpperCase()}
                   </span>
                 </div>
@@ -121,8 +126,12 @@ export default function Layout({ children, currentPageName }) {
       <div className="lg:hidden sticky top-0 z-50 bg-card/80 backdrop-blur-xl border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center shadow-apple-sm">
-              <span className="text-white font-bold text-xs">JX</span>
+            <div className="w-8 h-8 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
+              <div className="relative w-5 h-5">
+                <span className="absolute top-0 right-0 w-2 h-2 rounded-full bg-[#1a7a5e]" />
+                <span className="absolute bottom-0 left-0 w-2 h-2 rounded-full bg-[#b83a1a]" />
+                <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#c0a4e0]" />
+              </div>
             </div>
             <span className="font-bold text-foreground text-sm">Joint X</span>
           </div>
