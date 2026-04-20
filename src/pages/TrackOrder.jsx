@@ -1,210 +1,244 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { 
   Search, Package, CheckCircle2, Truck, Clock, 
-  Shirt, Calendar, ArrowRight
+  Shirt, MapPin, X, ChevronLeft, ChevronRight,
+  Image, FileText, Play
 } from "lucide-react";
 import { format } from "date-fns";
 
 const statusSteps = [
-  { key: "received", label: "Order Received", icon: Package },
-  { key: "materials_needed", label: "Getting Materials", icon: Clock },
+  { key: "confirmed", label: "Confirmed", icon: Package },
   { key: "in_production", label: "In Production", icon: Shirt },
   { key: "ready", label: "Ready", icon: CheckCircle2 },
-  { key: "out_for_delivery", label: "Out for Delivery", icon: Truck },
-  { key: "delivered", label: "Delivered", icon: CheckCircle2 }
+  { key: "shipped", label: "Shipped", icon: Truck },
+  { key: "delivered", label: "Delivered", icon: CheckCircle2 },
 ];
 
 const getStepIndex = (status) => {
-  const index = statusSteps.findIndex(s => s.key === status);
-  return index === -1 ? 0 : index;
+  const i = statusSteps.findIndex(s => s.key === status);
+  return i === -1 ? 0 : i;
 };
+
+function MediaViewer({ url, onClose }) {
+  const isImage = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
+  const isVideo = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url);
+  const isPDF = /\.pdf(\?|$)/i.test(url);
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <button onClick={onClose} className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all z-10">
+        <X className="w-5 h-5" />
+      </button>
+      <div className="max-w-4xl max-h-[85vh] w-full" onClick={e => e.stopPropagation()}>
+        {isImage && <img src={url} alt="Preview" className="max-w-full max-h-[85vh] object-contain rounded-2xl mx-auto" />}
+        {isVideo && <video src={url} controls autoPlay className="max-w-full max-h-[85vh] rounded-2xl mx-auto" />}
+        {isPDF && <iframe src={url} title="PDF" className="w-full h-[85vh] rounded-2xl" />}
+        {!isImage && !isVideo && !isPDF && (
+          <div className="bg-white/10 rounded-2xl p-8 text-center text-white">
+            <FileText className="w-12 h-12 mx-auto mb-3 opacity-60" />
+            <p className="text-sm opacity-80 mb-4">Preview not available</p>
+            <a href={url} target="_blank" rel="noreferrer" className="text-primary underline text-sm">Open file</a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FileThumb({ url, onClick }) {
+  const isImage = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
+  const isVideo = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url);
+  return (
+    <button
+      onClick={() => onClick(url)}
+      className="w-16 h-16 rounded-xl overflow-hidden border border-white/20 flex items-center justify-center bg-white/5 hover:bg-white/10 transition-all flex-shrink-0"
+    >
+      {isImage ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
+      ) : isVideo ? (
+        <Play className="w-6 h-6 text-white/70" />
+      ) : (
+        <FileText className="w-6 h-6 text-white/70" />
+      )}
+    </button>
+  );
+}
 
 export default function TrackOrder() {
   const [trackingCode, setTrackingCode] = useState("");
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [mediaUrl, setMediaUrl] = useState(null);
 
   const handleSearch = async () => {
     if (!trackingCode.trim()) return;
-    
     setLoading(true);
     setError("");
     setOrder(null);
 
-    const searchValue = trackingCode.trim().toUpperCase();
-
-    // Try searching by tracking code first
-    let orders = await base44.entities.Order.filter({
-      tracking_code: searchValue
-    });
-
-    // If not found, try searching by invoice number
-    if (orders.length === 0) {
-      orders = await base44.entities.Order.filter({
-        invoice_number: searchValue
-      });
-    }
+    const val = trackingCode.trim().toUpperCase();
+    let orders = await base44.entities.Order.filter({ tracking_number: val });
+    if (orders.length === 0) orders = await base44.entities.Order.filter({ order_number: val });
+    if (orders.length === 0) orders = await base44.entities.ClientOrder.filter({ tracking_code: val });
 
     setLoading(false);
-
     if (orders.length > 0) {
       setOrder(orders[0]);
     } else {
-      setError("No order found with this tracking code or invoice number. Please check and try again.");
+      setError("No order found. Check your tracking code and try again.");
     }
   };
 
   const currentStepIndex = order ? getStepIndex(order.status) : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <div className="max-w-2xl mx-auto p-4 md:p-8">
-        {/* Header */}
-        <div className="text-center mb-8 pt-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-white/10 rounded-2xl mb-4">
-            <Shirt className="w-8 h-8 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-[#0d1117] via-[#111827] to-[#0d1117]">
+      {mediaUrl && <MediaViewer url={mediaUrl} onClose={() => setMediaUrl(null)} />}
+
+      <div className="max-w-lg mx-auto p-4 md:p-8">
+        {/* Brand Header */}
+        <div className="text-center mb-10 pt-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-5 relative">
+            <div className="absolute inset-0 rounded-2xl bg-white/5 border border-white/10" />
+            <div className="relative w-8 h-8">
+              <span className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-[#1a7a5e]" />
+              <span className="absolute bottom-0 left-0 w-3.5 h-3.5 rounded-full bg-[#b83a1a]" />
+              <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-[#c0a4e0]" />
+            </div>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">Track Your Order</h1>
-          <p className="text-slate-400">Enter your tracking code or invoice number</p>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Track Your Order</h1>
+          <p className="text-white/50 text-sm">Enter your order number or tracking code</p>
         </div>
 
         {/* Search */}
-        <Card className="bg-white/5 border-white/10 backdrop-blur-sm mb-8">
-          <CardContent className="p-6">
-            <div className="flex gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <Input
-                  placeholder="Enter tracking code or invoice number"
-                  value={trackingCode}
-                  onChange={(e) => setTrackingCode(e.target.value.toUpperCase())}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                  className="pl-12 h-14 bg-white/10 border-white/20 text-white placeholder:text-slate-500 text-lg font-mono"
-                />
-              </div>
-              <Button 
-                onClick={handleSearch} 
-                disabled={loading}
-                className="h-14 px-8 bg-white text-slate-900 hover:bg-slate-100"
-              >
-                {loading ? "Searching..." : "Track"}
-              </Button>
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6 backdrop-blur-sm">
+          <div className="flex gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+              <Input
+                placeholder="e.g. JX-001 or TRACK123"
+                value={trackingCode}
+                onChange={e => setTrackingCode(e.target.value.toUpperCase())}
+                onKeyDown={e => e.key === "Enter" && handleSearch()}
+                className="pl-11 h-12 bg-white/8 border-white/15 text-white placeholder:text-white/30 rounded-xl font-mono"
+              />
             </div>
-            {error && (
-              <p className="text-red-400 text-sm mt-3">{error}</p>
-            )}
-          </CardContent>
-        </Card>
+            <Button onClick={handleSearch} disabled={loading} className="h-12 px-6 bg-[#1a7a5e] hover:bg-[#1a7a5e]/90 text-white rounded-xl font-medium">
+              {loading ? "..." : "Track"}
+            </Button>
+          </div>
+          {error && <p className="text-red-400 text-sm mt-3 text-center">{error}</p>}
+        </div>
 
-        {/* Order Details */}
+        {/* Order Result */}
         {order && (
-          <Card className="bg-white border-0 shadow-2xl overflow-hidden">
-            <div className="bg-gradient-to-r from-emerald-500 to-teal-500 p-6 text-white">
-              <div className="flex items-center justify-between">
+          <div className="animate-fade-in">
+            {/* Status Card */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-4 backdrop-blur-sm">
+              <div className="flex items-start justify-between mb-5">
                 <div>
-                  <p className="text-emerald-100 text-sm">Order Number</p>
-                  <p className="text-2xl font-bold">{order.order_number}</p>
+                  <p className="text-white/40 text-xs mb-1">Order</p>
+                  <p className="text-white font-bold text-lg">{order.order_number}</p>
+                  {order.client_name && <p className="text-white/60 text-sm mt-0.5">{order.client_name}</p>}
                 </div>
-                <div className="text-right">
-                  <p className="text-emerald-100 text-sm">Tracking Code</p>
-                  <p className="text-xl font-mono font-bold">{order.tracking_code}</p>
+                <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${
+                  order.status === "delivered" ? "bg-[#1a7a5e]/20 text-[#4ade80]" :
+                  order.status === "in_production" ? "bg-orange-500/20 text-orange-300" :
+                  order.status === "shipped" ? "bg-purple-500/20 text-purple-300" :
+                  order.status === "cancelled" ? "bg-red-500/20 text-red-300" :
+                  "bg-white/10 text-white/70"
+                }`}>
+                  {order.status?.replace(/_/g, " ")}
+                </div>
+              </div>
+
+              {/* Progress Track */}
+              <div className="relative">
+                <div className="absolute top-4 left-4 right-4 h-px bg-white/10">
+                  <div
+                    className="h-full bg-[#1a7a5e] transition-all duration-700"
+                    style={{ width: `${(currentStepIndex / (statusSteps.length - 1)) * 100}%` }}
+                  />
+                </div>
+                <div className="relative flex justify-between">
+                  {statusSteps.map((step, i) => {
+                    const done = i <= currentStepIndex;
+                    const current = i === currentStepIndex;
+                    const Icon = step.icon;
+                    return (
+                      <div key={step.key} className="flex flex-col items-center gap-2">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 transition-all ${
+                          done ? "bg-[#1a7a5e]" : "bg-white/10"
+                        } ${current ? "ring-4 ring-[#1a7a5e]/30 scale-110" : ""}`}>
+                          <Icon className={`w-4 h-4 ${done ? "text-white" : "text-white/30"}`} />
+                        </div>
+                        <p className={`text-xs text-center leading-tight max-w-12 ${done ? "text-white/80" : "text-white/25"}`}>
+                          {step.label}
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            <CardContent className="p-6">
-              {/* Progress Steps */}
-              <div className="mb-8">
-                <div className="relative">
-                  {/* Progress Line */}
-                  <div className="absolute top-5 left-5 right-5 h-0.5 bg-slate-200">
-                    <div 
-                      className="h-full bg-emerald-500 transition-all duration-500"
-                      style={{ width: `${(currentStepIndex / (statusSteps.length - 1)) * 100}%` }}
-                    />
-                  </div>
+            {/* Details Grid */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              {order.due_date && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-white/40 text-xs mb-1">Expected By</p>
+                  <p className="text-white font-semibold">{format(new Date(order.due_date), "dd MMM yyyy")}</p>
+                </div>
+              )}
+              {order.total_amount && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-white/40 text-xs mb-1">Order Value</p>
+                  <p className="text-white font-semibold">R{order.total_amount?.toLocaleString()}</p>
+                </div>
+              )}
+              {order.courier && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-white/40 text-xs mb-1">Courier</p>
+                  <p className="text-white font-semibold">{order.courier}</p>
+                </div>
+              )}
+              {order.tracking_number && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-white/40 text-xs mb-1">Tracking #</p>
+                  <p className="text-white font-semibold font-mono text-sm">{order.tracking_number}</p>
+                </div>
+              )}
+            </div>
 
-                  {/* Steps */}
-                  <div className="relative flex justify-between">
-                    {statusSteps.map((step, index) => {
-                      const isCompleted = index <= currentStepIndex;
-                      const isCurrent = index === currentStepIndex;
-                      const Icon = step.icon;
-
-                      return (
-                        <div key={step.key} className="flex flex-col items-center">
-                          <div className={`
-                            w-10 h-10 rounded-full flex items-center justify-center
-                            transition-all duration-300 z-10
-                            ${isCompleted 
-                              ? 'bg-emerald-500 text-white' 
-                              : 'bg-slate-100 text-slate-400'}
-                            ${isCurrent ? 'ring-4 ring-emerald-100 scale-110' : ''}
-                          `}>
-                            <Icon className="w-5 h-5" />
-                          </div>
-                          <p className={`
-                            text-xs mt-2 text-center max-w-16
-                            ${isCompleted ? 'text-emerald-600 font-medium' : 'text-slate-400'}
-                          `}>
-                            {step.label}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
+            {/* Design Files */}
+            {order.file_urls?.length > 0 && (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4">
+                <p className="text-white/40 text-xs mb-3">Design Files</p>
+                <div className="flex flex-wrap gap-2">
+                  {order.file_urls.map((url, i) => (
+                    <FileThumb key={i} url={url} onClick={setMediaUrl} />
+                  ))}
                 </div>
               </div>
+            )}
 
-              {/* Order Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 rounded-lg p-4">
-                  <p className="text-xs text-slate-500 mb-1">Items</p>
-                  <p className="font-semibold text-slate-900">{order.quantity} pieces</p>
-                </div>
-                {order.due_date && (
-                  <div className="bg-slate-50 rounded-lg p-4">
-                    <p className="text-xs text-slate-500 mb-1">Expected By</p>
-                    <p className="font-semibold text-slate-900">
-                      {format(new Date(order.due_date), "dd MMM yyyy")}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Current Status Message */}
-              <div className="mt-6 p-4 bg-emerald-50 rounded-lg border border-emerald-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
-                    {React.createElement(statusSteps[currentStepIndex].icon, {
-                      className: "w-5 h-5 text-emerald-600"
-                    })}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-emerald-800">
-                      {statusSteps[currentStepIndex].label}
-                    </p>
-                    <p className="text-sm text-emerald-600">
-                      {currentStepIndex < statusSteps.length - 1 
-                        ? `Next: ${statusSteps[currentStepIndex + 1].label}`
-                        : "Your order has been delivered!"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            {/* Current Step Message */}
+            <div className="bg-[#1a7a5e]/15 border border-[#1a7a5e]/30 rounded-xl p-4">
+              <p className="text-[#4ade80] font-medium text-sm">
+                {currentStepIndex < statusSteps.length - 1
+                  ? `Currently: ${statusSteps[currentStepIndex].label} · Next: ${statusSteps[currentStepIndex + 1].label}`
+                  : "Your order has been delivered! 🎉"}
+              </p>
+            </div>
+          </div>
         )}
 
-        {/* Footer */}
-        <div className="text-center mt-8 text-slate-500 text-sm">
-          <p>Questions about your order?</p>
-          <p>Contact us for support</p>
+        <div className="text-center mt-8 text-white/25 text-xs">
+          Questions? Contact Joint X for support.
         </div>
       </div>
     </div>

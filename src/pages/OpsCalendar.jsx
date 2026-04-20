@@ -11,7 +11,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search,
   LayoutGrid, List, Users, RefreshCw, Archive, Calendar
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday, addMonths, subMonths } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday, addMonths, subMonths, addWeeks, startOfWeek, endOfWeek, eachDayOfInterval as eachDay } from "date-fns";
 import OpsTaskCard from "@/components/ops/OpsTaskCard";
 import OpsTaskFormDialog from "@/components/ops/OpsTaskFormDialog";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -180,6 +180,13 @@ export default function OpsCalendar() {
               onClick={() => setViewMode('overview')}
             >
               Overview
+            </Button>
+            <Button
+              variant={viewMode === 'week12' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('week12')}
+            >
+              12-Week
             </Button>
             <Button
               size="sm"
@@ -439,6 +446,61 @@ export default function OpsCalendar() {
                     </div>
                     <p className="text-xs text-slate-400 mt-0.5">{pct}%</p>
                   </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 12-Week View */}
+        {viewMode === 'week12' && (
+          <div className="space-y-3">
+            {[...Array(12)].map((_, i) => {
+              const weekStart = addWeeks(startOfWeek(new Date(), { weekStartsOn: 1 }), i - Math.floor(12/2) + 1);
+              const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+              const weekLabel = `${format(weekStart, 'd MMM')} – ${format(weekEnd, 'd MMM')}`;
+              const wTasks = applyFilters(tasks.filter(t => {
+                if (!t.deadline) return false;
+                const d = new Date(t.deadline);
+                return d >= weekStart && d <= weekEnd;
+              }));
+              const done = wTasks.filter(t => t.status === 'complete').length;
+              const pct = wTasks.length > 0 ? Math.round((done / wTasks.length) * 100) : 0;
+              const isCurrent = i === Math.floor(12/2) - 1;
+              return (
+                <Card key={i} className={`border-0 shadow-sm rounded-xl overflow-hidden ${isCurrent ? 'ring-2 ring-[#0F9B8E]' : ''}`}>
+                  <div className="bg-slate-800 px-4 py-2.5 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">{weekLabel}</h3>
+                      {isCurrent && <span className="text-xs text-[#0F9B8E] font-medium">Current Week</span>}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="text-xs text-slate-300">{wTasks.length} tasks · {pct}% done</p>
+                        <div className="w-24 bg-slate-600 rounded-full h-1 mt-1">
+                          <div className="bg-[#0F9B8E] h-1 rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {wTasks.length > 0 && (
+                    <CardContent className="p-3 space-y-2">
+                      {wTasks.slice(0, 5).map(task => (
+                        <OpsTaskCard
+                          key={task.id}
+                          task={task}
+                          users={users}
+                          onStatusToggle={handleStatusToggle}
+                          onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                          onEdit={() => { setEditingTask(task); setShowForm(true); }}
+                          onDelete={() => setDeleteConfirm(task)}
+                        />
+                      ))}
+                      {wTasks.length > 5 && (
+                        <p className="text-xs text-slate-400 text-center py-1">+{wTasks.length - 5} more tasks</p>
+                      )}
+                    </CardContent>
+                  )}
                 </Card>
               );
             })}

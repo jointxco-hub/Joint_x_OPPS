@@ -5,12 +5,13 @@ import {
   LayoutDashboard, Package, ClipboardList, BarChart2,
   Menu, X, ChevronRight, Boxes, Building2, Calculator,
   CreditCard, Archive, Settings, MoreHorizontal, Target,
-  Search, Bell, User, ChevronDown, ShoppingCart
+  Search, Bell, User, ChevronDown, ShoppingCart, UserCircle
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
+  { name: "My Hub", page: "UserDashboard", icon: UserCircle },
   { name: "Orders", page: "Orders", icon: Package },
   { name: "Tasks", page: "Tasks", icon: ClipboardList },
 ];
@@ -30,7 +31,7 @@ const STANDALONE_PAGES = ["TrackOrder", "ClientCatalog", "AletheaClientPortal"];
 
 export default function Layout({ children, currentPageName }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(true);
   const [user, setUser] = useState(null);
   const location = useLocation();
 
@@ -88,9 +89,15 @@ export default function Layout({ children, currentPageName }) {
             })}
 
             <div className="pt-4 pb-2">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-3 pb-2">More</p>
+              <button
+                onClick={() => setMoreOpen(v => !v)}
+                className="flex items-center justify-between w-full px-3 pb-2 group"
+              >
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">More</p>
+                <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform duration-200 ${moreOpen ? 'rotate-180' : ''}`} />
+              </button>
             </div>
-            {moreNav.map(item => {
+            {moreOpen && moreNav.map(item => {
               const isActive = currentPageName === item.page;
               return (
                 <Link key={item.page} to={createPageUrl(item.page)}

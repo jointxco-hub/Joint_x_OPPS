@@ -69,10 +69,10 @@ export default function Dashboard() {
 
         {/* Stats Row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <StatCard label="Today" value={todayTasks.length} color="blue" icon={Clock} />
-          <StatCard label="Overdue" value={overdueTasks.length} color={overdueTasks.length > 0 ? "red" : "slate"} icon={AlertTriangle} />
-          <StatCard label="Active Orders" value={activeOrders.length} color="orange" icon={Package} />
-          <StatCard label="Goals" value={goals.length} color="purple" icon={Target} />
+          <StatCard label="Today" value={todayTasks.length} color="blue" icon={Clock} to="/Tasks" />
+          <StatCard label="Overdue" value={overdueTasks.length} color={overdueTasks.length > 0 ? "red" : "slate"} icon={AlertTriangle} to="/Tasks" />
+          <StatCard label="Active Orders" value={activeOrders.length} color="orange" icon={Package} to="/Orders" />
+          <StatCard label="Goals" value={goals.length} color="purple" icon={Target} to="/Executive" />
         </div>
 
         <div className="grid md:grid-cols-2 gap-5">
@@ -132,7 +132,7 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ label, value, color, icon: Icon }) {
+function StatCard({ label, value, color, icon: Icon, to }) {
   const colors = {
     blue: "bg-blue-50 text-blue-600 border-blue-100",
     red: "bg-red-50 text-red-600 border-red-100",
@@ -140,13 +140,19 @@ function StatCard({ label, value, color, icon: Icon }) {
     purple: "bg-purple-50 text-purple-600 border-purple-100",
     slate: "bg-secondary text-muted-foreground border-border",
   };
-  return (
-    <div className={`rounded-2xl border p-4 ${colors[color] || colors.slate}`}>
+  const inner = (
+    <>
       <Icon className="w-4 h-4 mb-2 opacity-70" />
       <p className="text-2xl font-bold">{value}</p>
       <p className="text-xs font-medium opacity-70 mt-0.5">{label}</p>
-    </div>
+    </>
   );
+  if (to) return (
+    <Link to={to} className={`rounded-2xl border p-4 ${colors[color] || colors.slate} hover:shadow-apple-sm transition-all cursor-pointer block`}>
+      {inner}
+    </Link>
+  );
+  return <div className={`rounded-2xl border p-4 ${colors[color] || colors.slate}`}>{inner}</div>;
 }
 
 function Section({ title, count, accent, link, children }) {
