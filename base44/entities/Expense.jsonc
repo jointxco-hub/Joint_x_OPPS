@@ -60,6 +60,10 @@
       "type": "string",
       "description": "Linked project"
     },
+    "client_id": {
+      "type": "string",
+      "description": "Linked client"
+    },
     "receipt_urls": {
       "type": "array",
       "items": {
