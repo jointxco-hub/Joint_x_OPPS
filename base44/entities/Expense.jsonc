@@ -1,0 +1,81 @@
+{
+  "name": "Expense",
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Expense date"
+    },
+    "vendor": {
+      "type": "string",
+      "description": "Vendor name"
+    },
+    "amount": {
+      "type": "number",
+      "description": "Total amount including VAT"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "production",
+        "raw_materials",
+        "packaging",
+        "shipping",
+        "marketing",
+        "software",
+        "rent_utilities",
+        "wages",
+        "admin",
+        "owner_drawings"
+      ],
+      "description": "Expense category"
+    },
+    "vat_type": {
+      "type": "string",
+      "enum": [
+        "vatable",
+        "zero_rated",
+        "non_vat"
+      ],
+      "default": "vatable",
+      "description": "VAT type"
+    },
+    "vat_amount": {
+      "type": "number",
+      "default": 0,
+      "description": "VAT amount (input VAT claimable)"
+    },
+    "payment_method": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "card",
+        "eft",
+        "credit"
+      ],
+      "description": "Payment method"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "receipt_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Receipt/screenshot uploads (multiple allowed)"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Notes"
+    }
+  },
+  "required": [
+    "date",
+    "vendor",
+    "amount",
+    "category"
+  ]
+}

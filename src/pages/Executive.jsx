@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart2, Target, Lock, Settings, Eye, EyeOff } from "lucide-react";
+import { BarChart2, Target, Lock, Settings, Eye, EyeOff, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
@@ -10,6 +10,7 @@ import FinanceKPIs from "@/components/executive/FinanceKPIs";
 import RevenueExpenseChart from "@/components/executive/RevenueExpenseChart";
 import ExpenseBreakdown from "@/components/executive/ExpenseBreakdown";
 import ProfitSummary from "@/components/executive/ProfitSummary";
+import AddExpenseDrawer from "@/components/executive/AddExpenseDrawer";
 
 const DEFAULT_PIN = "1234";
 const PIN_STORAGE_KEY = "exec_pin_hash";
@@ -79,6 +80,7 @@ export default function Executive() {
 }
 
 function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
+  const [showAddExpense, setShowAddExpense] = useState(false);
   const { data: orders = [] } = useQuery({
     queryKey: ["exec-orders"],
     queryFn: () => base44.entities.Order.list("-created_date", 500),
@@ -87,7 +89,7 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
     queryKey: ["exec-payments"],
     queryFn: () => base44.entities.Payment.list("-payment_date", 500),
   });
-  const { data: expenses = [] } = useQuery({
+  const { data: expenses = [], refetch: refetchExpenses } = useQuery({
     queryKey: ["exec-expenses"],
     queryFn: () => base44.entities.Expense.list("-date", 500),
   });
@@ -132,6 +134,9 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
             <p className="text-muted-foreground text-sm mt-0.5">{format(new Date(), "MMMM yyyy")}</p>
           </div>
           <div className="flex gap-2">
+            <Button size="sm" className="rounded-xl gap-1.5" onClick={() => setShowAddExpense(true)}>
+              <PlusCircle className="w-3.5 h-3.5" /> Add Expense
+            </Button>
             {user?.role === 'admin' && (
               <Button variant="outline" size="sm" className="rounded-xl gap-1.5" onClick={() => setShowChangePIN(true)}>
                 <Settings className="w-3.5 h-3.5" /> PIN Settings
@@ -142,6 +147,14 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
             </Button>
           </div>
         </div>
+
+        {/* Add Expense Drawer */}
+        {showAddExpense && (
+          <AddExpenseDrawer
+            onClose={() => setShowAddExpense(false)}
+            onSaved={refetchExpenses}
+          />
+        )}
 
         {/* PIN Settings Modal */}
         {showChangePIN && user?.role === 'admin' && (
