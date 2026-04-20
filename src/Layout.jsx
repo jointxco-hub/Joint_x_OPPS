@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Package, ClipboardList, BarChart2,
   Menu, X, ChevronRight, Boxes, Building2, Calculator,
   CreditCard, Archive, Settings, MoreHorizontal, Target,
-  Search, Bell, User, ChevronDown
+  Search, Bell, User, ChevronDown, ShoppingCart
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
@@ -19,6 +19,7 @@ const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2 },
   { name: "Ops Calendar", page: "OpsCalendar", icon: Target },
   { name: "Inventory", page: "Inventory", icon: Boxes },
+  { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
   { name: "Calculator", page: "Calculator", icon: Calculator },
   { name: "Archive", page: "Archive", icon: Archive },
