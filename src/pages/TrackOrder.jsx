@@ -81,16 +81,29 @@ export default function TrackOrder() {
     setOrder(null);
 
     const val = trackingCode.trim().toUpperCase();
-    let orders = await base44.entities.Order.filter({ tracking_number: val });
-    if (orders.length === 0) orders = await base44.entities.Order.filter({ order_number: val });
-    if (orders.length === 0) orders = await base44.entities.ClientOrder.filter({ tracking_code: val });
-
-    setLoading(false);
-    if (orders.length > 0) {
-      setOrder(orders[0]);
+    
+    // Search across multiple fields
+    let orders = await base44.entities.Order.list();
+    const found = orders.find(o => 
+      o.tracking_number?.toUpperCase() === val ||
+      o.order_number?.toUpperCase() === val ||
+      o.id === val
+    );
+    
+    if (found) {
+      setOrder(found);
     } else {
-      setError("No order found. Check your tracking code and try again.");
+      // Try ClientOrder as fallback
+      const clientOrders = await base44.entities.ClientOrder.list();
+      const clientFound = clientOrders.find(co => co.tracking_code?.toUpperCase() === val);
+      if (clientFound) {
+        setOrder(clientFound);
+      } else {
+        setError("No order found with this tracking code or invoice number. Please check and try again.");
+      }
     }
+    
+    setLoading(false);
   };
 
   const currentStepIndex = order ? getStepIndex(order.status) : 0;

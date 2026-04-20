@@ -206,8 +206,13 @@ function OrderRow({ order }) {
     ready: "bg-green-100 text-green-700",
     shipped: "bg-purple-100 text-purple-700",
   };
+  const trackingUrl = `?order_number=${order.order_number}`;
+  
   return (
-    <div className="flex items-center gap-3 py-2.5 border-b border-border last:border-0">
+    <a 
+      href={`/TrackOrder${trackingUrl}`}
+      className="flex items-center gap-3 py-2.5 border-b border-border last:border-0 hover:bg-secondary/50 rounded-lg px-2 -mx-2 transition-colors cursor-pointer"
+    >
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground truncate">{order.client_name}</p>
         <p className="text-xs text-muted-foreground mt-0.5">{order.order_number}</p>
@@ -215,6 +220,6 @@ function OrderRow({ order }) {
       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[order.status] || "bg-secondary text-muted-foreground"}`}>
         {order.status?.replace("_", " ")}
       </span>
-    </div>
+    </a>
   );
 }
