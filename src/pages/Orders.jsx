@@ -166,6 +166,10 @@ export default function Orders() {
             updateMutation.mutate({ id, data });
             setSelectedOrder(prev => ({ ...prev, ...data }));
           }}
+          onArchive={() => {
+            updateMutation.mutate({ id: selectedOrder.id, data: { is_archived: true, archived_at: new Date().toISOString(), archived_by: '' } });
+            setSelectedOrder(null);
+          }}
         />
       )}
 

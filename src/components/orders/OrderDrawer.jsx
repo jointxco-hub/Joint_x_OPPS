@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import {
   X, Edit2, Package, Truck, CreditCard, Paperclip, Plus,
   CheckCircle2, Clock, Circle, ChevronRight, ExternalLink,
-  Archive, MapPin, Send
+  Archive, MapPin, Send, ShoppingCart
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     queryFn: () => base44.entities.Task.filter({ linked_order_id: order.id })
   });
 
+  const { data: purchaseOrders = [] } = useQuery({
+    queryKey: ['purchaseOrders'],
+    queryFn: () => base44.entities.PurchaseOrder.list('-created_date', 100)
+  });
+
+  const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
+  const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
+
   const addPaymentMutation = useMutation({
     mutationFn: (data) => base44.entities.Payment.create(data),
     onSuccess: () => {
@@ -64,7 +72,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const saveEdit = () => {
     if (editingField) {
-      onUpdate({ [editingField]: fieldValue });
+      onUpdate(order.id, { [editingField]: fieldValue });
       setEditingField(null);
     }
   };
@@ -76,7 +84,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       const updated = { file_urls: [...(order.file_urls || []), file_url] };
-      onUpdate(updated);
+      onUpdate(order.id, updated);
       toast.success("File uploaded");
     } catch {
       toast.error("Upload failed");
@@ -158,7 +166,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           {ORDER_STATUSES.filter(s => s !== order.status).slice(0,3).map(s => (
             <button
               key={s}
-              onClick={() => onUpdate({ status: s })}
+              onClick={() => onUpdate(order.id, { status: s })}
               className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full bg-secondary hover:bg-border transition-all capitalize"
             >
               → {statusConfig[s]?.label || s}
@@ -200,8 +208,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         )}
 
         {/* Tabs */}
-        <div className="flex border-b border-border px-5">
-          {['details', 'payments', 'tasks', 'tracking', 'files'].map(t => (
+        <div className="flex border-b border-border px-5 overflow-x-auto">
+          {['details', 'payments', 'tasks', 'po', 'tracking', 'files'].map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
@@ -212,6 +220,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               )}
               {t === 'tasks' && orderTasks.length > 0 && (
                 <span className="ml-1 text-xs bg-secondary text-muted-foreground px-1 rounded-full">{orderTasks.length}</span>
+              )}
+              {t === 'po' && linkedPO && (
+                <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">1</span>
               )}
             </button>
           ))}
@@ -236,7 +247,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   onChange={setFieldValue} onSave={saveEdit} inputType="number" />
                 <div className="bg-secondary/30 rounded-xl p-3">
                   <p className="text-xs text-muted-foreground mb-1">Status</p>
-                  <Select value={order.status} onValueChange={v => onUpdate({ status: v })}>
+                  <Select value={order.status} onValueChange={v => onUpdate(order.id, { status: v })}>
                     <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
                       <SelectValue />
                     </SelectTrigger>
@@ -350,6 +361,69 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   <span className="text-xs capitalize text-muted-foreground">{task.status?.replace('_', ' ')}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {tab === 'po' && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                  <ShoppingCart className="w-3.5 h-3.5" /> Linked Purchase Order
+                </p>
+                <Select value={order.linked_po_id || '__none'} onValueChange={v => onUpdate(order.id, { linked_po_id: v === '__none' ? '' : v })}>
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue placeholder="Link a PO..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">No PO linked</SelectItem>
+                    {activePOs.map(po => (
+                      <SelectItem key={po.id} value={po.id}>
+                        {po.po_number} — {po.supplier_name}
+                      </SelectItem>
+                    ))}
+                    {linkedPO && !activePOs.find(p => p.id === linkedPO.id) && (
+                      <SelectItem value={linkedPO.id}>{linkedPO.po_number} — {linkedPO.supplier_name}</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {linkedPO ? (
+                <div className="bg-secondary/40 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-foreground">{linkedPO.po_number}</p>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium capitalize">{linkedPO.status}</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-sm text-muted-foreground">Supplier: <span className="text-foreground font-medium">{linkedPO.supplier_name}</span></p>
+                    {linkedPO.expected_delivery && (
+                      <p className="text-sm text-muted-foreground">Expected: <span className="text-foreground font-medium">{format(new Date(linkedPO.expected_delivery), 'dd MMM yyyy')}</span></p>
+                    )}
+                    {linkedPO.total > 0 && (
+                      <p className="text-sm text-muted-foreground">PO Value: <span className="text-foreground font-semibold">R{linkedPO.total?.toLocaleString()}</span></p>
+                    )}
+                  </div>
+                  {linkedPO.items?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">Items</p>
+                      <div className="space-y-1">
+                        {linkedPO.items.map((item, i) => (
+                          <div key={i} className="flex items-center justify-between text-sm">
+                            <span className="text-foreground">{item.name}</span>
+                            <span className="text-muted-foreground">×{item.quantity} {item.unit || ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <ShoppingCart className="w-10 h-10 text-muted-foreground/20 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">No purchase order linked</p>
+                  <p className="text-xs text-muted-foreground mt-1">Select a PO above to link supplier materials to this order</p>
+                </div>
+              )}
             </div>
           )}
 

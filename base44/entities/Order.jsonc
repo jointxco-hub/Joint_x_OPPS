@@ -114,6 +114,10 @@
         "none"
       ]
     },
+    "linked_po_id": {
+      "type": "string",
+      "description": "Linked Purchase Order ID"
+    },
     "is_archived": {
       "type": "boolean",
       "default": false

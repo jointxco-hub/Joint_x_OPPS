@@ -1,22 +1,35 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart2, TrendingUp, DollarSign, Package, Users, Target, Lock } from "lucide-react";
+import { BarChart2, TrendingUp, DollarSign, Package, Users, Target, Lock, Settings, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { toast } from "sonner";
 
-const PIN = "1234";
+const DEFAULT_PIN = "1234";
+const PIN_STORAGE_KEY = "exec_pin_hash";
+
+// Simple local PIN — stored in localStorage, settable by admin
+function getStoredPin() {
+  return localStorage.getItem(PIN_STORAGE_KEY) || DEFAULT_PIN;
+}
 
 export default function Executive() {
   const [unlocked, setUnlocked] = useState(false);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
+  const [showChangePIN, setShowChangePIN] = useState(false);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
 
   const handlePin = (e) => {
     e.preventDefault();
-    if (pin === PIN) {
+    if (pin === getStoredPin()) {
       setUnlocked(true);
       setError("");
     } else {
@@ -41,7 +54,7 @@ export default function Executive() {
               onChange={e => setPin(e.target.value)}
               placeholder="Enter PIN"
               className="text-center text-lg tracking-widest rounded-xl"
-              maxLength={6}
+              maxLength={8}
               autoFocus
             />
             {error && <p className="text-red-500 text-sm">{error}</p>}
@@ -52,26 +65,30 @@ export default function Executive() {
     );
   }
 
-  return <ExecutiveDashboard />;
+  return (
+    <ExecutiveDashboard
+      user={user}
+      showChangePIN={showChangePIN}
+      setShowChangePIN={setShowChangePIN}
+      onLock={() => setUnlocked(false)}
+    />
+  );
 }
 
-function ExecutiveDashboard() {
+function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
   const { data: orders = [] } = useQuery({
     queryKey: ["exec-orders"],
     queryFn: () => base44.entities.Order.list("-created_date", 500),
   });
-
   const { data: payments = [] } = useQuery({
     queryKey: ["exec-payments"],
     queryFn: () => base44.entities.Payment.list("-payment_date", 500),
   });
-
   const { data: goals = [] } = useQuery({
     queryKey: ["exec-goals"],
     queryFn: () => base44.entities.Goal.list(),
   });
 
-  // Revenue by month (last 6 months)
   const monthlyData = Array.from({ length: 6 }, (_, i) => {
     const month = subMonths(new Date(), 5 - i);
     const start = startOfMonth(month);
@@ -96,7 +113,6 @@ function ExecutiveDashboard() {
   const thisMonthRevenue = monthlyData[monthlyData.length - 1]?.revenue || 0;
   const lastMonthRevenue = monthlyData[monthlyData.length - 2]?.revenue || 0;
   const revenueGrowth = lastMonthRevenue > 0 ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1) : 0;
-
   const activeOrders = orders.filter(o => !["delivered", "cancelled"].includes(o.status) && !o.is_archived).length;
   const totalOrderValue = orders.filter(o => !o.is_archived).reduce((s, o) => s + (o.total_amount || 0), 0);
   const avgOrderValue = orders.length > 0 ? totalOrderValue / orders.length : 0;
@@ -104,12 +120,29 @@ function ExecutiveDashboard() {
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
-        <div className="mb-7">
-          <h1 className="text-2xl font-bold text-foreground tracking-tight flex items-center gap-2">
-            <BarChart2 className="w-6 h-6 text-primary" /> Executive Overview
-          </h1>
-          <p className="text-muted-foreground text-sm mt-0.5">{format(new Date(), "MMMM yyyy")}</p>
+        <div className="flex items-center justify-between mb-7">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight flex items-center gap-2">
+              <BarChart2 className="w-6 h-6 text-primary" /> Executive Overview
+            </h1>
+            <p className="text-muted-foreground text-sm mt-0.5">{format(new Date(), "MMMM yyyy")}</p>
+          </div>
+          <div className="flex gap-2">
+            {user?.role === 'admin' && (
+              <Button variant="outline" size="sm" className="rounded-xl gap-1.5" onClick={() => setShowChangePIN(true)}>
+                <Settings className="w-3.5 h-3.5" /> PIN Settings
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" className="rounded-xl text-muted-foreground" onClick={onLock}>
+              <Lock className="w-3.5 h-3.5 mr-1" /> Lock
+            </Button>
+          </div>
         </div>
+
+        {/* PIN Settings Modal */}
+        {showChangePIN && user?.role === 'admin' && (
+          <PINSettingsModal onClose={() => setShowChangePIN(false)} />
+        )}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -166,6 +199,75 @@ function ExecutiveDashboard() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PINSettingsModal({ onClose }) {
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    if (currentPin !== getStoredPin()) {
+      setError("Current PIN is incorrect");
+      return;
+    }
+    if (newPin.length < 4) {
+      setError("New PIN must be at least 4 digits");
+      return;
+    }
+    if (newPin !== confirmPin) {
+      setError("PINs don't match");
+      return;
+    }
+    localStorage.setItem(PIN_STORAGE_KEY, newPin);
+    toast.success("PIN updated successfully");
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-card rounded-2xl border border-border shadow-apple-xl p-6 w-full max-w-sm">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-semibold text-foreground">Update Executive PIN</h3>
+          <button onClick={onClose} className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center hover:bg-border transition-all text-muted-foreground">
+            ×
+          </button>
+        </div>
+        <form onSubmit={handleSave} className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Current PIN</label>
+            <Input type="password" value={currentPin} onChange={e => setCurrentPin(e.target.value)}
+              placeholder="••••" className="rounded-xl text-center tracking-widest" maxLength={8} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">New PIN</label>
+            <div className="relative">
+              <Input type={showNew ? "text" : "password"} value={newPin} onChange={e => setNewPin(e.target.value)}
+                placeholder="••••" className="rounded-xl text-center tracking-widest pr-10" maxLength={8} />
+              <button type="button" onClick={() => setShowNew(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                {showNew ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Confirm New PIN</label>
+            <Input type="password" value={confirmPin} onChange={e => setConfirmPin(e.target.value)}
+              placeholder="••••" className="rounded-xl text-center tracking-widest" maxLength={8} />
+          </div>
+          {error && <p className="text-destructive text-xs">{error}</p>}
+          <div className="flex gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={onClose} className="flex-1 rounded-xl">Cancel</Button>
+            <Button type="submit" className="flex-1 rounded-xl">Update PIN</Button>
+          </div>
+        </form>
+        <p className="text-xs text-muted-foreground text-center mt-3">Default PIN: {DEFAULT_PIN}</p>
       </div>
     </div>
   );

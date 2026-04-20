@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,8 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search,
-  LayoutGrid, List, Users, RefreshCw, Archive
+  LayoutGrid, List, Users, RefreshCw, Archive, Calendar
 } from "lucide-react";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday, addMonths, subMonths } from "date-fns";
 import OpsTaskCard from "@/components/ops/OpsTaskCard";
 import OpsTaskFormDialog from "@/components/ops/OpsTaskFormDialog";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -32,8 +33,10 @@ function getCurrentWeek() {
 }
 
 export default function OpsCalendar() {
-  const [viewMode, setViewMode] = useState('weekly');
+  const [viewMode, setViewMode] = useState('calendar');
   const [selectedWeek, setSelectedWeek] = useState(getCurrentWeek());
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -114,6 +117,27 @@ export default function OpsCalendar() {
     viewMode === 'weekly' ? tasks.filter(t => t.week_number === selectedWeek) : tasks
   );
 
+  // Calendar helpers — tasks with a deadline get shown on their date day
+  const calendarDays = useMemo(() => {
+    const start = startOfMonth(calendarDate);
+    const end = endOfMonth(calendarDate);
+    const days = eachDayOfInterval({ start, end });
+    // pad to start from Sunday
+    const startPad = start.getDay(); // 0=Sun
+    const padDays = Array.from({ length: startPad }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(d.getDate() - (startPad - i));
+      return d;
+    });
+    return [...padDays, ...days];
+  }, [calendarDate]);
+
+  const getTasksForDay = (day) => applyFilters(
+    tasks.filter(t => t.deadline && isSameDay(new Date(t.deadline), day))
+  );
+
+  const selectedDayTasks = selectedDay ? getTasksForDay(selectedDay) : [];
+
   // Stats
   const activeTasks = tasks.filter(t => t.status !== 'archived');
   const inProgress = activeTasks.filter(t => t.status === 'in_progress').length;
@@ -135,6 +159,13 @@ export default function OpsCalendar() {
           <div className="flex gap-2 flex-wrap">
             <Button variant="ghost" size="icon" onClick={() => queryClient.invalidateQueries()}>
               <RefreshCw className="w-4 h-4" />
+            </Button>
+            <Button
+              variant={viewMode === 'calendar' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('calendar')}
+            >
+              <Calendar className="w-3.5 h-3.5 mr-1" /> Calendar
             </Button>
             <Button
               variant={viewMode === 'weekly' ? 'default' : 'outline'}
@@ -219,6 +250,120 @@ export default function OpsCalendar() {
             </Select>
           </CardContent>
         </Card>
+
+        {/* Calendar View */}
+        {viewMode === 'calendar' && (
+          <div className="space-y-4">
+            {/* Month Navigator */}
+            <div className="flex items-center justify-between">
+              <Button variant="outline" size="sm" onClick={() => setCalendarDate(d => subMonths(d, 1))}>
+                <ChevronLeft className="w-4 h-4 mr-1" /> Prev
+              </Button>
+              <h2 className="font-bold text-slate-900 text-lg">{format(calendarDate, 'MMMM yyyy')}</h2>
+              <Button variant="outline" size="sm" onClick={() => setCalendarDate(d => addMonths(d, 1))}>
+                Next <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+
+            <div className="flex gap-4">
+              {/* Month grid */}
+              <div className="flex-1">
+                <Card className="border-0 shadow-sm rounded-xl overflow-hidden">
+                  {/* Day headers */}
+                  <div className="grid grid-cols-7 bg-slate-800">
+                    {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+                      <div key={d} className="text-center text-xs font-semibold text-slate-300 py-2">{d}</div>
+                    ))}
+                  </div>
+                  {/* Day cells */}
+                  <div className="grid grid-cols-7">
+                    {calendarDays.map((day, idx) => {
+                      const dayTasks = getTasksForDay(day);
+                      const isCurrentMonth = isSameMonth(day, calendarDate);
+                      const today = isToday(day);
+                      const isSelected = selectedDay && isSameDay(day, selectedDay);
+                      const hasUrgent = dayTasks.some(t => t.priority === 'urgent');
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => setSelectedDay(isSelected ? null : day)}
+                          className={`relative min-h-[70px] p-1.5 border-b border-r border-slate-100 text-left transition-all
+                            ${isCurrentMonth ? 'bg-white hover:bg-slate-50' : 'bg-slate-50/50'}
+                            ${isSelected ? 'bg-blue-50 ring-2 ring-inset ring-[#0F9B8E]' : ''}
+                          `}
+                        >
+                          <span className={`text-xs font-semibold inline-flex w-6 h-6 items-center justify-center rounded-full
+                            ${today ? 'bg-[#0F9B8E] text-white' : isCurrentMonth ? 'text-slate-700' : 'text-slate-300'}
+                          `}>
+                            {format(day, 'd')}
+                          </span>
+                          <div className="mt-1 space-y-0.5">
+                            {dayTasks.slice(0, 2).map(t => (
+                              <div key={t.id} className={`text-xs px-1 py-0.5 rounded truncate
+                                ${t.status === 'complete' ? 'bg-green-100 text-green-700' :
+                                  t.priority === 'urgent' ? 'bg-red-100 text-red-700' :
+                                  t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                                  'bg-slate-100 text-slate-600'}`}>
+                                {t.title}
+                              </div>
+                            ))}
+                            {dayTasks.length > 2 && (
+                              <div className="text-xs text-slate-400 px-1">+{dayTasks.length - 2} more</div>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Card>
+              </div>
+
+              {/* Day detail panel */}
+              {selectedDay && (
+                <div className="w-72 flex-shrink-0">
+                  <Card className="border-0 shadow-sm rounded-xl overflow-hidden sticky top-4">
+                    <div className="bg-slate-800 px-4 py-3 flex items-center justify-between">
+                      <div>
+                        <p className="text-white font-semibold">{format(selectedDay, 'EEEE')}</p>
+                        <p className="text-slate-300 text-xs">{format(selectedDay, 'dd MMMM yyyy')}</p>
+                      </div>
+                      <button onClick={() => setSelectedDay(null)} className="text-slate-400 hover:text-white">
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <CardContent className="p-3 max-h-[400px] overflow-y-auto">
+                      {selectedDayTasks.length === 0 ? (
+                        <div className="text-center py-6">
+                          <p className="text-xs text-slate-400">No tasks due this day</p>
+                          <button
+                            onClick={() => { setEditingTask(null); setShowForm(true); }}
+                            className="mt-2 text-xs text-[#0F9B8E] font-medium"
+                          >
+                            + Add task
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedDayTasks.map(task => (
+                            <OpsTaskCard
+                              key={task.id}
+                              task={task}
+                              users={users}
+                              onStatusToggle={handleStatusToggle}
+                              onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                              onEdit={() => { setEditingTask(task); setShowForm(true); }}
+                              onDelete={() => setDeleteConfirm(task)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Week Navigator */}
         {viewMode === 'weekly' && (
