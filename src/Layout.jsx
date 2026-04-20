@@ -17,6 +17,7 @@ const primaryNav = [
 
 const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2 },
+  { name: "Ops Calendar", page: "OpsCalendar", icon: Target },
   { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
   { name: "Calculator", page: "Calculator", icon: Calculator },
