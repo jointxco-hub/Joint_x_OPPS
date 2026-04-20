@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, TrendingDown, Edit2, X, Check } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,14 @@ export default function Inventory() {
     }
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: (id) => base44.entities.InventoryItem.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      toast.success("Item archived");
+    }
+  });
+
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.InventoryItem.create(data),
     onSuccess: () => {
@@ -38,7 +46,8 @@ export default function Inventory() {
   });
 
   const filtered = inventory.filter(i =>
-    !search || i.name?.toLowerCase().includes(search.toLowerCase()) || i.sku?.toLowerCase().includes(search.toLowerCase())
+    !i.is_archived &&
+    (!search || i.name?.toLowerCase().includes(search.toLowerCase()) || i.sku?.toLowerCase().includes(search.toLowerCase()))
   );
 
   const lowStock = inventory.filter(i => i.reorder_point && i.current_stock <= i.reorder_point);
@@ -116,12 +125,16 @@ export default function Inventory() {
                   <div className="text-center">
                     <span className="text-xs text-muted-foreground">{item.reorder_point ?? '—'}</span>
                   </div>
-                  <div className="flex justify-center">
+                  <div className="flex justify-center items-center gap-2">
                     {isLow ? (
                       <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
                     ) : (
                       <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
                     )}
+                    <button onClick={() => { if (confirm(`Archive ${item.name}?`)) archiveMutation.mutate(item.id); }}
+                      className="text-muted-foreground hover:text-foreground transition-all ml-1">
+                      <Archive className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               );

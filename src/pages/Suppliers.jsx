@@ -7,9 +7,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { toast } from "sonner";
 import { 
-  Plus, Building2, Phone, MapPin, Star, X, Trash2,
-  Mail, Clock, Edit, Users, Search, Filter
+Plus, Building2, Phone, MapPin, Star, X, Archive,
+Mail, Clock, Edit, Users, Search, Filter
 } from "lucide-react";
 
 const typeColors = {
@@ -81,9 +82,12 @@ export default function Suppliers() {
     }
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Supplier.delete(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+  const archiveMutation = useMutation({
+    mutationFn: (id) => base44.entities.Supplier.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      toast.success("Supplier archived");
+    }
   });
 
   const resetForm = () => {
@@ -161,6 +165,7 @@ export default function Suppliers() {
 
   // Filter suppliers
   const filteredSuppliers = suppliers.filter(supplier => {
+    if (supplier.is_archived) return false;
     const matchesSearch = !searchTerm || 
       supplier.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       supplier.location?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -496,9 +501,11 @@ export default function Suppliers() {
                           <Button variant="outline" size="sm" onClick={() => handleEdit(supplier)} className="flex-1 rounded-xl">
                             <Edit className="w-3.5 h-3.5 mr-1" /> Edit
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => deleteMutation.mutate(supplier.id)}
-                            className="text-destructive hover:bg-destructive/10 rounded-xl">
-                            <Trash2 className="w-3.5 h-3.5" />
+                          <Button variant="ghost" size="sm" onClick={() => {
+                              if (confirm(`Archive ${supplier.name}?`)) archiveMutation.mutate(supplier.id);
+                            }}
+                            className="text-muted-foreground hover:bg-secondary rounded-xl">
+                            <Archive className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       </div>

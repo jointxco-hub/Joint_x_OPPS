@@ -21,7 +21,7 @@ const moreNav = [
   { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
   { name: "Calculator", page: "Calculator", icon: Calculator },
-  { name: "Archive", page: "Operations", icon: Archive },
+  { name: "Archive", page: "Archive", icon: Archive },
   { name: "Settings", page: "RolesManagement", icon: Settings },
 ];
 

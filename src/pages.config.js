@@ -78,6 +78,7 @@ import TrackOrder from './pages/TrackOrder';
 import WeeklyCalendar from './pages/WeeklyCalendar';
 import OpsCalendar from './pages/OpsCalendar';
 import TeamProfiles from './pages/TeamProfiles';
+import ArchivePage from './pages/Archive';
 import __Layout from './Layout.jsx';
 
 
@@ -113,6 +114,7 @@ export const PAGES = {
     "WeeklyCalendar": WeeklyCalendar,
     "OpsCalendar": OpsCalendar,
     "TeamProfiles": TeamProfiles,
+    "Archive": ArchivePage,
 }
 
 export const pagesConfig = {

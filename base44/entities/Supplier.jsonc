@@ -1,0 +1,114 @@
+{
+  "name": "Supplier",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "vinyl",
+        "dtf_printing",
+        "blanks",
+        "delivery",
+        "embroidery",
+        "screen_printing",
+        "other"
+      ],
+      "description": "Type of supplier"
+    },
+    "location": {
+      "type": "string"
+    },
+    "address": {
+      "type": "string"
+    },
+    "contacts": {
+      "type": "array",
+      "description": "Team contacts",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "is_primary": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    },
+    "is_preferred": {
+      "type": "boolean",
+      "default": false
+    },
+    "payment_terms": {
+      "type": "string",
+      "enum": [
+        "cod",
+        "net_7",
+        "net_14",
+        "net_30",
+        "prepaid"
+      ],
+      "default": "cod"
+    },
+    "lead_time_days": {
+      "type": "number",
+      "description": "Average days to receive order"
+    },
+    "avg_uber_fee": {
+      "type": "number",
+      "description": "Average Uber/transport cost to this supplier"
+    },
+    "avg_errand_time": {
+      "type": "number",
+      "description": "Average time in minutes for a trip"
+    },
+    "products": {
+      "type": "array",
+      "description": "Products this supplier provides",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "unit_price": {
+            "type": "number"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "is_archived": {
+      "type": "boolean",
+      "default": false
+    },
+    "archived_at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "type"
+  ]
+}

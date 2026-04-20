@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, RefreshCw, Users, Mail, Phone, MapPin, Trash2 } from "lucide-react";
+import { Plus, Search, RefreshCw, Users, Mail, Phone, MapPin, Archive } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Clients() {
@@ -43,15 +43,16 @@ export default function Clients() {
     }
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Client.delete(id),
+  const archiveMutation = useMutation({
+    mutationFn: (id) => base44.entities.Client.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
-      toast.success("Client deleted");
+      toast.success("Client archived");
     }
   });
 
   const filteredClients = clients.filter(client => {
+    if (client.is_archived) return false;
     const matchesSearch = !search || 
       client.name?.toLowerCase().includes(search.toLowerCase()) ||
       client.email?.toLowerCase().includes(search.toLowerCase()) ||
@@ -193,12 +194,12 @@ export default function Clients() {
                       variant="ghost" 
                       size="icon"
                       onClick={() => {
-                        if (confirm(`Delete ${client.name}?`)) {
-                          deleteMutation.mutate(client.id);
+                        if (confirm(`Archive ${client.name}?`)) {
+                          archiveMutation.mutate(client.id);
                         }
                       }}
                     >
-                      <Trash2 className="w-4 h-4 text-red-500" />
+                      <Archive className="w-4 h-4 text-muted-foreground" />
                     </Button>
                   </div>
                 </CardContent>
