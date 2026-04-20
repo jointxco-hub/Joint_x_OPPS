@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart2, TrendingUp, DollarSign, Package, Users, Target, Lock, Settings, Eye, EyeOff } from "lucide-react";
+import { BarChart2, Target, Lock, Settings, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { format, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { toast } from "sonner";
+import FinanceKPIs from "@/components/executive/FinanceKPIs";
+import RevenueExpenseChart from "@/components/executive/RevenueExpenseChart";
+import ExpenseBreakdown from "@/components/executive/ExpenseBreakdown";
+import ProfitSummary from "@/components/executive/ProfitSummary";
 
 const DEFAULT_PIN = "1234";
 const PIN_STORAGE_KEY = "exec_pin_hash";
@@ -84,6 +87,10 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
     queryKey: ["exec-payments"],
     queryFn: () => base44.entities.Payment.list("-payment_date", 500),
   });
+  const { data: expenses = [] } = useQuery({
+    queryKey: ["exec-expenses"],
+    queryFn: () => base44.entities.Expense.list("-date", 500),
+  });
   const { data: goals = [] } = useQuery({
     queryKey: ["exec-goals"],
     queryFn: () => base44.entities.Goal.list(),
@@ -98,32 +105,29 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
       const d = new Date(p.payment_date);
       return d >= start && d <= end;
     });
+    const monthExpenses = expenses.filter(e => {
+      if (!e.date) return false;
+      const d = new Date(e.date);
+      return d >= start && d <= end;
+    });
+    const revenue = monthPayments.reduce((s, p) => s + (p.amount || 0), 0);
+    const exp = monthExpenses.reduce((s, e) => s + (e.amount || 0), 0);
     return {
       month: format(month, "MMM"),
-      revenue: monthPayments.reduce((s, p) => s + (p.amount || 0), 0),
-      orders: orders.filter(o => {
-        if (!o.created_date) return false;
-        const d = new Date(o.created_date);
-        return d >= start && d <= end;
-      }).length,
+      revenue,
+      expenses: exp,
+      profit: revenue - exp,
     };
   });
 
-  const totalRevenue = payments.filter(p => p.status === "completed").reduce((s, p) => s + (p.amount || 0), 0);
-  const thisMonthRevenue = monthlyData[monthlyData.length - 1]?.revenue || 0;
-  const lastMonthRevenue = monthlyData[monthlyData.length - 2]?.revenue || 0;
-  const revenueGrowth = lastMonthRevenue > 0 ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1) : 0;
-  const activeOrders = orders.filter(o => !["delivered", "cancelled"].includes(o.status) && !o.is_archived).length;
-  const totalOrderValue = orders.filter(o => !o.is_archived).reduce((s, o) => s + (o.total_amount || 0), 0);
-  const avgOrderValue = orders.length > 0 ? totalOrderValue / orders.length : 0;
-
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
+      <div className="max-w-6xl mx-auto px-4 py-6 md:py-8">
+        {/* Header */}
         <div className="flex items-center justify-between mb-7">
           <div>
             <h1 className="text-2xl font-bold text-foreground tracking-tight flex items-center gap-2">
-              <BarChart2 className="w-6 h-6 text-primary" /> Executive Overview
+              <BarChart2 className="w-6 h-6 text-primary" /> Finance Overview
             </h1>
             <p className="text-muted-foreground text-sm mt-0.5">{format(new Date(), "MMMM yyyy")}</p>
           </div>
@@ -145,60 +149,43 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
         )}
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <KPICard label="Total Revenue" value={`R${totalRevenue.toLocaleString()}`} icon={DollarSign} color="green" />
-          <KPICard
-            label="This Month"
-            value={`R${thisMonthRevenue.toLocaleString()}`}
-            sub={revenueGrowth !== 0 ? `${revenueGrowth > 0 ? "+" : ""}${revenueGrowth}% vs last month` : ""}
-            icon={TrendingUp}
-            color="blue"
-          />
-          <KPICard label="Active Orders" value={activeOrders} icon={Package} color="orange" />
-          <KPICard label="Avg Order Value" value={`R${avgOrderValue.toFixed(0)}`} icon={Users} color="purple" />
-        </div>
+        <FinanceKPIs payments={payments} expenses={expenses} orders={orders} monthlyData={monthlyData} />
 
-        {/* Revenue Chart */}
-        <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5 mb-5">
-          <h2 className="text-sm font-semibold text-foreground mb-4">Revenue (Last 6 Months)</h2>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={monthlyData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
-              <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
-              <Tooltip
-                contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "12px", fontSize: 12 }}
-                formatter={(v) => [`R${v.toLocaleString()}`, "Revenue"]}
-              />
-              <Bar dataKey="revenue" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Revenue vs Expenses Chart */}
+        <RevenueExpenseChart monthlyData={monthlyData} />
 
-        {/* Goals */}
-        {goals.length > 0 && (
+        {/* Bottom row: Expense Breakdown + P&L Summary + Goals */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-5">
+          <ExpenseBreakdown expenses={expenses} />
+          <ProfitSummary payments={payments} expenses={expenses} />
+
+          {/* Goals */}
           <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5">
             <h2 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
               <Target className="w-4 h-4 text-primary" /> Active Goals
             </h2>
-            <div className="space-y-4">
-              {goals.filter(g => g.status === "active").map(g => (
-                <div key={g.id}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <p className="text-sm font-medium text-foreground">{g.title}</p>
-                    <span className="text-xs text-muted-foreground">{g.progress || 0}%</span>
+            {goals.filter(g => g.status === "active").length === 0 ? (
+              <p className="text-muted-foreground text-sm text-center mt-8">No active goals</p>
+            ) : (
+              <div className="space-y-4">
+                {goals.filter(g => g.status === "active").map(g => (
+                  <div key={g.id}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <p className="text-xs font-medium text-foreground leading-tight">{g.title}</p>
+                      <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{g.progress || 0}%</span>
+                    </div>
+                    <div className="w-full bg-secondary rounded-full h-1.5">
+                      <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: `${g.progress || 0}%` }} />
+                    </div>
+                    {g.end_date && (
+                      <p className="text-xs text-muted-foreground mt-1">Due {format(new Date(g.end_date), "d MMM yyyy")}</p>
+                    )}
                   </div>
-                  <div className="w-full bg-secondary rounded-full h-2">
-                    <div className="bg-primary h-2 rounded-full transition-all" style={{ width: `${g.progress || 0}%` }} />
-                  </div>
-                  {g.end_date && (
-                    <p className="text-xs text-muted-foreground mt-1">Due {format(new Date(g.end_date), "d MMM yyyy")}</p>
-                  )}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
@@ -269,23 +256,6 @@ function PINSettingsModal({ onClose }) {
         </form>
         <p className="text-xs text-muted-foreground text-center mt-3">Default PIN: {DEFAULT_PIN}</p>
       </div>
-    </div>
-  );
-}
-
-function KPICard({ label, value, sub, icon: Icon, color }) {
-  const colors = {
-    green: "bg-green-50 text-green-600",
-    blue: "bg-blue-50 text-blue-600",
-    orange: "bg-orange-50 text-orange-600",
-    purple: "bg-purple-50 text-purple-600",
-  };
-  return (
-    <div className={`rounded-2xl p-4 ${colors[color]}`}>
-      <Icon className="w-4 h-4 mb-2 opacity-70" />
-      <p className="text-xl font-bold">{value}</p>
-      <p className="text-xs font-medium opacity-70 mt-0.5">{label}</p>
-      {sub && <p className="text-xs opacity-60 mt-0.5">{sub}</p>}
     </div>
   );
 }
