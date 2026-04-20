@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -178,34 +177,32 @@ export default function Suppliers() {
   }, {});
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-6xl mx-auto p-4 md:p-8">
+    <div className="min-h-screen bg-background">
+      <div className="max-w-6xl mx-auto px-4 py-6 md:py-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Suppliers</h1>
-            <p className="text-slate-500">Manage your suppliers and partners</p>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Suppliers</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">Manage your suppliers and partners</p>
           </div>
-          <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
-            <Plus className="w-4 h-4 mr-2" /> Add Supplier
+          <Button onClick={() => setShowForm(true)} className="gap-2 shadow-apple-sm rounded-xl">
+            <Plus className="w-4 h-4" /> Add Supplier
           </Button>
         </div>
 
         {/* Filters */}
-        <Card className="mb-6 bg-white border-0 shadow-sm">
-          <CardContent className="p-4">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  placeholder="Search suppliers..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
+        <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-4 mb-6">
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search suppliers..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-9 rounded-xl h-9"
+              />
               </div>
               <Select value={locationFilter} onValueChange={setLocationFilter}>
-                <SelectTrigger className="w-full md:w-48">
-                  <MapPin className="w-4 h-4 mr-2 text-slate-400" />
+                <SelectTrigger className="w-full md:w-40 rounded-xl h-9">
                   <SelectValue placeholder="Location" />
                 </SelectTrigger>
                 <SelectContent>
@@ -216,8 +213,7 @@ export default function Suppliers() {
                 </SelectContent>
               </Select>
               <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="w-full md:w-48">
-                  <Filter className="w-4 h-4 mr-2 text-slate-400" />
+                <SelectTrigger className="w-full md:w-40 rounded-xl h-9">
                   <SelectValue placeholder="Type" />
                 </SelectTrigger>
                 <SelectContent>
@@ -228,24 +224,24 @@ export default function Suppliers() {
                 </SelectContent>
               </Select>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
         {/* Form Modal */}
         {showForm && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <Card className="w-full max-w-2xl bg-white border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
-              <CardHeader className="flex flex-row items-center justify-between pb-2 sticky top-0 bg-white z-10">
-                <CardTitle>{editingSupplier ? "Edit Supplier" : "Add Supplier"}</CardTitle>
-                <Button variant="ghost" size="icon" onClick={resetForm}>
-                  <X className="w-5 h-5" />
-                </Button>
-              </CardHeader>
-              <CardContent>
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-2xl bg-card rounded-2xl border border-border shadow-apple-xl max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card z-10">
+                <h2 className="font-semibold text-foreground">{editingSupplier ? "Edit Supplier" : "Add Supplier"}</h2>
+                <button onClick={resetForm} className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center hover:bg-border transition-all">
+                  <X className="w-4 h-4 text-muted-foreground" />
+                </button>
+              </div>
+              <div className="p-5">
                 <form onSubmit={handleSubmit} className="space-y-6">
                   {/* Basic Info */}
                   <div className="space-y-4">
-                    <h3 className="font-semibold text-slate-700">Basic Information</h3>
+                    <h3 className="font-semibold text-foreground text-sm">Basic Information</h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2 col-span-2">
                         <Label>Supplier Name *</Label>
@@ -287,7 +283,7 @@ export default function Suppliers() {
                   {/* Contacts */}
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-semibold text-slate-700 flex items-center gap-2">
+                      <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
                         <Users className="w-4 h-4" /> Team Contacts
                       </h3>
                       <Button type="button" variant="outline" size="sm" onClick={addContact}>
@@ -296,7 +292,7 @@ export default function Suppliers() {
                     </div>
                     
                     {formData.contacts.map((contact, index) => (
-                      <div key={index} className="bg-slate-50 rounded-lg p-4 space-y-3">
+                      <div key={index} className="bg-secondary/40 rounded-xl p-4 space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <input
@@ -342,7 +338,7 @@ export default function Suppliers() {
 
                   {/* Terms */}
                   <div className="space-y-4">
-                    <h3 className="font-semibold text-slate-700">Terms & Details</h3>
+                    <h3 className="font-semibold text-foreground text-sm">Terms & Details</h3>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>Payment Terms</Label>
@@ -405,136 +401,108 @@ export default function Suppliers() {
                   </div>
 
                   <div className="flex gap-3 pt-4">
-                    <Button type="button" variant="outline" onClick={resetForm} className="flex-1">
+                    <Button type="button" variant="outline" onClick={resetForm} className="flex-1 rounded-xl">
                       Cancel
                     </Button>
-                    <Button type="submit" className="flex-1 bg-slate-900">
+                    <Button type="submit" className="flex-1 rounded-xl">
                       {editingSupplier ? "Update" : "Add Supplier"}
                     </Button>
                   </div>
                 </form>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         )}
 
         {/* Suppliers List */}
         {Object.keys(groupedSuppliers).length === 0 ? (
-          <Card className="p-12 text-center bg-white border-0">
-            <Building2 className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-slate-700 mb-2">
+          <div className="text-center py-20">
+            <Building2 className="w-12 h-12 text-muted-foreground/20 mx-auto mb-3" />
+            <p className="text-muted-foreground font-medium">
               {suppliers.length === 0 ? "No suppliers yet" : "No suppliers match filters"}
-            </h3>
-            <p className="text-slate-500 mb-4">
-              {suppliers.length === 0 ? "Add your first supplier to get started" : "Try adjusting your filters"}
             </p>
             {suppliers.length === 0 && (
-              <Button onClick={() => setShowForm(true)}>
-                <Plus className="w-4 h-4 mr-2" /> Add Supplier
+              <Button onClick={() => setShowForm(true)} className="mt-4 rounded-xl gap-2">
+                <Plus className="w-4 h-4" /> Add Supplier
               </Button>
             )}
-          </Card>
+          </div>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-6">
             {Object.entries(groupedSuppliers).map(([type, items]) => (
               <div key={type}>
-                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3 flex items-center gap-2">
-                  <Badge className={`${typeColors[type]} border-0`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${typeColors[type]}`}>
                     {typeLabels[type] || type}
-                  </Badge>
-                  <span>({items.length})</span>
-                </h2>
+                  </span>
+                  <span className="text-xs text-muted-foreground">({items.length})</span>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {items.map(supplier => {
                     const contacts = supplier.contacts || [];
                     const primaryContact = contacts.find(c => c.is_primary) || contacts[0];
-                    
                     return (
-                      <Card key={supplier.id} className="bg-white border-0 shadow-sm hover:shadow-md transition-shadow">
-                        <CardContent className="p-5">
-                          <div className="flex items-start justify-between mb-4">
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-semibold text-slate-900 text-lg">{supplier.name}</h3>
-                              {supplier.is_preferred && (
-                                <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
-                              )}
+                      <div key={supplier.id} className="bg-card rounded-2xl border border-border shadow-apple-sm p-5 hover:shadow-apple transition-all">
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-foreground">{supplier.name}</h3>
+                            {supplier.is_preferred && (
+                              <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-2 mb-4">
+                          {supplier.location && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <MapPin className="w-3.5 h-3.5" />
+                              <span>{supplier.location}</span>
                             </div>
-                          </div>
-                          
-                          <div className="space-y-2 mb-4">
-                            {supplier.location && (
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <MapPin className="w-4 h-4 text-slate-400" />
-                                <span>{supplier.location}</span>
-                              </div>
-                            )}
-                            
-                            {/* Primary Contact */}
-                            {primaryContact && (primaryContact.phone || primaryContact.name) && (
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <Phone className="w-4 h-4 text-slate-400" />
-                                <span>
-                                  {primaryContact.phone}
-                                  {primaryContact.name && ` (${primaryContact.name}${primaryContact.role ? ` - ${primaryContact.role}` : ''})`}
-                                </span>
-                              </div>
-                            )}
-
-                            {primaryContact?.email && (
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <Mail className="w-4 h-4 text-slate-400" />
-                                <span>{primaryContact.email}</span>
-                              </div>
-                            )}
-
-                            {/* Additional Contacts Badge */}
-                            {contacts.length > 1 && (
-                              <div className="flex items-center gap-2 text-sm text-slate-500">
-                                <Users className="w-4 h-4 text-slate-400" />
-                                <span>+{contacts.length - 1} more contacts</span>
-                              </div>
-                            )}
-
-                            {supplier.lead_time_days && (
-                              <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <Clock className="w-4 h-4 text-slate-400" />
-                                <span>{supplier.lead_time_days} day lead time</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {supplier.payment_terms && (
-                            <Badge variant="outline" className="mb-3">
-                              {paymentTermLabels[supplier.payment_terms] || supplier.payment_terms}
-                            </Badge>
                           )}
-
-                          {supplier.notes && (
-                            <p className="text-sm text-slate-500 bg-slate-50 p-3 rounded-lg mb-4 line-clamp-2">
-                              {supplier.notes}
-                            </p>
+                          {primaryContact && (primaryContact.phone || primaryContact.name) && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Phone className="w-3.5 h-3.5" />
+                              <span>{primaryContact.phone}{primaryContact.name && ` (${primaryContact.name})`}</span>
+                            </div>
                           )}
-
-                          <div className="flex gap-2 pt-3 border-t">
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              onClick={() => handleEdit(supplier)}
-                              className="flex-1"
-                            >
-                              <Edit className="w-4 h-4 mr-1" /> Edit
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => deleteMutation.mutate(supplier.id)}
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
+                          {primaryContact?.email && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Mail className="w-3.5 h-3.5" />
+                              <span>{primaryContact.email}</span>
+                            </div>
+                          )}
+                          {contacts.length > 1 && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Users className="w-3.5 h-3.5" />
+                              <span>+{contacts.length - 1} more contacts</span>
+                            </div>
+                          )}
+                          {supplier.lead_time_days && (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>{supplier.lead_time_days} day lead time</span>
+                            </div>
+                          )}
+                        </div>
+                        {supplier.payment_terms && (
+                          <Badge variant="outline" className="mb-3 text-xs">
+                            {paymentTermLabels[supplier.payment_terms] || supplier.payment_terms}
+                          </Badge>
+                        )}
+                        {supplier.notes && (
+                          <p className="text-sm text-muted-foreground bg-secondary/40 p-3 rounded-xl mb-4 line-clamp-2">
+                            {supplier.notes}
+                          </p>
+                        )}
+                        <div className="flex gap-2 pt-3 border-t border-border">
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(supplier)} className="flex-1 rounded-xl">
+                            <Edit className="w-3.5 h-3.5 mr-1" /> Edit
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => deleteMutation.mutate(supplier.id)}
+                            className="text-destructive hover:bg-destructive/10 rounded-xl">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
