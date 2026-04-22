@@ -174,16 +174,16 @@ export default function VisualEditAgent() {
 			return;
 		}
 
-		// Prevent default behavior immediately when in visual edit mode
-		e.preventDefault();
-		e.stopPropagation();
-		e.stopImmediatePropagation();
-
 		// Support both data-source-location and data-visual-selector-id
 		const element = e.target.closest('[data-source-location], [data-visual-selector-id]');
 		if (!element) {
 			return;
 		}
+
+		// Only intercept clicks for actual editable elements.
+		e.preventDefault();
+		e.stopPropagation();
+		e.stopImmediatePropagation();
 
 		// Prefer data-source-location, fallback to data-visual-selector-id
 		const visualSelectorId = element.dataset.sourceLocation || element.dataset.visualSelectorId;
