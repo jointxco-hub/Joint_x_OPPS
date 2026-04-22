@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { 
@@ -22,29 +22,29 @@ export default function UserDashboard() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    base44.auth.me().then(u => { setUser(u); setNewName(u?.full_name || ""); }).catch(() => {});
+    dataClient.auth.me().then(u => { setUser(u); setNewName(u?.full_name || ""); }).catch(() => {});
   }, []);
 
   const { data: tasks = [] } = useQuery({
     queryKey: ["user-tasks", user?.email],
-    queryFn: () => base44.entities.Task.filter({ assigned_to: user.email, is_archived: false }),
+    queryFn: () => dataClient.entities.Task.filter({ assigned_to: user.email, is_archived: false }),
     enabled: !!user,
   });
 
   const { data: goals = [] } = useQuery({
     queryKey: ["user-goals", user?.email],
-    queryFn: () => base44.entities.Goal.filter({ assigned_to: user.email, status: "active" }),
+    queryFn: () => dataClient.entities.Goal.filter({ assigned_to: user.email, status: "active" }),
     enabled: !!user,
   });
 
   const { data: weeklyTasks = [] } = useQuery({
     queryKey: ["user-weekly-tasks", user?.email],
-    queryFn: () => base44.entities.WeeklyTask.list("-created_date", 200),
+    queryFn: () => dataClient.entities.WeeklyTask.list("-created_date", 200),
     enabled: !!user,
   });
 
   const updateTaskMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Task.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.Task.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["user-tasks"] }),
   });
 
@@ -52,9 +52,9 @@ export default function UserDashboard() {
     const file = e.target.files[0];
     if (!file) return;
     setUploadingPhoto(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    await base44.auth.updateMe({ profile_photo: file_url });
-    const updated = await base44.auth.me();
+    const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+    await dataClient.auth.updateMe({ profile_photo: file_url });
+    const updated = await dataClient.auth.me();
     setUser(updated);
     setUploadingPhoto(false);
     toast.success("Photo updated!");
@@ -62,8 +62,8 @@ export default function UserDashboard() {
 
   const handleNameSave = async () => {
     if (!newName.trim()) return;
-    await base44.auth.updateMe({ full_name: newName.trim() });
-    const updated = await base44.auth.me();
+    await dataClient.auth.updateMe({ full_name: newName.trim() });
+    const updated = await dataClient.auth.me();
     setUser(updated);
     setEditingName(false);
     toast.success("Name updated!");

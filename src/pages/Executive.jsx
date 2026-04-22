@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart2, Target, Lock, Settings, Eye, EyeOff, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ export default function Executive() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => {});
+    dataClient.auth.me().then(setUser).catch(() => {});
   }, []);
 
   const handlePin = (e) => {
@@ -83,19 +83,19 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const { data: orders = [] } = useQuery({
     queryKey: ["exec-orders"],
-    queryFn: () => base44.entities.Order.list("-created_date", 500),
+    queryFn: () => dataClient.entities.Order.list("-created_date", 500),
   });
   const { data: payments = [] } = useQuery({
     queryKey: ["exec-payments"],
-    queryFn: () => base44.entities.Payment.list("-payment_date", 500),
+    queryFn: () => dataClient.entities.Payment.list("-payment_date", 500),
   });
   const { data: expenses = [], refetch: refetchExpenses } = useQuery({
     queryKey: ["exec-expenses"],
-    queryFn: () => base44.entities.Expense.list("-date", 500),
+    queryFn: () => dataClient.entities.Expense.list("-date", 500),
   });
   const { data: goals = [] } = useQuery({
     queryKey: ["exec-goals"],
-    queryFn: () => base44.entities.Goal.list(),
+    queryFn: () => dataClient.entities.Goal.list(),
   });
 
   const monthlyData = Array.from({ length: 6 }, (_, i) => {

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { 
@@ -83,7 +83,7 @@ export default function TrackOrder() {
     const val = trackingCode.trim().toUpperCase();
     
     // Search across multiple fields
-    let orders = await base44.entities.Order.list();
+    let orders = await dataClient.entities.Order.list();
     const found = orders.find(o => 
       o.tracking_number?.toUpperCase() === val ||
       o.order_number?.toUpperCase() === val ||
@@ -94,7 +94,7 @@ export default function TrackOrder() {
       setOrder(found);
     } else {
       // Try ClientOrder as fallback
-      const clientOrders = await base44.entities.ClientOrder.list();
+      const clientOrders = await dataClient.entities.ClientOrder.list();
       const clientFound = clientOrders.find(co => co.tracking_code?.toUpperCase() === val);
       if (clientFound) {
         setOrder(clientFound);

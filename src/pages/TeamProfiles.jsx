@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,36 +45,36 @@ export default function TeamProfiles() {
 
   const { data: members = [] } = useQuery({
     queryKey: ['teamMembers'],
-    queryFn: () => base44.entities.TeamMember.list('-created_date', 100)
+    queryFn: () => dataClient.entities.TeamMember.list('-created_date', 100)
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list('-created_date', 100)
+    queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
   const { data: tasks = [] } = useQuery({
     queryKey: ['opsTasks'],
-    queryFn: () => base44.entities.OpsTask.list('-created_date', 500)
+    queryFn: () => dataClient.entities.OpsTask.list('-created_date', 500)
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 200)
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.TeamMember.create(data),
+    mutationFn: (data) => dataClient.entities.TeamMember.create(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['teamMembers'] }); setShowForm(false); toast.success("Team member added!"); }
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.TeamMember.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.TeamMember.update(id, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['teamMembers'] }); setShowForm(false); setEditingMember(null); toast.success("Updated!"); }
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.TeamMember.delete(id),
+    mutationFn: (id) => dataClient.entities.TeamMember.delete(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['teamMembers'] }); toast.success("Removed!"); }
   });
 

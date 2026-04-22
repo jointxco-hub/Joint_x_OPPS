@@ -11,7 +11,7 @@ import {
 import OrderStatusBadge from "../dashboard/OrderStatusBadge";
 import ClientAssetsPanel from "./ClientAssetsPanel";
 import { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const printTypeLabels = {
@@ -52,7 +52,7 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
     await onUpdateStatus(order.id, order.status, { stuck_reason: newReason });
   };
 
-  const whatsappUrl = base44.agents.getWhatsAppConnectURL('order_assistant');
+  const whatsappUrl = dataClient.agents.getWhatsAppConnectURL('order_assistant');
   const balance = (order.quoted_price || 0) - (order.deposit_paid || 0);
   const currentStuckConfig = stuckReasons[stuckReason] || stuckReasons.none;
 

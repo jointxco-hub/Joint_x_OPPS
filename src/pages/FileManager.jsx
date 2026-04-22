@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,31 +43,31 @@ export default function FileManager() {
 
   const { data: folders = [] } = useQuery({
     queryKey: ['folders'],
-    queryFn: () => base44.entities.Folder.list('-created_date', 500)
+    queryFn: () => dataClient.entities.Folder.list('-created_date', 500)
   });
 
   const { data: assets = [] } = useQuery({
     queryKey: ['clientAssets'],
-    queryFn: () => base44.entities.ClientAsset.list('-created_date', 500)
+    queryFn: () => dataClient.entities.ClientAsset.list('-created_date', 500)
   });
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('-created_date', 500)
+    queryFn: () => dataClient.entities.Client.list('-created_date', 500)
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 500)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 500)
   });
 
   const { data: projects = [] } = useQuery({
     queryKey: ['projects'],
-    queryFn: () => base44.entities.Project.list('-created_date', 500)
+    queryFn: () => dataClient.entities.Project.list('-created_date', 500)
   });
 
   const createFolderMutation = useMutation({
-    mutationFn: (data) => base44.entities.Folder.create(data),
+    mutationFn: (data) => dataClient.entities.Folder.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setShowNewFolder(false);
@@ -76,7 +76,7 @@ export default function FileManager() {
   });
 
   const updateFolderMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Folder.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.Folder.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setShowEditFolder(null);
@@ -85,7 +85,7 @@ export default function FileManager() {
   });
 
   const deleteFolderMutation = useMutation({
-    mutationFn: (id) => base44.entities.Folder.delete(id),
+    mutationFn: (id) => dataClient.entities.Folder.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['folders'] });
       setDeleteConfirm(null);
@@ -95,7 +95,7 @@ export default function FileManager() {
 
   const moveFileMutation = useMutation({
     mutationFn: ({ fileId, folderId }) => 
-      base44.entities.ClientAsset.update(fileId, { folder_id: folderId }),
+      dataClient.entities.ClientAsset.update(fileId, { folder_id: folderId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets'] });
       setShowMoveFile(null);
@@ -104,7 +104,7 @@ export default function FileManager() {
   });
 
   const deleteFileMutation = useMutation({
-    mutationFn: (id) => base44.entities.ClientAsset.delete(id),
+    mutationFn: (id) => dataClient.entities.ClientAsset.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets'] });
       setDeleteConfirm(null);

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,31 +44,31 @@ export default function WeeklyCalendar() {
 
   const { data: tasks = [] } = useQuery({
     queryKey: ['weeklyTasks'],
-    queryFn: () => base44.entities.WeeklyTask.list('-created_date', 500)
+    queryFn: () => dataClient.entities.WeeklyTask.list('-created_date', 500)
   });
 
   const { data: goals = [] } = useQuery({
     queryKey: ['goals'],
-    queryFn: () => base44.entities.Goal.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Goal.list('-created_date', 200)
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list('-created_date', 100)
+    queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
   const { data: projects = [] } = useQuery({
     queryKey: ['projects'],
-    queryFn: () => base44.entities.Project.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Project.list('-created_date', 100)
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 100)
   });
 
   const createTaskMutation = useMutation({
-    mutationFn: (data) => base44.entities.WeeklyTask.create(data),
+    mutationFn: (data) => dataClient.entities.WeeklyTask.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['weeklyTasks'] });
       setShowTaskForm(false);
@@ -78,7 +78,7 @@ export default function WeeklyCalendar() {
   });
 
   const updateTaskMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.WeeklyTask.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.WeeklyTask.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['weeklyTasks'] });
       setShowTaskForm(false);
@@ -88,7 +88,7 @@ export default function WeeklyCalendar() {
   });
 
   const deleteTaskMutation = useMutation({
-    mutationFn: (id) => base44.entities.WeeklyTask.delete(id),
+    mutationFn: (id) => dataClient.entities.WeeklyTask.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['weeklyTasks'] });
       setDeleteConfirm(null);
@@ -97,7 +97,7 @@ export default function WeeklyCalendar() {
   });
 
   const createGoalMutation = useMutation({
-    mutationFn: (data) => base44.entities.Goal.create(data),
+    mutationFn: (data) => dataClient.entities.Goal.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['goals'] });
       setShowGoalForm(false);
@@ -107,7 +107,7 @@ export default function WeeklyCalendar() {
   });
 
   const updateGoalMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Goal.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.Goal.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['goals'] });
       toast.success("Goal updated!");
@@ -115,7 +115,7 @@ export default function WeeklyCalendar() {
   });
 
   const deleteGoalMutation = useMutation({
-    mutationFn: (id) => base44.entities.Goal.delete(id),
+    mutationFn: (id) => dataClient.entities.Goal.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['goals'] });
       setDeleteConfirm(null);

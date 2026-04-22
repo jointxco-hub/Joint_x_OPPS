@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,22 +16,22 @@ import { toast } from "sonner";
 export default function Operations() {
   const { data: qbrs = [] } = useQuery({
     queryKey: ['qbrs'],
-    queryFn: () => base44.entities.QBR.list('-created_date', 100)
+    queryFn: () => dataClient.entities.QBR.list('-created_date', 100)
   });
 
   const { data: roles = [] } = useQuery({
     queryKey: ['roles'],
-    queryFn: () => base44.entities.Role.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Role.list('-created_date', 100)
   });
 
   const { data: sops = [] } = useQuery({
     queryKey: ['sops'],
-    queryFn: () => base44.entities.SOP.list('-created_date', 500)
+    queryFn: () => dataClient.entities.SOP.list('-created_date', 500)
   });
 
   const { data: onboardings = [] } = useQuery({
     queryKey: ['onboardings'],
-    queryFn: () => base44.entities.OnboardingFlow.list('-created_date', 100)
+    queryFn: () => dataClient.entities.OnboardingFlow.list('-created_date', 100)
   });
 
   const activeQBR = qbrs.find(q => q.is_active);

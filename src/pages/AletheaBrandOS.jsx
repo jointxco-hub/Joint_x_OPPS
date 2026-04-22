@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,12 +19,12 @@ export default function AletheaBrandOS() {
 
   const { data: projects = [] } = useQuery({
     queryKey: ['aletheaProjects'],
-    queryFn: () => base44.entities.AletheaProject.list('-created_date', 100)
+    queryFn: () => dataClient.entities.AletheaProject.list('-created_date', 100)
   });
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('name', 200)
+    queryFn: () => dataClient.entities.Client.list('name', 200)
   });
 
   const filteredProjects = projects.filter(p => 

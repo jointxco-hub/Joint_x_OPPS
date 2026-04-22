@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -58,9 +58,9 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
     queryKey: ['clientAssets', orderId, projectId],
     queryFn: async () => {
       if (orderId) {
-        return base44.entities.ClientAsset.filter({ order_id: orderId }, '-created_date', 100);
+        return dataClient.entities.ClientAsset.filter({ order_id: orderId }, '-created_date', 100);
       } else if (projectId) {
-        return base44.entities.ClientAsset.filter({ project_id: projectId }, '-created_date', 100);
+        return dataClient.entities.ClientAsset.filter({ project_id: projectId }, '-created_date', 100);
       }
       return [];
     },
@@ -68,7 +68,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.ClientAsset.create(data),
+    mutationFn: (data) => dataClient.entities.ClientAsset.create(data),
     onSuccess: (newAsset) => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       // Force refetch to ensure new file shows immediately
@@ -87,7 +87,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.ClientAsset.delete(id),
+    mutationFn: (id) => dataClient.entities.ClientAsset.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       toast.success("Asset deleted");
@@ -96,7 +96,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
 
   const toggleVisibilityMutation = useMutation({
     mutationFn: ({ id, visible }) => 
-      base44.entities.ClientAsset.update(id, { is_client_visible: visible }),
+      dataClient.entities.ClientAsset.update(id, { is_client_visible: visible }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
     }
@@ -104,7 +104,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
 
   const updateApprovalMutation = useMutation({
     mutationFn: ({ id, status }) => 
-      base44.entities.ClientAsset.update(id, { approval_status: status }),
+      dataClient.entities.ClientAsset.update(id, { approval_status: status }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       toast.success("Approval status updated");
@@ -117,7 +117,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
 
     setUploadingFile(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       setNewAsset({ ...newAsset, file_url, title: newAsset.title || file.name });
       toast.success("File uploaded!");
     } catch (error) {

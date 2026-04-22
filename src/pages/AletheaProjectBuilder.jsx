@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -29,12 +29,12 @@ export default function AletheaProjectBuilder() {
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('name', 200)
+    queryFn: () => dataClient.entities.Client.list('name', 200)
   });
 
   const createProjectMutation = useMutation({
     mutationFn: async (data) => {
-      const project = await base44.entities.AletheaProject.create({
+      const project = await dataClient.entities.AletheaProject.create({
         ...data,
         status: 'draft',
         client_portal_enabled: true,
@@ -54,7 +54,7 @@ export default function AletheaProjectBuilder() {
         ];
 
         for (const phase of defaultPhases) {
-          await base44.entities.AletheaPhase.create({
+          await dataClient.entities.AletheaPhase.create({
             ...phase,
             alethea_project_id: project.id,
             unlock_condition: phase.payment_required ? 'payment' : 'auto'

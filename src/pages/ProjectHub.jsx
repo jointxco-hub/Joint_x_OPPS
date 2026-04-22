@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,7 +23,7 @@ export default function ProjectHub() {
   const { data: project, isLoading } = useQuery({
     queryKey: ['project', projectId],
     queryFn: async () => {
-      const projects = await base44.entities.Project.filter({ id: projectId });
+      const projects = await dataClient.entities.Project.filter({ id: projectId });
       return projects[0];
     },
     enabled: !!projectId
@@ -31,13 +31,13 @@ export default function ProjectHub() {
 
   const { data: orders = [] } = useQuery({
     queryKey: ['projectOrders', projectId],
-    queryFn: () => base44.entities.Order.filter({ project_id: projectId }, '-created_date', 100),
+    queryFn: () => dataClient.entities.Order.filter({ project_id: projectId }, '-created_date', 100),
     enabled: !!projectId
   });
 
   const { data: tasks = [] } = useQuery({
     queryKey: ['projectTasks', projectId],
-    queryFn: () => base44.entities.Task.filter({ project_id: projectId }, '-created_date', 100),
+    queryFn: () => dataClient.entities.Task.filter({ project_id: projectId }, '-created_date', 100),
     enabled: !!projectId
   });
 
@@ -195,7 +195,7 @@ function NotesTab({ project }) {
 
   const handleSave = async () => {
     setIsSaving(true);
-    await base44.entities.Project.update(project.id, { notes });
+    await dataClient.entities.Project.update(project.id, { notes });
     queryClient.invalidateQueries({ queryKey: ['project', project.id] });
     setIsSaving(false);
   };

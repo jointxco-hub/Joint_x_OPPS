@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,43 +48,43 @@ export default function OpsCalendar() {
 
   const { data: tasks = [] } = useQuery({
     queryKey: ['opsTasks'],
-    queryFn: () => base44.entities.OpsTask.list('-created_date', 500)
+    queryFn: () => dataClient.entities.OpsTask.list('-created_date', 500)
   });
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list('-created_date', 100)
+    queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Client.list('-created_date', 200)
   });
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 200)
   });
   const { data: projects = [] } = useQuery({
     queryKey: ['projects'],
-    queryFn: () => base44.entities.Project.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Project.list('-created_date', 100)
   });
   const { data: aletheaProjects = [] } = useQuery({
     queryKey: ['aletheaProjects'],
-    queryFn: () => base44.entities.AletheaProject.list('-created_date', 100)
+    queryFn: () => dataClient.entities.AletheaProject.list('-created_date', 100)
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.OpsTask.create(data),
+    mutationFn: (data) => dataClient.entities.OpsTask.create(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); toast.success("Task created!"); }
   });
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.OpsTask.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.OpsTask.update(id, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); setEditingTask(null); toast.success("Task updated!"); }
   });
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.OpsTask.delete(id),
+    mutationFn: (id) => dataClient.entities.OpsTask.delete(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setDeleteConfirm(null); toast.success("Task deleted!"); }
   });
   const archiveMutation = useMutation({
-    mutationFn: (task) => base44.entities.OpsTask.update(task.id, { ...task, status: 'archived' }),
+    mutationFn: (task) => dataClient.entities.OpsTask.update(task.id, { ...task, status: 'archived' }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); toast.success("Task archived!"); }
   });
 

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,11 +34,11 @@ export default function OrderLinker({ projectId, clientName, onClose }) {
 
   const { data: allOrders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 200)
   });
 
   const linkOrderMutation = useMutation({
-    mutationFn: (orderId) => base44.entities.Order.update(orderId, { project_id: projectId }),
+    mutationFn: (orderId) => dataClient.entities.Order.update(orderId, { project_id: projectId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectOrders', projectId] });
       toast.success("Order linked to project!");
@@ -47,7 +47,7 @@ export default function OrderLinker({ projectId, clientName, onClose }) {
   });
 
   const createOrderMutation = useMutation({
-    mutationFn: (data) => base44.entities.Order.create(data),
+    mutationFn: (data) => dataClient.entities.Order.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectOrders', projectId] });
       toast.success("Order created!");

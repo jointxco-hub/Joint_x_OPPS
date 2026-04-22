@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,12 +26,12 @@ export default function SOPLibrary() {
 
   const { data: sops = [] } = useQuery({
     queryKey: ['sops'],
-    queryFn: () => base44.entities.SOP.list('-created_date', 500)
+    queryFn: () => dataClient.entities.SOP.list('-created_date', 500)
   });
 
   const { data: roles = [] } = useQuery({
     queryKey: ['roles'],
-    queryFn: () => base44.entities.Role.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Role.list('-created_date', 100)
   });
 
   const activeSops = sops.filter(s => s.is_active);

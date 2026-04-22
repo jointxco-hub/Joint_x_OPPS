@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Package, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,11 +34,11 @@ export default function Orders() {
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["orders"],
-    queryFn: () => base44.entities.Order.list("-created_date", 200),
+    queryFn: () => dataClient.entities.Order.list("-created_date", 200),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Order.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.Order.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] }),
   });
 
@@ -177,7 +177,7 @@ export default function Orders() {
         <NewOrderDrawer
           onClose={() => setShowNew(false)}
           onCreate={async (orderData) => {
-            await base44.entities.Order.create(orderData);
+            await dataClient.entities.Order.create(orderData);
             queryClient.invalidateQueries({ queryKey: ["orders"] });
             setShowNew(false);
           }}

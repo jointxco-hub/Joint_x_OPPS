@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,17 +21,17 @@ export default function OnboardingManagement() {
 
   const { data: onboardings = [] } = useQuery({
     queryKey: ['onboardings'],
-    queryFn: () => base44.entities.OnboardingFlow.list('-created_date', 100)
+    queryFn: () => dataClient.entities.OnboardingFlow.list('-created_date', 100)
   });
 
   const { data: roles = [] } = useQuery({
     queryKey: ['roles'],
-    queryFn: () => base44.entities.Role.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Role.list('-created_date', 100)
   });
 
   const { data: sops = [] } = useQuery({
     queryKey: ['sops'],
-    queryFn: () => base44.entities.SOP.list('-created_date', 500)
+    queryFn: () => dataClient.entities.SOP.list('-created_date', 500)
   });
 
   const activeOnboardings = onboardings.filter(o => o.status === 'in_progress');
@@ -119,7 +119,7 @@ function OnboardingCard({ onboarding, roles, sops }) {
   const role = roles.find(r => r.id === onboarding.role_id);
 
   const updateMutation = useMutation({
-    mutationFn: ({ data }) => base44.entities.OnboardingFlow.update(onboarding.id, data),
+    mutationFn: ({ data }) => dataClient.entities.OnboardingFlow.update(onboarding.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['onboardings'] });
     }
@@ -224,7 +224,7 @@ function OnboardingFormDialog({ roles, sops, onClose }) {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.OnboardingFlow.create(data),
+    mutationFn: (data) => dataClient.entities.OnboardingFlow.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['onboardings'] });
       toast.success("Onboarding started!");

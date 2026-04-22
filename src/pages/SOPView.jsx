@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,30 +43,30 @@ export default function SOPView() {
 
   const { data: sop } = useQuery({
     queryKey: ['sop', sopId],
-    queryFn: () => base44.entities.SOP.filter({ id: sopId }).then(r => r[0]),
+    queryFn: () => dataClient.entities.SOP.filter({ id: sopId }).then(r => r[0]),
     enabled: !!sopId
   });
 
   const { data: role } = useQuery({
     queryKey: ['role', sop?.role_id],
-    queryFn: () => base44.entities.Role.filter({ id: sop.role_id }).then(r => r[0]),
+    queryFn: () => dataClient.entities.Role.filter({ id: sop.role_id }).then(r => r[0]),
     enabled: !!sop?.role_id
   });
 
   const { data: videos = [] } = useQuery({
     queryKey: ['sopVideos', sopId],
-    queryFn: () => base44.entities.SOPVideo.filter({ sop_id: sopId }),
+    queryFn: () => dataClient.entities.SOPVideo.filter({ sop_id: sopId }),
     enabled: !!sopId
   });
 
   const { data: versions = [] } = useQuery({
     queryKey: ['sopVersions', sopId],
-    queryFn: () => base44.entities.SOPVersion.filter({ sop_id: sopId }),
+    queryFn: () => dataClient.entities.SOPVersion.filter({ sop_id: sopId }),
     enabled: !!sopId
   });
 
   const updateSopMutation = useMutation({
-    mutationFn: ({ data }) => base44.entities.SOP.update(sopId, data),
+    mutationFn: ({ data }) => dataClient.entities.SOP.update(sopId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sop', sopId] });
       setShowVerifyDialog(false);
@@ -338,7 +338,7 @@ function VideoFormDialog({ sopId, onClose }) {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.SOPVideo.create({
+    mutationFn: (data) => dataClient.entities.SOPVideo.create({
       ...data,
       sop_id: sopId
     }),

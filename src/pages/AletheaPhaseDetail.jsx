@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,20 +21,20 @@ export default function AletheaPhaseDetail() {
 
   const { data: phase } = useQuery({
     queryKey: ['aletheaPhase', phaseId],
-    queryFn: () => base44.entities.AletheaPhase.filter({ id: phaseId }),
+    queryFn: () => dataClient.entities.AletheaPhase.filter({ id: phaseId }),
     select: (data) => data[0]
   });
 
   const { data: project } = useQuery({
     queryKey: ['aletheaProject', projectId],
-    queryFn: () => base44.entities.AletheaProject.filter({ id: projectId }),
+    queryFn: () => dataClient.entities.AletheaProject.filter({ id: projectId }),
     select: (data) => data[0],
     enabled: !!projectId
   });
 
   const { data: steps = [] } = useQuery({
     queryKey: ['aletheaSteps', phaseId],
-    queryFn: () => base44.entities.AletheaStep.filter({ phase_id: phaseId }, 'order'),
+    queryFn: () => dataClient.entities.AletheaStep.filter({ phase_id: phaseId }, 'order'),
     enabled: !!phaseId
   });
 
@@ -43,7 +43,7 @@ export default function AletheaPhaseDetail() {
     queryFn: async () => {
       const allTasks = [];
       for (const step of steps) {
-        const stepTasks = await base44.entities.AletheaTask.filter({ step_id: step.id });
+        const stepTasks = await dataClient.entities.AletheaTask.filter({ step_id: step.id });
         allTasks.push(...stepTasks);
       }
       return allTasks;
@@ -56,7 +56,7 @@ export default function AletheaPhaseDetail() {
   const toggleTaskMutation = useMutation({
     mutationFn: async ({ taskId, currentStatus }) => {
       const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
-      await base44.entities.AletheaTask.update(taskId, { status: newStatus });
+      await dataClient.entities.AletheaTask.update(taskId, { status: newStatus });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['aletheaTasks'] });

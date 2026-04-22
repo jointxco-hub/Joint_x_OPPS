@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 
 export default function NewTaskForm({ onClose, onCreate }) {
   const [form, setForm] = useState({
@@ -21,7 +21,7 @@ export default function NewTaskForm({ onClose, onCreate }) {
     e.preventDefault();
     if (!form.title.trim()) return;
     setLoading(true);
-    await base44.entities.Task.create({ ...form, is_archived: false });
+    await dataClient.entities.Task.create({ ...form, is_archived: false });
     setLoading(false);
     onCreate();
   };

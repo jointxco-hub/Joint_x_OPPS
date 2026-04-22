@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -39,24 +39,24 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const { data: payments = [] } = useQuery({
     queryKey: ['payments', order.id],
-    queryFn: () => base44.entities.Payment.filter({ order_id: order.id })
+    queryFn: () => dataClient.entities.Payment.filter({ order_id: order.id })
   });
 
   const { data: orderTasks = [] } = useQuery({
     queryKey: ['orderTasks', order.id],
-    queryFn: () => base44.entities.Task.filter({ linked_order_id: order.id })
+    queryFn: () => dataClient.entities.Task.filter({ linked_order_id: order.id })
   });
 
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
-    queryFn: () => base44.entities.PurchaseOrder.list('-created_date', 100)
+    queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100)
   });
 
   const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
   const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
 
   const addPaymentMutation = useMutation({
-    mutationFn: (data) => base44.entities.Payment.create(data),
+    mutationFn: (data) => dataClient.entities.Payment.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
@@ -82,7 +82,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     if (!file) return;
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       const updated = { file_urls: [...(order.file_urls || []), file_url] };
       onUpdate(order.id, updated);
       toast.success("File uploaded");

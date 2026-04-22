@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,26 +45,26 @@ export default function PurchaseOrders() {
 
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
-    queryFn: () => base44.entities.PurchaseOrder.list('-created_date', 200)
+    queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 200)
   });
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers'],
-    queryFn: () => base44.entities.Supplier.list('name', 100)
+    queryFn: () => dataClient.entities.Supplier.list('name', 100)
   });
 
   const { data: inventory = [] } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.InventoryItem.list('name', 100)
+    queryFn: () => dataClient.entities.InventoryItem.list('name', 100)
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 100)
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.PurchaseOrder.create(data),
+    mutationFn: (data) => dataClient.entities.PurchaseOrder.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setShowForm(false);
@@ -73,7 +73,7 @@ export default function PurchaseOrders() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.PurchaseOrder.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.PurchaseOrder.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setSelectedPO(null);
@@ -82,7 +82,7 @@ export default function PurchaseOrders() {
   });
 
   const archiveMutation = useMutation({
-    mutationFn: (id) => base44.entities.PurchaseOrder.update(id, { status: "archived" }),
+    mutationFn: (id) => dataClient.entities.PurchaseOrder.update(id, { status: "archived" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setSelectedPOs([]);
@@ -90,7 +90,7 @@ export default function PurchaseOrders() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.PurchaseOrder.delete(id),
+    mutationFn: (id) => dataClient.entities.PurchaseOrder.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setSelectedPOs([]);
@@ -100,7 +100,7 @@ export default function PurchaseOrders() {
   const bulkArchiveMutation = useMutation({
     mutationFn: async (ids) => {
       for (const id of ids) {
-        await base44.entities.PurchaseOrder.update(id, { status: "archived" });
+        await dataClient.entities.PurchaseOrder.update(id, { status: "archived" });
       }
     },
     onSuccess: () => {
@@ -113,7 +113,7 @@ export default function PurchaseOrders() {
   const bulkDeleteMutation = useMutation({
     mutationFn: async (ids) => {
       for (const id of ids) {
-        await base44.entities.PurchaseOrder.delete(id);
+        await dataClient.entities.PurchaseOrder.delete(id);
       }
     },
     onSuccess: () => {

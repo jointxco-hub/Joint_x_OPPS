@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +66,7 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
     const newFile = { name: file.name, url: file_url, type: file.type };
     setFormData(prev => ({ ...prev, supporting_files: [...(prev.supporting_files || []), newFile] }));
     setUploading(false);

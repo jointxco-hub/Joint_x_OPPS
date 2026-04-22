@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Archive, Package, ClipboardList, Building2, Users, Boxes, RotateCcw, Trash2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,23 +23,23 @@ export default function ArchivePage() {
 
   const { data: orders = [] } = useQuery({
     queryKey: ["archived-orders"],
-    queryFn: () => base44.entities.Order.list("-archived_at", 200),
+    queryFn: () => dataClient.entities.Order.list("-archived_at", 200),
   });
   const { data: tasks = [] } = useQuery({
     queryKey: ["archived-tasks"],
-    queryFn: () => base44.entities.Task.list("-archived_at", 200),
+    queryFn: () => dataClient.entities.Task.list("-archived_at", 200),
   });
   const { data: clients = [] } = useQuery({
     queryKey: ["archived-clients"],
-    queryFn: () => base44.entities.Client.list("-updated_date", 200),
+    queryFn: () => dataClient.entities.Client.list("-updated_date", 200),
   });
   const { data: suppliers = [] } = useQuery({
     queryKey: ["archived-suppliers"],
-    queryFn: () => base44.entities.Supplier.list("-updated_date", 200),
+    queryFn: () => dataClient.entities.Supplier.list("-updated_date", 200),
   });
   const { data: inventory = [] } = useQuery({
     queryKey: ["archived-inventory"],
-    queryFn: () => base44.entities.InventoryItem.list("-updated_date", 200),
+    queryFn: () => dataClient.entities.InventoryItem.list("-updated_date", 200),
   });
 
   const archivedOrders = orders.filter(o => o.is_archived);
@@ -59,11 +59,11 @@ export default function ArchivePage() {
   const restoreMutation = useMutation({
     mutationFn: ({ entity, id }) => {
       const map = {
-        orders: base44.entities.Order,
-        tasks: base44.entities.Task,
-        clients: base44.entities.Client,
-        suppliers: base44.entities.Supplier,
-        inventory: base44.entities.InventoryItem,
+        orders: dataClient.entities.Order,
+        tasks: dataClient.entities.Task,
+        clients: dataClient.entities.Client,
+        suppliers: dataClient.entities.Supplier,
+        inventory: dataClient.entities.InventoryItem,
       };
       return map[entity].update(id, { is_archived: false });
     },
@@ -77,11 +77,11 @@ export default function ArchivePage() {
   const deleteMutation = useMutation({
     mutationFn: ({ entity, id }) => {
       const map = {
-        orders: base44.entities.Order,
-        tasks: base44.entities.Task,
-        clients: base44.entities.Client,
-        suppliers: base44.entities.Supplier,
-        inventory: base44.entities.InventoryItem,
+        orders: dataClient.entities.Order,
+        tasks: dataClient.entities.Task,
+        clients: dataClient.entities.Client,
+        suppliers: dataClient.entities.Supplier,
+        inventory: dataClient.entities.InventoryItem,
       };
       return map[entity].delete(id);
     },

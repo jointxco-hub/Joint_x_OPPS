@@ -7,7 +7,7 @@ import {
   CreditCard, Archive, Settings, MoreHorizontal, Target,
   Search, Bell, User, ChevronDown, ShoppingCart, UserCircle
 } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 
 const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
@@ -36,7 +36,7 @@ export default function Layout({ children, currentPageName }) {
   const location = useLocation();
 
   useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => {});
+    dataClient.auth.me().then(setUser).catch(() => {});
   }, []);
 
   useEffect(() => {

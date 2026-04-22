@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,22 +41,22 @@ export default function NotesHub() {
 
   const { data: bugs = [] } = useQuery({
     queryKey: ['bugReports'],
-    queryFn: () => base44.entities.BugReport.list('-created_date', 200)
+    queryFn: () => dataClient.entities.BugReport.list('-created_date', 200)
   });
 
   const { data: ideas = [] } = useQuery({
     queryKey: ['ideas'],
-    queryFn: () => base44.entities.Idea.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Idea.list('-created_date', 200)
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list('-created_date', 100)
+    queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
   const { data: weeklyTasks = [] } = useQuery({
     queryKey: ['weeklyTasks'],
-    queryFn: () => base44.entities.WeeklyTask.list('-created_date', 500)
+    queryFn: () => dataClient.entities.WeeklyTask.list('-created_date', 500)
   });
 
   const last7Days = new Date();
@@ -300,7 +300,7 @@ function BugFormDialog({ users, onClose }) {
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.BugReport.create(data),
+    mutationFn: (data) => dataClient.entities.BugReport.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bugReports'] });
       toast.success("Bug reported!");
@@ -314,7 +314,7 @@ function BugFormDialog({ users, onClose }) {
 
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       setFormData({ ...formData, screenshot_url: file_url });
       toast.success("Screenshot uploaded!");
     } catch (error) {
@@ -436,7 +436,7 @@ function IdeaFormDialog({ users, onClose }) {
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Idea.create(data),
+    mutationFn: (data) => dataClient.entities.Idea.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ideas'] });
       toast.success("Idea added!");
@@ -450,7 +450,7 @@ function IdeaFormDialog({ users, onClose }) {
 
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       setFormData({ ...formData, attachment_url: file_url });
       toast.success("File uploaded!");
     } catch (error) {

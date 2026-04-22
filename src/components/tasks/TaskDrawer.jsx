@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 
 const STATUSES = ["pending", "in_progress", "done"];
@@ -30,7 +30,7 @@ export default function TaskDrawer({ task, orders, onClose, onUpdate, onArchive 
 
   const addComment = async () => {
     if (!newComment.trim()) return;
-    const user = await base44.auth.me().catch(() => null);
+    const user = await dataClient.auth.me().catch(() => null);
     const comment = {
       author: user?.full_name || user?.email || 'Unknown',
       text: newComment,
@@ -47,7 +47,7 @@ export default function TaskDrawer({ task, orders, onClose, onUpdate, onArchive 
     if (!file) return;
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       const updated = { file_urls: [...(task.file_urls || []), file_url] };
       onUpdate(updated);
       toast.success("File uploaded");

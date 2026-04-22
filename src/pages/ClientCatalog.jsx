@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -106,11 +106,11 @@ export default function ClientCatalog() {
   // Fetch catalog items from database
   const { data: catalogItems = [], isLoading: catalogLoading } = useQuery({
     queryKey: ['catalogItems'],
-    queryFn: () => base44.entities.CatalogItem.list('name', 200)
+    queryFn: () => dataClient.entities.CatalogItem.list('name', 200)
   });
 
   const submitOrderMutation = useMutation({
-    mutationFn: (data) => base44.entities.ClientOrder.create(data),
+    mutationFn: (data) => dataClient.entities.ClientOrder.create(data),
     onSuccess: (newOrder) => {
       toast.success("Order submitted! Save your tracking code.");
       setCart([]);
@@ -236,7 +236,7 @@ export default function ClientCatalog() {
 
     for (const file of files) {
       try {
-        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
         uploadedUrls.push(file_url);
       } catch (error) {
         console.error("Upload failed:", error);

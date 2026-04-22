@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,12 +38,12 @@ export default function SOPEditor() {
 
   const { data: roles = [] } = useQuery({
     queryKey: ['roles'],
-    queryFn: () => base44.entities.Role.list('-created_date', 100)
+    queryFn: () => dataClient.entities.Role.list('-created_date', 100)
   });
 
   const { data: existingSop } = useQuery({
     queryKey: ['sop', sopId],
-    queryFn: () => sopId ? base44.entities.SOP.filter({ id: sopId }).then(r => r[0]) : null,
+    queryFn: () => sopId ? dataClient.entities.SOP.filter({ id: sopId }).then(r => r[0]) : null,
     enabled: !!sopId
   });
 
@@ -57,7 +57,7 @@ export default function SOPEditor() {
   }, [existingSop]);
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.SOP.create(data),
+    mutationFn: (data) => dataClient.entities.SOP.create(data),
     onSuccess: (newSop) => {
       queryClient.invalidateQueries({ queryKey: ['sops'] });
       toast.success("SOP created!");
@@ -66,7 +66,7 @@ export default function SOPEditor() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.SOP.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.SOP.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sops'] });
       queryClient.invalidateQueries({ queryKey: ['sop', sopId] });

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,16 +35,16 @@ export default function Projects() {
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ['projects'],
-    queryFn: () => base44.entities.Project.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Project.list('-created_date', 200)
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 200)
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Project.delete(id),
+    mutationFn: (id) => dataClient.entities.Project.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       toast.success("Project deleted");
@@ -254,7 +254,7 @@ function NewProjectModal({ onClose }) {
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Project.create({
+    mutationFn: (data) => dataClient.entities.Project.create({
       ...data,
       project_code: `PRJ-${Date.now().toString(36).toUpperCase()}`
     }),

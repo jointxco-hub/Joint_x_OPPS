@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CheckCircle2, Circle, Clock, Package, Target, TrendingUp, AlertTriangle, ChevronRight, Plus } from "lucide-react";
@@ -26,22 +26,22 @@ export default function Dashboard() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => {});
+    dataClient.auth.me().then(setUser).catch(() => {});
   }, []);
 
   const { data: tasks = [] } = useQuery({
     queryKey: ["tasks-dash"],
-    queryFn: () => base44.entities.Task.filter({ is_archived: false }),
+    queryFn: () => dataClient.entities.Task.filter({ is_archived: false }),
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ["orders-dash"],
-    queryFn: () => base44.entities.Order.filter({ is_archived: false }, "-created_date", 10),
+    queryFn: () => dataClient.entities.Order.filter({ is_archived: false }, "-created_date", 10),
   });
 
   const { data: goals = [] } = useQuery({
     queryKey: ["goals-dash"],
-    queryFn: () => base44.entities.Goal.filter({ status: "active" }),
+    queryFn: () => dataClient.entities.Goal.filter({ status: "active" }),
   });
 
   const today = new Date();

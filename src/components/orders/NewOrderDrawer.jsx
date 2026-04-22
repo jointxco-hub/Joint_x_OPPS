@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 
 export default function NewOrderDrawer({ onClose, onCreate }) {
   const [form, setForm] = useState({
@@ -28,17 +28,17 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Client.list('-created_date', 200)
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => base44.entities.Order.list('-created_date', 50)
+    queryFn: () => dataClient.entities.Order.list('-created_date', 50)
   });
 
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
-    queryFn: () => base44.entities.PurchaseOrder.list('-created_date', 100)
+    queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100)
   });
 
   const filteredClients = useMemo(() => {

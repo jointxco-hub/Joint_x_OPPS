@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -63,9 +63,9 @@ export default function AddExpenseDrawer({ onClose, onSaved }) {
   const [showLinkSection, setShowLinkSection] = useState(false);
 
   useEffect(() => {
-    base44.entities.Supplier.list("-created_date", 100).then(setSuppliers).catch(() => {});
-    base44.entities.Client.filter({ is_archived: false }, "-created_date", 100).then(setClients).catch(() => {});
-    base44.entities.Project.list("-created_date", 100).then(setProjects).catch(() => {});
+    dataClient.entities.Supplier.list("-created_date", 100).then(setSuppliers).catch(() => {});
+    dataClient.entities.Client.filter({ is_archived: false }, "-created_date", 100).then(setClients).catch(() => {});
+    dataClient.entities.Project.list("-created_date", 100).then(setProjects).catch(() => {});
   }, []);
 
   const vatAmount = form.vat_type === "vatable"
@@ -83,7 +83,7 @@ export default function AddExpenseDrawer({ onClose, onSaved }) {
     if (!files.length) return;
     setUploading(true);
     for (const file of files) {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       setReceiptUrls(prev => [...prev, file_url]);
     }
     setUploading(false);
@@ -106,7 +106,7 @@ export default function AddExpenseDrawer({ onClose, onSaved }) {
     };
     if (!payload.project_id) delete payload.project_id;
     if (!payload.client_id) delete payload.client_id;
-    await base44.entities.Expense.create(payload);
+    await dataClient.entities.Expense.create(payload);
     toast.success("Expense added");
     onSaved();
     onClose();

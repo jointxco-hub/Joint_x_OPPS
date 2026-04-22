@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,11 +29,11 @@ export default function CatalogManagement() {
 
   const { data: catalogItems = [], isLoading } = useQuery({
     queryKey: ['catalogItems'],
-    queryFn: () => base44.entities.CatalogItem.list('display_order', 200)
+    queryFn: () => dataClient.entities.CatalogItem.list('display_order', 200)
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.CatalogItem.create(data),
+    mutationFn: (data) => dataClient.entities.CatalogItem.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogItems'] });
       setCreatingNew(false);
@@ -42,7 +42,7 @@ export default function CatalogManagement() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.CatalogItem.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.CatalogItem.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['catalogItems'] });
       setEditingItem(null);
@@ -56,7 +56,7 @@ export default function CatalogManagement() {
 
     setUploadingImage(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       await updateMutation.mutateAsync({ 
         id: item.id, 
         data: { ...item, image_url: file_url } 
@@ -95,7 +95,7 @@ export default function CatalogManagement() {
 
     for (const file of files) {
       try {
-        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
         uploadedUrls.push(file_url);
       } catch (error) {
         console.error("Upload failed:", error);

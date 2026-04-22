@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -21,17 +21,17 @@ export default function FileLightbox({ file, onClose }) {
 
   const { data: comments = [] } = useQuery({
     queryKey: ['fileComments', file.id],
-    queryFn: () => base44.entities.FileComment.filter({ file_id: file.id }, '-created_date', 100),
+    queryFn: () => dataClient.entities.FileComment.filter({ file_id: file.id }, '-created_date', 100),
     enabled: !!file.id
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => base44.entities.User.list('-created_date', 100)
+    queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
   const createCommentMutation = useMutation({
-    mutationFn: (data) => base44.entities.FileComment.create(data),
+    mutationFn: (data) => dataClient.entities.FileComment.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['fileComments', file.id] });
       setShowCommentForm(false);

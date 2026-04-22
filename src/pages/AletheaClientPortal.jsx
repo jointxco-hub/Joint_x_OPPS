@@ -1,5 +1,5 @@
 import React from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,25 +12,25 @@ export default function AletheaClientPortal() {
 
   const { data: project } = useQuery({
     queryKey: ['aletheaProject', projectId],
-    queryFn: () => base44.entities.AletheaProject.filter({ id: projectId }).then(r => r[0]),
+    queryFn: () => dataClient.entities.AletheaProject.filter({ id: projectId }).then(r => r[0]),
     enabled: !!projectId
   });
 
   const { data: phases = [] } = useQuery({
     queryKey: ['aletheaPhases', projectId],
-    queryFn: () => base44.entities.AletheaPhase.filter({ alethea_project_id: projectId }, 'order'),
+    queryFn: () => dataClient.entities.AletheaPhase.filter({ alethea_project_id: projectId }, 'order'),
     enabled: !!projectId
   });
 
   const { data: client } = useQuery({
     queryKey: ['client', project?.client_id],
-    queryFn: () => base44.entities.Client.filter({ id: project.client_id }).then(r => r[0]),
+    queryFn: () => dataClient.entities.Client.filter({ id: project.client_id }).then(r => r[0]),
     enabled: !!project?.client_id
   });
 
   const { data: invoices = [] } = useQuery({
     queryKey: ['invoices'],
-    queryFn: () => base44.entities.Invoice.list('-invoice_date', 200)
+    queryFn: () => dataClient.entities.Invoice.list('-invoice_date', 200)
   });
 
   if (!project) {

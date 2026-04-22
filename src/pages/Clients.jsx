@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,11 +21,11 @@ export default function Clients() {
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('-created_date', 200)
+    queryFn: () => dataClient.entities.Client.list('-created_date', 200)
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Client.create(data),
+    mutationFn: (data) => dataClient.entities.Client.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       setShowForm(false);
@@ -34,7 +34,7 @@ export default function Clients() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Client.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.Client.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       setEditingClient(null);
@@ -44,7 +44,7 @@ export default function Clients() {
   });
 
   const archiveMutation = useMutation({
-    mutationFn: (id) => base44.entities.Client.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
+    mutationFn: (id) => dataClient.entities.Client.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       toast.success("Client archived");

@@ -5,7 +5,7 @@ import TypeformInput from "../forms/TypeformInput";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, Plus } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 
 const printTypes = [
@@ -31,12 +31,12 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
-    queryFn: () => base44.entities.Client.list('name', 100)
+    queryFn: () => dataClient.entities.Client.list('name', 100)
   });
 
   const { data: projects = [] } = useQuery({
     queryKey: ['projects'],
-    queryFn: () => base44.entities.Project.list('name', 100)
+    queryFn: () => dataClient.entities.Project.list('name', 100)
   });
 
   const queryClient = useQueryClient();
@@ -68,7 +68,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
   };
 
   const createClientMutation = useMutation({
-    mutationFn: (data) => base44.entities.Client.create(data),
+    mutationFn: (data) => dataClient.entities.Client.create(data),
     onSuccess: (newClient) => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       handleChange('client_id', newClient.id);
@@ -84,7 +84,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     setIsSubmitting(true);
     // Auto-create or update client
     if (formData.client_name && !formData.client_id) {
-      const newClient = await base44.entities.Client.create({
+      const newClient = await dataClient.entities.Client.create({
         name: formData.client_name,
         email: formData.client_email,
         phone: formData.client_phone,
@@ -98,7 +98,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       // Update existing client stats
       const client = clients.find(c => c.id === formData.client_id);
       if (client) {
-        await base44.entities.Client.update(formData.client_id, {
+        await dataClient.entities.Client.update(formData.client_id, {
           total_orders: (client.total_orders || 0) + 1,
           total_revenue: (client.total_revenue || 0) + (formData.quoted_price || 0),
           last_activity_date: new Date().toISOString().split('T')[0],
@@ -339,7 +339,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
                 
                 setUploadingInvoice(true);
                 try {
-                  const { file_url } = await base44.integrations.Core.UploadFile({ file });
+                  const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
                   handleChange("invoice_url", file_url);
                   toast.success("Invoice uploaded!");
                 } catch (error) {

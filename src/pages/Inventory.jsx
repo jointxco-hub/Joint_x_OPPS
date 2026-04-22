@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Boxes, AlertTriangle, Archive, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,11 +16,11 @@ export default function Inventory() {
 
   const { data: inventory = [], isLoading } = useQuery({
     queryKey: ['inventory'],
-    queryFn: () => base44.entities.InventoryItem.list('name', 200)
+    queryFn: () => dataClient.entities.InventoryItem.list('name', 200)
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.InventoryItem.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.entities.InventoryItem.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       setEditingId(null);
@@ -29,7 +29,7 @@ export default function Inventory() {
   });
 
   const archiveMutation = useMutation({
-    mutationFn: (id) => base44.entities.InventoryItem.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
+    mutationFn: (id) => dataClient.entities.InventoryItem.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       toast.success("Item archived");
@@ -37,7 +37,7 @@ export default function Inventory() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.InventoryItem.create(data),
+    mutationFn: (data) => dataClient.entities.InventoryItem.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       setShowForm(false);
