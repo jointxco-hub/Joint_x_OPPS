@@ -33,9 +33,77 @@ const PRIORITY_MAP = {
   urgent: 'urgent',
 };
 
-const DERIVED_ENTITY_NAMES = new Set(['Client', 'Supplier']);
-
 const ENTITY_CONFIG = {
+  Client: {
+    table: 'clients',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      client_name: 'name',
+      client_email: 'email',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      client_name: 'name',
+      client_email: 'email',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        client_name: row.name,
+        client_email: row.email,
+        client_phone: row.phone,
+        created_date: row.created_at,
+        updated_date: row.updated_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        name: payload.name ?? payload.client_name,
+        email: payload.email ?? payload.client_email,
+        phone: payload.phone ?? payload.client_phone,
+        company_name: payload.company_name,
+        notes: payload.notes,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+  Project: {
+    table: 'projects',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      client_name: 'client_id',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      client_name: 'client_id',
+      is_archived: 'is_archived',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        created_date: row.created_at,
+        updated_date: row.updated_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        name: payload.name,
+        description: payload.description,
+        status: payload.status,
+        client_id: payload.client_id,
+        start_date: payload.start_date,
+        due_date: payload.due_date,
+        notes: payload.notes,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
   Order: {
     table: 'orders',
     sortMap: {
@@ -245,6 +313,82 @@ const ENTITY_CONFIG = {
       return ENTITY_CONFIG.User.serialize(payload);
     },
   },
+  Supplier: {
+    table: 'suppliers',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      vendor: 'name',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      vendor: 'name',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        vendor: row.name,
+        created_date: row.created_at,
+        updated_date: row.updated_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        name: payload.name ?? payload.vendor,
+        contact_person: payload.contact_person,
+        email: payload.email,
+        phone: payload.phone,
+        category: payload.category,
+        notes: payload.notes,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+  PurchaseOrder: {
+    table: 'purchase_orders',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      archived_at: 'archived_at',
+      due_date: 'expected_date',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      archived_at: 'archived_at',
+      order_id: 'linked_order_id',
+      supplier_id: 'supplier_id',
+      project_id: 'project_id',
+      is_archived: 'is_archived',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        order_id: row.linked_order_id,
+        due_date: row.expected_date,
+        created_date: row.created_at,
+        updated_date: row.updated_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        po_number: payload.po_number,
+        supplier_id: payload.supplier_id,
+        project_id: payload.project_id,
+        linked_order_id: payload.linked_order_id ?? payload.order_id,
+        status: payload.status,
+        items: payload.items,
+        notes: payload.notes,
+        total_amount: numberOrUndefined(payload.total_amount),
+        expected_date: payload.expected_date ?? payload.due_date,
+        received_date: payload.received_date,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
   Payment: {
     table: 'transactions',
     baseFilter: { type: 'income' },
@@ -339,14 +483,6 @@ function compactObject(object) {
   );
 }
 
-function slugify(value) {
-  return String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 function getLocalRows(entityName) {
   if (!localStore.has(entityName)) {
     localStore.set(entityName, []);
@@ -360,24 +496,10 @@ function createLocalId() {
 }
 
 function warnUnsupportedEntity(entityName) {
-  if (DERIVED_ENTITY_NAMES.has(entityName)) {
-    return;
-  }
-
   if (!warnedEntities.has(entityName)) {
     warnedEntities.add(entityName);
     console.warn(
       `[dataClient] ${entityName} is not in the current Supabase Phase 1 schema. Using local fallback only.`
-    );
-  }
-}
-
-function warnDerivedWriteFallback(entityName) {
-  const warningKey = `${entityName}:write`;
-  if (!warnedEntities.has(warningKey)) {
-    warnedEntities.add(warningKey);
-    console.warn(
-      `[dataClient] ${entityName} write operations are not supported by the Phase 1 Supabase schema. Using local fallback for writes.`
     );
   }
 }
@@ -611,113 +733,6 @@ async function runDelete(entityName, id) {
   return true;
 }
 
-async function runDerivedClientSelect(filter = {}, sort, limit = 100) {
-  if (!supabase) {
-    return null;
-  }
-
-  let query = supabase
-    .from('orders')
-    .select('client_name, client_email, client_phone, created_at, updated_at, is_archived')
-    .order('updated_at', { ascending: false });
-
-  if (filter.is_archived != null) {
-    query = query.eq('is_archived', filter.is_archived);
-  }
-
-  if (filter.client_name) {
-    query = query.eq('client_name', filter.client_name);
-  }
-
-  if (filter.client_email) {
-    query = query.eq('client_email', filter.client_email);
-  }
-
-  const { data, error } = await query.limit(Math.max(limit * 5, 200));
-
-  if (error) {
-    console.warn('[dataClient] Client query failed:', error.message);
-    return null;
-  }
-
-  const deduped = new Map();
-  for (const row of data ?? []) {
-    const key = row.client_email || row.client_name;
-    if (!key || deduped.has(key)) {
-      continue;
-    }
-
-    deduped.set(key, {
-      id: `client-${slugify(key)}`,
-      name: row.client_name,
-      client_name: row.client_name,
-      email: row.client_email,
-      client_email: row.client_email,
-      phone: row.client_phone,
-      client_phone: row.client_phone,
-      is_archived: row.is_archived ?? false,
-      created_date: row.created_at,
-      updated_date: row.updated_at,
-    });
-  }
-
-  return sortRows(
-    filterRows(Array.from(deduped.values()), normalizeDerivedFilter(filter)),
-    sort
-  ).slice(0, limit);
-}
-
-async function runDerivedSupplierSelect(filter = {}, sort, limit = 100) {
-  if (!supabase) {
-    return null;
-  }
-
-  let query = supabase
-    .from('transactions')
-    .select('vendor, created_at, updated_at')
-    .eq('type', 'expense')
-    .not('vendor', 'is', null)
-    .order('updated_at', { ascending: false });
-
-  const { data, error } = await query.limit(Math.max(limit * 5, 200));
-
-  if (error) {
-    console.warn('[dataClient] Supplier query failed:', error.message);
-    return null;
-  }
-
-  const deduped = new Map();
-  for (const row of data ?? []) {
-    const key = row.vendor;
-    if (!key || deduped.has(key)) {
-      continue;
-    }
-
-    deduped.set(key, {
-      id: `supplier-${slugify(key)}`,
-      name: row.vendor,
-      vendor: row.vendor,
-      created_date: row.created_at,
-      updated_date: row.updated_at,
-    });
-  }
-
-  return sortRows(
-    filterRows(Array.from(deduped.values()), normalizeDerivedFilter(filter)),
-    sort
-  ).slice(0, limit);
-}
-
-function normalizeDerivedFilter(filter = {}) {
-  return Object.fromEntries(
-    Object.entries(filter).map(([key, value]) => {
-      if (key === 'client_name') return ['name', value];
-      if (key === 'client_email') return ['email', value];
-      return [key, value];
-    })
-  );
-}
-
 async function handleLocalEntity(entityName, operation, ...args) {
   warnUnsupportedEntity(entityName);
   const rows = getLocalRows(entityName);
@@ -779,20 +794,6 @@ function createEntityApi(entityName) {
 
   return {
     async list(sort, limit = 100) {
-      if (entityName === 'Client') {
-        const rows = await runDerivedClientSelect({}, sort, limit);
-        if (rows) {
-          return rows;
-        }
-      }
-
-      if (entityName === 'Supplier') {
-        const rows = await runDerivedSupplierSelect({}, sort, limit);
-        if (rows) {
-          return rows;
-        }
-      }
-
       if (isSupported) {
         const rows = await runSelect(entityName, {}, sort, limit);
         if (rows) {
@@ -804,20 +805,6 @@ function createEntityApi(entityName) {
     },
 
     async filter(filter = {}, sort, limit = 100) {
-      if (entityName === 'Client') {
-        const rows = await runDerivedClientSelect(filter, sort, limit);
-        if (rows) {
-          return rows;
-        }
-      }
-
-      if (entityName === 'Supplier') {
-        const rows = await runDerivedSupplierSelect(filter, sort, limit);
-        if (rows) {
-          return rows;
-        }
-      }
-
       if (isSupported) {
         const rows = await runSelect(entityName, filter, sort, limit);
         if (rows) {
@@ -829,10 +816,6 @@ function createEntityApi(entityName) {
     },
 
     async create(payload = {}) {
-      if (entityName === 'Client' || entityName === 'Supplier') {
-        warnDerivedWriteFallback(entityName);
-      }
-
       if (isSupported) {
         const row = await runInsert(entityName, payload);
         if (row) {
@@ -844,10 +827,6 @@ function createEntityApi(entityName) {
     },
 
     async update(id, payload = {}) {
-      if (entityName === 'Client' || entityName === 'Supplier') {
-        warnDerivedWriteFallback(entityName);
-      }
-
       if (isSupported) {
         const row = await runUpdate(entityName, id, payload);
         if (row) {
@@ -859,10 +838,6 @@ function createEntityApi(entityName) {
     },
 
     async delete(id) {
-      if (entityName === 'Client' || entityName === 'Supplier') {
-        warnDerivedWriteFallback(entityName);
-      }
-
       if (isSupported) {
         const deleted = await runDelete(entityName, id);
         if (deleted) {
