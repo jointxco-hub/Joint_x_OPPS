@@ -93,10 +93,7 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
     queryKey: ["exec-expenses"],
     queryFn: () => dataClient.entities.Expense.list("-date", 500),
   });
-  const { data: goals = [] } = useQuery({
-    queryKey: ["exec-goals"],
-    queryFn: () => dataClient.entities.Goal.list(),
-  });
+ const goals = []; // Goals feature coming in Phase 3
 
   const monthlyData = Array.from({ length: 6 }, (_, i) => {
     const month = subMonths(new Date(), 5 - i);
