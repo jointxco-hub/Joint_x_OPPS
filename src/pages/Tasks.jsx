@@ -1,12 +1,11 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Filter, ClipboardList, Circle, CheckCircle2, Clock, AlertTriangle } from "lucide-react";
+import { Plus, Search, ClipboardList, Circle, CheckCircle2, Clock, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { format, isPast, isToday } from "date-fns";
+import { format, isPast } from "date-fns";
 import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 
@@ -42,7 +41,7 @@ export default function Tasks() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tasks"] }),
   });
 
-  const filtered = tasks.filter(t => {
+  const filtered = tasks.filter((t) => {
     if (t.is_archived) return false;
     if (statusFilter === "active" && t.status === "done") return false;
     if (statusFilter === "done" && t.status !== "done") return false;
@@ -59,49 +58,68 @@ export default function Tasks() {
   }, {});
 
   const counts = {
-    active: tasks.filter(t => !t.is_archived && t.status !== "done").length,
-    done: tasks.filter(t => !t.is_archived && t.status === "done").length,
-    overdue: tasks.filter(t => !t.is_archived && t.deadline && isPast(new Date(t.deadline)) && t.status !== "done").length,
+    active: tasks.filter((t) => !t.is_archived && t.status !== "done").length,
+    done: tasks.filter((t) => !t.is_archived && t.status === "done").length,
+    overdue: tasks.filter(
+      (t) =>
+        !t.is_archived &&
+        t.deadline &&
+        isPast(new Date(t.deadline)) &&
+        t.status !== "done"
+    ).length,
   };
 
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
+
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-foreground tracking-tight">Tasks</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">
-              {counts.active} active · {counts.overdue > 0 && <span className="text-red-500">{counts.overdue} overdue · </span>}
-              {counts.done} done
+            <h1 className="text-2xl font-bold text-foreground">Tasks</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {counts.active} active · {counts.overdue > 0 && `${counts.overdue} overdue · `}{counts.done} done
             </p>
           </div>
-          <Button onClick={() => setShowNew(true)} className="gap-2 shadow-apple-sm rounded-xl">
+
+          <Button onClick={() => setShowNew(true)} className="gap-2">
             <Plus className="w-4 h-4" /> New Task
           </Button>
         </div>
 
         {/* Filters */}
         <div className="flex flex-wrap gap-3 mb-6">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Search tasks..." value={search} onChange={e => setSearch(e.target.value)}
-              className="pl-9 bg-card rounded-xl h-9" />
+          <div className="flex-1 min-w-[200px]">
+            <Input
+              placeholder="Search tasks..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-card"
+            />
           </div>
+
           <div className="flex gap-2">
-            {["active", "done"].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-xl text-sm font-medium transition-all ${statusFilter === s ? 'bg-primary text-primary-foreground shadow-apple-sm' : 'bg-card border border-border text-muted-foreground hover:text-foreground'}`}>
-                {s === "active" ? `Active (${counts.active})` : `Done (${counts.done})`}
+            {["active", "done"].map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 rounded-xl text-sm ${
+                  statusFilter === s
+                    ? "bg-primary text-white"
+                    : "bg-card text-muted-foreground"
+                }`}
+              >
+                {s}
               </button>
             ))}
           </div>
+
           <Select value={priorityFilter} onValueChange={setPriorityFilter}>
-            <SelectTrigger className="w-36 rounded-xl h-9 bg-card">
+            <SelectTrigger className="w-36">
               <SelectValue placeholder="Priority" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Priority</SelectItem>
+              <SelectItem value="all">All</SelectItem>
               <SelectItem value="urgent">Urgent</SelectItem>
               <SelectItem value="high">High</SelectItem>
               <SelectItem value="medium">Medium</SelectItem>
@@ -112,39 +130,69 @@ export default function Tasks() {
 
         {/* Task List */}
         {isLoading ? (
-          <div className="space-y-3">{[1,2,3,4].map(i => <div key={i} className="h-16 bg-card rounded-2xl animate-pulse" />)}</div>
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-16 bg-card rounded-xl animate-pulse" />
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
-            <ClipboardList className="w-12 h-12 text-muted-foreground/20 mx-auto mb-3" />
-            <p className="text-muted-foreground">No tasks found</p>
+            <ClipboardList className="w-10 h-10 mx-auto text-muted-foreground" />
+            <p className="text-muted-foreground mt-2">No tasks found</p>
           </div>
         ) : (
           <div className="space-y-6">
             {Object.entries(grouped).map(([dept, deptTasks]) => (
               <div key={dept}>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-2 px-1">
-                  {dept.replace("_", " ")} ({deptTasks.length})
+                <p className="text-xs uppercase text-muted-foreground mb-2">
+                  {dept} ({deptTasks.length})
                 </p>
-                <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
-                  {deptTasks.map((task, idx) => {
+
+                <div className="bg-card rounded-xl overflow-hidden">
+                  {deptTasks.map((task) => {
                     const StatusIcon = statusIcons[task.status] || Circle;
-                    const isOverdue = task.deadline && isPast(new Date(task.deadline)) && task.status !== "done";
+                    const isOverdue =
+                      task.deadline &&
+                      isPast(new Date(task.deadline)) &&
+                      task.status !== "done";
+
                     return (
-                      <button key={task.id} onClick={() => setSelectedTask(task)}
-                        className="w-full flex items-center gap-4 px-5 py-4 border-b border-border last:border-0 hover:bg-secondary/40 transition-all text-left">
-                        <StatusIcon className={`w-4 h-4 flex-shrink-0 ${task.status === "done" ? "text-green-500" : isOverdue ? "text-red-400" : "text-muted-foreground"}`} />
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-medium truncate ${task.status === "done" ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                      <button
+                        key={task.id}
+                        onClick={() => setSelectedTask(task)}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/40"
+                      >
+                        <StatusIcon
+                          className={`w-4 h-4 ${
+                            task.status === "done"
+                              ? "text-green-500"
+                              : isOverdue
+                              ? "text-red-500"
+                              : "text-muted-foreground"
+                          }`}
+                        />
+
+                        <div className="flex-1 text-left">
+                          <p
+                            className={`text-sm ${
+                              task.status === "done"
+                                ? "line-through text-muted-foreground"
+                                : ""
+                            }`}
+                          >
                             {task.title}
                           </p>
                           {task.deadline && (
-                            <p className={`text-xs mt-0.5 ${isOverdue ? "text-red-400" : "text-muted-foreground"}`}>
-                              {isOverdue ? "Overdue · " : ""}{format(new Date(task.deadline), "d MMM yyyy")}
+                            <p className="text-xs text-muted-foreground">
+                              {format(new Date(task.deadline), "d MMM yyyy")}
                             </p>
                           )}
                         </div>
+
                         {task.priority && (
-                          <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${priorityColors[task.priority]}`}>
+                          <span
+                            className={`text-xs px-2 py-1 rounded ${priorityColors[task.priority]}`}
+                          >
                             {task.priority}
                           </span>
                         )}
@@ -158,21 +206,31 @@ export default function Tasks() {
         )}
       </div>
 
+      {/* DRAWER */}
       {selectedTask && (
         <TaskDrawer
           task={selectedTask}
           onClose={() => setSelectedTask(null)}
           onUpdate={(data) => {
             updateMutation.mutate({ id: selectedTask.id, data });
-            setSelectedTask(prev => ({ ...prev, ...data }));
+            setSelectedTask((prev) => ({ ...prev, ...data }));
           }}
-          onArchive={() => {
-            updateMutation.mutate({ id: selectedTask.id, data: { is_archived: true } });
+          onArchive={async () => {
+            await updateMutation.mutateAsync({
+              id: selectedTask.id,
+              data: {
+                is_archived: true,
+                archived_at: new Date().toISOString(),
+                archived_by: "",
+              },
+            });
+
             setSelectedTask(null);
           }}
         />
       )}
 
+      {/* NEW TASK */}
       {showNew && (
         <NewTaskForm
           onClose={() => setShowNew(false)}

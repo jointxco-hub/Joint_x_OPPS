@@ -7,13 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { restoreEntity } from "@/utils/archiveEntity";
 
 const TABS = [
-  { key: "orders", label: "Orders", icon: Package },
-  { key: "tasks", label: "Tasks", icon: ClipboardList },
-  { key: "clients", label: "Clients", icon: Users },
-  { key: "suppliers", label: "Suppliers", icon: Building2 },
-  { key: "inventory", label: "Inventory", icon: Boxes },
+  { key: "orders",    label: "Orders",    icon: Package,      entity: "Order" },
+  { key: "tasks",     label: "Tasks",     icon: ClipboardList, entity: "Task" },
+  { key: "clients",   label: "Clients",   icon: Users,        entity: "Client" },
+  { key: "suppliers", label: "Suppliers", icon: Building2,    entity: "Supplier" },
+  { key: "inventory", label: "Inventory", icon: Boxes,        entity: "InventoryItem" },
 ];
 
 export default function ArchivePage() {
@@ -21,65 +22,49 @@ export default function ArchivePage() {
   const [search, setSearch] = useState("");
   const queryClient = useQueryClient();
 
+  // Use filter() to fetch only archived records directly from DB
   const { data: orders = [] } = useQuery({
     queryKey: ["archived-orders"],
-    queryFn: () => dataClient.entities.Order.list("-archived_at", 200),
+    queryFn: () => dataClient.entities.Order.filter({ is_archived: true }, "-archived_at", 500),
   });
   const { data: tasks = [] } = useQuery({
     queryKey: ["archived-tasks"],
-    queryFn: () => dataClient.entities.Task.list("-archived_at", 200),
+    queryFn: () => dataClient.entities.Task.filter({ is_archived: true }, "-archived_at", 500),
   });
   const { data: clients = [] } = useQuery({
     queryKey: ["archived-clients"],
-    queryFn: () => dataClient.entities.Client.list("-updated_date", 200),
+    queryFn: () => dataClient.entities.Client.filter({ is_archived: true }, "-updated_date", 500),
   });
   const { data: suppliers = [] } = useQuery({
     queryKey: ["archived-suppliers"],
-    queryFn: () => dataClient.entities.Supplier.list("-updated_date", 200),
+    queryFn: () => dataClient.entities.Supplier.filter({ is_archived: true }, "-updated_date", 500),
   });
   const { data: inventory = [] } = useQuery({
     queryKey: ["archived-inventory"],
-    queryFn: () => dataClient.entities.InventoryItem.list("-updated_date", 200),
+    queryFn: () => dataClient.entities.InventoryItem.filter({ is_archived: true }, "-updated_date", 500),
   });
-
-  const archivedOrders = orders.filter(o => o.is_archived);
-  const archivedTasks = tasks.filter(t => t.is_archived);
-  const archivedClients = clients.filter(c => c.is_archived);
-  const archivedSuppliers = suppliers.filter(s => s.is_archived);
-  const archivedInventory = inventory.filter(i => i.is_archived);
 
   const counts = {
-    orders: archivedOrders.length,
-    tasks: archivedTasks.length,
-    clients: archivedClients.length,
-    suppliers: archivedSuppliers.length,
-    inventory: archivedInventory.length,
+    orders:    orders.length,
+    tasks:     tasks.length,
+    clients:   clients.length,
+    suppliers: suppliers.length,
+    inventory: inventory.length,
   };
 
-  const restoreMutation = useMutation({
-    mutationFn: ({ entity, id }) => {
-      const map = {
-        orders: dataClient.entities.Order,
-        tasks: dataClient.entities.Task,
-        clients: dataClient.entities.Client,
-        suppliers: dataClient.entities.Supplier,
-        inventory: dataClient.entities.InventoryItem,
-      };
-      return map[entity].update(id, { is_archived: false });
-    },
-    onSuccess: (_, { entity }) => {
-      queryClient.invalidateQueries({ queryKey: [`archived-${entity}`] });
-      queryClient.invalidateQueries({ queryKey: [entity] });
-      toast.success("Restored successfully");
-    },
-  });
+  const handleRestore = async (entity, id) => {
+    const tab = TABS.find(t => t.key === activeTab);
+    await restoreEntity(tab.entity, id);
+    queryClient.invalidateQueries({ queryKey: [`archived-${activeTab}`] });
+    queryClient.invalidateQueries({ queryKey: [activeTab] });
+  };
 
   const deleteMutation = useMutation({
     mutationFn: ({ entity, id }) => {
       const map = {
-        orders: dataClient.entities.Order,
-        tasks: dataClient.entities.Task,
-        clients: dataClient.entities.Client,
+        orders:    dataClient.entities.Order,
+        tasks:     dataClient.entities.Task,
+        clients:   dataClient.entities.Client,
         suppliers: dataClient.entities.Supplier,
         inventory: dataClient.entities.InventoryItem,
       };
@@ -88,6 +73,9 @@ export default function ArchivePage() {
     onSuccess: (_, { entity }) => {
       queryClient.invalidateQueries({ queryKey: [`archived-${entity}`] });
       toast.success("Permanently deleted");
+    },
+    onError: () => {
+      toast.error("Delete failed. Please try again.");
     },
   });
 
@@ -99,19 +87,16 @@ export default function ArchivePage() {
 
   const getActiveItems = () => {
     const q = search.toLowerCase();
-    switch (activeTab) {
-      case "orders": return archivedOrders.filter(o =>
-        !q || o.client_name?.toLowerCase().includes(q) || o.order_number?.toLowerCase().includes(q));
-      case "tasks": return archivedTasks.filter(t =>
-        !q || t.title?.toLowerCase().includes(q));
-      case "clients": return archivedClients.filter(c =>
-        !q || c.name?.toLowerCase().includes(q));
-      case "suppliers": return archivedSuppliers.filter(s =>
-        !q || s.name?.toLowerCase().includes(q));
-      case "inventory": return archivedInventory.filter(i =>
-        !q || i.name?.toLowerCase().includes(q));
-      default: return [];
-    }
+    const dataMap = { orders, tasks, clients, suppliers, inventory };
+    const items = dataMap[activeTab] ?? [];
+
+    if (!q) return items;
+
+    return items.filter(item => {
+      if (activeTab === "orders") return item.client_name?.toLowerCase().includes(q) || item.order_number?.toLowerCase().includes(q);
+      if (activeTab === "tasks")  return item.title?.toLowerCase().includes(q);
+      return item.name?.toLowerCase().includes(q);
+    });
   };
 
   const items = getActiveItems();
@@ -170,12 +155,12 @@ export default function ArchivePage() {
               <Archive className="w-4 h-4 text-amber-500" />
               <p className="text-xs text-amber-700 font-medium">You can restore items or permanently delete them here</p>
             </div>
-            {items.map((item, idx) => (
+            {items.map((item) => (
               <div key={item.id} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-0 hover:bg-secondary/30 transition-all">
                 <div className="flex-1 min-w-0 mr-4">
                   <p className="text-sm font-medium text-foreground truncate">
                     {activeTab === "orders" ? `${item.client_name} — ${item.order_number}` :
-                     activeTab === "tasks" ? item.title :
+                     activeTab === "tasks"  ? item.title :
                      item.name}
                   </p>
                   <div className="flex items-center gap-3 mt-0.5">
@@ -183,7 +168,7 @@ export default function ArchivePage() {
                       <Badge variant="outline" className="text-xs">{item.status}</Badge>
                     )}
                     {activeTab === "orders" && item.total_amount && (
-                      <span className="text-xs text-muted-foreground">R{item.total_amount.toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground">R{Number(item.total_amount).toLocaleString()}</span>
                     )}
                     {activeTab === "tasks" && item.priority && (
                       <Badge variant="outline" className="text-xs">{item.priority}</Badge>
@@ -203,14 +188,16 @@ export default function ArchivePage() {
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
                   <Button variant="outline" size="sm" className="rounded-xl gap-1.5 text-xs"
-                    onClick={() => restoreMutation.mutate({ entity: activeTab, id: item.id })}
-                    disabled={restoreMutation.isPending}>
+                    onClick={() => handleRestore(activeTab, item.id)}
+                    disabled={deleteMutation.isPending}>
                     <RotateCcw className="w-3 h-3" /> Restore
                   </Button>
                   <Button variant="ghost" size="sm" className="rounded-xl text-destructive hover:bg-destructive/10"
-                    onClick={() => handleDelete(activeTab, item.id,
+                    onClick={() => handleDelete(
+                      activeTab,
+                      item.id,
                       activeTab === "orders" ? `${item.client_name} ${item.order_number}` :
-                      activeTab === "tasks" ? item.title : item.name
+                      activeTab === "tasks"  ? item.title : item.name
                     )}
                     disabled={deleteMutation.isPending}>
                     <Trash2 className="w-3.5 h-3.5" />
