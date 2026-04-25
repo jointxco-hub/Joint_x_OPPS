@@ -95,15 +95,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const addPayment = () => {
     if (!paymentForm.amount) return;
     addPaymentMutation.mutate({
-  order_id: order.id,
-  order_number: order.order_number,
-  client_name: order.client_name,
-  amount: parseFloat(paymentForm.amount),
-  payment_method: paymentForm.method,
-  payment_status: 'completed',
-  payment_date: new Date().toISOString().split('T')[0],
-  notes: paymentForm.notes,
-});
+      order_id: order.id,
+      order_number: order.order_number,
+      client_name: order.client_name,
+      amount: parseFloat(paymentForm.amount),
+      payment_method: paymentForm.method,
+      payment_status: 'completed',
+      payment_date: new Date().toISOString().split('T')[0],
+      notes: paymentForm.notes,
+    });
+  };
 
   const currentStageIndex = progressStages.indexOf(order.status);
   const totalPaid = payments.filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
