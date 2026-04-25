@@ -104,13 +104,17 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       }
 
       if (clientId) {
-        const client = clients.find(c => c.id === clientId);
-        await dataClient.entities.Client.update(clientId, {
-          total_orders: (client?.total_orders || 0) + 1,
-          total_revenue: (client?.total_revenue || 0) + total,
-          last_activity_date: new Date().toISOString().split('T')[0],
-          status: 'active',
-        });
+        try {
+          const client = clients.find(c => c.id === clientId);
+          await dataClient.entities.Client.update(clientId, {
+            total_orders: (client?.total_orders || 0) + 1,
+            total_revenue: (client?.total_revenue || 0) + total,
+            last_activity_date: new Date().toISOString().split('T')[0],
+            status: 'active',
+          });
+        } catch {
+          // stats update is non-critical — order creation continues
+        }
       }
 
       const orderData = {

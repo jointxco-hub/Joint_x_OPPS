@@ -228,7 +228,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         </div>
 
         {/* Tab Content */}
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5">
           {tab === 'details' && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
