@@ -25,11 +25,17 @@ export default function UserDashboard() {
     dataClient.auth.me().then(u => { setUser(u); setNewName(u?.full_name || ""); }).catch(() => {});
   }, []);
 
-  const { data: tasks = [] } = useQuery({
-    queryKey: ["user-tasks", user?.email],
-    queryFn: () => dataClient.entities.Task.filter({ assigned_to: user.email, is_archived: false }),
-    enabled: !!user,
-  });
+  const userEmail = user?.email;
+
+const { data: tasks = [], isLoading } = useQuery({
+  queryKey: ["user-tasks", userEmail],
+  enabled: !!userEmail,
+  queryFn: () =>
+    dataClient.entities.Task.filter({
+      assigned_to: userEmail,
+      is_archived: false,
+    }),
+});
 
   const { data: goals = [] } = useQuery({
     queryKey: ["user-goals", user?.email],
