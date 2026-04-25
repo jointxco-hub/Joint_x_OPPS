@@ -32,7 +32,6 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [fieldValue, setFieldValue] = useState("");
   const [showPayment, setShowPayment] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'eft', notes: '' });
-  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
   const [uploading, setUploading] = useState(false);
   const queryClient = useQueryClient();
 
@@ -476,20 +475,18 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         </div>
 
         {/* Archive */}
-        <div className="p-4 border-t border-border">
-          {showArchiveConfirm ? (
-            <div className="space-y-2">
-              <p className="text-xs text-muted-foreground text-center">Archive this order? This can be undone from the Archive page.</p>
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => setShowArchiveConfirm(false)} className="flex-1 rounded-xl">Cancel</Button>
-                <Button type="button" variant="destructive" onClick={() => { onArchive && onArchive(); }} className="flex-1 rounded-xl">Archive</Button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" onClick={() => setShowArchiveConfirm(true)} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-all mx-auto">
-              <Archive className="w-3.5 h-3.5" /> Archive order
-            </button>
-          )}
+        <div className="p-4 border-t border-border flex justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm('Archive this order? It can be restored from the Archive page.')) {
+                onArchive && onArchive();
+              }
+            }}
+            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-all"
+          >
+            <Archive className="w-3.5 h-3.5" /> Archive order
+          </button>
         </div>
       </div>
     </>
