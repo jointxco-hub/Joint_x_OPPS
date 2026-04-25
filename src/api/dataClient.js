@@ -409,6 +409,8 @@ const ENTITY_CONFIG = {
         created_date: row.created_at,
         updated_date: row.updated_at,
         date: row.payment_date,
+        status: row.payment_status,
+        method: row.payment_method,
       };
     },
     serialize(payload) {

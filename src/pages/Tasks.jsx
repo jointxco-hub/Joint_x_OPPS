@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { format, isPast } from "date-fns";
 import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
-
+import { useArchive } from "@/hooks/useArchive";
 const priorityColors = {
   urgent: "bg-red-100 text-red-700 border-red-200",
   high: "bg-orange-100 text-orange-700 border-orange-200",
@@ -42,6 +42,10 @@ export default function Tasks() {
     mutationFn: ({ id, data }) => dataClient.entities.Task.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tasks"] }),
   });
+
+  const { archive: archiveTask, isPending: isArchiving } = useArchive("Task", {
+  onSuccess: () => setSelectedTask(null),
+});
 
   const filtered = tasks.filter((t) => {
     if (t.is_archived) return false;
@@ -179,15 +183,7 @@ export default function Tasks() {
           onUpdate={(data) => {
             updateMutation.mutate({ id: selectedTask.id, data });
           }}
-          onArchive={() => {
-            updateMutation.mutate({
-              id: selectedTask.id,
-              data: {
-                is_archived: true,
-                archived_at: new Date().toISOString(),
-              },
-            });
-          }}
+          onArchive={() => { if (selectedTask) archiveTask(selectedTask.id); }}
         />
       )}
 

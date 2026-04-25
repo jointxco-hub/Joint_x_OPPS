@@ -76,6 +76,8 @@ export default function TaskDrawer({ task, onClose, onUpdate, onArchive }) {
   }
 };
 
+
+
   const statusConfig = {
     pending: "bg-amber-100 text-amber-700",
     in_progress: "bg-blue-100 text-blue-700",
