@@ -37,7 +37,7 @@ export default function TaskForm({ task, orders = [], onSubmit, onCancel }) {
     assigned_to: "",
     status: "pending",
     priority: "normal",
-    due_date: "",
+    due_date: undefined,
     notes: ""
   });
 

@@ -27,7 +27,7 @@ export default function OrderForm({ order, onSubmit, onCancel }) {
     blank_type: "",
     status: "received",
     priority: "normal",
-    due_date: "",
+    due_date: undefined,
     quoted_price: "",
     deposit_paid: 0,
     materials_cost: "",

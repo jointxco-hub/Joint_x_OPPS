@@ -39,10 +39,7 @@ export default function Dashboard() {
     queryFn: () => dataClient.entities.Order.filter({ is_archived: false }, "-created_date", 10),
   });
 
-  const { data: goals = [] } = useQuery({
-    queryKey: ["goals-dash"],
-    queryFn: () => dataClient.entities.Goal.filter({ status: "active" }),
-  });
+ const goals = []; // Goals feature coming in Phase 3
 
   const today = new Date();
   const todayTasks = tasks.filter(t => t.deadline && isToday(new Date(t.deadline)) && t.status !== "done");

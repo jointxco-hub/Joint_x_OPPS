@@ -55,7 +55,7 @@ export default function TypeformTaskForm({ task, orders = [], projects = [], sup
     assigned_to: "",
     status: "pending",
     priority: "normal",
-    due_date: "",
+    due_date: undefined,
     due_week: null,
     estimated_time_hours: null,
     notes: ""

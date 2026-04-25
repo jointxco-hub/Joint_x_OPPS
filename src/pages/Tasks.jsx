@@ -13,6 +13,7 @@ const priorityColors = {
   urgent: "bg-red-100 text-red-700 border-red-200",
   high: "bg-orange-100 text-orange-700 border-orange-200",
   medium: "bg-yellow-100 text-yellow-700 border-yellow-200",
+  normal: "bg-slate-100 text-slate-600 border-slate-200",
   low: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
@@ -29,6 +30,7 @@ export default function Tasks() {
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [selectedTask, setSelectedTask] = useState(null);
   const [showNew, setShowNew] = useState(false);
+
   const queryClient = useQueryClient();
 
   const { data: tasks = [], isLoading } = useQuery({
@@ -73,28 +75,32 @@ export default function Tasks() {
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
 
-        {/* Header */}
+        {/* HEADER */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Tasks</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {counts.active} active · {counts.overdue > 0 && `${counts.overdue} overdue · `}{counts.done} done
+            <h1 className="text-2xl font-bold">Tasks</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              {counts.active} active ·{" "}
+              {counts.overdue > 0 && (
+                <span className="text-red-500">{counts.overdue} overdue · </span>
+              )}
+              {counts.done} done
             </p>
           </div>
-
           <Button onClick={() => setShowNew(true)} className="gap-2">
             <Plus className="w-4 h-4" /> New Task
           </Button>
         </div>
 
-        {/* Filters */}
+        {/* FILTERS */}
         <div className="flex flex-wrap gap-3 mb-6">
-          <div className="flex-1 min-w-[200px]">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search tasks..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="bg-card"
+              className="pl-9"
             />
           </div>
 
@@ -103,13 +109,15 @@ export default function Tasks() {
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1 rounded-xl text-sm ${
+                className={`px-3 py-1.5 rounded-xl text-sm ${
                   statusFilter === s
                     ? "bg-primary text-white"
-                    : "bg-card text-muted-foreground"
+                    : "bg-card border"
                 }`}
               >
-                {s}
+                {s === "active"
+                  ? `Active (${counts.active})`
+                  : `Done (${counts.done})`}
               </button>
             ))}
           </div>
@@ -128,109 +136,62 @@ export default function Tasks() {
           </Select>
         </div>
 
-        {/* Task List */}
+        {/* TASK LIST */}
         {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 bg-card rounded-xl animate-pulse" />
-            ))}
-          </div>
+          <p>Loading...</p>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-20">
-            <ClipboardList className="w-10 h-10 mx-auto text-muted-foreground" />
-            <p className="text-muted-foreground mt-2">No tasks found</p>
-          </div>
+          <p className="text-center text-muted-foreground">No tasks</p>
         ) : (
           <div className="space-y-6">
             {Object.entries(grouped).map(([dept, deptTasks]) => (
               <div key={dept}>
-                <p className="text-xs uppercase text-muted-foreground mb-2">
+                <p className="text-xs mb-2">
                   {dept} ({deptTasks.length})
                 </p>
 
-                <div className="bg-card rounded-xl overflow-hidden">
-                  {deptTasks.map((task) => {
-                    const StatusIcon = statusIcons[task.status] || Circle;
-                    const isOverdue =
-                      task.deadline &&
-                      isPast(new Date(task.deadline)) &&
-                      task.status !== "done";
+                {deptTasks.map((task) => {
+                  const StatusIcon = statusIcons[task.status] || Circle;
 
-                    return (
-                      <button
-                        key={task.id}
-                        onClick={() => setSelectedTask(task)}
-                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/40"
-                      >
-                        <StatusIcon
-                          className={`w-4 h-4 ${
-                            task.status === "done"
-                              ? "text-green-500"
-                              : isOverdue
-                              ? "text-red-500"
-                              : "text-muted-foreground"
-                          }`}
-                        />
-
-                        <div className="flex-1 text-left">
-                          <p
-                            className={`text-sm ${
-                              task.status === "done"
-                                ? "line-through text-muted-foreground"
-                                : ""
-                            }`}
-                          >
-                            {task.title}
-                          </p>
-                          {task.deadline && (
-                            <p className="text-xs text-muted-foreground">
-                              {format(new Date(task.deadline), "d MMM yyyy")}
-                            </p>
-                          )}
-                        </div>
-
-                        {task.priority && (
-                          <span
-                            className={`text-xs px-2 py-1 rounded ${priorityColors[task.priority]}`}
-                          >
-                            {task.priority}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
+                  return (
+                    <button
+                      key={task.id}
+                      onClick={() => setSelectedTask(task)}
+                      className="w-full flex justify-between p-3 border rounded-lg mb-2"
+                    >
+                      <div className="flex gap-3 items-center">
+                        <StatusIcon className="w-4 h-4" />
+                        <span>{task.title}</span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* DRAWER */}
+      {/* TASK DRAWER */}
       {selectedTask && (
         <TaskDrawer
           task={selectedTask}
           onClose={() => setSelectedTask(null)}
           onUpdate={(data) => {
             updateMutation.mutate({ id: selectedTask.id, data });
-            setSelectedTask((prev) => ({ ...prev, ...data }));
           }}
-          onArchive={async () => {
-            await updateMutation.mutateAsync({
+          onArchive={() => {
+            updateMutation.mutate({
               id: selectedTask.id,
               data: {
                 is_archived: true,
                 archived_at: new Date().toISOString(),
-                archived_by: "",
               },
             });
-
-            setSelectedTask(null);
           }}
         />
       )}
 
-      {/* NEW TASK */}
+      {/* NEW TASK FORM */}
       {showNew && (
         <NewTaskForm
           onClose={() => setShowNew(false)}

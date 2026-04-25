@@ -461,7 +461,7 @@ function TaskRow({ task, users, goals, onStatusToggle, onUpdate, onEdit, onDelet
       name: subtaskName,
       completed: false,
       assigned_to: [],
-      due_date: ""
+      due_date: undefined
     };
     const updatedSubtasks = [...(task.subtasks || []), newSubtask];
     onUpdate({ ...task, subtasks: updatedSubtasks });
@@ -618,7 +618,7 @@ function TaskFormDialog({ task, users, projects, orders, goals, onClose, onSubmi
     status: "not_started",
     priority: "medium",
     assigned_to: [],
-    due_date: "",
+    due_date: undefined,
     project_id: "",
     order_id: "",
     goal_id: "",

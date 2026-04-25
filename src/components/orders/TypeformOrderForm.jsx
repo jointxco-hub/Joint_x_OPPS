@@ -54,7 +54,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     blank_type: "",
     status: "received",
     priority: "normal",
-    due_date: "",
+    due_date: undefined,
     quoted_price: 0,
     deposit_paid: 0,
     notes: "",

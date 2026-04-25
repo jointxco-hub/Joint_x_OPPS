@@ -815,28 +815,31 @@ function createEntityApi(entityName) {
       return handleLocalEntity(entityName, 'filter', filter, sort, limit);
     },
 
-    async create(payload = {}) {
-      if (isSupported) {
-        const row = await runInsert(entityName, payload);
-        if (row) {
-          return row;
-        }
-      }
-
-      return handleLocalEntity(entityName, 'create', payload);
-    },
+   async create(payload = {}) {
+  if (isSupported) {
+    const row = await runInsert(entityName, payload);
+    if (row) {
+      return row;
+    }
+    if (supabase) {
+      throw new Error(`[dataClient] ${entityName} failed to save. Check console for details.`);
+    }
+  }
+  return handleLocalEntity(entityName, 'create', payload);
+},
 
     async update(id, payload = {}) {
-      if (isSupported) {
-        const row = await runUpdate(entityName, id, payload);
-        if (row) {
-          return row;
-        }
-      }
-
-      return handleLocalEntity(entityName, 'update', id, payload);
-    },
-
+  if (isSupported) {
+    const row = await runUpdate(entityName, id, payload);
+    if (row) {
+      return row;
+    }
+    if (supabase) {
+      throw new Error(`[dataClient] ${entityName} update failed. Check console for details.`);
+    }
+  }
+  return handleLocalEntity(entityName, 'update', id, payload);
+},
     async delete(id) {
       if (isSupported) {
         const deleted = await runDelete(entityName, id);
