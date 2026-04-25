@@ -72,7 +72,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.client_name.trim()) return;
+    if (!form.client_name.trim()) {
+      toast.error("Client name is required");
+      return;
+    }
     setIsSubmitting(true);
 
     try {
@@ -115,6 +118,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         client_id: clientId || undefined,
         total_amount: total,
         source: 'opps',
+        products: form.products.filter(p => p.name.trim()),
       };
 
       if (!orderData.linked_po_id) delete orderData.linked_po_id;
@@ -321,7 +325,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
         <div className="p-5 border-t border-border">
           <Button
-            type="submit"
+            type="button"
             onClick={handleSubmit}
             disabled={isSubmitting}
             className="w-full rounded-xl"

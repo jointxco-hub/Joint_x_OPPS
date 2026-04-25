@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { dataClient } from "@/api/dataClient";
+import { toast } from "sonner";
 
 export default function NewTaskForm({ onClose, onCreate }) {
   const [form, setForm] = useState({
@@ -19,7 +20,7 @@ export default function NewTaskForm({ onClose, onCreate }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.title.trim()) return;
+    if (!form.title.trim()) { toast.error("Task title is required"); return; }
     setLoading(true);
     await dataClient.entities.Task.create({ ...form, is_archived: false });
     setLoading(false);

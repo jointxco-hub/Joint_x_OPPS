@@ -33,7 +33,6 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [showPayment, setShowPayment] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'eft', notes: '' });
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
-  const [archiveInput, setArchiveInput] = useState("");
   const [uploading, setUploading] = useState(false);
   const queryClient = useQueryClient();
 
@@ -478,19 +477,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         <div className="p-4 border-t border-border">
           {showArchiveConfirm ? (
             <div className="space-y-2">
-              <p className="text-xs text-muted-foreground text-center">Type <strong>DELETE</strong> to archive</p>
-              <Input value={archiveInput} onChange={e => setArchiveInput(e.target.value)} placeholder="Type DELETE" className="rounded-xl text-center" />
+              <p className="text-xs text-muted-foreground text-center">Archive this order? This can be undone from the Archive page.</p>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setShowArchiveConfirm(false)} className="flex-1 rounded-xl">Cancel</Button>
-                <Button variant="destructive" onClick={(e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  onArchive && onArchive();
-}} disabled={archiveInput !== 'DELETE'} className="flex-1 rounded-xl">Archive</Button>
+                <Button type="button" variant="outline" onClick={() => setShowArchiveConfirm(false)} className="flex-1 rounded-xl">Cancel</Button>
+                <Button type="button" variant="destructive" onClick={() => { onArchive && onArchive(); }} className="flex-1 rounded-xl">Archive</Button>
               </div>
             </div>
           ) : (
-            <button onClick={() => setShowArchiveConfirm(true)} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-all mx-auto">
+            <button type="button" onClick={() => setShowArchiveConfirm(true)} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-all mx-auto">
               <Archive className="w-3.5 h-3.5" /> Archive order
             </button>
           )}
