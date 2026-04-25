@@ -116,8 +116,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-50 flex flex-col animate-slide-in-right">
+      <div className="fixed inset-0 z-40" onClick={onClose}>
+        <div className="absolute inset-0 bg-black/20 backdrop-blur-sm pointer-events-none" />
+      </div>
+      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-50 flex flex-col animate-slide-in-right" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div>
