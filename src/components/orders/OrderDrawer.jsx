@@ -482,7 +482,11 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               <Input value={archiveInput} onChange={e => setArchiveInput(e.target.value)} placeholder="Type DELETE" className="rounded-xl text-center" />
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setShowArchiveConfirm(false)} className="flex-1 rounded-xl">Cancel</Button>
-                <Button variant="destructive" onClick={onArchive} disabled={archiveInput !== 'DELETE'} className="flex-1 rounded-xl">Archive</Button>
+                <Button variant="destructive" onClick={(e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  onArchive && onArchive();
+}} disabled={archiveInput !== 'DELETE'} className="flex-1 rounded-xl">Archive</Button>
               </div>
             </div>
           ) : (
