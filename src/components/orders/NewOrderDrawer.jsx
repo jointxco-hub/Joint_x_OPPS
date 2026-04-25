@@ -1,14 +1,16 @@
 import React, { useState, useMemo } from "react";
-import { X, Plus, Trash2, Search, ShoppingCart, ChevronDown } from "lucide-react";
+import { X, Plus, Trash2, Search, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
+import { toast } from "sonner";
 
 export default function NewOrderDrawer({ onClose, onCreate }) {
   const [form, setForm] = useState({
+    client_id: '',
     client_name: '',
     client_email: '',
     client_phone: '',
@@ -25,15 +27,12 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
   const [clientSearch, setClientSearch] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
     queryFn: () => dataClient.entities.Client.list('-created_date', 200)
-  });
-
-  const { data: orders = [] } = useQuery({
-    queryKey: ['orders'],
-    queryFn: () => dataClient.entities.Order.list('-created_date', 50)
   });
 
   const { data: purchaseOrders = [] } = useQuery({
@@ -50,15 +49,12 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   }, [clients, clientSearch]);
 
   const selectClient = (client) => {
-    // pre-fill from client data
-    const lastOrder = orders.find(o => o.client_name === client.name || o.client_email === client.email);
     setForm(f => ({
       ...f,
+      client_id: client.id,
       client_name: client.name,
       client_email: client.email || f.client_email,
       client_phone: client.phone || f.client_phone,
-      // pre-fill products from last order if available
-      products: lastOrder?.products?.length ? lastOrder.products.map(p => ({ ...p })) : f.products,
       total_amount: '',
     }));
     setClientSearch(client.name);
@@ -74,16 +70,69 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
   const calcTotal = () => form.products.reduce((s, p) => s + (parseFloat(p.price || 0) * (parseInt(p.quantity) || 1)), 0);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.client_name.trim()) return;
-    const total = form.total_amount ? parseFloat(form.total_amount) : calcTotal();
-    const data = { ...form, total_amount: total };
-    if (!data.linked_po_id) delete data.linked_po_id;
-    onCreate(data);
+    setIsSubmitting(true);
+
+    try {
+      const total = form.total_amount ? parseFloat(form.total_amount) : calcTotal();
+      let clientId = form.client_id;
+
+      if (!clientId) {
+        const existing = clients.find(
+          c => c.name?.toLowerCase() === form.client_name.trim().toLowerCase()
+        );
+        if (existing) {
+          clientId = existing.id;
+        } else {
+          const newClient = await dataClient.entities.Client.create({
+            name: form.client_name.trim(),
+            email: form.client_email || undefined,
+            phone: form.client_phone || undefined,
+            status: 'active',
+            total_orders: 0,
+            total_revenue: 0,
+          });
+          clientId = newClient?.id;
+          toast.success(`New client "${form.client_name}" created`);
+          queryClient.invalidateQueries({ queryKey: ['clients'] });
+        }
+      }
+
+      if (clientId) {
+        const client = clients.find(c => c.id === clientId);
+        await dataClient.entities.Client.update(clientId, {
+          total_orders: (client?.total_orders || 0) + 1,
+          total_revenue: (client?.total_revenue || 0) + total,
+          last_activity_date: new Date().toISOString().split('T')[0],
+          status: 'active',
+        });
+      }
+
+      const orderData = {
+        ...form,
+        client_id: clientId || undefined,
+        total_amount: total,
+        source: 'opps',
+      };
+
+      if (!orderData.linked_po_id) delete orderData.linked_po_id;
+      if (!orderData.due_date) delete orderData.due_date;
+
+      await onCreate(orderData);
+
+    } catch (err) {
+      console.error('Order create error:', err);
+      toast.error('Failed to create order. Check console for details.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered'].includes(po.status));
+  const activePOs = purchaseOrders.filter(po =>
+    ['draft', 'pending', 'approved', 'ordered'].includes(po.status)
+  );
 
   return (
     <>
@@ -99,18 +148,22 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
           {/* Client autocomplete */}
           <div className="relative">
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Client *</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              Client *
+              {form.client_id && <span className="ml-2 text-primary font-medium">✓ linked</span>}
+            </label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               <Input
                 value={clientSearch || form.client_name}
                 onChange={e => {
                   setClientSearch(e.target.value);
-                  setForm(f => ({ ...f, client_name: e.target.value }));
+                  setForm(f => ({ ...f, client_name: e.target.value, client_id: '' }));
                   setShowClientDropdown(true);
                 }}
                 onFocus={() => setShowClientDropdown(true)}
-                placeholder="Search or type client name..."
+                onBlur={() => setTimeout(() => setShowClientDropdown(false), 150)}
+                placeholder="Search existing or type new client..."
                 className="rounded-xl pl-9"
                 required
               />
@@ -129,43 +182,49 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                 ))}
               </div>
             )}
+            {!form.client_id && form.client_name.trim() && (
+              <p className="text-xs text-muted-foreground mt-1">
+                New client — will be created automatically on save
+              </p>
+            )}
           </div>
 
-          {/* Client contact pre-fill */}
+          {/* Client contact */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Email</label>
-              <Input value={form.client_email} onChange={e => setForm({...form, client_email: e.target.value})}
+              <Input value={form.client_email} onChange={e => setForm({ ...form, client_email: e.target.value })}
                 placeholder="client@email.com" className="rounded-xl h-9 text-sm" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Phone</label>
-              <Input value={form.client_phone} onChange={e => setForm({...form, client_phone: e.target.value})}
+              <Input value={form.client_phone} onChange={e => setForm({ ...form, client_phone: e.target.value })}
                 placeholder="Phone number" className="rounded-xl h-9 text-sm" />
             </div>
           </div>
 
-          {/* Order details */}
+          {/* Order number + due date */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Order Number</label>
-              <Input value={form.order_number} onChange={e => setForm({...form, order_number: e.target.value})}
+              <Input value={form.order_number} onChange={e => setForm({ ...form, order_number: e.target.value })}
                 placeholder="ORD-..." className="rounded-xl h-9 text-sm" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Due Date</label>
-              <Input type="date" value={form.due_date} onChange={e => setForm({...form, due_date: e.target.value})}
+              <Input type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })}
                 className="rounded-xl h-9 text-sm" />
             </div>
           </div>
 
+          {/* Status + Priority */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Status</label>
-              <Select value={form.status} onValueChange={v => setForm({...form, status: v})}>
+              <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
                 <SelectTrigger className="rounded-xl h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {['confirmed','in_production','ready','shipped','delivered'].map(s => (
+                  {['confirmed', 'in_production', 'ready', 'shipped', 'delivered'].map(s => (
                     <SelectItem key={s} value={s} className="capitalize">{s.replace('_', ' ')}</SelectItem>
                   ))}
                 </SelectContent>
@@ -173,10 +232,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Priority</label>
-              <Select value={form.priority} onValueChange={v => setForm({...form, priority: v})}>
+              <Select value={form.priority} onValueChange={v => setForm({ ...form, priority: v })}>
                 <SelectTrigger className="rounded-xl h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {['low','normal','high','urgent'].map(s => (
+                  {['low', 'normal', 'high', 'urgent'].map(s => (
                     <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
                   ))}
                 </SelectContent>
@@ -184,9 +243,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
           </div>
 
+          {/* Print Type */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Print Type</label>
-            <Select value={form.print_type} onValueChange={v => setForm({...form, print_type: v})}>
+            <Select value={form.print_type} onValueChange={v => setForm({ ...form, print_type: v })}>
               <SelectTrigger className="rounded-xl h-9 text-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {[['none','None'],['dtf','DTF'],['vinyl','Vinyl'],['embroidery','Embroidery'],['screen','Screen Print']].map(([v,l]) => (
@@ -196,20 +256,19 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </Select>
           </div>
 
-          {/* Link to Purchase Order */}
+          {/* Link PO */}
           {activePOs.length > 0 && (
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block flex items-center gap-1">
-                <ShoppingCart className="w-3 h-3" /> Link Purchase Order <span className="text-muted-foreground font-normal">(optional)</span>
+                <ShoppingCart className="w-3 h-3" /> Link Purchase Order
+                <span className="font-normal">(optional)</span>
               </label>
-              <Select value={form.linked_po_id || '__none'} onValueChange={v => setForm({...form, linked_po_id: v === '__none' ? '' : v})}>
+              <Select value={form.linked_po_id || '__none'} onValueChange={v => setForm({ ...form, linked_po_id: v === '__none' ? '' : v })}>
                 <SelectTrigger className="rounded-xl h-9 text-sm"><SelectValue placeholder="Select a PO..." /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none">No PO linked</SelectItem>
                   {activePOs.map(po => (
-                    <SelectItem key={po.id} value={po.id}>
-                      {po.po_number} — {po.supplier_name} ({po.status})
-                    </SelectItem>
+                    <SelectItem key={po.id} value={po.id}>{po.po_number} — {po.status}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -243,23 +302,32 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
           </div>
 
+          {/* Total */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-              Total Amount {calcTotal() > 0 && <span className="text-primary">(auto: R{calcTotal().toLocaleString()})</span>}
+              Total Amount{calcTotal() > 0 && <span className="text-primary ml-1">(auto: R{calcTotal().toLocaleString()})</span>}
             </label>
-            <Input value={form.total_amount} onChange={e => setForm({...form, total_amount: e.target.value})}
+            <Input value={form.total_amount} onChange={e => setForm({ ...form, total_amount: e.target.value })}
               placeholder={`R${calcTotal() || '0'}`} type="number" className="rounded-xl" />
           </div>
 
+          {/* Notes */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Notes</label>
-            <Textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})}
+            <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
               placeholder="Any special instructions..." className="rounded-xl resize-none h-20" />
           </div>
         </form>
 
         <div className="p-5 border-t border-border">
-          <Button type="submit" onClick={handleSubmit} className="w-full rounded-xl">Create Order</Button>
+          <Button
+            type="submit"
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className="w-full rounded-xl"
+          >
+            {isSubmitting ? 'Creating...' : 'Create Order'}
+          </Button>
         </div>
       </div>
     </>
