@@ -115,10 +115,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose}>
+      <div className="fixed inset-0 z-[55]" onClick={onClose}>
         <div className="absolute inset-0 bg-black/20 backdrop-blur-sm pointer-events-none" />
       </div>
-      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-50 flex flex-col animate-slide-in-right" onClick={e => e.stopPropagation()}>
+      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-[60] flex flex-col animate-slide-in-right" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div>
@@ -475,17 +475,17 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         </div>
 
         {/* Archive */}
-        <div className="p-4 border-t border-border flex justify-center">
+        <div className="p-4 border-t border-border">
           <button
             type="button"
+            className="w-full flex items-center justify-center gap-2 rounded-xl border border-border py-2 text-sm text-muted-foreground hover:text-destructive hover:border-destructive transition-all"
             onClick={() => {
               if (window.confirm('Archive this order? It can be restored from the Archive page.')) {
                 onArchive && onArchive();
               }
             }}
-            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-all"
           >
-            <Archive className="w-3.5 h-3.5" /> Archive order
+            <Archive className="w-4 h-4" /> Archive order
           </button>
         </div>
       </div>
