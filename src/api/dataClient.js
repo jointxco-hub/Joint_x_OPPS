@@ -215,6 +215,56 @@ const ENTITY_CONFIG = {
       });
     },
   },
+  OpsTask: {
+    table: 'ops_tasks',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      due_date: 'deadline',
+      deadline: 'deadline',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      due_date: 'deadline',
+      week_number: 'week_number',
+      status: 'status',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        due_date: row.deadline,
+        created_date: row.created_at,
+        updated_date: row.updated_at,
+      };
+    },
+    serialize(payload) {
+      const cleanId = (v) => (v && v !== '_none' ? v : undefined);
+      return compactObject({
+        title: payload.title,
+        description: payload.description || undefined,
+        production_type: payload.production_type || undefined,
+        production_stage: payload.production_stage || undefined,
+        status: payload.status,
+        priority: payload.priority,
+        start_date: payload.start_date || undefined,
+        deadline: payload.deadline || payload.due_date || undefined,
+        week_number: numberOrUndefined(payload.week_number),
+        day_of_week: payload.day_of_week || undefined,
+        assigned_to: Array.isArray(payload.assigned_to) ? payload.assigned_to : [],
+        client_id: cleanId(payload.client_id),
+        client_name: payload.client_name || undefined,
+        order_id: cleanId(payload.order_id),
+        project_id: cleanId(payload.project_id),
+        alethea_project_id: cleanId(payload.alethea_project_id),
+        deliverables: payload.deliverables || undefined,
+        notes: payload.notes || undefined,
+        supporting_files: payload.supporting_files ?? [],
+        subtasks: payload.subtasks ?? [],
+        comments: payload.comments ?? [],
+      });
+    },
+  },
   InventoryItem: {
     table: 'inventory',
     sortMap: {

@@ -21,7 +21,12 @@ export default function SignIn() {
     try {
       if (mode === 'magic') {
         if (!supabase) throw new Error('Supabase is not configured.');
-        const { error } = await supabase.auth.signInWithOtp({ email });
+        const { error } = await supabase.auth.signInWithOtp({
+          email,
+          options: {
+            emailRedirectTo: `${window.location.origin}/Dashboard`,
+          },
+        });
         if (error) throw error;
         setMagicSent(true);
       } else {
