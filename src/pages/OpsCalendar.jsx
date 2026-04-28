@@ -73,19 +73,23 @@ export default function OpsCalendar() {
 
   const createMutation = useMutation({
     mutationFn: (data) => dataClient.entities.OpsTask.create(data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); toast.success("Task created!"); }
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); toast.success("Task created!"); },
+    onError: (err) => toast.error(err?.message || 'Failed to create task'),
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => dataClient.entities.OpsTask.update(id, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); setEditingTask(null); toast.success("Task updated!"); }
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); setEditingTask(null); toast.success("Task updated!"); },
+    onError: (err) => toast.error(err?.message || 'Failed to update task'),
   });
   const deleteMutation = useMutation({
     mutationFn: (id) => dataClient.entities.OpsTask.delete(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setDeleteConfirm(null); toast.success("Task deleted!"); }
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setDeleteConfirm(null); toast.success("Task deleted!"); },
+    onError: (err) => toast.error(err?.message || 'Failed to delete task'),
   });
   const archiveMutation = useMutation({
     mutationFn: (task) => dataClient.entities.OpsTask.update(task.id, { ...task, status: 'archived' }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); toast.success("Task archived!"); }
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); toast.success("Task archived!"); },
+    onError: (err) => toast.error(err?.message || 'Failed to archive task'),
   });
 
   const handleStatusToggle = (task) => {

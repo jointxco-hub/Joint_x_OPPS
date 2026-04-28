@@ -3,46 +3,107 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 
+const REDIRECT = `${window.location.origin}/Dashboard`;
+
 export default function SignIn() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [mode, setMode] = useState('password');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [magicSent, setMagicSent] = useState(false);
+  const [mode, setMode]         = useState('password'); // 'password' | 'signup' | 'magic_link'
+  const [loading, setLoading]   = useState(false);
+  const [sent, setSent]         = useState(false);
+  const [error, setError]       = useState('');
   const { checkAppState } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const next = params.get('next') || '/Dashboard';
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const reset = (toMode = 'password') => {
+    setSent(false);
+    setMode(toMode);
+    setError('');
+  };
+
+  // ── Auth handlers ────────────────────────────────────────────────
+
+  const handleGoogle = async () => {
+    if (!supabase) return setError('Supabase is not configured.');
     setError('');
     setLoading(true);
     try {
-      if (mode === 'magic') {
-        if (!supabase) throw new Error('Supabase is not configured.');
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            emailRedirectTo: `${window.location.origin}/Dashboard`,
-          },
-        });
-        if (error) throw error;
-        setMagicSent(true);
-      } else {
-        if (!supabase) throw new Error('Supabase is not configured.');
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        await checkAppState();
-        navigate(params.get('next') || '/Dashboard', { replace: true });
-      }
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: REDIRECT },
+      });
+      if (error) throw error;
+      // Browser navigates away — no further state updates needed
     } catch (err) {
-      setError(err.message || 'Sign in failed.');
+      setError(err.message || 'Google sign-in failed.');
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  if (magicSent) {
+  const handlePassword = async (e) => {
+    e.preventDefault();
+    if (!supabase) return setError('Supabase is not configured.');
+    setError('');
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      await checkAppState();
+      navigate(next, { replace: true });
+    } catch (err) {
+      setError(err.message || 'Sign in failed.');
+      setLoading(false);
+    }
+  };
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    if (!supabase) return setError('Supabase is not configured.');
+    setError('');
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: REDIRECT },
+      });
+      if (error) throw error;
+      setSent(true);
+    } catch (err) {
+      setError(err.message || 'Sign up failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMagicLink = async (e) => {
+    e.preventDefault();
+    if (!supabase) return setError('Supabase is not configured.');
+    setError('');
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: REDIRECT },
+      });
+      if (error) throw error;
+      setSent(true);
+    } catch (err) {
+      setError(err.message || 'Failed to send magic link.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = mode === 'signup'     ? handleSignup
+                     : mode === 'magic_link' ? handleMagicLink
+                     :                         handlePassword;
+
+  // ── Sent confirmation screen (Google button explicitly absent) ───
+
+  if (sent) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="w-full max-w-sm text-center">
@@ -53,18 +114,34 @@ export default function SignIn() {
           </div>
           <h2 className="text-xl font-bold text-foreground mb-2">Check your email</h2>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            We sent a magic link to <span className="font-semibold text-foreground">{email}</span>.<br />Click it to sign in — no password needed.
+            {mode === 'magic_link' ? (
+              <>We sent a sign-in link to <span className="font-semibold text-foreground">{email}</span>.<br />Click it to sign in — no password needed.</>
+            ) : (
+              <>We sent a confirmation to <span className="font-semibold text-foreground">{email}</span>.<br />Click the link to verify your account, then sign in.</>
+            )}
           </p>
           <button
-            onClick={() => { setMagicSent(false); setEmail(''); }}
+            onClick={() => reset('password')}
             className="mt-6 text-sm text-primary hover:underline"
           >
-            Use a different email
+            Use a different method
           </button>
         </div>
       </div>
     );
   }
+
+  // ── Derived labels ───────────────────────────────────────────────
+
+  const heading = mode === 'signup' ? 'Create account' : 'Sign in';
+  const subheading = mode === 'signup'     ? 'Create your Joint X account.'
+                   : mode === 'magic_link' ? "Enter your email and we'll send a sign-in link."
+                   :                        'Enter your email and password to continue.';
+  const submitLabel = loading
+    ? (mode === 'signup' ? 'Creating account…' : mode === 'magic_link' ? 'Sending link…' : 'Signing in…')
+    : (mode === 'signup' ? 'Create account'    : mode === 'magic_link' ? 'Send magic link' : 'Sign in');
+
+  // ── Main form ────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -85,11 +162,33 @@ export default function SignIn() {
           </div>
         </div>
 
-        <h2 className="text-2xl font-bold text-foreground mb-1">Sign in</h2>
-        <p className="text-sm text-muted-foreground mb-7">
-          {mode === 'password' ? 'Enter your email and password to continue.' : 'Enter your email and we\'ll send a sign-in link.'}
-        </p>
+        <h2 className="text-2xl font-bold text-foreground mb-1">{heading}</h2>
+        <p className="text-sm text-muted-foreground mb-7">{subheading}</p>
 
+        {/* Google OAuth — not rendered on sent screen (early return above) */}
+        <button
+          type="button"
+          onClick={handleGoogle}
+          disabled={loading}
+          className="w-full h-11 rounded-xl border border-border bg-card flex items-center justify-center gap-3 text-sm font-medium text-foreground hover:bg-muted transition-all disabled:opacity-50 mb-5"
+        >
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z"/>
+            <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332Z"/>
+            <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58Z"/>
+          </svg>
+          Continue with Google
+        </button>
+
+        {/* Divider */}
+        <div className="flex items-center gap-3 mb-5">
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-xs text-muted-foreground">or</span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* Email form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
@@ -106,7 +205,7 @@ export default function SignIn() {
             />
           </div>
 
-          {mode === 'password' && (
+          {(mode === 'password' || mode === 'signup') && (
             <div>
               <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
                 Password
@@ -133,22 +232,41 @@ export default function SignIn() {
             disabled={loading}
             className="w-full h-11 rounded-xl bg-primary text-primary-foreground text-sm font-semibold transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
           >
-            {loading
-              ? 'Signing in…'
-              : mode === 'magic'
-              ? 'Send magic link'
-              : 'Sign in'}
+            {submitLabel}
           </button>
         </form>
 
-        <div className="mt-5 text-center">
-          <button
-            onClick={() => { setMode(m => m === 'password' ? 'magic' : 'password'); setError(''); }}
-            className="text-sm text-primary hover:underline"
-          >
-            {mode === 'password' ? 'Sign in with magic link instead' : 'Sign in with password instead'}
-          </button>
+        {/* Below-form links */}
+        <div className="mt-5 text-center space-y-2">
+          {mode === 'password' && (
+            <p className="text-sm text-muted-foreground">
+              Don't have an account?{' '}
+              <button onClick={() => reset('signup')} className="text-primary hover:underline font-medium">
+                Sign up
+              </button>
+            </p>
+          )}
+          {mode === 'signup' && (
+            <p className="text-sm text-muted-foreground">
+              Already have an account?{' '}
+              <button onClick={() => reset('password')} className="text-primary hover:underline font-medium">
+                Sign in
+              </button>
+            </p>
+          )}
+          <p className="text-sm text-muted-foreground">
+            {mode !== 'magic_link' ? (
+              <button onClick={() => reset('magic_link')} className="text-primary hover:underline">
+                Or send me a magic link instead
+              </button>
+            ) : (
+              <button onClick={() => reset('password')} className="text-primary hover:underline">
+                Sign in with password instead
+              </button>
+            )}
+          </p>
         </div>
+
       </div>
     </div>
   );
