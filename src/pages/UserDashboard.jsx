@@ -15,6 +15,7 @@ import { toast } from "sonner";
 
 export default function UserDashboard() {
   const [user, setUser] = useState(null);
+  const [userLoading, setUserLoading] = useState(true);
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState("");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -22,7 +23,10 @@ export default function UserDashboard() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    dataClient.auth.me().then(u => { setUser(u); setNewName(u?.full_name || ""); }).catch(() => {});
+    dataClient.auth.me()
+      .then(u => { setUser(u); setNewName(u?.full_name || ""); })
+      .catch(() => {})
+      .finally(() => setUserLoading(false));
   }, []);
 
   const userEmail = user?.email;
@@ -88,7 +92,8 @@ const { data: tasks = [], isLoading } = useQuery({
   const weekDone = myWeekTasks.filter(t => t.status === "complete").length;
   const weekScore = myWeekTasks.length > 0 ? Math.round((weekDone / myWeekTasks.length) * 100) : 0;
 
-  if (!user) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
+  if (userLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
+  if (!user) return <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground text-sm">Not signed in.</div>;
 
   return (
     <div className="min-h-screen bg-background">

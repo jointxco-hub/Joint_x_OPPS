@@ -41,7 +41,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const navigateToLogin = () => {
-    dataClient.auth.redirectToLogin();
+    window.location.href = '/SignIn';
   };
 
   return (

@@ -80,6 +80,7 @@ import OpsCalendar from './pages/OpsCalendar';
 import UserDashboard from './pages/UserDashboard';
 import TeamProfiles from './pages/TeamProfiles';
 import ArchivePage from './pages/Archive';
+import SignIn from './pages/SignIn';
 import __Layout from './Layout.jsx';
 
 
@@ -117,6 +118,7 @@ export const PAGES = {
     "TeamProfiles": TeamProfiles,
     "Archive": ArchivePage,
     "UserDashboard": UserDashboard,
+    "SignIn": SignIn,
 }
 
 export const pagesConfig = {
