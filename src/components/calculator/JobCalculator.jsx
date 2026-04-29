@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,19 +16,17 @@ const PRINT_PRICES = {
 
 export default function JobCalculator({ onSave }) {
   const [printType, setPrintType] = useState("vinyl_videoflex");
-  const [meters, setMeters] = useState(1);
-  const [quantity, setQuantity] = useState(1);
-  const [blanksCost, setBlanksCost] = useState(0);
-  const [transportCost, setTransportCost] = useState(0);
-  const [quotedPrice, setQuotedPrice] = useState(0);
+  const [meters, setMeters] = useState("1");
+  const [quantity, setQuantity] = useState("1");
+  const [blanksCost, setBlanksCost] = useState("");
+  const [transportCost, setTransportCost] = useState("");
   const [additionalCosts, setAdditionalCosts] = useState([]);
 
-  const printCost = PRINT_PRICES[printType].price * meters;
+  const printCost = PRINT_PRICES[printType].price * (parseFloat(meters) || 0);
   const totalAdditional = additionalCosts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   const totalCost = printCost + (parseFloat(blanksCost) || 0) + (parseFloat(transportCost) || 0) + totalAdditional;
-  const costPerItem = quantity > 0 ? totalCost / quantity : 0;
-  const profit = (parseFloat(quotedPrice) || 0) - totalCost;
-  const profitMargin = quotedPrice > 0 ? (profit / quotedPrice) * 100 : 0;
+  const qty = parseInt(quantity) || 1;
+  const costPerItem = qty > 0 ? totalCost / qty : 0;
 
   const addAdditionalCost = () => {
     setAdditionalCosts([...additionalCosts, { name: "", amount: 0 }]);
@@ -74,20 +72,17 @@ export default function JobCalculator({ onSave }) {
           <div className="space-y-2">
             <Label>Meters Required</Label>
             <Input
-              type="number"
-              min="0"
-              step="0.1"
+              inputMode="decimal"
               value={meters}
-              onChange={(e) => setMeters(parseFloat(e.target.value) || 0)}
+              onChange={(e) => setMeters(e.target.value)}
             />
           </div>
           <div className="space-y-2">
             <Label>Quantity (items)</Label>
             <Input
-              type="number"
-              min="1"
+              inputMode="numeric"
               value={quantity}
-              onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
+              onChange={(e) => setQuantity(e.target.value)}
             />
           </div>
         </div>
@@ -96,8 +91,7 @@ export default function JobCalculator({ onSave }) {
           <div className="space-y-2">
             <Label>Blanks Cost (R)</Label>
             <Input
-              type="number"
-              min="0"
+              inputMode="decimal"
               value={blanksCost}
               onChange={(e) => setBlanksCost(e.target.value)}
               placeholder="0"
@@ -106,8 +100,7 @@ export default function JobCalculator({ onSave }) {
           <div className="space-y-2">
             <Label>Transport/Uber (R)</Label>
             <Input
-              type="number"
-              min="0"
+              inputMode="decimal"
               value={transportCost}
               onChange={(e) => setTransportCost(e.target.value)}
               placeholder="0"
@@ -132,7 +125,7 @@ export default function JobCalculator({ onSave }) {
                 className="flex-1"
               />
               <Input
-                type="number"
+                inputMode="decimal"
                 placeholder="R"
                 value={cost.amount}
                 onChange={(e) => updateAdditionalCost(index, "amount", e.target.value)}
@@ -143,18 +136,6 @@ export default function JobCalculator({ onSave }) {
               </Button>
             </div>
           ))}
-        </div>
-
-        <div className="space-y-2">
-          <Label>Quoted Price to Client (R)</Label>
-          <Input
-            type="number"
-            min="0"
-            value={quotedPrice}
-            onChange={(e) => setQuotedPrice(e.target.value)}
-            placeholder="0"
-            className="text-lg font-semibold"
-          />
         </div>
 
         {/* Results */}
@@ -193,20 +174,6 @@ export default function JobCalculator({ onSave }) {
             </div>
           </div>
 
-          {quotedPrice > 0 && (
-            <div className="border-t border-slate-200 pt-3 space-y-2">
-              <div className={`flex justify-between font-bold text-lg ${profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                <span>Profit</span>
-                <span>R{profit.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Profit Margin</span>
-                <span className={profitMargin >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                  {profitMargin.toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          )}
         </div>
       </CardContent>
     </Card>

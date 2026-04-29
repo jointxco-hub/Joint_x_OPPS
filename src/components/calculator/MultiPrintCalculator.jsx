@@ -57,8 +57,6 @@ export default function MultiPrintCalculator() {
   const [printItems, setPrintItems] = useState([]);
   const [transportCost, setTransportCost] = useState(0);
   const [additionalCosts, setAdditionalCosts] = useState([]);
-  const [quotedPrice, setQuotedPrice] = useState(0);
-
   const addItem = () => {
     setItems([...items, {
       id: Date.now(),
@@ -189,8 +187,6 @@ export default function MultiPrintCalculator() {
   const totalAdditional = additionalCosts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
   const totalCost = totalGarmentCost + totalPrintCost + onceOffCosts + parseFloat(transportCost || 0) + totalAdditional;
   const costPerItem = totalQuantity > 0 ? totalCost / totalQuantity : 0;
-  const profit = (parseFloat(quotedPrice) || 0) - totalCost;
-  const profitMargin = quotedPrice > 0 ? (profit / quotedPrice) * 100 : 0;
 
   return (
     <Card className="bg-white border-0 shadow-sm">
@@ -476,8 +472,7 @@ export default function MultiPrintCalculator() {
             ))}
           </div>
           <Input
-            type="number"
-            min="0"
+            inputMode="decimal"
             value={transportCost}
             onChange={(e) => setTransportCost(e.target.value)}
             placeholder="0"
@@ -501,7 +496,7 @@ export default function MultiPrintCalculator() {
                 className="flex-1"
               />
               <Input
-                type="number"
+                inputMode="decimal"
                 placeholder="R"
                 value={cost.amount}
                 onChange={(e) => updateAdditionalCost(index, "amount", e.target.value)}
@@ -512,19 +507,6 @@ export default function MultiPrintCalculator() {
               </Button>
             </div>
           ))}
-        </div>
-
-        {/* Quoted Price */}
-        <div className="space-y-2">
-          <Label>Quoted Price to Client (R)</Label>
-          <Input
-            type="number"
-            min="0"
-            value={quotedPrice}
-            onChange={(e) => setQuotedPrice(e.target.value)}
-            placeholder="0"
-            className="text-lg font-semibold"
-          />
         </div>
 
         {/* Results */}
@@ -579,24 +561,6 @@ export default function MultiPrintCalculator() {
             </div>
           </div>
 
-          {parseFloat(quotedPrice) > 0 && (
-            <div className="border-t border-slate-200 pt-3 space-y-2">
-              <div className={`flex justify-between font-bold text-lg ${profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                <span>Profit</span>
-                <span>R{profit.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Profit Margin</span>
-                <span className={profitMargin >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                  {profitMargin.toFixed(1)}%
-                </span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-600">Price per Item</span>
-                <span>R{(quotedPrice / totalQuantity).toFixed(2)}</span>
-              </div>
-            </div>
-          )}
         </div>
       </CardContent>
     </Card>

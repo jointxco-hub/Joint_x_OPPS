@@ -38,6 +38,13 @@ export default function Tasks() {
     queryFn: () => dataClient.entities.Task.list("-created_date", 200),
   });
 
+  const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
+  const { data: opsTasks = [] } = useQuery({
+    queryKey: ["opsTasks"],
+    queryFn: () => opsEntity.list("-created_date", 200),
+    enabled: !!opsEntity,
+  });
+
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => dataClient.entities.Task.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tasks"] }),
@@ -174,6 +181,42 @@ export default function Tasks() {
           </div>
         )}
       </div>
+
+      {/* OPS TASKS */}
+      {(() => {
+        const filteredOps = opsTasks.filter((t) => {
+          if (t.status === 'archived') return false;
+          if (search && !t.title?.toLowerCase().includes(search.toLowerCase())) return false;
+          return true;
+        });
+        if (filteredOps.length === 0) return null;
+        const opsStatusColors = {
+          not_started: "bg-slate-100 text-slate-600",
+          in_progress: "bg-blue-100 text-blue-700",
+          on_hold: "bg-orange-100 text-orange-700",
+          complete: "bg-green-100 text-green-700",
+        };
+        return (
+          <div className="mt-8 border-t pt-6">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+              Ops Tasks ({filteredOps.length})
+            </p>
+            <div className="space-y-2">
+              {filteredOps.map((task) => (
+                <div key={task.id} className="w-full flex items-center justify-between p-3 border rounded-lg bg-card gap-3">
+                  <div className="flex gap-3 items-center min-w-0">
+                    <Clock className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+                    <span className="truncate text-sm">{task.title}</span>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${opsStatusColors[task.status] || "bg-slate-100 text-slate-600"}`}>
+                    {task.status?.replace('_', ' ')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* TASK DRAWER */}
       {selectedTask && (

@@ -193,6 +193,13 @@ export default function OpsCalendar() {
               12-Week
             </Button>
             <Button
+              variant={viewMode === 'list' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('list')}
+            >
+              <List className="w-3.5 h-3.5 mr-1" /> List
+            </Button>
+            <Button
               size="sm"
               className="bg-[#0F9B8E] hover:bg-[#0d8a7e]"
               onClick={() => { setEditingTask(null); setShowForm(true); }}
@@ -508,6 +515,31 @@ export default function OpsCalendar() {
                 </Card>
               );
             })}
+          </div>
+        )}
+
+        {/* List View — all tasks regardless of deadline/week */}
+        {viewMode === 'list' && (
+          <div className="space-y-2">
+            {applyFilters(tasks).length === 0 ? (
+              <Card className="border-0 shadow-sm rounded-xl">
+                <CardContent className="p-8 text-center">
+                  <p className="text-slate-400 text-sm">No tasks found. Create one with "New Task".</p>
+                </CardContent>
+              </Card>
+            ) : (
+              applyFilters(tasks).map(task => (
+                <OpsTaskCard
+                  key={task.id}
+                  task={task}
+                  users={users}
+                  onStatusToggle={handleStatusToggle}
+                  onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                  onEdit={() => { setEditingTask(task); setShowForm(true); }}
+                  onDelete={() => setDeleteConfirm(task)}
+                />
+              ))
+            )}
           </div>
         )}
 
