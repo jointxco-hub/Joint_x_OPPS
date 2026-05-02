@@ -5,7 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   CheckCircle, Circle, Clock, ChevronDown, ChevronRight,
-  Trash2, Pencil, Plus, Paperclip, MessageSquare, AlertTriangle
+  Trash2, Pencil, Plus, Paperclip, MessageSquare, AlertTriangle, Archive
 } from "lucide-react";
 
 const statusColors = {
@@ -37,7 +37,7 @@ const productionTypeLabels = {
   alethea: "Alethea"
 };
 
-export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onEdit, onDelete }) {
+export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onEdit, onDelete, onArchive }) {
   const [expanded, setExpanded] = useState(false);
   const [showSubtaskForm, setShowSubtaskForm] = useState(false);
   const [subtaskName, setSubtaskName] = useState("");
@@ -147,6 +147,11 @@ export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onE
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
             <Pencil className="w-3.5 h-3.5 text-slate-400" />
           </Button>
+          {onArchive && task.status !== 'archived' && (
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onArchive} title="Archive">
+              <Archive className="w-3.5 h-3.5 text-slate-400" />
+            </Button>
+          )}
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onDelete}>
             <Trash2 className="w-3.5 h-3.5 text-red-400" />
           </Button>

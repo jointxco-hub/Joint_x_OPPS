@@ -13,7 +13,7 @@ import { toast } from "sonner";
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const STAGES = ['design', 'sourcing', 'sampling', 'cutting', 'printing', 'pressing', 'finishing', 'packing', 'delivery', 'other'];
 
-export default function OpsTaskFormDialog({ task, users, clients, orders, projects, aletheaProjects, onClose, onSubmit }) {
+export default function OpsTaskFormDialog({ task, users, clients, orders, projects, aletheaProjects, onClose, onSubmit, defaultDate }) {
   const [formData, setFormData] = useState(task ? { ...task } : {
     title: "",
     description: "",
@@ -21,7 +21,7 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
     status: "not_started",
     priority: "medium",
     start_date: undefined,
-    due_date: undefined,
+    due_date: defaultDate || undefined,
     assigned_to: [],
     client_id: "",
     client_name: "",

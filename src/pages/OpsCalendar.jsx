@@ -11,7 +11,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search,
   LayoutGrid, List, Users, RefreshCw, Archive, Calendar
 } from "lucide-react";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday, addMonths, subMonths, addWeeks, startOfWeek, endOfWeek, eachDayOfInterval as eachDay } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday, addMonths, subMonths, addWeeks, startOfWeek, endOfWeek, addDays } from "date-fns";
 import OpsTaskCard from "@/components/ops/OpsTaskCard";
 import OpsTaskFormDialog from "@/components/ops/OpsTaskFormDialog";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
@@ -39,6 +39,7 @@ export default function OpsCalendar() {
   const [selectedDay, setSelectedDay] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [defaultDate, setDefaultDate] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [search, setSearch] = useState("");
   const [filterUser, setFilterUser] = useState("all");
@@ -202,7 +203,7 @@ export default function OpsCalendar() {
             <Button
               size="sm"
               className="bg-[#0F9B8E] hover:bg-[#0d8a7e]"
-              onClick={() => { setEditingTask(null); setShowForm(true); }}
+              onClick={() => { setEditingTask(null); setDefaultDate(null); setShowForm(true); }}
             >
               <Plus className="w-4 h-4 mr-1" /> New Task
             </Button>
@@ -277,7 +278,14 @@ export default function OpsCalendar() {
               <Button variant="outline" size="sm" onClick={() => setCalendarDate(d => subMonths(d, 1))}>
                 <ChevronLeft className="w-4 h-4 mr-1" /> Prev
               </Button>
-              <h2 className="font-bold text-slate-900 text-lg">{format(calendarDate, 'MMMM yyyy')}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-slate-900 text-lg">{format(calendarDate, 'MMMM yyyy')}</h2>
+                {!isSameDay(calendarDate, new Date()) && (
+                  <Button variant="ghost" size="sm" className="text-xs text-[#0F9B8E]" onClick={() => { setCalendarDate(new Date()); setSelectedDay(new Date()); }}>
+                    Today
+                  </Button>
+                )}
+              </div>
               <Button variant="outline" size="sm" onClick={() => setCalendarDate(d => addMonths(d, 1))}>
                 Next <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
@@ -354,7 +362,7 @@ export default function OpsCalendar() {
                         <div className="text-center py-6">
                           <p className="text-xs text-slate-400">No tasks due this day</p>
                           <button
-                            onClick={() => { setEditingTask(null); setShowForm(true); }}
+                            onClick={() => { setEditingTask(null); setDefaultDate(format(selectedDay, 'yyyy-MM-dd')); setShowForm(true); }}
                             className="mt-2 text-xs text-[#0F9B8E] font-medium"
                           >
                             + Add task
@@ -371,6 +379,7 @@ export default function OpsCalendar() {
                               onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
                               onEdit={() => { setEditingTask(task); setShowForm(true); }}
                               onDelete={() => setDeleteConfirm(task)}
+                            onArchive={() => archiveMutation.mutate(task)}
                             />
                           ))}
                         </div>
@@ -384,20 +393,30 @@ export default function OpsCalendar() {
         )}
 
         {/* Week Navigator */}
-        {viewMode === 'weekly' && (
-          <div className="flex items-center justify-between mb-4">
-            <Button variant="outline" size="sm" onClick={() => setSelectedWeek(Math.max(1, selectedWeek - 1))}>
-              <ChevronLeft className="w-4 h-4 mr-1" /> Prev
-            </Button>
-            <div className="text-center">
-              <p className="font-bold text-slate-900 text-lg">Week {selectedWeek}</p>
-              <p className="text-xs text-slate-500">{weekTasks.length} tasks</p>
+        {viewMode === 'weekly' && (() => {
+          const jan1 = new Date(new Date().getFullYear(), 0, 1);
+          const wStart = addDays(jan1, (selectedWeek - 1) * 7);
+          const wEnd = addDays(wStart, 6);
+          return (
+            <div className="flex items-center justify-between mb-4">
+              <Button variant="outline" size="sm" onClick={() => setSelectedWeek(Math.max(1, selectedWeek - 1))}>
+                <ChevronLeft className="w-4 h-4 mr-1" /> Prev
+              </Button>
+              <div className="text-center">
+                <p className="font-bold text-slate-900 text-lg">Week {selectedWeek}</p>
+                <p className="text-xs text-slate-500">{format(wStart, 'd MMM')} – {format(wEnd, 'd MMM')} · {weekTasks.length} tasks</p>
+                {selectedWeek !== getCurrentWeek() && (
+                  <button onClick={() => setSelectedWeek(getCurrentWeek())} className="text-xs text-[#0F9B8E] hover:underline mt-0.5">
+                    Back to current week
+                  </button>
+                )}
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setSelectedWeek(Math.min(52, selectedWeek + 1))}>
+                Next <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={() => setSelectedWeek(Math.min(52, selectedWeek + 1))}>
-              Next <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Weekly View */}
         {viewMode === 'weekly' && (
@@ -518,30 +537,50 @@ export default function OpsCalendar() {
           </div>
         )}
 
-        {/* List View — all tasks regardless of deadline/week */}
-        {viewMode === 'list' && (
-          <div className="space-y-2">
-            {applyFilters(tasks).length === 0 ? (
-              <Card className="border-0 shadow-sm rounded-xl">
-                <CardContent className="p-8 text-center">
-                  <p className="text-slate-400 text-sm">No tasks found. Create one with "New Task".</p>
-                </CardContent>
-              </Card>
-            ) : (
-              applyFilters(tasks).map(task => (
-                <OpsTaskCard
-                  key={task.id}
-                  task={task}
-                  users={users}
-                  onStatusToggle={handleStatusToggle}
-                  onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
-                  onEdit={() => { setEditingTask(task); setShowForm(true); }}
-                  onDelete={() => setDeleteConfirm(task)}
-                />
-              ))
-            )}
-          </div>
-        )}
+        {/* List View — grouped by status */}
+        {viewMode === 'list' && (() => {
+          const all = applyFilters(tasks);
+          const STATUS_ORDER = ['not_started', 'in_progress', 'on_hold', 'complete', 'archived'];
+          const STATUS_LABELS = { not_started: 'Not Started', in_progress: 'In Progress', on_hold: 'On Hold', complete: 'Complete', archived: 'Archived' };
+          const grouped = STATUS_ORDER.reduce((acc, s) => {
+            const items = all.filter(t => t.status === s);
+            if (items.length) acc[s] = items;
+            return acc;
+          }, {});
+          if (all.length === 0) return (
+            <Card className="border-0 shadow-sm rounded-xl">
+              <CardContent className="p-8 text-center">
+                <p className="text-slate-400 text-sm">No tasks found. Create one with "New Task".</p>
+              </CardContent>
+            </Card>
+          );
+          return (
+            <div className="space-y-5">
+              {Object.entries(grouped).map(([status, items]) => (
+                <div key={status}>
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${statusColors[status]}`}>{STATUS_LABELS[status]}</span>
+                    <span className="text-xs text-slate-400">{items.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {items.map(task => (
+                      <OpsTaskCard
+                        key={task.id}
+                        task={task}
+                        users={users}
+                        onStatusToggle={handleStatusToggle}
+                        onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                        onEdit={() => { setEditingTask(task); setShowForm(true); }}
+                        onDelete={() => setDeleteConfirm(task)}
+                        onArchive={() => archiveMutation.mutate(task)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Dialogs */}
         {showForm && (
@@ -552,8 +591,9 @@ export default function OpsCalendar() {
             orders={orders}
             projects={projects}
             aletheaProjects={aletheaProjects}
-            onClose={() => { setShowForm(false); setEditingTask(null); }}
+            onClose={() => { setShowForm(false); setEditingTask(null); setDefaultDate(null); }}
             onSubmit={handleSubmit}
+            defaultDate={defaultDate}
           />
         )}
 
