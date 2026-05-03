@@ -15,15 +15,12 @@ export default function Calculator() {
   const [items, setItems] = useState(DEFAULT_ITEMS);
   const [quantity, setQuantity] = useState(1);
   const [margin, setMargin] = useState(40);
-  const [tax, setTax] = useState(15);
   const [newLabel, setNewLabel] = useState("");
 
   const totalCost = items.reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
   const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
   const profitAmount = costPerUnit * (margin / 100);
-  const priceBeforeTax = costPerUnit + profitAmount;
-  const taxAmount = priceBeforeTax * (tax / 100);
-  const finalPrice = priceBeforeTax + taxAmount;
+  const finalPrice = costPerUnit + profitAmount;
   const totalRevenue = finalPrice * quantity;
 
   const updateItem = (id, field, val) => setItems(items.map(i => i.id === id ? { ...i, [field]: val } : i));
@@ -43,9 +40,9 @@ export default function Calculator() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Pricing Calculator</h1>
-            <p className="text-muted-foreground text-sm">Cost + Margin + Tax = Price</p>
+            <p className="text-muted-foreground text-sm">Cost + Margin = Price</p>
           </div>
-          <button onClick={() => { setItems(DEFAULT_ITEMS); setQuantity(1); setMargin(40); setTax(15); }}
+          <button onClick={() => { setItems(DEFAULT_ITEMS); setQuantity(1); setMargin(40); }}
             className="ml-auto text-muted-foreground hover:text-foreground transition-all">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -100,13 +97,6 @@ export default function Calculator() {
               </div>
               <Slider value={[margin]} onValueChange={([v]) => setMargin(v)} min={0} max={200} step={5} className="w-full" />
             </div>
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-sm text-muted-foreground">Tax Rate (VAT)</label>
-                <span className="text-sm font-bold text-foreground">{tax}%</span>
-              </div>
-              <Slider value={[tax]} onValueChange={([v]) => setTax(v)} min={0} max={30} step={1} className="w-full" />
-            </div>
           </div>
         </div>
 
@@ -117,7 +107,6 @@ export default function Calculator() {
             <ResultRow label="Total Cost" value={`R${totalCost.toFixed(2)}`} />
             <ResultRow label={`Cost per Unit (÷${quantity})`} value={`R${costPerUnit.toFixed(2)}`} />
             <ResultRow label={`Profit (${margin}%)`} value={`+R${profitAmount.toFixed(2)}`} />
-            <ResultRow label={`VAT (${tax}%)`} value={`+R${taxAmount.toFixed(2)}`} />
             <div className="pt-3 border-t border-white/20">
               <ResultRow label="SELLING PRICE" value={`R${finalPrice.toFixed(2)}`} large />
             </div>

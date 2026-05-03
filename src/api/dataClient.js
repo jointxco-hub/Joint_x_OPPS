@@ -297,6 +297,7 @@ const ENTITY_CONFIG = {
         cost_price: numberOrUndefined(payload.cost_price),
         selling_price: numberOrUndefined(payload.selling_price),
         location: payload.location,
+        preferred_supplier_id: payload.preferred_supplier_id ?? null,
         is_archived: payload.is_archived,
         archived_at: payload.archived_at,
       });

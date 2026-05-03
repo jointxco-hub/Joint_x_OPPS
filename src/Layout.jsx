@@ -11,6 +11,7 @@ import {
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
 import { isAdmin } from "@/lib/admin";
+import NotificationsPanel from "@/components/common/NotificationsPanel";
 
 const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
@@ -127,6 +128,16 @@ export default function Layout({ children, currentPageName }) {
           {/* User Profile */}
           {user && (
             <div className="p-3 border-t border-border">
+              <div className="flex items-center justify-between px-2 pb-2">
+                <NotificationsPanel />
+                <button
+                  onClick={handleLogout}
+                  title="Sign out"
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
               <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl">
                 <div className="w-7 h-7 rounded-full bg-[#1a7a5e]/12 flex items-center justify-center flex-shrink-0">
                   <span className="text-[#1a7a5e] text-xs font-bold">
@@ -137,13 +148,6 @@ export default function Layout({ children, currentPageName }) {
                   <p className="text-xs font-semibold text-foreground truncate">{user.full_name || 'User'}</p>
                   <p className="text-xs text-muted-foreground capitalize truncate">{user.role || 'user'}</p>
                 </div>
-                <button
-                  onClick={handleLogout}
-                  title="Sign out"
-                  className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
               </div>
             </div>
           )}
@@ -163,12 +167,15 @@ export default function Layout({ children, currentPageName }) {
             </div>
             <span className="font-bold text-foreground text-sm">Joint X</span>
           </div>
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="w-8 h-8 flex items-center justify-center rounded-xl bg-secondary text-foreground"
-          >
-            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-          </button>
+          <div className="flex items-center gap-2">
+            <NotificationsPanel />
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="w-8 h-8 flex items-center justify-center rounded-xl bg-secondary text-foreground"
+            >
+              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
         {mobileMenuOpen && (
