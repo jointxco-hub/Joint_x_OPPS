@@ -518,6 +518,566 @@ const ENTITY_CONFIG = {
       });
     },
   },
+
+  // ── Phase 2 entities ─────────────────────────────────────────────
+
+  Goal: {
+    table: 'goals',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      cycle_id: 'cycle_id',
+      scope: 'scope',
+      is_north_star: 'is_north_star',
+      assigned_to: 'assigned_to',
+      status: 'status',
+      is_archived: 'is_archived',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        cycle_id: payload.cycle_id,
+        parent_goal_id: payload.parent_goal_id,
+        scope: payload.scope,
+        is_north_star: payload.is_north_star,
+        team_name: payload.team_name,
+        title: payload.title,
+        description: payload.description,
+        assigned_to: payload.assigned_to,
+        status: payload.status,
+        progress: numberOrUndefined(payload.progress),
+        start_date: payload.start_date,
+        end_date: payload.end_date,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+
+  WeeklyTask: {
+    table: 'weekly_tasks',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      week_number: 'week_number',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      cycle_id: 'cycle_id',
+      goal_id: 'goal_id',
+      week_number: 'week_number',
+      status: 'status',
+      assigned_to: 'assigned_to',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        cycle_id: payload.cycle_id,
+        goal_id: payload.goal_id,
+        week_number: numberOrUndefined(payload.week_number),
+        day_of_week: payload.day_of_week,
+        title: payload.title,
+        description: payload.description,
+        assigned_to: Array.isArray(payload.assigned_to) ? payload.assigned_to : undefined,
+        status: payload.status,
+        priority: payload.priority,
+        completed_at: payload.completed_at,
+        notes: payload.notes,
+      });
+    },
+  },
+
+  Cycle: {
+    table: 'twelve_week_cycles',
+    sortMap: { created_date: 'created_at', start_date: 'start_date' },
+    filterMap: {
+      created_date: 'created_at',
+      status: 'status',
+      scope: 'scope',
+      owner_email: 'owner_email',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        scope: payload.scope,
+        team_name: payload.team_name,
+        owner_email: payload.owner_email,
+        cycle_number: numberOrUndefined(payload.cycle_number),
+        start_date: payload.start_date,
+        end_date: payload.end_date,
+        status: payload.status,
+      });
+    },
+  },
+
+  KPI: {
+    table: 'kpis',
+    sortMap: { created_date: 'created_at' },
+    filterMap: {
+      created_date: 'created_at',
+      goal_id: 'goal_id',
+      kind: 'kind',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        goal_id: payload.goal_id,
+        name: payload.name,
+        kind: payload.kind,
+        target_value: numberOrUndefined(payload.target_value),
+        current_value: numberOrUndefined(payload.current_value),
+        unit: payload.unit,
+        frequency: payload.frequency,
+        last_updated_at: payload.last_updated_at,
+      });
+    },
+  },
+
+  WeeklyScore: {
+    table: 'weekly_scores',
+    sortMap: { created_date: 'created_at', week_number: 'week_number' },
+    filterMap: {
+      created_date: 'created_at',
+      cycle_id: 'cycle_id',
+      user_email: 'user_email',
+      week_number: 'week_number',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        cycle_id: payload.cycle_id,
+        user_email: payload.user_email,
+        week_number: numberOrUndefined(payload.week_number),
+        tactics_planned: numberOrUndefined(payload.tactics_planned),
+        tactics_completed: numberOrUndefined(payload.tactics_completed),
+        wins: payload.wins,
+        lessons: payload.lessons,
+        next_week_focus: payload.next_week_focus,
+        submitted_at: payload.submitted_at,
+      });
+    },
+  },
+
+  Role: {
+    table: 'roles',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      is_active: 'is_active',
+      criticality: 'criticality',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        key: payload.key,
+        name: payload.name,
+        emoji: payload.emoji,
+        color: payload.color,
+        purpose: payload.purpose,
+        success_definition: payload.success_definition,
+        inputs: payload.inputs,
+        outputs: payload.outputs,
+        tools: payload.tools,
+        responsibilities: payload.responsibilities,
+        queen_bee_role: payload.queen_bee_role,
+        fourD_target: payload.fourD_target,
+        criticality: payload.criticality,
+        supports_qbr: payload.supports_qbr,
+        is_active: payload.is_active,
+      });
+    },
+  },
+
+  UserRole: {
+    table: 'user_roles',
+    sortMap: { assigned_at: 'assigned_at' },
+    filterMap: {
+      user_email: 'user_email',
+      role_key: 'role_key',
+      is_primary: 'is_primary',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.assigned_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        user_email: payload.user_email,
+        role_key: payload.role_key,
+        is_primary: payload.is_primary,
+        assigned_at: payload.assigned_at,
+      });
+    },
+  },
+
+  QBR: {
+    table: 'qbrs',
+    sortMap: { created_date: 'created_at', date: 'date' },
+    filterMap: {
+      created_date: 'created_at',
+      user_email: 'user_email',
+      date: 'date',
+      role_key: 'role_key',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        user_email: payload.user_email,
+        role_key: payload.role_key,
+        date: payload.date,
+        qbr_done: payload.qbr_done,
+        note: payload.note,
+        is_active: payload.is_active,
+      });
+    },
+  },
+
+  TimeAllocation: {
+    table: 'time_allocations',
+    sortMap: { created_date: 'logged_at', logged_at: 'logged_at' },
+    filterMap: {
+      created_date: 'logged_at',
+      user_email: 'user_email',
+      bucket: 'bucket',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.logged_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        user_email: payload.user_email,
+        bucket: payload.bucket,
+        minutes: numberOrUndefined(payload.minutes),
+        note: payload.note,
+        logged_at: payload.logged_at,
+      });
+    },
+  },
+
+  SOP: {
+    table: 'sops',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      role_key: 'role_key',
+      is_active: 'is_active',
+      criticality: 'criticality',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        title: payload.title,
+        description: payload.description,
+        role_key: payload.role_key,
+        owner_email: payload.owner_email,
+        criticality: payload.criticality,
+        body: payload.body,
+        video_url: payload.video_url,
+        last_verified_date: payload.last_verified_date,
+        is_active: payload.is_active,
+      });
+    },
+  },
+
+  OnboardingFlow: {
+    table: 'onboarding_flows',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      user_email: 'user_email',
+      status: 'status',
+      role_key: 'role_key',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        user_email: payload.user_email,
+        role_key: payload.role_key,
+        status: payload.status,
+        completion_percentage: numberOrUndefined(payload.completion_percentage),
+        started_at: payload.started_at,
+        completed_at: payload.completed_at,
+      });
+    },
+  },
+
+  CalendarEvent: {
+    table: 'calendar_events',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      start_at: 'start_at',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      owner_email: 'owner_email',
+      scope: 'scope',
+      category: 'category',
+      status: 'status',
+      reference_id: 'reference_id',
+      reference_type: 'reference_type',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        owner_email: payload.owner_email,
+        scope: payload.scope,
+        team_name: payload.team_name,
+        category: payload.category,
+        reference_id: payload.reference_id,
+        reference_type: payload.reference_type,
+        title: payload.title,
+        description: payload.description,
+        start_at: payload.start_at,
+        end_at: payload.end_at,
+        all_day: payload.all_day,
+        color: payload.color,
+        recurring_rule: payload.recurring_rule,
+        status: payload.status,
+      });
+    },
+  },
+
+  OrderTag: {
+    table: 'order_tags',
+    sortMap: { created_date: 'created_at' },
+    filterMap: {
+      created_date: 'created_at',
+      order_id: 'order_id',
+      role_key: 'role_key',
+      user_email: 'user_email',
+      action: 'action',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        order_id: payload.order_id,
+        role_key: payload.role_key,
+        user_email: payload.user_email,
+        action: payload.action,
+        reason: payload.reason,
+        context: payload.context,
+        resolved_at: payload.resolved_at,
+        resolved_by: payload.resolved_by,
+      });
+    },
+  },
+
+  OrderStage: {
+    table: 'order_stages',
+    sortMap: { sequence: 'sequence' },
+    filterMap: { is_exception: 'is_exception', legacy_status: 'legacy_status' },
+    normalize(row) {
+      return { ...row };
+    },
+    serialize(payload) {
+      return compactObject({
+        key: payload.key,
+        display_name: payload.display_name,
+        sequence: numberOrUndefined(payload.sequence),
+        is_exception: payload.is_exception,
+        color: payload.color,
+        sla_hours: numberOrUndefined(payload.sla_hours),
+        legacy_status: payload.legacy_status,
+      });
+    },
+  },
+
+  StageRoleRule: {
+    table: 'stage_role_rules',
+    sortMap: {},
+    filterMap: { stage_key: 'stage_key', role_key: 'role_key', action: 'action' },
+    normalize(row) {
+      return { ...row };
+    },
+    serialize(payload) {
+      return compactObject({
+        stage_key: payload.stage_key,
+        role_key: payload.role_key,
+        action: payload.action,
+      });
+    },
+  },
+
+  OrderException: {
+    table: 'order_exceptions',
+    sortMap: { created_date: 'created_at' },
+    filterMap: {
+      created_date: 'created_at',
+      order_id: 'order_id',
+      exception_type: 'exception_type',
+      severity: 'severity',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        order_id: payload.order_id,
+        exception_type: payload.exception_type,
+        severity: payload.severity,
+        description: payload.description,
+        raised_by: payload.raised_by,
+        resolved_at: payload.resolved_at,
+        resolved_by: payload.resolved_by,
+      });
+    },
+  },
+
+  OrderStageHistory: {
+    table: 'order_stage_history',
+    sortMap: { changed_at: 'changed_at' },
+    filterMap: { order_id: 'order_id' },
+    normalize(row) {
+      return { ...row, created_date: row.changed_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        order_id: payload.order_id,
+        from_stage: payload.from_stage,
+        to_stage: payload.to_stage,
+        changed_by: payload.changed_by,
+        note: payload.note,
+        changed_at: payload.changed_at,
+      });
+    },
+  },
+
+  OfferScore: {
+    table: 'offer_scores',
+    sortMap: { scored_at: 'scored_at' },
+    filterMap: { offer_key: 'offer_key' },
+    normalize(row) {
+      return { ...row, created_date: row.scored_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        offer_key: payload.offer_key,
+        offer_name: payload.offer_name,
+        dream_outcome: numberOrUndefined(payload.dream_outcome),
+        perceived_likelihood: numberOrUndefined(payload.perceived_likelihood),
+        time_delay: numberOrUndefined(payload.time_delay),
+        effort_sacrifice: numberOrUndefined(payload.effort_sacrifice),
+        notes: payload.notes,
+        scored_at: payload.scored_at,
+      });
+    },
+  },
+
+  MoneyModel: {
+    table: 'money_model_snapshots',
+    sortMap: { created_date: 'created_at', period_start: 'period_start' },
+    filterMap: { created_date: 'created_at', offer_key: 'offer_key' },
+    normalize(row) {
+      return { ...row, created_date: row.created_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        offer_key: payload.offer_key,
+        period_start: payload.period_start,
+        period_end: payload.period_end,
+        units_sold: numberOrUndefined(payload.units_sold),
+        revenue: numberOrUndefined(payload.revenue),
+        cogs: numberOrUndefined(payload.cogs),
+        ad_spend: numberOrUndefined(payload.ad_spend),
+        payback_days: numberOrUndefined(payload.payback_days),
+        ltv_estimate: numberOrUndefined(payload.ltv_estimate),
+        notes: payload.notes,
+      });
+    },
+  },
+
+  Folder: {
+    table: 'folders',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      client_id: 'client_id',
+      project_id: 'project_id',
+      order_id: 'order_id',
+      is_archived: 'is_archived',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        name: payload.name,
+        color: payload.color,
+        parent_id: payload.parent_id,
+        client_id: payload.client_id,
+        project_id: payload.project_id,
+        order_id: payload.order_id,
+        created_by: payload.created_by,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+
+  ClientAsset: {
+    table: 'client_assets',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      client_id: 'client_id',
+      order_id: 'order_id',
+      folder_id: 'folder_id',
+      project_id: 'project_id',
+      approval_status: 'approval_status',
+      is_archived: 'is_archived',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        title: payload.title,
+        file_url: payload.file_url,
+        file_type: payload.file_type,
+        file_size: numberOrUndefined(payload.file_size),
+        folder_id: payload.folder_id,
+        client_id: payload.client_id,
+        order_id: payload.order_id,
+        project_id: payload.project_id,
+        uploaded_by: payload.uploaded_by,
+        approval_status: payload.approval_status,
+        tags: payload.tags,
+        notes: payload.notes,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
 };
 
 function numberOrUndefined(value) {
