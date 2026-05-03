@@ -51,7 +51,7 @@ function buildNotifications(inventory, tags, tasks) {
   return notes;
 }
 
-export default function NotificationsPanel() {
+export default function NotificationsPanel({ placement = "topbar" }) {
   const [open, setOpen] = useState(false);
 
   const { data: inventory = [] } = useQuery({
@@ -102,7 +102,11 @@ export default function NotificationsPanel() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-10 z-50 w-80 max-h-[70vh] bg-card border border-border rounded-2xl shadow-apple-xl overflow-hidden flex flex-col">
+          <div className={`fixed z-50 w-80 max-h-[70vh] bg-card border border-border rounded-2xl shadow-apple-xl overflow-hidden flex flex-col ${
+            placement === "sidebar"
+              ? "bottom-20 left-[228px]"
+              : "top-14 right-4"
+          }`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <p className="text-sm font-semibold text-foreground">Notifications</p>
               <button onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">

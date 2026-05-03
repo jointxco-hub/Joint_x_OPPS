@@ -83,6 +83,7 @@ import ArchivePage from './pages/Archive';
 import SignIn from './pages/SignIn';
 import OffersDashboard from './pages/OffersDashboard';
 import MoneyModel from './pages/MoneyModel';
+import Goals from './pages/Goals';
 import __Layout from './Layout.jsx';
 
 
@@ -123,6 +124,7 @@ export const PAGES = {
     "SignIn": SignIn,
     "OffersDashboard": OffersDashboard,
     "MoneyModel": MoneyModel,
+    "Goals": Goals,
 }
 
 export const pagesConfig = {

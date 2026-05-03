@@ -6,7 +6,7 @@ import {
   Menu, X, ChevronRight, Boxes, Building2, Calculator,
   CreditCard, Archive, Settings, MoreHorizontal, Target,
   Search, Bell, User, ChevronDown, ShoppingCart, UserCircle,
-  LogOut, Sparkles, DollarSign
+  LogOut, Sparkles, DollarSign, FolderOpen, Flag
 } from "lucide-react";
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
@@ -24,7 +24,9 @@ const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2, adminOnly: true },
   { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
+  { name: "Goals", page: "Goals", icon: Flag },
   { name: "Ops Calendar", page: "OpsCalendar", icon: Target },
+  { name: "File Manager", page: "FileManager", icon: FolderOpen },
   { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
@@ -129,7 +131,7 @@ export default function Layout({ children, currentPageName }) {
           {user && (
             <div className="p-3 border-t border-border">
               <div className="flex items-center justify-between px-2 pb-2">
-                <NotificationsPanel />
+                <NotificationsPanel placement="sidebar" />
                 <button
                   onClick={handleLogout}
                   title="Sign out"
