@@ -719,10 +719,29 @@ create trigger trg_sync_weekly_task_event
 
 
 -- ════════════════════════════════════════════════════════════════════
---  RLS (Phase 1: disabled — enable before go-live)
+--  RLS — explicitly OFF to match Phase 1 pattern (schema.sql)
+--  Supabase may auto-enable RLS on new tables in some project configs.
+--  These statements ensure the anon key can read/write all Phase 2 tables.
+--  Enable RLS + add policies before go-live if X1/X LAB share this project.
 -- ════════════════════════════════════════════════════════════════════
--- alter table public.goals enable row level security;
--- alter table public.weekly_tasks enable row level security;
--- alter table public.roles enable row level security;
--- ... (enable per table when cross-app RLS audit is complete)
--- ════════════════════════════════════════════════════════════════════
+alter table public.twelve_week_cycles    disable row level security;
+alter table public.goals                 disable row level security;
+alter table public.kpis                  disable row level security;
+alter table public.weekly_tasks          disable row level security;
+alter table public.weekly_scores         disable row level security;
+alter table public.roles                 disable row level security;
+alter table public.user_roles            disable row level security;
+alter table public.qbrs                  disable row level security;
+alter table public.time_allocations      disable row level security;
+alter table public.sops                  disable row level security;
+alter table public.onboarding_flows      disable row level security;
+alter table public.calendar_events       disable row level security;
+alter table public.order_stages          disable row level security;
+alter table public.stage_role_rules      disable row level security;
+alter table public.order_tags            disable row level security;
+alter table public.order_stage_history   disable row level security;
+alter table public.order_exceptions      disable row level security;
+alter table public.offer_scores          disable row level security;
+alter table public.money_model_snapshots disable row level security;
+alter table public.folders               disable row level security;
+alter table public.client_assets         disable row level security;
