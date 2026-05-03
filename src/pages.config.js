@@ -81,6 +81,8 @@ import UserDashboard from './pages/UserDashboard';
 import TeamProfiles from './pages/TeamProfiles';
 import ArchivePage from './pages/Archive';
 import SignIn from './pages/SignIn';
+import OffersDashboard from './pages/OffersDashboard';
+import MoneyModel from './pages/MoneyModel';
 import __Layout from './Layout.jsx';
 
 
@@ -119,6 +121,8 @@ export const PAGES = {
     "Archive": ArchivePage,
     "UserDashboard": UserDashboard,
     "SignIn": SignIn,
+    "OffersDashboard": OffersDashboard,
+    "MoneyModel": MoneyModel,
 }
 
 export const pagesConfig = {

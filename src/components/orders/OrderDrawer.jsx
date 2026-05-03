@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import {
   X, Edit2, Package, Truck, CreditCard, Paperclip, Plus,
   CheckCircle2, Clock, Circle, ChevronRight, ExternalLink,
-  Archive, MapPin, Send, ShoppingCart
+  Archive, MapPin, Send, ShoppingCart, AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import PipelineStrip from "@/components/orders/PipelineStrip";
+import OrderTagBadges from "@/components/orders/OrderTagBadges";
+import ExceptionFlag from "@/components/orders/ExceptionFlag";
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-blue-100 text-blue-700" },
@@ -33,6 +36,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [showPayment, setShowPayment] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'eft', notes: '' });
   const [uploading, setUploading] = useState(false);
+  const [showException, setShowException] = useState(false);
+  const [localPipelineStage, setLocalPipelineStage] = useState(order.pipeline_stage);
   const queryClient = useQueryClient();
 
   const { data: payments = [] } = useQuery({
@@ -121,21 +126,22 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-[60] flex flex-col animate-slide-in-right" onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border">
-          <div>
+          <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
               <h2 className="font-bold text-foreground">{order.client_name}</h2>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusConfig[order.status]?.color || 'bg-secondary'}`}>
                 {statusConfig[order.status]?.label || order.status}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground">#{order.order_number || order.id?.slice(0,8)}</p>
+            <p className="text-xs text-muted-foreground mb-1.5">#{order.order_number || order.id?.slice(0,8)}</p>
+            <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all">
+          <button onClick={onClose} className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all ml-3 flex-shrink-0">
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Progress Bar */}
+        {/* 5-stage legacy progress bar */}
         <div className="px-5 py-4 border-b border-border bg-secondary/30">
           <div className="flex items-center justify-between">
             {progressStages.map((stage, i) => (
@@ -161,6 +167,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           </div>
         </div>
 
+        {/* 13-stage detailed pipeline strip */}
+        <PipelineStrip
+          order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
+          onStageChange={setLocalPipelineStage}
+        />
+
         {/* Quick Actions */}
         <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
           {ORDER_STATUSES.filter(s => s !== order.status).slice(0,3).map(s => (
@@ -184,6 +196,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
             </span>
             <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />
           </label>
+          <button
+            onClick={() => setShowException(true)}
+            className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 transition-all"
+          >
+            <AlertTriangle className="w-3 h-3" /> Flag Exception
+          </button>
         </div>
 
         {/* Add Payment Form */}
@@ -489,6 +507,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           </button>
         </div>
       </div>
+
+      <ExceptionFlag
+        open={showException}
+        onClose={() => setShowException(false)}
+        order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
+        onStageChange={(stage) => {
+          setLocalPipelineStage(stage);
+          queryClient.invalidateQueries({ queryKey: ['orders'] });
+        }}
+      />
     </>
   );
 }

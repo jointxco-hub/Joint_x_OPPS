@@ -1,13 +1,14 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { 
-  Crown, Users, BookOpen, TrendingUp, AlertCircle, 
-  CheckCircle2, Clock, Target, RefreshCw
+import {
+  Crown, Users, BookOpen, TrendingUp, AlertCircle,
+  CheckCircle2, Clock, Target, RefreshCw, UserMinus
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "../utils";
@@ -59,6 +60,19 @@ export default function Operations() {
   const operabilityScore = Math.round((ownershipRate + updateRate + avgOnboardingCompletion) / 3);
 
   const riskSops = activeSops.filter(s => !s.owner_email || !s.last_verified_date);
+
+  const { data: founderDep } = useQuery({
+    queryKey: ["founderDependency"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("v_founder_dependency_score")
+        .select("score_pct, founder_tags, total_tags")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    staleTime: 60_000,
+  });
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -153,6 +167,53 @@ export default function Operations() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Founder Dependency Score */}
+        {founderDep != null && (
+          <Card className="mb-6">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <UserMinus className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-sm font-semibold text-foreground">Founder Dependency Score</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    % of order tags assigned to founder in last 30 days — lower is better
+                  </p>
+                  <div className="flex items-end gap-3">
+                    <span className={`text-3xl font-bold ${
+                      founderDep.score_pct <= 20 ? "text-green-600" :
+                      founderDep.score_pct <= 40 ? "text-amber-600" : "text-red-600"
+                    }`}>
+                      {founderDep.score_pct}%
+                    </span>
+                    <span className="text-xs text-muted-foreground mb-1">
+                      {founderDep.founder_tags} / {founderDep.total_tags} tags
+                    </span>
+                  </div>
+                </div>
+                <div className="w-16 h-16 relative flex-shrink-0">
+                  <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                    <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e5e7eb" strokeWidth="3" />
+                    <circle
+                      cx="18" cy="18" r="15.9" fill="none"
+                      stroke={founderDep.score_pct <= 20 ? "#16a34a" : founderDep.score_pct <= 40 ? "#d97706" : "#dc2626"}
+                      strokeWidth="3"
+                      strokeDasharray={`${founderDep.score_pct} ${100 - founderDep.score_pct}`}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-3">
+                {founderDep.score_pct <= 20 ? "Great — business runs without you." :
+                 founderDep.score_pct <= 40 ? "Moderate — delegate more founder tasks." :
+                 "High — you're a bottleneck. Document and delegate."}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* QBR Section */}
         {activeQBR && (

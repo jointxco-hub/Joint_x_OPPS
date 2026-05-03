@@ -6,10 +6,11 @@ import {
   Menu, X, ChevronRight, Boxes, Building2, Calculator,
   CreditCard, Archive, Settings, MoreHorizontal, Target,
   Search, Bell, User, ChevronDown, ShoppingCart, UserCircle,
-  LogOut
+  LogOut, Sparkles, DollarSign
 } from "lucide-react";
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
+import { isAdmin } from "@/lib/admin";
 
 const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
@@ -19,14 +20,16 @@ const primaryNav = [
 ];
 
 const moreNav = [
-  { name: "Finance", page: "Executive", icon: BarChart2, roles: ["admin"] },
+  { name: "Finance", page: "Executive", icon: BarChart2, adminOnly: true },
+  { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
+  { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
   { name: "Ops Calendar", page: "OpsCalendar", icon: Target },
   { name: "Inventory", page: "Inventory", icon: Boxes },
   { name: "Purchase Orders", page: "PurchaseOrders", icon: ShoppingCart },
   { name: "Suppliers", page: "Suppliers", icon: Building2 },
   { name: "Calculator", page: "Calculator", icon: Calculator },
   { name: "Archive", page: "Archive", icon: Archive },
-  { name: "Settings", page: "RolesManagement", icon: Settings, roles: ["admin"] },
+  { name: "Settings", page: "RolesManagement", icon: Settings, adminOnly: true },
 ];
 
 const STANDALONE_PAGES = ["TrackOrder", "ClientCatalog", "AletheaClientPortal", "SignIn"];
@@ -47,7 +50,7 @@ export default function Layout({ children, currentPageName }) {
     window.location.href = '/SignIn';
   };
 
-  const visibleMoreNav = moreNav.filter(item => !item.roles || item.roles.includes(user?.role));
+  const visibleMoreNav = moreNav.filter(item => !item.adminOnly || isAdmin(user));
 
   useEffect(() => {
     setMobileMenuOpen(false);

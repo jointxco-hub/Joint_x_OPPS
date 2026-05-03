@@ -1,7 +1,8 @@
 import { Card } from "@/components/ui/card";
-import { Calendar, User, Shirt } from "lucide-react";
+import { Calendar, Shirt } from "lucide-react";
 import { format } from "date-fns";
 import OrderStatusBadge from "./OrderStatusBadge";
+import OrderTagBadges from "@/components/orders/OrderTagBadges";
 
 const printTypeLabels = {
   vinyl_videoflex: "Vinyl (Videoflex)",
@@ -38,6 +39,10 @@ export default function ActiveOrderCard({ order, onClick }) {
         )}
       </div>
       
+      <div className="mt-2">
+        <OrderTagBadges order={order} />
+      </div>
+
       {order.quoted_price && (
         <div className="mt-3 pt-3 border-t border-slate-100 flex justify-between items-center">
           <span className="text-sm text-slate-500">Quoted</span>
