@@ -9,11 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import {
   CalendarDays, ChevronLeft, ChevronRight, Search,
-  List, RefreshCw, Calendar, LayoutGrid
+  List, RefreshCw, Calendar, LayoutGrid, Plus, SlidersHorizontal
 } from "lucide-react";
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth,
-  isSameDay, isToday, addMonths, subMonths, addDays, startOfWeek, endOfWeek, addWeeks
+  isSameDay, isToday, isPast, addMonths, subMonths, addDays, startOfWeek, endOfWeek, addWeeks
 } from "date-fns";
 import OpsTaskCard from "@/components/ops/OpsTaskCard";
 import OpsTaskFormDialog from "@/components/ops/OpsTaskFormDialog";
@@ -41,7 +41,7 @@ function getCurrentWeek() {
 }
 
 export default function OpsCalendar() {
-  const [viewMode, setViewMode] = useState('twelveWeek');
+  const [viewMode, setViewMode] = useState('list');
   const [selectedWeek, setSelectedWeek] = useState(getCurrentWeek());
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(null);
@@ -54,6 +54,7 @@ export default function OpsCalendar() {
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [showEventModal, setShowEventModal] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [visibleCategories, setVisibleCategories] = useState(Object.keys(eventColors));
   const queryClient = useQueryClient();
 
@@ -191,23 +192,6 @@ export default function OpsCalendar() {
           </Button>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          {[
-            { label: 'Total Active', value: activeTasks.length, color: 'text-foreground' },
-            { label: 'In Progress', value: inProgress, color: 'text-blue-600' },
-            { label: 'Completed', value: complete, color: 'text-green-600' },
-            { label: 'Urgent', value: urgent, color: 'text-red-600' },
-          ].map(s => (
-            <Card key={s.label} className="border shadow-sm rounded-xl">
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className={`text-2xl font-bold mt-1 ${s.color}`}>{s.value}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
         {/* Unified toolbar (new) — includes view switcher + category filters + new event */}
         <CalendarToolbar
           viewMode={viewMode}
@@ -217,55 +201,69 @@ export default function OpsCalendar() {
           onNewEvent={() => setShowEventModal(true)}
         />
 
-        {/* Legacy ops-task filters (kept for list/weekly/calendar views) */}
+        {/* Ops task bar */}
         {viewMode !== 'twelveWeek' && (
-          <Card className="mb-5 border shadow-sm rounded-xl">
-            <CardContent className="p-3 flex flex-wrap gap-2 items-center">
-              <div className="relative flex-1 min-w-[160px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
-                <Input
-                  placeholder="Search tasks or clients..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9 h-9 rounded-lg"
-                />
+          <div className="mb-5 flex flex-wrap gap-2 items-center">
+            <div className="relative flex-1 min-w-[180px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
+              <Input
+                placeholder="Search tasks..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 h-9 rounded-xl bg-card"
+              />
+            </div>
+            <button
+              onClick={() => setShowFilters(f => !f)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm border transition-all ${
+                showFilters || filterUser !== 'all' || filterStatus !== 'all' || filterType !== 'all'
+                  ? 'bg-primary/10 border-primary/20 text-primary'
+                  : 'bg-card border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Filters
+            </button>
+            <Button
+              size="sm"
+              className="rounded-xl"
+              onClick={() => { setEditingTask(null); setDefaultDate(null); setShowForm(true); }}
+            >
+              <Plus className="w-4 h-4 mr-1" /> New Task
+            </Button>
+            {showFilters && (
+              <div className="w-full flex flex-wrap gap-2 pt-1">
+                <Select value={filterUser} onValueChange={setFilterUser}>
+                  <SelectTrigger className="w-36 h-9 rounded-xl"><SelectValue placeholder="All Members" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Members</SelectItem>
+                    {users.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={filterStatus} onValueChange={setFilterStatus}>
+                  <SelectTrigger className="w-32 h-9 rounded-xl"><SelectValue placeholder="Status" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="not_started">Not Started</SelectItem>
+                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="on_hold">On Hold</SelectItem>
+                    <SelectItem value="complete">Complete</SelectItem>
+                    <SelectItem value="archived">Archived</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={filterType} onValueChange={setFilterType}>
+                  <SelectTrigger className="w-36 h-9 rounded-xl"><SelectValue placeholder="Type" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="single">Single</SelectItem>
+                    <SelectItem value="bulk">Bulk</SelectItem>
+                    <SelectItem value="x1_sample_pack">X1 Sample Pack</SelectItem>
+                    <SelectItem value="alethea">Alethea</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <Select value={filterUser} onValueChange={setFilterUser}>
-                <SelectTrigger className="w-36 h-9 rounded-lg"><SelectValue placeholder="All Members" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Members</SelectItem>
-                  {users.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-32 h-9 rounded-lg"><SelectValue placeholder="Status" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="not_started">Not Started</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="on_hold">On Hold</SelectItem>
-                  <SelectItem value="complete">Complete</SelectItem>
-                  <SelectItem value="archived">Archived</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={filterType} onValueChange={setFilterType}>
-                <SelectTrigger className="w-36 h-9 rounded-lg"><SelectValue placeholder="Type" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="single">Single</SelectItem>
-                  <SelectItem value="bulk">Bulk</SelectItem>
-                  <SelectItem value="x1_sample_pack">X1 Sample Pack</SelectItem>
-                  <SelectItem value="alethea">Alethea</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                size="sm"
-                onClick={() => { setEditingTask(null); setDefaultDate(null); setShowForm(true); }}
-              >
-                + New Task
-              </Button>
-            </CardContent>
-          </Card>
+            )}
+          </div>
         )}
 
         {/* ── 12-Week View (new default) ── */}
@@ -458,31 +456,49 @@ export default function OpsCalendar() {
 
         {/* ── List View ── */}
         {viewMode === 'list' && (() => {
-          const all = applyFilters(tasks);
-          const STATUS_ORDER = ['not_started', 'in_progress', 'on_hold', 'complete', 'archived'];
-          const STATUS_LABELS = { not_started: 'Not Started', in_progress: 'In Progress', on_hold: 'On Hold', complete: 'Complete', archived: 'Archived' };
-          const grouped = STATUS_ORDER.reduce((acc, s) => {
-            const items = all.filter(t => t.status === s);
-            if (items.length) acc[s] = items;
-            return acc;
-          }, {});
-          if (all.length === 0) return (
+          const now = new Date();
+          const all = applyFilters(tasks.filter(t => t.status !== 'archived'));
+          const active = all.filter(t => t.status !== 'complete');
+          const completed = all.filter(t => t.status === 'complete');
+
+          const getTimeGroup = (task) => {
+            if (!task.deadline) return 'no_date';
+            const d = new Date(task.deadline);
+            if (isPast(d) && !isToday(d)) return 'overdue';
+            if (isToday(d)) return 'today';
+            if (d <= endOfWeek(now)) return 'this_week';
+            return 'later';
+          };
+
+          const groups = [
+            { key: 'overdue', label: 'Overdue', accent: 'text-red-600 bg-red-50', tasks: active.filter(t => getTimeGroup(t) === 'overdue') },
+            { key: 'today', label: 'Today', accent: 'text-primary bg-primary/10', tasks: active.filter(t => getTimeGroup(t) === 'today') },
+            { key: 'this_week', label: 'This Week', accent: 'text-orange-600 bg-orange-50', tasks: active.filter(t => getTimeGroup(t) === 'this_week') },
+            { key: 'later', label: 'Later', accent: 'text-muted-foreground bg-secondary', tasks: active.filter(t => getTimeGroup(t) === 'later') },
+            { key: 'no_date', label: 'No Date', accent: 'text-muted-foreground bg-secondary', tasks: active.filter(t => getTimeGroup(t) === 'no_date') },
+          ].filter(g => g.tasks.length > 0);
+
+          if (groups.length === 0 && completed.length === 0) return (
             <Card className="border shadow-sm rounded-xl">
-              <CardContent className="p-8 text-center">
-                <p className="text-muted-foreground text-sm">No tasks found. Create one with "+ New Task".</p>
+              <CardContent className="p-10 text-center">
+                <p className="text-muted-foreground text-sm mb-3">No tasks yet — you're all clear!</p>
+                <Button size="sm" className="rounded-xl" onClick={() => { setEditingTask(null); setDefaultDate(null); setShowForm(true); }}>
+                  <Plus className="w-4 h-4 mr-1" /> Add first task
+                </Button>
               </CardContent>
             </Card>
           );
+
           return (
-            <div className="space-y-5">
-              {Object.entries(grouped).map(([status, items]) => (
-                <div key={status}>
-                  <div className="flex items-center gap-2 mb-2 px-1">
-                    <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${statusColors[status]}`}>{STATUS_LABELS[status]}</span>
-                    <span className="text-xs text-muted-foreground">{items.length}</span>
+            <div className="space-y-6">
+              {groups.map(group => (
+                <div key={group.key}>
+                  <div className="flex items-center gap-2 mb-2.5 px-1">
+                    <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${group.accent}`}>{group.label}</span>
+                    <span className="text-xs text-muted-foreground">{group.tasks.length}</span>
                   </div>
                   <div className="space-y-2">
-                    {items.map(task => (
+                    {group.tasks.map(task => (
                       <OpsTaskCard
                         key={task.id}
                         task={task}
@@ -497,6 +513,31 @@ export default function OpsCalendar() {
                   </div>
                 </div>
               ))}
+              {completed.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2.5 px-1">
+                    <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full text-green-700 bg-green-100">Done</span>
+                    <span className="text-xs text-muted-foreground">{completed.length}</span>
+                  </div>
+                  <div className="space-y-2 opacity-60">
+                    {completed.slice(0, 5).map(task => (
+                      <OpsTaskCard
+                        key={task.id}
+                        task={task}
+                        users={users}
+                        onStatusToggle={handleStatusToggle}
+                        onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                        onEdit={() => { setEditingTask(task); setShowForm(true); }}
+                        onDelete={() => setDeleteConfirm(task)}
+                        onArchive={() => archiveMutation.mutate(task)}
+                      />
+                    ))}
+                    {completed.length > 5 && (
+                      <p className="text-xs text-muted-foreground text-center pt-1">+{completed.length - 5} more completed</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })()}

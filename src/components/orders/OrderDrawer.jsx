@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { format } from "date-fns";
 import {
-  X, Edit2, Package, Truck, CreditCard, Paperclip, Plus,
-  CheckCircle2, Clock, Circle, ChevronRight, ExternalLink,
-  Archive, MapPin, Send, ShoppingCart, AlertTriangle, Copy, Check
+  X, Package, CreditCard, Paperclip,
+  CheckCircle2, ChevronRight, ExternalLink,
+  Archive, ShoppingCart, AlertTriangle, Copy, Check,
+  Play, User
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -20,7 +21,6 @@ const DEFAULT_COURIERS = [
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -65,6 +65,11 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
     queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100)
+  });
+
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
   const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
@@ -294,6 +299,23 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 </div>
               </div>
 
+              {/* Assigned To */}
+              <div className="bg-secondary/30 rounded-xl p-3">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <User className="w-3 h-3 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">Assigned To</p>
+                </div>
+                <Select value={order.assigned_to || '__none'} onValueChange={v => onUpdate(order.id, { assigned_to: v === '__none' ? null : v })}>
+                  <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Unassigned</SelectItem>
+                    {users.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
               {/* Products */}
               {order.products && order.products.length > 0 && (
                 <div className="bg-secondary/30 rounded-xl p-4">
@@ -493,8 +515,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           )}
 
           {tab === 'files' && (
-            <div className="space-y-2">
-              <label className="cursor-pointer">
+            <div className="space-y-3">
+              <label className="cursor-pointer block">
                 <div className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-2xl hover:border-primary/40 transition-all">
                   <Paperclip className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">{uploading ? 'Uploading...' : 'Upload a file'}</span>
@@ -502,14 +524,30 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />
               </label>
               {order.file_urls?.length > 0 ? (
-                order.file_urls.map((url, i) => (
-                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl hover:bg-secondary transition-all">
-                    <Paperclip className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-sm text-foreground flex-1">File {i + 1}</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-muted-foreground" />
-                  </a>
-                ))
+                <div className="grid grid-cols-3 gap-2">
+                  {order.file_urls.map((/** @type {string} */ url, /** @type {number} */ i) => {
+                    const isImg = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
+                    const isVid = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url);
+                    return (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                        className="aspect-square rounded-xl overflow-hidden border border-border bg-secondary/30 flex items-center justify-center hover:border-primary/30 transition-all group">
+                        {isImg ? (
+                          <img src={url} alt={`File ${i + 1}`} className="w-full h-full object-cover" />
+                        ) : isVid ? (
+                          <div className="flex flex-col items-center gap-1 text-muted-foreground group-hover:text-foreground transition-colors">
+                            <Play className="w-6 h-6" />
+                            <span className="text-[10px]">Video</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1 text-muted-foreground group-hover:text-foreground transition-colors">
+                            <Paperclip className="w-6 h-6" />
+                            <span className="text-[10px]">File {i + 1}</span>
+                          </div>
+                        )}
+                      </a>
+                    );
+                  })}
+                </div>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-4">No files attached</p>
               )}
