@@ -6,9 +6,11 @@ import { Input } from "@/components/ui/input";
 import {
   FolderPlus, FileText, File, Trash2, Pencil, Archive,
   Search, FolderOpen, ChevronRight, Download, FileSpreadsheet,
+  Upload, Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
+import { useRef } from "react";
 
 const FOLDER_COLORS = {
   blue:   { bg: "bg-blue-50",   icon: "text-blue-500",   hex: "#dbeafe" },

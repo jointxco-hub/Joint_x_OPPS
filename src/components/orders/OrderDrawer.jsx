@@ -3,8 +3,20 @@ import { format } from "date-fns";
 import {
   X, Edit2, Package, Truck, CreditCard, Paperclip, Plus,
   CheckCircle2, Clock, Circle, ChevronRight, ExternalLink,
-  Archive, MapPin, Send, ShoppingCart, AlertTriangle
+  Archive, MapPin, Send, ShoppingCart, AlertTriangle, Copy, Check
 } from "lucide-react";
+
+const DEFAULT_COURIERS = [
+  { value: "the_courier_guy", label: "The Courier Guy", url: "https://www.thecourierguy.co.za/tracking/?ref=" },
+  { value: "courier_it", label: "Courier IT", url: "https://www.courier-it.co.za/tracking/?tracking=" },
+  { value: "aramex", label: "Aramex", url: "https://www.aramex.com/tools/track?l=" },
+  { value: "dhl", label: "DHL", url: "https://www.dhl.com/za-en/home/tracking.html?tracking-id=" },
+  { value: "fedex", label: "FedEx", url: "https://www.fedex.com/apps/fedextrack/?tracknumbers=" },
+  { value: "fastway", label: "Fastway", url: "https://www.fastway.co.za/tools/track/?number=" },
+  { value: "sa_post", label: "SA Post Office", url: "https://www.postoffice.co.za/tracking?id=" },
+  { value: "dawn_wing", label: "Dawn Wing", url: "https://www.dawnwing.co.za/tracking?waybill=" },
+  { value: "other", label: "Other / Hand delivery", url: "" },
+];
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -113,10 +125,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const totalPaid = payments.filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
   const balance = (order.total_amount || 0) - totalPaid;
 
-  const courier = couriers?.find(c => c.value === order.courier);
-  const trackingUrl = courier && order.tracking_number
+  const resolvedCouriers = couriers?.length ? couriers : DEFAULT_COURIERS;
+  const courier = resolvedCouriers.find(c => c.value === order.courier);
+  const trackingUrl = courier?.url && order.tracking_number
     ? `${courier.url}${order.tracking_number}`
     : null;
+  const [copiedTracking, setCopiedTracking] = useState(false);
+  const copyTrackingLink = () => {
+    const link = `${window.location.origin}/TrackOrder?code=${order.order_number}`;
+    navigator.clipboard.writeText(link).then(() => { setCopiedTracking(true); setTimeout(() => setCopiedTracking(false), 2000); });
+  };
 
   return (
     <>
@@ -447,11 +465,11 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
           {tab === 'tracking' && (
             <div className="space-y-4">
-              <EditField label="Courier" field="courier" value={order.courier}
+              <EditField label="Courier" field="courier" value={courier?.label || order.courier}
                 editing={editingField === 'courier'} editValue={fieldValue}
                 onEdit={() => startEdit('courier', order.courier)}
                 onChange={setFieldValue} onSave={saveEdit}
-                isSelect options={couriers?.map(c => ({ value: c.value, label: c.label }))} />
+                isSelect options={resolvedCouriers.map((/** @type {any} */ c) => ({ value: c.value, label: c.label }))} />
               <EditField label="Tracking Number" field="tracking_number" value={order.tracking_number}
                 editing={editingField === 'tracking_number'} editValue={fieldValue}
                 onEdit={() => startEdit('tracking_number', order.tracking_number)}
@@ -464,6 +482,13 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   <ChevronRight className="w-4 h-4 ml-auto" />
                 </a>
               )}
+              <button
+                onClick={copyTrackingLink}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all"
+              >
+                {copiedTracking ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                {copiedTracking ? "Link copied — send to client" : "Copy client tracking link"}
+              </button>
             </div>
           )}
 

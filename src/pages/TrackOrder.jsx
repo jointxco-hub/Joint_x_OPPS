@@ -1,11 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { dataClient } from "@/api/dataClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { 
-  Search, Package, CheckCircle2, Truck, Clock, 
+import {
+  Search, Package, CheckCircle2, Truck, Clock,
   Shirt, MapPin, X, ChevronLeft, ChevronRight,
-  Image, FileText, Play
+  Image, FileText, Play, Copy, Check
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -68,11 +68,23 @@ function FileThumb({ url, onClick }) {
 }
 
 export default function TrackOrder() {
-  const [trackingCode, setTrackingCode] = useState("");
+  const [trackingCode, setTrackingCode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return (params.get("code") || "").toUpperCase();
+  });
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [mediaUrl, setMediaUrl] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const copyTrackingLink = () => {
+    const link = `${window.location.origin}/TrackOrder?code=${order?.order_number}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   const handleSearch = async () => {
     if (!trackingCode.trim()) return;
@@ -137,7 +149,8 @@ export default function TrackOrder() {
                 value={trackingCode}
                 onChange={e => setTrackingCode(e.target.value.toUpperCase())}
                 onKeyDown={e => e.key === "Enter" && handleSearch()}
-                className="pl-11 h-12 bg-white/8 border-white/15 text-white placeholder:text-white/30 rounded-xl font-mono"
+                className="pl-11 h-12 rounded-xl font-mono border-white/15 placeholder:text-white/30"
+                style={{ backgroundColor: "rgba(255,255,255,0.08)", color: "white" }}
               />
             </div>
             <Button onClick={handleSearch} disabled={loading} className="h-12 px-6 bg-[#1a7a5e] hover:bg-[#1a7a5e]/90 text-white rounded-xl font-medium">
@@ -240,13 +253,22 @@ export default function TrackOrder() {
             )}
 
             {/* Current Step Message */}
-            <div className="bg-[#1a7a5e]/15 border border-[#1a7a5e]/30 rounded-xl p-4">
+            <div className="bg-[#1a7a5e]/15 border border-[#1a7a5e]/30 rounded-xl p-4 mb-3">
               <p className="text-[#4ade80] font-medium text-sm">
                 {currentStepIndex < statusSteps.length - 1
                   ? `Currently: ${statusSteps[currentStepIndex].label} · Next: ${statusSteps[currentStepIndex + 1].label}`
                   : "Your order has been delivered! 🎉"}
               </p>
             </div>
+
+            {/* Share tracking link */}
+            <button
+              onClick={copyTrackingLink}
+              className="w-full flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-xl p-3.5 text-white/60 hover:text-white hover:bg-white/10 transition-all text-sm font-medium"
+            >
+              {copied ? <Check className="w-4 h-4 text-[#4ade80]" /> : <Copy className="w-4 h-4" />}
+              {copied ? "Link copied — paste into WhatsApp" : "Copy tracking link for client"}
+            </button>
           </div>
         )}
 

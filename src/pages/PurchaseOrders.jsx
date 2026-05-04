@@ -21,7 +21,7 @@ import POModal from "@/components/purchaseorders/POModal";
 import StockDemandPanel from "@/components/purchaseorders/StockDemandPanel";
 
 const statusConfig = {
-  draft: { label: "Draft", className: "bg-slate-100 text-slate-700", icon: Package },
+  draft: { label: "Draft", className: "bg-secondary text-muted-foreground", icon: Package },
   pending: { label: "Pending", className: "bg-amber-100 text-amber-700", icon: AlertTriangle },
   approved: { label: "Approved", className: "bg-blue-100 text-blue-700", icon: Check },
   ordered: { label: "Ordered", className: "bg-purple-100 text-purple-700", icon: Truck },
@@ -245,7 +245,7 @@ export default function PurchaseOrders() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-50">
+    <div className="min-h-screen bg-background">
       <ConfirmDialog
         open={confirmDialog.open}
         onOpenChange={(open) => setConfirmDialog({ ...confirmDialog, open })}
@@ -276,15 +276,15 @@ export default function PurchaseOrders() {
           className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
           onClick={() => setShowDemand(false)}
         >
-          <div 
-            className="bg-white rounded-3xl w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl p-6"
+          <div
+            className="bg-card rounded-2xl border border-border w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-apple-lg p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold">Stock & Demand Analysis</h2>
-              <button 
+              <h2 className="text-xl font-bold text-foreground">Stock & Demand Analysis</h2>
+              <button
                 onClick={() => setShowDemand(false)}
-                className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center"
+                className="w-10 h-10 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -303,12 +303,12 @@ export default function PurchaseOrders() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Purchase Orders</h1>
-              <p className="text-slate-500 mt-1">Manage supplier orders and stock</p>
+              <h1 className="text-2xl font-bold text-foreground tracking-tight">Purchase Orders</h1>
+              <p className="text-muted-foreground text-sm mt-0.5">Manage supplier orders and stock</p>
             </div>
             {selectedPOs.length > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-slate-500">{selectedPOs.length} selected</span>
+                <span className="text-sm text-muted-foreground">{selectedPOs.length} selected</span>
                 <Button 
                   size="sm" 
                   variant="outline"
@@ -341,11 +341,11 @@ export default function PurchaseOrders() {
             <Button 
               variant="outline" 
               onClick={() => setShowDemand(true)}
-              className="rounded-xl border-slate-200"
+              className="rounded-xl"
             >
               <BarChart3 className="w-4 h-4 mr-2" /> Stock Analysis
             </Button>
-            <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800 rounded-xl h-11 px-6">
+            <Button onClick={() => setShowForm(true)} className="rounded-xl gap-2 shadow-apple-sm">
               <Plus className="w-4 h-4 mr-2" /> New PO
             </Button>
           </div>
@@ -353,59 +353,59 @@ export default function PurchaseOrders() {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+          <Card className="border border-border bg-card shadow-apple-sm rounded-2xl">
             <CardContent className="p-5">
-              <p className="text-sm text-slate-500">Active POs</p>
-              <p className="text-3xl font-bold text-slate-900 mt-1">{activePOs.length}</p>
+              <p className="text-sm text-muted-foreground">Active POs</p>
+              <p className="text-3xl font-bold text-foreground mt-1">{activePOs.length}</p>
             </CardContent>
           </Card>
-          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+          <Card className="border border-border bg-card shadow-apple-sm rounded-2xl">
             <CardContent className="p-5">
-              <p className="text-sm text-slate-500">Pending Approval</p>
+              <p className="text-sm text-muted-foreground">Pending Approval</p>
               <p className="text-3xl font-bold text-amber-600 mt-1">
                 {activePOs.filter(p => p.status === 'pending').length}
               </p>
             </CardContent>
           </Card>
-          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+          <Card className="border border-border bg-card shadow-apple-sm rounded-2xl">
             <CardContent className="p-5">
-              <p className="text-sm text-slate-500">Total Value</p>
-              <p className="text-3xl font-bold text-slate-900 mt-1">
+              <p className="text-sm text-muted-foreground">Total Value</p>
+              <p className="text-3xl font-bold text-foreground mt-1">
                 R{activePOs.reduce((sum, po) => sum + (po.total || 0), 0).toLocaleString()}
               </p>
             </CardContent>
           </Card>
-          <Card className="border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+          <Card className="border border-border bg-card shadow-apple-sm rounded-2xl">
             <CardContent className="p-5">
               <div className="flex items-center gap-2">
-                <Car className="w-4 h-4 text-slate-400" />
-                <p className="text-sm text-slate-500">Est. Transport</p>
+                <Car className="w-4 h-4 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">Est. Transport</p>
               </div>
-              <p className="text-3xl font-bold text-slate-900 mt-1">~R{totalEstimatedTransport}</p>
+              <p className="text-3xl font-bold text-foreground mt-1">~R{totalEstimatedTransport}</p>
             </CardContent>
           </Card>
         </div>
 
         {/* Product Demand Summary */}
         {Object.keys(productDemand).length > 0 && (
-          <Card className="mb-6 border-0 bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl overflow-hidden">
+          <Card className="mb-6 border border-border bg-card shadow-apple-sm rounded-2xl overflow-hidden">
             <CardContent className="p-5">
               <div className="flex items-center gap-2 mb-4">
-                <Layers className="w-5 h-5 text-slate-400" />
-                <p className="font-medium">Items on Order</p>
+                <Layers className="w-4 h-4 text-muted-foreground" />
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">Items on Order</p>
               </div>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-2">
                 {Object.entries(productDemand).slice(0, 8).map(([product, data]) => (
                   <button
                     key={product}
                     onClick={() => setProductFilter(productFilter === product ? "all" : product)}
-                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                    className={`px-3 py-1.5 rounded-xl text-sm font-medium transition-all ${
                       productFilter === product
-                        ? 'bg-white text-slate-900'
-                        : 'bg-white/10 hover:bg-white/20'
+                        ? 'bg-primary text-primary-foreground shadow-apple-sm'
+                        : 'bg-secondary text-muted-foreground hover:text-foreground border border-border'
                     }`}
                   >
-                    {product.split(' ')[0]} <span className="opacity-70">×{data.total}</span>
+                    {product.split(' ')[0]} <span className="opacity-60">×{/** @type {any} */ (data).total}</span>
                   </button>
                 ))}
               </div>
@@ -414,7 +414,7 @@ export default function PurchaseOrders() {
         )}
 
         {/* Filters */}
-        <Card className="mb-6 border-0 bg-white/80 backdrop-blur shadow-sm rounded-2xl">
+        <Card className="mb-6 border border-border bg-card shadow-apple-sm rounded-2xl">
           <CardContent className="p-4">
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex items-center gap-3">
@@ -422,20 +422,20 @@ export default function PurchaseOrders() {
                   checked={selectedPOs.length === filteredPOs.length && filteredPOs.length > 0}
                   onCheckedChange={toggleSelectAll}
                 />
-                <span className="text-sm text-slate-500">Select all</span>
+                <span className="text-sm text-muted-foreground">Select all</span>
               </div>
               <div className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input 
                   placeholder="Search orders..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="pl-11 h-11 rounded-xl border-slate-200 bg-slate-50"
+                  className="pl-11 h-11 rounded-xl border-border bg-secondary/50"
                 />
               </div>
               <Select value={locationFilter} onValueChange={setLocationFilter}>
-                <SelectTrigger className="w-full md:w-44 h-11 rounded-xl border-slate-200">
-                  <MapPin className="w-4 h-4 mr-2 text-slate-400" />
+                <SelectTrigger className="w-full md:w-44 h-11 rounded-xl border-border">
+                  <MapPin className="w-4 h-4 mr-2 text-muted-foreground" />
                   <SelectValue placeholder="Location" />
                 </SelectTrigger>
                 <SelectContent>
@@ -446,8 +446,8 @@ export default function PurchaseOrders() {
                 </SelectContent>
               </Select>
               <Select value={productFilter} onValueChange={setProductFilter}>
-                <SelectTrigger className="w-full md:w-48 h-11 rounded-xl border-slate-200">
-                  <Package className="w-4 h-4 mr-2 text-slate-400" />
+                <SelectTrigger className="w-full md:w-48 h-11 rounded-xl border-border">
+                  <Package className="w-4 h-4 mr-2 text-muted-foreground" />
                   <SelectValue placeholder="Product" />
                 </SelectTrigger>
                 <SelectContent>
@@ -463,17 +463,17 @@ export default function PurchaseOrders() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6 bg-slate-100 p-1 rounded-xl">
+          <TabsList className="mb-6 bg-secondary p-1 rounded-xl">
             <TabsTrigger value="active" className="rounded-lg">Active ({activePOs.length})</TabsTrigger>
             <TabsTrigger value="completed" className="rounded-lg">Completed ({completedPOs.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="active">
             {filteredPOs.length === 0 ? (
-              <Card className="p-16 text-center border-0 bg-white/80 backdrop-blur rounded-3xl">
-                <ShoppingCart className="w-16 h-16 text-slate-200 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-slate-700 mb-2">No purchase orders</h3>
-                <p className="text-slate-500 mb-6">Create a PO to restock inventory</p>
+              <Card className="p-16 text-center border border-border bg-card rounded-2xl">
+                <ShoppingCart className="w-16 h-16 text-muted-foreground/30 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-foreground mb-2">No purchase orders</h3>
+                <p className="text-muted-foreground mb-6">Create a PO to restock inventory</p>
                 <Button onClick={() => setShowForm(true)} className="rounded-xl">
                   <Plus className="w-4 h-4 mr-2" /> Create PO
                 </Button>
@@ -489,8 +489,8 @@ export default function PurchaseOrders() {
 
           <TabsContent value="completed">
             {filteredPOs.length === 0 ? (
-              <Card className="p-16 text-center border-0 bg-white/80 rounded-3xl">
-                <p className="text-slate-500">No completed orders</p>
+              <Card className="p-16 text-center border border-border bg-card rounded-2xl">
+                <p className="text-muted-foreground">No completed orders</p>
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -528,55 +528,55 @@ function POCard({ po, onClick, getUrgency }) {
   };
   
   return (
-    <Card 
-      className={`border-0 bg-white/90 backdrop-blur shadow-sm hover:shadow-lg transition-all cursor-pointer rounded-2xl overflow-hidden ${urgencyStyles[urgency]}`}
+    <Card
+      className={`border border-border bg-card shadow-apple-sm hover:shadow-apple transition-all cursor-pointer rounded-2xl overflow-hidden ${urgencyStyles[urgency]}`}
       onClick={onClick}
     >
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between mb-4">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between mb-3">
           <div>
             <div className="flex items-center gap-2">
-              <p className="font-semibold text-slate-900">{po.po_number}</p>
+              <p className="font-semibold text-foreground">{po.po_number}</p>
               {po.auto_generated && (
                 <span className="w-2 h-2 rounded-full bg-amber-400" title="Auto-generated" />
               )}
             </div>
-            <p className="text-sm text-slate-500">{po.supplier_name}</p>
+            <p className="text-sm text-muted-foreground">{po.supplier_name}</p>
             {po.supplierLocation && (
-              <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+              <p className="text-xs text-muted-foreground/60 flex items-center gap-1 mt-0.5">
                 <MapPin className="w-3 h-3" />
                 {po.supplierLocation}
               </p>
             )}
           </div>
-          <Badge className={`${config.className} border-0 rounded-full`}>
+          <Badge className={`${config.className} border-0 rounded-full text-xs`}>
             {config.label}
           </Badge>
         </div>
-        
+
         {/* Items Preview */}
-        <div className="flex flex-wrap gap-1 mb-4">
+        <div className="flex flex-wrap gap-1 mb-3">
           {po.items?.slice(0, 3).map((item, i) => (
-            <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">
+            <span key={i} className="text-xs bg-secondary text-muted-foreground px-2 py-0.5 rounded-lg">
               {item.name?.split(' ')[0]} ×{item.quantity}
             </span>
           ))}
           {po.items?.length > 3 && (
-            <span className="text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded-full">
+            <span className="text-xs bg-secondary text-muted-foreground px-2 py-0.5 rounded-lg">
               +{po.items.length - 3}
             </span>
           )}
         </div>
 
-        <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-          <div className="text-sm text-slate-500">
+        <div className="flex items-center justify-between pt-3 border-t border-border">
+          <div className="text-sm text-muted-foreground">
             {po.expected_delivery && (
               <span className={urgency === 'overdue' ? 'text-red-600 font-medium' : ''}>
                 {format(new Date(po.expected_delivery), "dd MMM")}
               </span>
             )}
           </div>
-          <p className="text-lg font-bold text-slate-900">R{(po.total || 0).toLocaleString()}</p>
+          <p className="text-lg font-bold text-foreground">R{(po.total || 0).toLocaleString()}</p>
         </div>
       </CardContent>
     </Card>
