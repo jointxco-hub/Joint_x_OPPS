@@ -29,17 +29,22 @@ export default function Dashboard() {
     dataClient.auth.me().then(setUser).catch(() => {});
   }, []);
 
+  const ents = /** @type {any} */ (dataClient.entities);
+
   const { data: tasks = [] } = useQuery({
     queryKey: ["tasks-dash"],
-    queryFn: () => dataClient.entities.Task.filter({ is_archived: false }),
+    queryFn: () => ents.Task.filter({ is_archived: false }),
   });
 
   const { data: orders = [] } = useQuery({
     queryKey: ["orders-dash"],
-    queryFn: () => dataClient.entities.Order.filter({ is_archived: false }, "-created_date", 10),
+    queryFn: () => ents.Order.filter({ is_archived: false }, "-created_date", 10),
   });
 
- const goals = []; // Goals feature coming in Phase 3
+  const { data: goals = [] } = useQuery({
+    queryKey: ["goals-dash"],
+    queryFn: () => ents.Goal.filter({ is_archived: false }, "-created_date", 5),
+  });
 
   const today = new Date();
   const todayTasks = tasks.filter(t => t.deadline && isToday(new Date(t.deadline)) && t.status !== "done");
@@ -69,7 +74,7 @@ export default function Dashboard() {
           <StatCard label="Today" value={todayTasks.length} color="blue" icon={Clock} to="/Tasks" />
           <StatCard label="Overdue" value={overdueTasks.length} color={overdueTasks.length > 0 ? "red" : "slate"} icon={AlertTriangle} to="/Tasks" />
           <StatCard label="Active Orders" value={activeOrders.length} color="orange" icon={Package} to="/Orders" />
-          <StatCard label="Goals" value={goals.length} color="purple" icon={Target} to="/Executive" />
+          <StatCard label="Goals" value={goals.length} color="purple" icon={Target} to="/Goals" />
         </div>
 
         <div className="grid md:grid-cols-2 gap-5">
@@ -108,7 +113,7 @@ export default function Dashboard() {
 
             {/* Goals */}
             {goals.length > 0 && (
-              <Section title="Active Goals" count={goals.length} accent="purple" link="/Executive">
+              <Section title="Active Goals" count={goals.length} accent="purple" link="/Goals">
                 {goals.slice(0, 3).map(g => (
                   <div key={g.id} className="py-2.5 border-b border-border last:border-0">
                     <div className="flex items-center justify-between mb-1">

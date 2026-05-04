@@ -139,7 +139,7 @@ export default function FileLightbox({ file, onClose }) {
                         <SelectValue placeholder="Select user..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={null}>None</SelectItem>
+                        <SelectItem value="">None</SelectItem>
                         {users.map(user => (
                           <SelectItem key={user.id} value={user.email}>
                             {user.full_name || user.email}
