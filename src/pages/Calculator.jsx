@@ -7,10 +7,18 @@ import { toast } from "sonner";
 
 const STORAGE_KEY = "jx_calc_saves";
 const DEFAULT_ITEMS = [
-  { id: 1, label: "Cost of Goods", value: 0 },
-  { id: 2, label: "Printing / Embroidery", value: 0 },
+  { id: 1, label: "Supplier / Stocking Cost", value: 0 },
+  { id: 2, label: "Printing / Embroidery / Finishing", value: 0 },
   { id: 3, label: "Packaging", value: 0 },
-  { id: 4, label: "Shipping", value: 0 },
+  { id: 4, label: "Courier / Collection", value: 0 },
+  { id: 5, label: "POS / Rush / Misc", value: 0 },
+];
+
+const QUICK_PRESETS = [
+  { label: "Tee PO", items: [{ label: "Supplier / Stocking Cost", value: 95 }, { label: "DTF / Print", value: 45 }, { label: "Packaging", value: 8 }, { label: "Courier", value: 0 }] },
+  { label: "Hoodie PO", items: [{ label: "Supplier / Stocking Cost", value: 260 }, { label: "DTF / Print", value: 65 }, { label: "Packaging", value: 12 }, { label: "Courier", value: 0 }] },
+  { label: "DTF Meter", items: [{ label: "Supplier DTF", value: 212.75 }, { label: "Collection", value: 0 }, { label: "Waste Buffer", value: 20 }] },
+  { label: "Blank Stock", items: [{ label: "Supplier / Stocking Cost", value: 0 }, { label: "Courier", value: 0 }, { label: "Packaging", value: 0 }] },
 ];
 
 function loadSaves() {
@@ -39,6 +47,7 @@ export default function Calculator() {
   const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
   const profitAmount = costPerUnit * (margin / 100);
   const finalPrice = costPerUnit + profitAmount;
+  const actualMargin = finalPrice > 0 ? (profitAmount / finalPrice) * 100 : 0;
   // Use exact unrounded value so total revenue is consistent
   const totalRevenue = finalPrice * quantity;
 
@@ -51,6 +60,10 @@ export default function Calculator() {
   };
 
   const reset = () => { setItems(DEFAULT_ITEMS); setQuantity(1); setMargin(40); };
+  const applyPreset = (preset) => {
+    setItems(preset.items.map((item, index) => ({ id: Date.now() + index, ...item })));
+    toast.success(`${preset.label} loaded`);
+  };
 
   const saveCalc = () => {
     const name = saveName.trim() || `Quote ${new Date().toLocaleDateString("en-ZA")}`;
@@ -137,7 +150,17 @@ export default function Calculator() {
 
         {/* Cost Items */}
         <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5 mb-4">
-          <h2 className="text-sm font-semibold text-foreground mb-4">Cost Breakdown</h2>
+          <div className="flex items-center justify-between mb-4 gap-3">
+            <h2 className="text-sm font-semibold text-foreground">Supplier / POS Cost Breakdown</h2>
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {QUICK_PRESETS.map(preset => (
+                <button key={preset.label} onClick={() => applyPreset(preset)}
+                  className="text-[11px] px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground">
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="space-y-3 mb-4">
             {items.map(item => (
               <div key={item.id} className="flex items-center gap-3">
@@ -180,7 +203,7 @@ export default function Calculator() {
             </div>
             <div>
               <div className="flex items-center justify-between mb-3">
-                <label className="text-sm text-muted-foreground">Profit Margin</label>
+                <label className="text-sm text-muted-foreground">Markup on Cost</label>
                 <span className="text-sm font-bold text-primary">{margin}%</span>
               </div>
               <Slider value={[margin]} onValueChange={([v]) => setMargin(v)} min={0} max={200} step={5} className="w-full" />
@@ -195,6 +218,7 @@ export default function Calculator() {
             <ResultRow label="Total Cost" value={`R${totalCost.toFixed(2)}`} />
             <ResultRow label={`Cost per Unit (÷${quantity})`} value={`R${costPerUnit.toFixed(2)}`} />
             <ResultRow label={`Profit (${margin}%)`} value={`+R${profitAmount.toFixed(2)}`} />
+            <ResultRow label="True Profit Margin" value={`${actualMargin.toFixed(1)}%`} />
             <div className="pt-3 border-t border-white/20">
               <ResultRow label="SELLING PRICE / UNIT" value={`R${finalPrice.toFixed(2)}`} large />
             </div>

@@ -489,6 +489,8 @@ const ENTITY_CONFIG = {
       created_date: 'created_at',
       updated_date: 'updated_at',
       date: 'expense_date',
+      submitted_by: 'submitted_by',
+      approval_status: 'approval_status',
     },
     filterMap: {
       created_date: 'created_at',
@@ -514,6 +516,9 @@ const ENTITY_CONFIG = {
         receipt_urls: payload.receipt_urls,
         project_id: payload.project_id,
         client_id: payload.client_id,
+        submitted_by: payload.submitted_by,
+        approval_status: payload.approval_status,
+        payment_method: payload.payment_method,
         amount: numberOrUndefined(payload.amount ?? payload.total_amount),
         notes: payload.notes,
       });
@@ -521,6 +526,91 @@ const ENTITY_CONFIG = {
   },
 
   // ── Phase 2 entities ─────────────────────────────────────────────
+
+  BugReport: {
+    table: 'bug_reports',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      assigned_to: 'assigned_to',
+      reported_by: 'reported_by',
+      status: 'status',
+      priority: 'priority',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        description: payload.description,
+        page_feature: payload.page_feature,
+        screenshot_url: payload.screenshot_url,
+        priority: payload.priority,
+        assigned_to: payload.assigned_to,
+        reported_by: payload.reported_by,
+        status: payload.status,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+
+  Idea: {
+    table: 'ideas',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      assigned_to: 'assigned_to',
+      submitted_by: 'submitted_by',
+      status: 'status',
+      category: 'category',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        title: payload.title,
+        description: payload.description,
+        category: payload.category,
+        attachment_url: payload.attachment_url,
+        assigned_to: payload.assigned_to,
+        submitted_by: payload.submitted_by,
+        status: payload.status,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+
+  PersonalNote: {
+    table: 'personal_notes',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      user_email: 'user_email',
+      category: 'category',
+      is_shared: 'is_shared',
+      is_archived: 'is_archived',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        user_email: payload.user_email,
+        title: payload.title,
+        body: payload.body,
+        category: payload.category,
+        is_shared: payload.is_shared,
+        is_archived: payload.is_archived,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
 
   Goal: {
     table: 'goals',

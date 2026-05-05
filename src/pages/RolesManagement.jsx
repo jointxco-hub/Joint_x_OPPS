@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Users, Plus, Crown, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Users, Plus, Crown, ArrowLeft, Shield, UserCheck, Archive } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "../utils";
 import { toast } from "sonner";
@@ -35,6 +35,16 @@ export default function RolesManagement() {
     queryFn: () => dataClient.entities.SOP.list('-created_date', 500)
   });
 
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => dataClient.entities.User.list('name', 200)
+  });
+
+  const { data: userRoles = [] } = useQuery({
+    queryKey: ['userRoles'],
+    queryFn: () => dataClient.entities.UserRole.list('-assigned_at', 500)
+  });
+
   const activeRoles = roles.filter(r => r.is_active);
 
   const createMutation = useMutation({
@@ -54,6 +64,42 @@ export default function RolesManagement() {
       setShowForm(false);
       setEditingRole(null);
       toast.success("Role updated!");
+    }
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: ({ id, data }) => dataClient.entities.User.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success("User updated");
+    }
+  });
+
+  const assignRoleMutation = useMutation({
+    mutationFn: (data) => dataClient.entities.UserRole.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userRoles'] });
+      toast.success("Role assigned");
+    },
+    onError: (err) => toast.error(err?.message || "Could not assign role")
+  });
+
+  const removeRoleMutation = useMutation({
+    mutationFn: (id) => dataClient.entities.UserRole.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userRoles'] });
+      toast.success("Role removed");
+    }
+  });
+
+  const setPrimaryMutation = useMutation({
+    mutationFn: async ({ userEmail, assignment }) => {
+      const existing = userRoles.filter(r => r.user_email === userEmail);
+      await Promise.all(existing.map(r => dataClient.entities.UserRole.update(r.id, { is_primary: r.id === assignment.id })));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['userRoles'] });
+      toast.success("Primary role updated");
     }
   });
 
@@ -80,6 +126,17 @@ export default function RolesManagement() {
             <Plus className="w-4 h-4 mr-2" /> New Role
           </Button>
         </div>
+
+        <UserRoleAssignments
+          users={users}
+          roles={activeRoles}
+          userRoles={userRoles}
+          onSystemRoleChange={(user, role) => updateUserMutation.mutate({ id: user.id, data: { role } })}
+          onDeactivate={(user) => updateUserMutation.mutate({ id: user.id, data: { is_active: false } })}
+          onAssign={(userEmail, roleKey) => assignRoleMutation.mutate({ user_email: userEmail, role_key: roleKey, is_primary: !userRoles.some(r => r.user_email === userEmail) })}
+          onRemove={(assignment) => removeRoleMutation.mutate(assignment.id)}
+          onPrimary={(userEmail, assignment) => setPrimaryMutation.mutate({ userEmail, assignment })}
+        />
 
         {/* Roles Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -164,16 +221,107 @@ export default function RolesManagement() {
             role={editingRole}
             onClose={() => { setShowForm(false); setEditingRole(null); }}
             onSubmit={(data) => {
+              const payload = {
+                ...data,
+                key: data.key || data.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+              };
               if (editingRole) {
-                updateMutation.mutate({ id: editingRole.id, data });
+                updateMutation.mutate({ id: editingRole.id, data: payload });
               } else {
-                createMutation.mutate(data);
+                createMutation.mutate(payload);
               }
             }}
           />
         )}
       </div>
     </div>
+  );
+}
+
+function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDeactivate, onAssign, onRemove, onPrimary }) {
+  const [selectedRoles, setSelectedRoles] = useState({});
+  const activeUsers = users.filter(u => u.is_active !== false);
+  const roleByKey = Object.fromEntries(roles.map(r => [r.key, r]));
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Shield className="w-5 h-5 text-[#0F9B8E]" />
+          Admin User Access
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {activeUsers.length === 0 ? (
+          <p className="text-sm text-slate-500">No users found yet.</p>
+        ) : activeUsers.map(user => {
+          const email = user.email || user.user_email;
+          const assignments = userRoles.filter(r => r.user_email === email);
+          const selected = selectedRoles[email] || "";
+          return (
+            <div key={user.id} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-slate-900 truncate">{user.full_name || user.name || email}</p>
+                  <p className="text-xs text-slate-500 truncate">{email}</p>
+                </div>
+                <Select value={user.role || "user"} onValueChange={(value) => onSystemRoleChange(user, value)}>
+                  <SelectTrigger className="w-full lg:w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">User</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex gap-2">
+                  <Select value={selected} onValueChange={(value) => setSelectedRoles(s => ({ ...s, [email]: value }))}>
+                    <SelectTrigger className="w-full lg:w-52">
+                      <SelectValue placeholder="Assign role..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {roles.map(role => (
+                        <SelectItem key={role.id} value={role.key}>{role.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!selected || assignments.some(r => r.role_key === selected)}
+                    onClick={() => {
+                      onAssign(email, selected);
+                      setSelectedRoles(s => ({ ...s, [email]: "" }));
+                    }}
+                  >
+                    <UserCheck className="w-4 h-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="icon" onClick={() => onDeactivate(user)} title="Deactivate user">
+                    <Archive className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {assignments.length === 0 ? (
+                  <span className="text-xs text-slate-400">No operational roles assigned</span>
+                ) : assignments.map(assignment => {
+                  const role = roleByKey[assignment.role_key];
+                  return (
+                    <span key={assignment.id} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs">
+                      <button type="button" onClick={() => onPrimary(email, assignment)} className={assignment.is_primary ? "text-yellow-600" : "text-slate-400"}>
+                        <Crown className="w-3.5 h-3.5" />
+                      </button>
+                      {role?.name || assignment.role_key}
+                      <button type="button" onClick={() => onRemove(assignment)} className="text-slate-400 hover:text-red-600">x</button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 

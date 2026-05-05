@@ -10,10 +10,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Bug, Lightbulb, Plus, Upload, Calendar } from "lucide-react";
+import { Bug, Lightbulb, Plus, Upload, Calendar, StickyNote } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import FileThumbnail from "@/components/files/FileThumbnail";
+import { createWithOfflineQueue } from "@/lib/offlineQueue";
 
 const bugPriorityColors = {
   low: "bg-slate-100 text-slate-700",
@@ -37,7 +38,13 @@ export default function NotesHub() {
   const [showBugForm, setShowBugForm] = useState(false);
   const [showIdeaForm, setShowIdeaForm] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
+  const [showNoteForm, setShowNoteForm] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
   const queryClient = useQueryClient();
+
+  React.useEffect(() => {
+    dataClient.auth.me().then(setCurrentUser).catch(() => {});
+  }, []);
 
   const { data: bugs = [] } = useQuery({
     queryKey: ['bugReports'],
@@ -57,6 +64,12 @@ export default function NotesHub() {
   const { data: weeklyTasks = [] } = useQuery({
     queryKey: ['weeklyTasks'],
     queryFn: () => dataClient.entities.WeeklyTask.list('-created_date', 500)
+  });
+
+  const { data: notes = [] } = useQuery({
+    queryKey: ['personalNotes', currentUser?.email],
+    enabled: !!currentUser?.email,
+    queryFn: () => dataClient.entities.PersonalNote.filter({ user_email: currentUser.email, is_archived: false }, '-created_date', 200)
   });
 
   const last7Days = new Date();
@@ -144,6 +157,10 @@ export default function NotesHub() {
               <Lightbulb className="w-4 h-4 mr-2" />
               Ideas ({ideas.length})
             </TabsTrigger>
+            <TabsTrigger value="notes">
+              <StickyNote className="w-4 h-4 mr-2" />
+              Notes ({notes.length})
+            </TabsTrigger>
           </TabsList>
 
           {/* Bugs Tab */}
@@ -189,11 +206,40 @@ export default function NotesHub() {
               </Card>
             )}
           </TabsContent>
+
+          <TabsContent value="notes">
+            <div className="flex justify-end mb-4">
+              <Button onClick={() => setShowNoteForm(true)}>
+                <Plus className="w-4 h-4 mr-2" /> Add Note
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {notes.map(note => (
+                <Card key={note.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <h3 className="font-semibold text-slate-900">{note.title}</h3>
+                      <Badge variant="outline" className="capitalize">{note.category}</Badge>
+                    </div>
+                    {note.body && <p className="text-sm text-slate-600 whitespace-pre-wrap">{note.body}</p>}
+                    <p className="text-xs text-slate-400 mt-3">{note.created_date ? format(new Date(note.created_date), 'MMM d') : 'Saved offline'}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            {notes.length === 0 && (
+              <Card className="p-12 text-center">
+                <StickyNote className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+                <p className="text-slate-500">No notes yet</p>
+              </Card>
+            )}
+          </TabsContent>
         </Tabs>
 
         {/* Forms */}
         {showBugForm && <BugFormDialog users={users} onClose={() => setShowBugForm(false)} />}
         {showIdeaForm && <IdeaFormDialog users={users} onClose={() => setShowIdeaForm(false)} />}
+        {showNoteForm && <NoteFormDialog currentUser={currentUser} onClose={() => setShowNoteForm(false)} />}
       </div>
     </div>
   );
@@ -300,7 +346,10 @@ function BugFormDialog({ users, onClose }) {
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: (data) => dataClient.entities.BugReport.create(data),
+    mutationFn: async (data) => {
+      const user = await dataClient.auth.me().catch(() => null);
+      return createWithOfflineQueue("BugReport", { ...data, reported_by: user?.email });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bugReports'] });
       toast.success("Bug reported!");
@@ -330,7 +379,7 @@ function BugFormDialog({ users, onClose }) {
         <DialogHeader>
           <DialogTitle>Report Bug</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(formData); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to === "unassigned" ? null : formData.assigned_to }); }} className="space-y-4">
           <div>
             <Label>Bug Description *</Label>
             <Textarea
@@ -402,7 +451,7 @@ function BugFormDialog({ users, onClose }) {
                   <SelectValue placeholder="Optional..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={null}>Unassigned</SelectItem>
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
                   {users.map(user => (
                     <SelectItem key={user.id} value={user.email}>
                       {user.full_name || user.email}
@@ -436,7 +485,10 @@ function IdeaFormDialog({ users, onClose }) {
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: (data) => dataClient.entities.Idea.create(data),
+    mutationFn: async (data) => {
+      const user = await dataClient.auth.me().catch(() => null);
+      return createWithOfflineQueue("Idea", { ...data, submitted_by: user?.email });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ideas'] });
       toast.success("Idea added!");
@@ -466,7 +518,7 @@ function IdeaFormDialog({ users, onClose }) {
         <DialogHeader>
           <DialogTitle>New Idea</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(formData); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to === "unassigned" ? null : formData.assigned_to }); }} className="space-y-4">
           <div>
             <Label>Idea Title *</Label>
             <Input
@@ -537,7 +589,7 @@ function IdeaFormDialog({ users, onClose }) {
                 <SelectValue placeholder="Optional..." />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={null}>Unassigned</SelectItem>
+                <SelectItem value="unassigned">Unassigned</SelectItem>
                 {users.map(user => (
                   <SelectItem key={user.id} value={user.email}>
                     {user.full_name || user.email}
@@ -550,6 +602,84 @@ function IdeaFormDialog({ users, onClose }) {
           <div className="flex justify-end gap-3">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
             <Button type="submit">Add Idea</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NoteFormDialog({ currentUser, onClose }) {
+  const [formData, setFormData] = useState({
+    title: "",
+    body: "",
+    category: "note",
+    is_shared: false,
+  });
+  const queryClient = useQueryClient();
+
+  const createMutation = useMutation({
+    mutationFn: (data) => createWithOfflineQueue("PersonalNote", {
+      ...data,
+      user_email: currentUser?.email,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['personalNotes'] });
+      toast.success("Note saved");
+      onClose();
+    }
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>New Note</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(formData); }} className="space-y-4">
+          <div>
+            <Label>Title *</Label>
+            <Input
+              value={formData.title}
+              onChange={(e) => setFormData({...formData, title: e.target.value})}
+              placeholder="Quick reminder, supplier note, idea..."
+              required
+            />
+          </div>
+          <div>
+            <Label>Note</Label>
+            <Textarea
+              value={formData.body}
+              onChange={(e) => setFormData({...formData, body: e.target.value})}
+              placeholder="Write the thing before it escapes..."
+              rows={5}
+            />
+          </div>
+          <div>
+            <Label>Category</Label>
+            <Select value={formData.category} onValueChange={(v) => setFormData({...formData, category: v})}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="note">Note</SelectItem>
+                <SelectItem value="idea">Idea</SelectItem>
+                <SelectItem value="reminder">Reminder</SelectItem>
+                <SelectItem value="supplier">Supplier</SelectItem>
+                <SelectItem value="client">Client</SelectItem>
+                <SelectItem value="internal">Internal</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={formData.is_shared}
+              onChange={(e) => setFormData({...formData, is_shared: e.target.checked})}
+            />
+            Share with admin
+          </label>
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={!currentUser?.email}>Save Note</Button>
           </div>
         </form>
       </DialogContent>

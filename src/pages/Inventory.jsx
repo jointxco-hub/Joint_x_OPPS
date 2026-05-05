@@ -218,7 +218,7 @@ export default function Inventory() {
             <div className="hidden md:grid grid-cols-12 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-5 py-3 border-b border-border bg-secondary/30">
               <span className="col-span-3">Item</span>
               <span className="col-span-2 text-center">Stock</span>
-              <span className="col-span-2 text-center">Reorder</span>
+              <span className="col-span-2 text-center">Pricing</span>
               <span className="col-span-2">Supplier</span>
               <span className="col-span-2 text-center">Status</span>
               <span className="col-span-1" />
@@ -231,6 +231,10 @@ export default function Inventory() {
             ) : filtered.map(item => {
               const isLow = item.reorder_point != null && item.current_stock <= item.reorder_point;
               const supplierName = item.preferred_supplier_id ? supplierMap[item.preferred_supplier_id] : null;
+              const cost = Number(item.cost_price) || 0;
+              const selling = Number(item.selling_price) || 0;
+              const profit = selling - cost;
+              const margin = selling > 0 ? Math.round((profit / selling) * 100) : null;
               return (
                 <div key={item.id} className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
                   {/* Mobile */}
@@ -243,6 +247,12 @@ export default function Inventory() {
                         {item.current_stock ?? 0} {item.unit}
                         {isLow && " — Low stock"}
                       </p>
+                      {(cost > 0 || selling > 0) && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Stock R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
+                          {margin !== null && ` / ${margin}% margin`}
+                        </p>
+                      )}
                     </div>
                     <button onClick={() => setEditItem(item)} className="text-muted-foreground hover:text-foreground mt-0.5">
                       <Pencil className="w-4 h-4" />
@@ -259,9 +269,14 @@ export default function Inventory() {
                       <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
                         {item.current_stock ?? 0} {item.unit}
                       </span>
+                      {(cost > 0 || selling > 0) && (
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          R{cost.toFixed(2)} / R{selling.toFixed(2)}
+                        </p>
+                      )}
                     </div>
-                    <div className="col-span-2 text-center text-xs text-muted-foreground">
-                      {item.reorder_point ?? "—"}
+                    <div className="col-span-2 text-center text-xs">
+                      {margin !== null ? `${margin}% margin` : "-"}
                     </div>
                     <div className="col-span-2">
                       {supplierName ? (

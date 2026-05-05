@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Target, Plus, Star, Pencil, Archive, ChevronRight } from "lucide-react";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import ResponsiveModal from "@/components/common/ResponsiveModal";
+import { isAdmin } from "@/lib/admin";
 
 const SCOPES = ["company", "team", "personal"];
 const STATUSES = ["active", "completed", "paused"];
@@ -22,9 +23,10 @@ const EMPTY_FORM = {
   start_date: "", end_date: "", assigned_to: "",
 };
 
-function GoalFormModal({ open, onClose, existing }) {
+function GoalFormModal({ open, onClose, existing, users = [], currentUser }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState(existing ?? EMPTY_FORM);
+  const [form, setForm] = useState(existing ?? { ...EMPTY_FORM, assigned_to: currentUser?.email || "" });
+  const admin = isAdmin(currentUser);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   const mutation = useMutation({
@@ -52,7 +54,7 @@ function GoalFormModal({ open, onClose, existing }) {
       is_north_star: !!form.is_north_star,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
-      assigned_to: form.assigned_to || null,
+      assigned_to: admin ? (form.assigned_to || null) : (existing?.assigned_to || currentUser?.email || null),
     });
   };
 
@@ -117,8 +119,18 @@ function GoalFormModal({ open, onClose, existing }) {
           </div>
         </div>
         <div>
-          <label className="text-xs font-medium text-foreground block mb-1">Assigned to (email)</label>
-          <Input value={form.assigned_to} onChange={set("assigned_to")} placeholder="name@jointx.co.za" className="h-11 md:h-10" />
+          <label className="text-xs font-medium text-foreground block mb-1">Assigned to</label>
+          {admin ? (
+            <select value={form.assigned_to || ""} onChange={set("assigned_to")}
+              className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+              <option value="">Unassigned / company</option>
+              {users.map(user => (
+                <option key={user.id} value={user.email}>{user.full_name || user.name || user.email}</option>
+              ))}
+            </select>
+          ) : (
+            <Input value={currentUser?.email || form.assigned_to || ""} disabled className="h-11 md:h-10" />
+          )}
         </div>
         <label className="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" checked={!!form.is_north_star}
@@ -191,10 +203,20 @@ export default function Goals() {
   const [editGoal, setEditGoal] = useState(null);
   const [scopeFilter, setScopeFilter] = useState("all");
   const qc = useQueryClient();
+  const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    dataClient.auth.me().then(setCurrentUser).catch(() => {});
+  }, []);
 
   const { data: goals = [], isLoading } = useQuery({
     queryKey: ["goals"],
     queryFn: () => dataClient.entities.Goal.list("-created_date", 200),
+  });
+
+  const { data: users = [] } = useQuery({
+    queryKey: ["users"],
+    queryFn: () => dataClient.entities.User.list("name", 200),
   });
 
   const archiveMutation = useMutation({
@@ -212,8 +234,11 @@ export default function Goals() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["goals"] }),
   });
 
-  const active = goals.filter(g => !g.is_archived && g.status !== "completed");
-  const completed = goals.filter(g => !g.is_archived && g.status === "completed");
+  const visibleGoals = isAdmin(currentUser)
+    ? goals
+    : goals.filter(g => !g.assigned_to || g.assigned_to === currentUser?.email || g.scope === "company");
+  const active = visibleGoals.filter(g => !g.is_archived && g.status !== "completed");
+  const completed = visibleGoals.filter(g => !g.is_archived && g.status === "completed");
   const northStar = active.find(g => g.is_north_star);
 
   const filtered = active.filter(g =>
@@ -320,8 +345,8 @@ export default function Goals() {
         )}
       </div>
 
-      {showForm && <GoalFormModal open={showForm} onClose={() => setShowForm(false)} />}
-      {editGoal && <GoalFormModal open={!!editGoal} onClose={() => setEditGoal(null)} existing={editGoal} />}
+      {showForm && <GoalFormModal open={showForm} onClose={() => setShowForm(false)} users={users} currentUser={currentUser} />}
+      {editGoal && <GoalFormModal open={!!editGoal} onClose={() => setEditGoal(null)} existing={editGoal} users={users} currentUser={currentUser} />}
     </div>
   );
 }

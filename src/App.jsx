@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import VisualEditAgent from '@/lib/VisualEditAgent'
 import NavigationTracker from '@/lib/NavigationTracker'
+import PWAInstallPrompt from '@/components/common/PWAInstallPrompt'
 import { pagesConfig } from './pages.config'
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
@@ -81,6 +82,7 @@ function App() {
           <AuthenticatedApp />
         </Router>
         <Toaster />
+        <PWAInstallPrompt />
         <VisualEditAgent />
       </QueryClientProvider>
     </AuthProvider>

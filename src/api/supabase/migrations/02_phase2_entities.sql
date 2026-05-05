@@ -410,6 +410,71 @@ create table if not exists public.money_model_snapshots (
 );
 create index if not exists idx_money_model_offer on public.money_model_snapshots(offer_key);
 
+-- Lightweight team feedback, notes, and finance submission support.
+-- These are intentionally simple so team members can capture things fast.
+alter table public.transactions add column if not exists submitted_by text;
+alter table public.transactions add column if not exists approval_status text default 'approved'
+  check (approval_status in ('submitted','approved','rejected','paid'));
+alter table public.transactions add column if not exists payment_method text
+  check (payment_method in ('cash','card','eft','credit','bank_transfer','other'));
+create index if not exists idx_transactions_submitted_by on public.transactions(submitted_by);
+create index if not exists idx_transactions_approval_status on public.transactions(approval_status);
+
+create table if not exists public.bug_reports (
+  id              uuid primary key default gen_random_uuid(),
+  description     text not null,
+  page_feature    text,
+  screenshot_url  text,
+  priority        text default 'medium' check (priority in ('low','medium','high')),
+  assigned_to     text,
+  reported_by     text,
+  status          text default 'open' check (status in ('open','in_review','resolved')),
+  is_archived     boolean default false,
+  archived_at     timestamptz,
+  created_at      timestamptz default now() not null,
+  updated_at      timestamptz default now() not null
+);
+create trigger trg_bug_reports_updated_at before update on public.bug_reports
+  for each row execute function handle_updated_at();
+create index if not exists idx_bug_reports_status on public.bug_reports(status);
+create index if not exists idx_bug_reports_reported_by on public.bug_reports(reported_by);
+
+create table if not exists public.ideas (
+  id              uuid primary key default gen_random_uuid(),
+  title           text not null,
+  description     text,
+  category        text default 'other' check (category in ('ui','automation','workflow','other')),
+  attachment_url  text,
+  assigned_to     text,
+  submitted_by    text,
+  status          text default 'pending' check (status in ('pending','approved','in_progress','resolved')),
+  is_archived     boolean default false,
+  archived_at     timestamptz,
+  created_at      timestamptz default now() not null,
+  updated_at      timestamptz default now() not null
+);
+create trigger trg_ideas_updated_at before update on public.ideas
+  for each row execute function handle_updated_at();
+create index if not exists idx_ideas_status on public.ideas(status);
+create index if not exists idx_ideas_submitted_by on public.ideas(submitted_by);
+
+create table if not exists public.personal_notes (
+  id            uuid primary key default gen_random_uuid(),
+  user_email    text not null,
+  title         text not null,
+  body          text,
+  category      text default 'note' check (category in ('note','idea','reminder','supplier','client','internal')),
+  is_shared     boolean default false,
+  is_archived   boolean default false,
+  archived_at   timestamptz,
+  created_at    timestamptz default now() not null,
+  updated_at    timestamptz default now() not null
+);
+create trigger trg_personal_notes_updated_at before update on public.personal_notes
+  for each row execute function handle_updated_at();
+create index if not exists idx_personal_notes_user on public.personal_notes(user_email);
+create index if not exists idx_personal_notes_shared on public.personal_notes(is_shared);
+
 
 -- ══════════════════════════════════════════════════════════════════
 --  PART 7: FILE MANAGEMENT (v3 §22.4)
@@ -743,5 +808,8 @@ alter table public.order_stage_history   disable row level security;
 alter table public.order_exceptions      disable row level security;
 alter table public.offer_scores          disable row level security;
 alter table public.money_model_snapshots disable row level security;
+alter table public.bug_reports           disable row level security;
+alter table public.ideas                 disable row level security;
+alter table public.personal_notes        disable row level security;
 alter table public.folders               disable row level security;
 alter table public.client_assets         disable row level security;

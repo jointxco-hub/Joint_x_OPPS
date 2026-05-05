@@ -1,0 +1,25 @@
+{
+  "name": "Joint X Operations OS",
+  "short_name": "Joint X",
+  "description": "Mobile operations, tasks, goals, inventory and finance capture for Joint X.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7faf8",
+  "theme_color": "#1a7a5e",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

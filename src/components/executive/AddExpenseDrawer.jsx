@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { X, Upload, Loader2, Trash2, Plus, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
+import { createWithOfflineQueue } from "@/lib/offlineQueue";
 
 const VAT_RATE = 0.15;
 
@@ -51,6 +52,7 @@ export default function AddExpenseDrawer({ onClose, onSaved }) {
   const [receiptUrls, setReceiptUrls] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
 
   // Vendor state
   const [suppliers, setSuppliers] = useState([]);
@@ -63,6 +65,7 @@ export default function AddExpenseDrawer({ onClose, onSaved }) {
   const [showLinkSection, setShowLinkSection] = useState(false);
 
   useEffect(() => {
+    dataClient.auth.me().then(setCurrentUser).catch(() => {});
     dataClient.entities.Supplier.list("-created_date", 100).then(setSuppliers).catch(() => {});
     dataClient.entities.Client.filter({ is_archived: false }, "-created_date", 100).then(setClients).catch(() => {});
     dataClient.entities.Project.list("-created_date", 100).then(setProjects).catch(() => {});
@@ -103,11 +106,13 @@ export default function AddExpenseDrawer({ onClose, onSaved }) {
       amount: parseFloat(form.amount),
       vat_amount: parseFloat(vatAmount.toFixed(2)),
       receipt_urls: receiptUrls,
+      submitted_by: currentUser?.email,
+      approval_status: currentUser?.role === "admin" ? "approved" : "submitted",
     };
     if (!payload.project_id) delete payload.project_id;
     if (!payload.client_id) delete payload.client_id;
-    await dataClient.entities.Expense.create(payload);
-    toast.success("Expense added");
+    const saved = await createWithOfflineQueue("Expense", payload);
+    toast.success(saved?.isQueuedOffline ? "Expense saved offline. It will sync when online." : "Expense added");
     onSaved();
     onClose();
   };

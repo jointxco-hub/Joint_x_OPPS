@@ -79,6 +79,7 @@ import WeeklyCalendar from './pages/WeeklyCalendar';
 import OpsCalendar from './pages/OpsCalendar';
 import UserDashboard from './pages/UserDashboard';
 import TeamProfiles from './pages/TeamProfiles';
+import TeamExpenses from './pages/TeamExpenses';
 import ArchivePage from './pages/Archive';
 import SignIn from './pages/SignIn';
 import OffersDashboard from './pages/OffersDashboard';
@@ -119,6 +120,7 @@ export const PAGES = {
     "WeeklyCalendar": WeeklyCalendar,
     "OpsCalendar": OpsCalendar,
     "TeamProfiles": TeamProfiles,
+    "TeamExpenses": TeamExpenses,
     "Archive": ArchivePage,
     "UserDashboard": UserDashboard,
     "SignIn": SignIn,
