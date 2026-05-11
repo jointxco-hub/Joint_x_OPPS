@@ -121,12 +121,12 @@ export default function Calculator() {
     <div className="min-h-screen bg-background">
       <div className="max-w-2xl mx-auto px-4 py-6 md:py-8">
         {/* Header */}
-        <div className="flex items-center gap-3 mb-6">
+        <div className="mb-6 flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center">
             <CalcIcon className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground tracking-tight">Budget Calculator</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Budget Calculator</h1>
             <p className="text-muted-foreground text-sm">Supplier cost + quantity = order budget</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -180,7 +180,7 @@ export default function Calculator() {
         )}
 
         {/* Cost Items */}
-        <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5 mb-4">
+        <div className="mb-4 rounded-[1.25rem] border border-border bg-card p-4 shadow-apple-sm md:p-5">
           <div className="flex items-center justify-between mb-4 gap-3">
             <h2 className="text-sm font-semibold text-foreground">Supplier / POS Cost Breakdown</h2>
             <div className="flex flex-wrap justify-end gap-1.5">
@@ -225,20 +225,20 @@ export default function Calculator() {
               </Select>
             </div>
           </div>
-          <div className="space-y-3 mb-4">
+          <div className="mb-4 space-y-2">
             {items.map(item => (
-              <div key={item.id} className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground flex-1">{item.label}</span>
-                <div className="flex items-center gap-1">
+              <div key={item.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 rounded-xl bg-secondary/35 px-3 py-2">
+                <span className="min-w-0 truncate text-sm text-foreground">{item.label}</span>
+                <div className="flex items-center gap-1 rounded-lg bg-background px-2 py-1">
                   <span className="text-xs text-muted-foreground">R</span>
                   <Input
                     type="number"
                     value={item.value}
                     onChange={e => updateItem(item.id, "value", e.target.value)}
-                    className="w-24 h-8 rounded-xl text-sm text-right"
+                    className="h-8 w-20 border-0 bg-transparent p-0 text-right text-sm shadow-none focus-visible:ring-0"
                   />
                 </div>
-                <button onClick={() => removeItem(item.id)} className="text-muted-foreground hover:text-destructive transition-all">
+                <button onClick={() => removeItem(item.id)} className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-all hover:bg-background hover:text-destructive" aria-label={`Remove ${item.label}`}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -254,7 +254,7 @@ export default function Calculator() {
         </div>
 
         {/* Settings */}
-        <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5 mb-4">
+        <div className="mb-4 rounded-[1.25rem] border border-border bg-card p-4 shadow-apple-sm md:p-5">
           <div className="space-y-5">
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -276,8 +276,11 @@ export default function Calculator() {
         </div>
 
         {/* Results */}
-        <div className="bg-primary rounded-2xl p-5 text-white shadow-apple mb-4">
-          <h2 className="text-sm font-semibold text-primary-foreground/70 mb-4">Pricing Summary</h2>
+        <div className="mb-4 rounded-[1.35rem] bg-slate-950 p-5 text-white shadow-apple">
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <h2 className="text-sm font-semibold text-white/60">Budget needed</h2>
+            <p className="text-3xl font-bold tracking-tight">R{totalCost.toFixed(2)}</p>
+          </div>
           <div className="space-y-2.5">
             <ResultRow label="Total Cost" value={`R${totalCost.toFixed(2)}`} />
             <ResultRow label={`Cost per Unit (÷${quantity})`} value={`R${costPerUnit.toFixed(2)}`} />

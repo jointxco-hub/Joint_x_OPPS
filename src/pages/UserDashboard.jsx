@@ -150,6 +150,7 @@ export default function UserDashboard() {
 
   // ── Derived stats ─────────────────────────────────────────────────────────
   const pendingTasks = tasks.filter(t => t.status !== "done");
+  const urgentTasks = pendingTasks.filter(t => t.priority === "urgent");
   const todayTasks = tasks.filter(
     t => t.due_date && isToday(new Date(t.due_date)) && t.status !== "done"
   );
@@ -264,7 +265,7 @@ export default function UserDashboard() {
         </div>
 
         {/* 5 — Stats row */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-2 gap-3 mb-6 md:grid-cols-4">
           <div className="bg-card rounded-2xl border border-border p-4 text-center shadow-sm">
             <p className="text-2xl font-bold text-foreground">{todayTasks.length}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Due Today</p>
@@ -276,6 +277,10 @@ export default function UserDashboard() {
           <div className={`rounded-2xl border p-4 text-center shadow-sm ${urgentOpsTasks.length > 0 ? "bg-red-50 border-red-100" : "bg-card border-border"}`}>
             <p className={`text-2xl font-bold ${urgentOpsTasks.length > 0 ? "text-red-600" : "text-foreground"}`}>{urgentOpsTasks.length}</p>
             <p className="text-xs text-muted-foreground mt-0.5">Urgent Ops</p>
+          </div>
+          <div className={`rounded-2xl border p-4 text-center shadow-sm ${(urgentTasks.length + myTags.length) > 0 ? "bg-amber-50 border-amber-100" : "bg-card border-border"}`}>
+            <p className={`text-2xl font-bold ${(urgentTasks.length + myTags.length) > 0 ? "text-amber-700" : "text-foreground"}`}>{urgentTasks.length + myTags.length}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Needs Me</p>
           </div>
         </div>
 
@@ -379,7 +384,7 @@ export default function UserDashboard() {
           {tasksLoading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
           ) : pendingTasks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">All caught up! 🎉</p>
+            <p className="text-sm text-muted-foreground">All caught up.</p>
           ) : (
             <div className="grid md:grid-cols-2 gap-2">
               {pendingTasks.slice(0, 6).map(t => {

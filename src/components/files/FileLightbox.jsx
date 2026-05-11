@@ -51,8 +51,13 @@ export default function FileLightbox({ file, onClose }) {
     });
   };
 
-  const isImage = file.file_url?.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i);
-  const isPdf = file.file_url?.match(/\.pdf$/i);
+  const fileUrl = file.file_url || file.url || file.fileUrl || "";
+  const fileName = file.title || file.name || file.file_name || "";
+  const fileType = file.file_type || file.mime_type || file.type || "";
+  const imagePattern = /\.(jpg|jpeg|png|gif|webp|svg)(\?|#|$)/i;
+  const pdfPattern = /\.pdf(\?|#|$)/i;
+  const isImage = fileType.startsWith("image/") || imagePattern.test(fileUrl) || imagePattern.test(fileName);
+  const isPdf = fileType === "application/pdf" || pdfPattern.test(fileUrl) || pdfPattern.test(fileName);
 
   const statusColors = {
     needs_fix: "bg-red-100 text-red-700",
@@ -78,13 +83,13 @@ export default function FileLightbox({ file, onClose }) {
           <div className="bg-slate-50 rounded-lg p-4 flex items-center justify-center min-h-[300px]">
             {isImage ? (
               <img 
-                src={file.file_url} 
-                alt={file.title}
-                className="max-w-full max-h-[500px] object-contain rounded"
+                src={fileUrl} 
+                alt={file.title || "File preview"}
+                className="max-w-full max-h-[70vh] object-contain rounded"
               />
             ) : isPdf ? (
               <iframe 
-                src={file.file_url}
+                src={fileUrl}
                 className="w-full h-[500px] rounded border"
                 title={file.title}
               />
@@ -92,7 +97,7 @@ export default function FileLightbox({ file, onClose }) {
               <div className="text-center">
                 <p className="text-slate-500 mb-4">Preview not available</p>
                 <Button asChild>
-                  <a href={file.file_url} target="_blank" rel="noopener noreferrer">
+                  <a href={fileUrl} target="_blank" rel="noopener noreferrer">
                     <Download className="w-4 h-4 mr-2" /> Download File
                   </a>
                 </Button>
@@ -102,7 +107,7 @@ export default function FileLightbox({ file, onClose }) {
 
           {/* Download Button */}
           <Button asChild variant="outline" className="w-full">
-            <a href={file.file_url} download target="_blank" rel="noopener noreferrer">
+            <a href={fileUrl} download target="_blank" rel="noopener noreferrer">
               <Download className="w-4 h-4 mr-2" /> Download File
             </a>
           </Button>

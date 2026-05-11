@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, ClipboardList, CheckCircle2, Circle, Clock, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Search, ClipboardList, CheckCircle2, Circle, Clock, AlertTriangle, ChevronDown, ChevronUp, Factory, Palette, Settings2, MessageSquare, DollarSign, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format, isPast } from "date-fns";
@@ -9,6 +9,7 @@ import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 import { useArchive } from "@/hooks/useArchive";
 import RefreshButton from "@/components/common/RefreshButton";
+import { SourceBadge, getTaskDisplay } from "@/lib/opsDisplay";
 
 const priorityBar = {
   urgent: "bg-red-500",
@@ -34,6 +35,16 @@ const deptEmoji = {
   finance:    "💰",
   admin:      "📋",
   general:    "📌",
+};
+
+const deptMeta = {
+  operations: Settings2,
+  design:     Palette,
+  production: Factory,
+  sales:      MessageSquare,
+  finance:    DollarSign,
+  admin:      ShieldCheck,
+  general:    ClipboardList,
 };
 
 export default function Tasks() {
@@ -162,6 +173,7 @@ export default function Tasks() {
           <div className="space-y-5">
             {Object.entries(grouped).map(([dept, deptTasks]) => {
               const collapsed = collapsedDepts[dept];
+              const DeptIcon = deptMeta[dept] || ClipboardList;
               return (
                 <div key={dept} className="bg-card rounded-2xl border border-border overflow-hidden shadow-apple-sm">
                   <button
@@ -169,7 +181,7 @@ export default function Tasks() {
                     className="w-full flex items-center justify-between px-5 py-3 border-b border-border bg-secondary/30 hover:bg-secondary/50 transition-all"
                   >
                     <div className="flex items-center gap-2">
-                      <span>{deptEmoji[dept] || "📌"}</span>
+                      <DeptIcon className="h-4 w-4 text-primary" />
                       <span className="text-xs font-semibold text-foreground uppercase tracking-wide capitalize">{dept}</span>
                       <span className="text-xs text-muted-foreground">({deptTasks.length})</span>
                     </div>
@@ -185,6 +197,7 @@ export default function Tasks() {
                         const isDone = task.status === "done";
                         const isOverdue = task.deadline && isPast(new Date(task.deadline)) && !isDone;
                         const StatusIcon = isDone ? CheckCircle2 : isOverdue ? AlertTriangle : Circle;
+                        const display = getTaskDisplay(task);
 
                         return (
                           <div
@@ -211,10 +224,18 @@ export default function Tasks() {
                               className="flex-1 text-left min-w-0"
                               onClick={() => setSelectedTask(task)}
                             >
-                              <p className={`text-sm font-medium text-foreground truncate ${isDone ? "line-through" : ""}`}>
-                                {task.title}
-                              </p>
-                              <div className="flex items-center gap-2 mt-0.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {display.source !== "manual" && <SourceBadge source={display.source} />}
+                                <p className={`min-w-0 flex-1 truncate text-sm font-semibold text-foreground ${isDone ? "line-through" : ""}`} title={display.original}>
+                                  {display.primary}
+                                </p>
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                                {display.secondary && (
+                                  <span className="max-w-full truncate text-[11px] text-muted-foreground">
+                                    {display.secondary}
+                                  </span>
+                                )}
                                 {task.priority && task.priority !== "normal" && (
                                   <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${priorityLabel[task.priority]}`}>
                                     {task.priority}
@@ -267,3 +288,4 @@ export default function Tasks() {
     </div>
   );
 }
+

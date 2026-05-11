@@ -13,6 +13,7 @@ import { Users, Plus, Crown, ArrowLeft, Shield, UserCheck, Archive } from "lucid
 import { Link } from "react-router-dom";
 import { createPageUrl } from "../utils";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabaseClient";
 
 const criticalityColors = {
   critical: "bg-red-100 text-red-700",
@@ -38,6 +39,17 @@ export default function RolesManagement() {
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
     queryFn: () => dataClient.entities.User.list('name', 200)
+  });
+
+  const { data: authUsers = [], isError: authUsersError } = useQuery({
+    queryKey: ['auth-users'],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke('list-auth-users');
+      if (error) throw error;
+      return data?.users ?? [];
+    },
+    staleTime: 60_000,
+    retry: 1,
   });
 
   const { data: userRoles = [] } = useQuery({
@@ -137,6 +149,8 @@ export default function RolesManagement() {
 
         <UserRoleAssignments
           users={users}
+          authUsers={authUsers}
+          authUsersError={authUsersError}
           roles={activeRoles}
           userRoles={userRoles}
           onSystemRoleChange={(user, role) => updateUserMutation.mutate({ id: user.id, data: { role } })}
@@ -247,10 +261,25 @@ export default function RolesManagement() {
   );
 }
 
-function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, authUsers = [], authUsersError, roles, userRoles, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
   const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
-  const activeUsers = users.filter(u => u.is_active !== false);
+  const profileByEmail = new Map(users.filter(u => u.email || u.user_email).map(u => [String(u.email || u.user_email).toLowerCase(), u]));
+  const activeUsers = [
+    ...users.filter(u => u.is_active !== false).map(u => ({ ...u, hasProfile: true })),
+    ...authUsers
+      .filter(auth => auth.email && !profileByEmail.has(String(auth.email).toLowerCase()))
+      .map(auth => ({
+        id: `auth_${auth.id}`,
+        auth_id: auth.id,
+        email: auth.email,
+        full_name: auth.full_name || auth.user_metadata?.full_name || auth.email,
+        role: "user",
+        hasProfile: false,
+        created_at: auth.created_at,
+        last_sign_in_at: auth.last_sign_in_at,
+      })),
+  ];
   const roleByKey = Object.fromEntries(roles.map(r => [r.key, r]));
 
   return (
@@ -263,7 +292,14 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
-          <p className="mb-3 text-sm font-semibold text-slate-900">Add person by email</p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-900">Add person by email</p>
+            {authUsersError ? (
+              <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">Deploy list-auth-users to see Supabase Auth accounts</span>
+            ) : (
+              <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">{authUsers.length} signed-in accounts found</span>
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_1fr_140px_auto]">
             <Input placeholder="Full name" value={invite.name} onChange={(e) => setInvite({ ...invite, name: e.target.value })} />
             <Input placeholder="email@example.com" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} />
@@ -298,10 +334,13 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
             <div key={user.id} className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex flex-col lg:flex-row lg:items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-900 truncate">{user.full_name || user.name || email}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-slate-900 truncate">{user.full_name || user.name || email}</p>
+                    {!user.hasProfile && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">Signed in</span>}
+                  </div>
                   <p className="text-xs text-slate-500 truncate">{email}</p>
                 </div>
-                <Select value={user.role || "user"} onValueChange={(value) => onSystemRoleChange(user, value)}>
+                <Select value={user.role || "user"} disabled={!user.hasProfile} onValueChange={(value) => onSystemRoleChange(user, value)}>
                   <SelectTrigger className="w-full lg:w-36">
                     <SelectValue />
                   </SelectTrigger>
@@ -324,7 +363,7 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={!selected || assignments.some(r => r.role_key === selected)}
+                    disabled={!user.hasProfile || !selected || assignments.some(r => r.role_key === selected)}
                     onClick={() => {
                       onAssign(email, selected);
                       setSelectedRoles(s => ({ ...s, [email]: "" }));
@@ -332,9 +371,15 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
                   >
                     <UserCheck className="w-4 h-4" />
                   </Button>
-                  <Button type="button" variant="ghost" size="icon" onClick={() => onDeactivate(user)} title="Deactivate user">
-                    <Archive className="w-4 h-4" />
-                  </Button>
+                  {user.hasProfile ? (
+                    <Button type="button" variant="ghost" size="icon" onClick={() => onDeactivate(user)} title="Deactivate user">
+                      <Archive className="w-4 h-4" />
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => onInvite({ email, full_name: user.full_name || email, role: "user", is_active: true })}>
+                      Create profile
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 mt-3">

@@ -8,7 +8,7 @@ export function useMyTags(userEmail) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('order_tags')
-        .select('*, orders(id, customer_name, pipeline_stage)')
+        .select('*, orders(id, order_number, customer_name, pipeline_stage, status, priority, source, due_date)')
         .eq('user_email', userEmail)
         .is('resolved_at', null)
         .order('created_at', { ascending: false })

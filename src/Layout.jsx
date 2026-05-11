@@ -56,6 +56,20 @@ export default function Layout({ children, currentPageName }) {
   };
 
   const visibleMoreNav = moreNav.filter(item => !item.adminOnly || isAdmin(user));
+  const initials = (user?.full_name || user?.email || "U").charAt(0).toUpperCase();
+
+  const NavIcon = ({ item, isActive, className = "w-4 h-4" }) => {
+    if (item.page === "UserDashboard" && user?.profile_photo) {
+      return (
+        <img
+          src={user.profile_photo}
+          alt=""
+          className={`${className} rounded-full object-cover ring-1 ${isActive ? "ring-primary-foreground/60" : "ring-border"}`}
+        />
+      );
+    }
+    return <item.icon className={`${className} flex-shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'}`} />;
+  };
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -100,7 +114,7 @@ export default function Layout({ children, currentPageName }) {
                   className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group
                     ${isActive ? 'bg-primary text-primary-foreground shadow-apple-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                 >
-                  <item.icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-primary-foreground' : 'text-muted-foreground group-hover:text-foreground'}`} />
+                  <NavIcon item={item} isActive={isActive} />
                   {item.name}
                 </Link>
               );
@@ -143,10 +157,12 @@ export default function Layout({ children, currentPageName }) {
                 </button>
               </div>
               <div className="flex items-center gap-2.5 px-2 py-2 rounded-xl">
-                <div className="w-7 h-7 rounded-full bg-[#1a7a5e]/12 flex items-center justify-center flex-shrink-0">
-                  <span className="text-[#1a7a5e] text-xs font-bold">
-                    {(user.full_name || user.email || 'U').charAt(0).toUpperCase()}
-                  </span>
+                <div className="w-8 h-8 rounded-full bg-[#1a7a5e]/12 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                  {user.profile_photo ? (
+                    <img src={user.profile_photo} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-[#1a7a5e] text-xs font-bold">{initials}</span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-semibold text-foreground truncate">{user.full_name || 'User'}</p>
@@ -175,9 +191,10 @@ export default function Layout({ children, currentPageName }) {
             <NotificationsPanel />
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="w-8 h-8 flex items-center justify-center rounded-xl bg-secondary text-foreground"
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary text-foreground"
+              aria-label="Open navigation menu"
             >
-              {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           </div>
         </div>
@@ -192,7 +209,7 @@ export default function Layout({ children, currentPageName }) {
                     className={`flex items-center gap-2.5 px-3 py-3 rounded-xl text-sm font-medium transition-all
                       ${isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                   >
-                    <item.icon className="w-4 h-4 flex-shrink-0" />
+                    <NavIcon item={item} isActive={isActive} />
                     {item.name}
                   </Link>
                 );
@@ -209,17 +226,21 @@ export default function Layout({ children, currentPageName }) {
             const isActive = currentPageName === item.page;
             return (
               <Link key={item.page} to={createPageUrl(item.page)}
-                className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all
+                className={`flex min-h-14 flex-col items-center gap-1 rounded-xl px-3 py-2 transition-all
                   ${isActive ? 'text-primary' : 'text-muted-foreground'}`}
               >
-                <item.icon className={`w-5 h-5 ${isActive ? 'text-primary' : ''}`} />
+                {item.page === "UserDashboard" && user?.profile_photo ? (
+                  <img src={user.profile_photo} alt="" className={`h-5 w-5 rounded-full object-cover ring-1 ${isActive ? 'ring-primary' : 'ring-border'}`} />
+                ) : (
+                  <item.icon className={`w-5 h-5 ${isActive ? 'text-primary' : ''}`} />
+                )}
                 <span className={`text-xs font-medium ${isActive ? 'text-primary' : ''}`}>{item.name}</span>
               </Link>
             );
           })}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className={`flex flex-col items-center gap-1 px-4 py-2 rounded-xl transition-all
+            className={`flex min-h-14 flex-col items-center gap-1 rounded-xl px-3 py-2 transition-all
               ${isMoreActive ? 'text-primary' : 'text-muted-foreground'}`}
           >
             <MoreHorizontal className="w-5 h-5" />

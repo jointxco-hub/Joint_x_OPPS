@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Package, LayoutGrid, List } from "lucide-react";
+import { Plus, Search, Package, LayoutGrid, List, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
@@ -10,6 +10,7 @@ import NewOrderDrawer from "@/components/orders/NewOrderDrawer";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import { SourceBadge } from "@/lib/opsDisplay";
 
 const statusConfig = {
   confirmed:     { label: "Confirmed",     color: "bg-blue-100 text-blue-700" },
@@ -184,15 +185,18 @@ export default function Orders() {
                     className="w-full text-left border-b border-border last:border-0 hover:bg-secondary/40 transition-all"
                   >
                     {/* Mobile */}
-                    <div className="md:hidden grid grid-cols-2 items-center px-5 py-4 gap-2">
-                      <div>
-                        <p className="font-medium text-foreground text-sm">{order.client_name}</p>
-                        <p className="text-xs text-muted-foreground">{order.order_number}</p>
+                    <div className="md:hidden px-4 py-4">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <SourceBadge source={order.source} />
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{sc.label}</span>
                       </div>
-                      <div className="text-right">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${sc.color}`}>{sc.label}</span>
+                      <p className="truncate text-base font-semibold text-foreground">{order.client_name || "Customer"}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span className="font-mono">{order.order_number}</span>
+                        <span>{order.due_date ? format(new Date(order.due_date), "d MMM") : "No due date"}</span>
+                        {order.total_amount ? <span className="font-semibold text-foreground">R{Number(order.total_amount).toLocaleString()}</span> : null}
                       </div>
-                      <div className="col-span-2">
+                      <div className="mt-2">
                         <OrderTagBadges order={order} />
                       </div>
                     </div>
@@ -236,7 +240,7 @@ export default function Orders() {
             {exceptionOrders.length > 0 && (
               <div className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-3">
                 <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-2">
-                  🚨 Exceptions ({exceptionOrders.length})
+                  <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Exceptions ({exceptionOrders.length})
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {exceptionOrders.map(order => (
@@ -347,6 +351,9 @@ function KanbanCard({ order, onClick, isDragging, isException }) {
           : "border-border shadow-sm hover:shadow-md hover:border-primary/20"
       }`}
     >
+      <div className="mb-1">
+        <SourceBadge source={order.source} />
+      </div>
       <p className="text-xs font-semibold text-foreground truncate mb-0.5">{order.client_name}</p>
       {order.order_number && (
         <p className="text-[10px] text-muted-foreground font-mono mb-1">{order.order_number}</p>
