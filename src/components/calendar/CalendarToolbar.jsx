@@ -4,10 +4,10 @@ import HelperHint from '@/components/common/HelperHint';
 import { eventColors } from './eventColors';
 
 const VIEWS = [
-  { key: 'twelveWeek', label: '12-Week', icon: Rows3 },
-  { key: 'calendar',   label: 'Month',   icon: Calendar },
-  { key: 'weekly',     label: 'Weekly',  icon: LayoutGrid },
-  { key: 'list',       label: 'List',    icon: List },
+  { key: 'twelveWeek', label: '12-Week Actions', icon: Rows3 },
+  { key: 'calendar',   label: 'Calendar Events', icon: Calendar },
+  { key: 'weekly',     label: 'Ops Week',  icon: LayoutGrid },
+  { key: 'list',       label: 'Ops Tasks',    icon: List },
 ];
 
 const CATEGORIES = Object.keys(eventColors);
@@ -34,7 +34,7 @@ export default function CalendarToolbar({
             }`}
           >
             <Icon className="w-3.5 h-3.5" />
-            {label}
+            <span>{label}</span>
             {key === 'twelveWeek' && (
               <HelperHint
                 storageKey="twelve_week_view"

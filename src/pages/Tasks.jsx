@@ -8,6 +8,7 @@ import { format, isPast } from "date-fns";
 import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 import { useArchive } from "@/hooks/useArchive";
+import RefreshButton from "@/components/common/RefreshButton";
 
 const priorityBar = {
   urgent: "bg-red-500",
@@ -48,6 +49,11 @@ export default function Tasks() {
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ["tasks"],
     queryFn: () => ents.Task.list("-created_date", 200),
+  });
+
+  const { data: users = [], isFetching: usersFetching } = useQuery({
+    queryKey: ["users"],
+    queryFn: () => ents.User.list("name", 200),
   });
 
   const updateMutation = useMutation({
@@ -101,9 +107,18 @@ export default function Tasks() {
               {" · "}{counts.done} done
             </p>
           </div>
-          <Button onClick={() => setShowNew(true)} className="gap-2 rounded-xl shadow-apple-sm">
-            <Plus className="w-4 h-4" /> New Task
-          </Button>
+          <div className="flex items-center gap-2">
+            <RefreshButton
+              isRefreshing={isLoading || usersFetching}
+              onRefresh={() => {
+                queryClient.invalidateQueries({ queryKey: ["tasks"] });
+                queryClient.invalidateQueries({ queryKey: ["users"] });
+              }}
+            />
+            <Button onClick={() => setShowNew(true)} className="gap-2 rounded-xl shadow-apple-sm">
+              <Plus className="w-4 h-4" /> New Task
+            </Button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -229,6 +244,7 @@ export default function Tasks() {
       {selectedTask && (
         <TaskDrawer
           task={selectedTask}
+          users={users}
           onClose={() => setSelectedTask(null)}
           onUpdate={(data) => {
             updateMutation.mutate({ id: selectedTask.id, data });
@@ -240,6 +256,7 @@ export default function Tasks() {
 
       {showNew && (
         <NewTaskForm
+          users={users}
           onClose={() => setShowNew(false)}
           onCreate={() => {
             queryClient.invalidateQueries({ queryKey: ["tasks"] });

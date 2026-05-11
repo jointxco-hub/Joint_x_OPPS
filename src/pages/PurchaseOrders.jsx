@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
 import POModal from "@/components/purchaseorders/POModal";
 import StockDemandPanel from "@/components/purchaseorders/StockDemandPanel";
+import RefreshButton from "@/components/common/RefreshButton";
 
 const statusConfig = {
   draft: { label: "Draft", className: "bg-secondary text-muted-foreground", icon: Package },
@@ -61,6 +62,11 @@ export default function PurchaseOrders() {
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
     queryFn: () => dataClient.entities.Order.list('-created_date', 100)
+  });
+
+  const { data: users = [], isFetching: usersFetching } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => dataClient.entities.User.list('name', 200)
   });
 
   const createMutation = useMutation({
@@ -261,8 +267,14 @@ export default function PurchaseOrders() {
         <POModal 
           po={selectedPO}
           supplier={selectedPO.supplier}
+          users={users}
           onClose={() => setSelectedPO(null)}
           onStatusChange={handleStatusChange}
+          onUpdate={async (data) => {
+            await dataClient.entities.PurchaseOrder.update(selectedPO.id, data);
+            setSelectedPO((prev) => ({ ...prev, ...data }));
+            queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+          }}
           onEdit={(po) => {
             setEditingPO(po);
             setSelectedPO(null);
@@ -338,6 +350,15 @@ export default function PurchaseOrders() {
             )}
           </div>
           <div className="flex gap-3">
+            <RefreshButton
+              isRefreshing={usersFetching}
+              onRefresh={() => {
+                queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+                queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+                queryClient.invalidateQueries({ queryKey: ['inventory'] });
+                queryClient.invalidateQueries({ queryKey: ['users'] });
+              }}
+            />
             <Button 
               variant="outline" 
               onClick={() => setShowDemand(true)}
@@ -371,7 +392,7 @@ export default function PurchaseOrders() {
             <CardContent className="p-5">
               <p className="text-sm text-muted-foreground">Total Value</p>
               <p className="text-3xl font-bold text-foreground mt-1">
-                R{activePOs.reduce((sum, po) => sum + (po.total || 0), 0).toLocaleString()}
+                R{activePOs.reduce((sum, po) => sum + Number(po.total_amount ?? po.total ?? 0), 0).toLocaleString()}
               </p>
             </CardContent>
           </Card>
@@ -481,7 +502,15 @@ export default function PurchaseOrders() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredPOs.map(po => (
-                  <POCard key={po.id} po={po} onClick={() => setSelectedPO(po)} getUrgency={getUrgency} />
+                  <div key={po.id} className="relative group">
+                    <Checkbox
+                      checked={selectedPOs.includes(po.id)}
+                      onCheckedChange={() => togglePOSelection(po.id)}
+                      onClick={(event) => event.stopPropagation()}
+                      className="absolute top-3 left-3 z-10 bg-white border-2"
+                    />
+                    <POCard po={po} onClick={() => setSelectedPO(po)} getUrgency={getUrgency} />
+                  </div>
                 ))}
               </div>
             )}
@@ -576,7 +605,7 @@ function POCard({ po, onClick, getUrgency }) {
               </span>
             )}
           </div>
-          <p className="text-lg font-bold text-foreground">R{(po.total || 0).toLocaleString()}</p>
+          <p className="text-lg font-bold text-foreground">R{Number(po.total_amount ?? po.total ?? 0).toLocaleString()}</p>
         </div>
       </CardContent>
     </Card>

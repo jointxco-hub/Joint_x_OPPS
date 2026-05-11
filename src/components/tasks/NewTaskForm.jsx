@@ -7,13 +7,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 
-export default function NewTaskForm({ onClose, onCreate }) {
+export default function NewTaskForm({ users = [], onClose, onCreate }) {
   const [form, setForm] = useState({
     title: "",
     description: "",
     status: "pending",
     priority: "medium",
     department: "",
+    assigned_to: "",
+    assigned_to_name: "",
     deadline: "",
   });
   const [loading, setLoading] = useState(false);
@@ -71,6 +73,31 @@ export default function NewTaskForm({ onClose, onCreate }) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Assigned To</label>
+            <Select
+              value={form.assigned_to || "_none"}
+              onValueChange={(value) => {
+                const user = users.find((item) => (item.email || item.user_email) === value);
+                setForm({
+                  ...form,
+                  assigned_to: value === "_none" ? "" : value,
+                  assigned_to_name: value === "_none" ? "" : user?.full_name || user?.name || "",
+                  assigned_user_id: value === "_none" ? "" : user?.id,
+                });
+              }}
+            >
+              <SelectTrigger className="rounded-xl"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_none">Unassigned</SelectItem>
+                {users.filter((user) => user.is_active !== false).map((user) => (
+                  <SelectItem key={user.id || user.email} value={user.email || user.user_email}>
+                    {user.full_name || user.name || user.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Deadline</label>

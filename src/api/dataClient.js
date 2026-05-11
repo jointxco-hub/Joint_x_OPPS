@@ -415,26 +415,53 @@ const ENTITY_CONFIG = {
       is_archived: 'is_archived',
     },
     normalize(row) {
+      const items = Array.isArray(row.items) ? row.items : [];
+      const totalAmount = Number(
+        row.total_amount ??
+        row.total ??
+        items.reduce((sum, item) => sum + Number(item?.total ?? (Number(item?.quantity ?? 0) * Number(item?.unit_price ?? 0))), 0)
+      );
       return {
         ...row,
         order_id: row.linked_order_id,
         due_date: row.expected_date,
+        expected_delivery: row.expected_delivery ?? row.expected_date,
+        order_date: row.order_date ?? row.created_at?.slice?.(0, 10),
+        supplier_name: row.supplier_name,
+        total: totalAmount,
+        subtotal: Number(row.subtotal ?? totalAmount),
+        total_amount: totalAmount,
         created_date: row.created_at,
         updated_date: row.updated_at,
       };
     },
     serialize(payload) {
+      const items = Array.isArray(payload.items) ? payload.items.map((item) => ({
+        ...item,
+        quantity: numberOrUndefined(item.quantity) ?? 0,
+        unit_price: numberOrUndefined(item.unit_price) ?? 0,
+        total: numberOrUndefined(item.total) ?? ((Number(item.quantity) || 0) * (Number(item.unit_price) || 0)),
+      })) : undefined;
+      const computedTotal = Array.isArray(items)
+        ? items.reduce((sum, item) => sum + Number(item.total ?? 0), 0)
+        : undefined;
       return compactObject({
         po_number: payload.po_number,
         supplier_id: payload.supplier_id,
+        supplier_name: payload.supplier_name,
         project_id: payload.project_id,
         linked_order_id: payload.linked_order_id ?? payload.order_id,
         status: payload.status,
-        items: payload.items,
+        items,
         notes: payload.notes,
-        total_amount: numberOrUndefined(payload.total_amount),
-        expected_date: payload.expected_date ?? payload.due_date,
+        subtotal: numberOrUndefined(payload.subtotal) ?? computedTotal,
+        total_amount: numberOrUndefined(payload.total_amount ?? payload.total) ?? computedTotal,
+        total: numberOrUndefined(payload.total) ?? numberOrUndefined(payload.total_amount) ?? computedTotal,
+        order_date: payload.order_date,
+        expected_date: payload.expected_date ?? payload.expected_delivery ?? payload.due_date,
+        expected_delivery: payload.expected_delivery ?? payload.expected_date ?? payload.due_date,
         received_date: payload.received_date,
+        comments: payload.comments,
         is_archived: payload.is_archived,
         archived_at: payload.archived_at,
       });

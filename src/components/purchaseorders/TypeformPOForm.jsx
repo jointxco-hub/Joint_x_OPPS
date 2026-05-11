@@ -15,7 +15,14 @@ export default function TypeformPOForm({
   onCancel
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formData, setFormData] = useState(purchaseOrder || {
+  const [formData, setFormData] = useState(purchaseOrder ? {
+    ...purchaseOrder,
+    supplier_ids: purchaseOrder.supplier_ids || (purchaseOrder.supplier_id ? [purchaseOrder.supplier_id] : []),
+    total: Number(purchaseOrder.total_amount ?? purchaseOrder.total ?? 0),
+    subtotal: Number(purchaseOrder.subtotal ?? purchaseOrder.total_amount ?? purchaseOrder.total ?? 0),
+    expected_delivery: purchaseOrder.expected_delivery || purchaseOrder.expected_date || purchaseOrder.due_date || "",
+    order_date: purchaseOrder.order_date || purchaseOrder.created_date?.slice?.(0, 10) || new Date().toISOString().split('T')[0],
+  } : {
     po_number: `PO-${Date.now().toString(36).toUpperCase()}`,
     supplier_ids: [],
     supplier_name: "",
@@ -98,7 +105,21 @@ export default function TypeformPOForm({
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
-    await onSubmit(formData);
+    const items = (formData.items || []).map(item => ({
+      ...item,
+      quantity: parseFloat(item.quantity) || 0,
+      unit_price: parseFloat(item.unit_price) || 0,
+      total: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0),
+    }));
+    const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+    await onSubmit({
+      ...formData,
+      items,
+      subtotal,
+      total: subtotal + (parseFloat(formData.tax) || 0),
+      total_amount: subtotal + (parseFloat(formData.tax) || 0),
+      expected_date: formData.expected_delivery,
+    });
     setIsSubmitting(false);
   };
 

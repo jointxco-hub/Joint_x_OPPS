@@ -75,6 +75,14 @@ export default function RolesManagement() {
     }
   });
 
+  const createUserMutation = useMutation({
+    mutationFn: (data) => dataClient.entities.User.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success("Person added");
+    }
+  });
+
   const assignRoleMutation = useMutation({
     mutationFn: (data) => dataClient.entities.UserRole.create(data),
     onSuccess: () => {
@@ -133,6 +141,7 @@ export default function RolesManagement() {
           userRoles={userRoles}
           onSystemRoleChange={(user, role) => updateUserMutation.mutate({ id: user.id, data: { role } })}
           onDeactivate={(user) => updateUserMutation.mutate({ id: user.id, data: { is_active: false } })}
+          onInvite={(data) => createUserMutation.mutate(data)}
           onAssign={(userEmail, roleKey) => assignRoleMutation.mutate({ user_email: userEmail, role_key: roleKey, is_primary: !userRoles.some(r => r.user_email === userEmail) })}
           onRemove={(assignment) => removeRoleMutation.mutate(assignment.id)}
           onPrimary={(userEmail, assignment) => setPrimaryMutation.mutate({ userEmail, assignment })}
@@ -238,8 +247,9 @@ export default function RolesManagement() {
   );
 }
 
-function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDeactivate, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
+  const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
   const activeUsers = users.filter(u => u.is_active !== false);
   const roleByKey = Object.fromEntries(roles.map(r => [r.key, r]));
 
@@ -252,6 +262,32 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
+          <p className="mb-3 text-sm font-semibold text-slate-900">Add person by email</p>
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_1fr_140px_auto]">
+            <Input placeholder="Full name" value={invite.name} onChange={(e) => setInvite({ ...invite, name: e.target.value })} />
+            <Input placeholder="email@example.com" value={invite.email} onChange={(e) => setInvite({ ...invite, email: e.target.value })} />
+            <Select value={invite.role} onValueChange={(role) => setInvite({ ...invite, role })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="user">User</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="investor">Investor</SelectItem>
+                <SelectItem value="onboarding">Onboarding</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              type="button"
+              disabled={!invite.email.trim()}
+              onClick={() => {
+                onInvite({ email: invite.email.trim(), full_name: invite.name.trim() || invite.email.trim(), role: invite.role, is_active: true });
+                setInvite({ email: "", name: "", role: "user" });
+              }}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
         {activeUsers.length === 0 ? (
           <p className="text-sm text-slate-500">No users found yet.</p>
         ) : activeUsers.map(user => {

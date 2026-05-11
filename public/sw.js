@@ -43,3 +43,27 @@ self.addEventListener("fetch", (event) => {
     )
   );
 });
+
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { title: "Joint X update", body: event.data?.text() || "You have a new app update." };
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "Joint X update", {
+      body: payload.body || "You have a new notification.",
+      icon: "/icons/icon-192.svg",
+      badge: "/icons/icon-192.svg",
+      data: payload.url || "/",
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data || "/";
+  event.waitUntil(self.clients.openWindow(url));
+});

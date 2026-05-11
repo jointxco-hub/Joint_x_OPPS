@@ -3,6 +3,9 @@ import { Calculator as CalcIcon, Plus, Trash2, RefreshCw, Save, FolderOpen, X } 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useQuery } from "@tanstack/react-query";
+import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 
 const STORAGE_KEY = "jx_calc_saves";
@@ -39,6 +42,17 @@ export default function Calculator() {
   const [showSaves, setShowSaves] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [showSaveInput, setShowSaveInput] = useState(false);
+  const [budgetContext, setBudgetContext] = useState("");
+
+  const { data: inventory = [] } = useQuery({
+    queryKey: ["inventory"],
+    queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
+  });
+
+  const { data: orders = [] } = useQuery({
+    queryKey: ["orders"],
+    queryFn: () => dataClient.entities.Order.list("-created_date", 100),
+  });
 
   // Keep saves in sync with localStorage
   useEffect(() => { persistSaves(saves); }, [saves]);
@@ -59,6 +73,22 @@ export default function Calculator() {
     setNewLabel("");
   };
 
+  const addInventoryItem = (inventoryId) => {
+    const item = inventory.find((entry) => entry.id === inventoryId);
+    if (!item) return;
+    setItems([
+      ...items,
+      {
+        id: Date.now(),
+        inventory_item_id: item.id,
+        label: item.name,
+        value: Number(item.cost_price || 0),
+        source: "inventory_supplier_cost",
+      },
+    ]);
+    toast.success(`${item.name} added at supplier cost`);
+  };
+
   const reset = () => { setItems(DEFAULT_ITEMS); setQuantity(1); setMargin(40); };
   const applyPreset = (preset) => {
     setItems(preset.items.map((item, index) => ({ id: Date.now() + index, ...item })));
@@ -66,8 +96,8 @@ export default function Calculator() {
   };
 
   const saveCalc = () => {
-    const name = saveName.trim() || `Quote ${new Date().toLocaleDateString("en-ZA")}`;
-    const entry = { id: Date.now(), name, items, quantity, margin, savedAt: new Date().toISOString() };
+    const name = saveName.trim() || `Budget ${new Date().toLocaleDateString("en-ZA")}`;
+    const entry = { id: Date.now(), name, items, quantity, margin, budgetContext, savedAt: new Date().toISOString() };
     setSaves(s => [entry, ...s].slice(0, 20));
     setSaveName("");
     setShowSaveInput(false);
@@ -78,6 +108,7 @@ export default function Calculator() {
     setItems(entry.items);
     setQuantity(entry.quantity);
     setMargin(entry.margin);
+    setBudgetContext(entry.budgetContext || "");
     setShowSaves(false);
     toast.success(`Loaded "${entry.name}"`);
   };
@@ -95,8 +126,8 @@ export default function Calculator() {
             <CalcIcon className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground tracking-tight">Pricing Calculator</h1>
-            <p className="text-muted-foreground text-sm">Cost + Margin = Price</p>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Budget Calculator</h1>
+            <p className="text-muted-foreground text-sm">Supplier cost + quantity = order budget</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -116,13 +147,13 @@ export default function Calculator() {
         {showSaves && (
           <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-4 mb-4">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-semibold text-foreground">Saved Quotes</p>
+              <p className="text-sm font-semibold text-foreground">Saved Budgets</p>
               <button onClick={() => setShowSaves(false)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
             </div>
             {saves.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-4">No saved quotes yet</p>
+              <p className="text-xs text-muted-foreground text-center py-4">No saved budgets yet</p>
             ) : (
               <div className="space-y-2 max-h-52 overflow-y-auto">
                 {saves.map(entry => (
@@ -159,6 +190,39 @@ export default function Calculator() {
                   {preset.label}
                 </button>
               ))}
+            </div>
+          </div>
+          <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Budget for order / batch</label>
+              <Select value={budgetContext || "_custom"} onValueChange={(value) => setBudgetContext(value === "_custom" ? "" : value)}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Select order..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_custom">Custom / no order</SelectItem>
+                  {orders.map((order) => (
+                    <SelectItem key={order.id} value={`${order.order_number || order.id} - ${order.client_name || "Order"}`}>
+                      {order.order_number || order.id} - {order.client_name || "Order"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Add inventory supplier cost</label>
+              <Select value="" onValueChange={addInventoryItem}>
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Select inventory item..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {inventory.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name} - R{Number(item.cost_price || 0).toFixed(2)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="space-y-3 mb-4">
@@ -220,8 +284,9 @@ export default function Calculator() {
             <ResultRow label={`Profit (${margin}%)`} value={`+R${profitAmount.toFixed(2)}`} />
             <ResultRow label="True Profit Margin" value={`${actualMargin.toFixed(1)}%`} />
             <div className="pt-3 border-t border-white/20">
-              <ResultRow label="SELLING PRICE / UNIT" value={`R${finalPrice.toFixed(2)}`} large />
+              <ResultRow label="EST. SELLING PRICE / UNIT" value={`R${finalPrice.toFixed(2)}`} large />
             </div>
+            <ResultRow label={`Budget needed (${quantity} x supplier cost)`} value={`R${totalCost.toFixed(2)}`} />
             <ResultRow label={`Total Revenue (${quantity} × R${finalPrice.toFixed(2)})`} value={`R${totalRevenue.toFixed(2)}`} />
           </div>
         </div>
@@ -232,7 +297,7 @@ export default function Calculator() {
             <Input
               value={saveName}
               onChange={e => setSaveName(e.target.value)}
-              placeholder="Quote name (e.g. JHG Merch Run)"
+              placeholder="Budget name (e.g. JHG batch blanks)"
               className="rounded-xl"
               onKeyDown={e => e.key === "Enter" && saveCalc()}
               autoFocus
@@ -246,7 +311,7 @@ export default function Calculator() {
           </div>
         ) : (
           <Button variant="outline" onClick={() => setShowSaveInput(true)} className="w-full rounded-xl gap-2">
-            <Save className="w-4 h-4" /> Save this quote
+            <Save className="w-4 h-4" /> Save this budget
           </Button>
         )}
       </div>

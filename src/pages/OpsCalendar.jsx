@@ -23,6 +23,7 @@ import TwelveWeekView from "@/components/calendar/TwelveWeekView";
 import EventModal from "@/components/calendar/EventModal";
 import { useActiveCompanyCycle } from "@/hooks/useActiveCompanyCycle";
 import { eventColors } from "@/components/calendar/eventColors";
+import RefreshButton from "@/components/common/RefreshButton";
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
@@ -183,13 +184,9 @@ export default function OpsCalendar() {
               {activeCycle ? `Cycle: ${activeCycle.name}` : 'Day-to-day operations — team tasks, production & communication'}
             </p>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); queryClient.invalidateQueries({ queryKey: ['calendarEvents'] }); }}
-          >
-            <RefreshCw className="w-4 h-4" />
-          </Button>
+          <RefreshButton
+            onRefresh={() => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); queryClient.invalidateQueries({ queryKey: ['calendarEvents'] }); }}
+          />
         </div>
 
         {/* Unified toolbar (new) — includes view switcher + category filters + new event */}

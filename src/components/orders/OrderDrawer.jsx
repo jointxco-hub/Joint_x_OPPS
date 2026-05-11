@@ -27,6 +27,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
+import MediaPreview from "@/components/common/MediaPreview";
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-blue-100 text-blue-700" },
@@ -525,28 +526,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               </label>
               {order.file_urls?.length > 0 ? (
                 <div className="grid grid-cols-3 gap-2">
-                  {order.file_urls.map((/** @type {string} */ url, /** @type {number} */ i) => {
-                    const isImg = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
-                    const isVid = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url);
-                    return (
-                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                        className="aspect-square rounded-xl overflow-hidden border border-border bg-secondary/30 flex items-center justify-center hover:border-primary/30 transition-all group">
-                        {isImg ? (
-                          <img src={url} alt={`File ${i + 1}`} className="w-full h-full object-cover" />
-                        ) : isVid ? (
-                          <div className="flex flex-col items-center gap-1 text-muted-foreground group-hover:text-foreground transition-colors">
-                            <Play className="w-6 h-6" />
-                            <span className="text-[10px]">Video</span>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-1 text-muted-foreground group-hover:text-foreground transition-colors">
-                            <Paperclip className="w-6 h-6" />
-                            <span className="text-[10px]">File {i + 1}</span>
-                          </div>
-                        )}
-                      </a>
-                    );
-                  })}
+                  {order.file_urls.map((/** @type {string} */ url, /** @type {number} */ i) => (
+                    <MediaPreview key={url} url={url} title={`Order file ${i + 1}`} />
+                  ))}
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground text-center py-4">No files attached</p>
