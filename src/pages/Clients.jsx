@@ -25,11 +25,34 @@ export default function Clients() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => dataClient.entities.Client.create(data),
+    mutationFn: async (data) => {
+      const client = await dataClient.entities.Client.create(data);
+      if (client?.id) {
+        try {
+          // Ensure root "Clients" folder exists
+          const allFolders = await dataClient.entities.Folder.list('-created_date', 500);
+          let rootFolder = allFolders.find(f => !f.is_archived && !f.parent_id && f.name === 'Clients');
+          if (!rootFolder) {
+            rootFolder = await dataClient.entities.Folder.create({ name: 'Clients', color: 'blue', parent_id: null });
+          }
+          // Create sub-folder for this client
+          await dataClient.entities.Folder.create({
+            name: client.name || data.name,
+            color: 'green',
+            parent_id: rootFolder.id,
+            client_id: client.id,
+          });
+        } catch {
+          // Folder creation is best-effort — don't block client save
+        }
+      }
+      return client;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
+      queryClient.invalidateQueries({ queryKey: ['folders'] });
       setShowForm(false);
-      toast.success("Client created!");
+      toast.success("Client created! Folder auto-created in Files.");
     }
   });
 

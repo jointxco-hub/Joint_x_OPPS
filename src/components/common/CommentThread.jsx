@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Send, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
+
+const REACTIONS = ["👍", "❤️", "✅", "🔥", "🙌"];
 
 const VISIBILITY = [
   { value: "internal", label: "Internal" },
@@ -55,7 +57,27 @@ export default function CommentThread({
   const [text, setText] = useState("");
   const [taggedEmail, setTaggedEmail] = useState("_none");
   const [visibility, setVisibility] = useState("internal");
+  const [myEmail, setMyEmail] = useState("");
   const activeUsers = useMemo(() => users.filter((user) => user.is_active !== false), [users]);
+
+  useEffect(() => {
+    dataClient.auth.me().then(u => { if (u?.email) setMyEmail(u.email); }).catch(() => {});
+  }, []);
+
+  const toggleReaction = (commentId, emoji) => {
+    const updated = comments.map(c => {
+      if ((c.id || c.created_at) !== commentId) return c;
+      const reactions = { ...(c.reactions || {}) };
+      const list = reactions[emoji] ? [...reactions[emoji]] : [];
+      const idx = list.indexOf(myEmail);
+      if (idx === -1) list.push(myEmail);
+      else list.splice(idx, 1);
+      if (list.length === 0) delete reactions[emoji];
+      else reactions[emoji] = list;
+      return { ...c, reactions };
+    });
+    onChange(updated);
+  };
 
   const addComment = async () => {
     const trimmed = text.trim();
@@ -103,8 +125,9 @@ export default function CommentThread({
         ) : comments.map((comment) => {
           const author = comment.author_name || comment.author || comment.author_email || "Unknown";
           const created = comment.created_at || comment.timestamp;
+          const commentId = comment.id || created;
           return (
-            <div key={comment.id || `${author}-${created}`} className="rounded-xl border border-border bg-card p-3">
+            <div key={commentId} className="rounded-xl border border-border bg-card p-3">
               <div className="flex items-start gap-2">
                 <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
                   {getInitials(author)}
@@ -118,7 +141,7 @@ export default function CommentThread({
                   </div>
                   <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{comment.text}</p>
                   {(comment.mentions || []).length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
+                    <div className="mt-1.5 flex flex-wrap gap-1">
                       {comment.mentions.map((mention) => (
                         <Badge key={mention.email || mention.name} className="rounded-full bg-primary/10 text-primary hover:bg-primary/10">
                           @{mention.name || mention.email}
@@ -126,6 +149,27 @@ export default function CommentThread({
                       ))}
                     </div>
                   )}
+                  {/* Emoji reactions */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1">
+                    {REACTIONS.map(emoji => {
+                      const list = comment.reactions?.[emoji] || [];
+                      const active = myEmail && list.includes(myEmail);
+                      return (
+                        <button
+                          key={emoji}
+                          onClick={() => toggleReaction(commentId, emoji)}
+                          className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs border transition-all ${
+                            active
+                              ? "bg-primary/10 border-primary/30 text-primary"
+                              : "bg-secondary/50 border-transparent text-muted-foreground hover:bg-secondary"
+                          }`}
+                          title={list.length ? list.join(", ") : "React"}
+                        >
+                          {emoji}{list.length > 0 && <span className="font-medium ml-0.5">{list.length}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>

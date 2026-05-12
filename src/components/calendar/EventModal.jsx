@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { dataClient } from '@/api/dataClient';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -15,6 +15,11 @@ const CATEGORIES = [
 export default function EventModal({ open, onClose, event = null }) {
   const qc = useQueryClient();
   const isEdit = !!event;
+  const [ownerEmail, setOwnerEmail] = useState('');
+
+  useEffect(() => {
+    dataClient.auth.me().then(u => { if (u?.email) setOwnerEmail(u.email); }).catch(() => {});
+  }, []);
 
   const [form, setForm] = useState({
     title: event?.title ?? '',
@@ -47,7 +52,7 @@ export default function EventModal({ open, onClose, event = null }) {
       toast.error('Title and start time are required');
       return;
     }
-    mutation.mutate(form);
+    mutation.mutate({ ...form, owner_email: ownerEmail || undefined });
   };
 
   return (

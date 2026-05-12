@@ -4,7 +4,7 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, ShoppingCart, AlertTriangle, Copy, Check,
-  Play, User
+  Play, User, FileText
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -251,7 +251,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
         {/* Tabs */}
         <div className="flex border-b border-border px-5 overflow-x-auto">
-          {['details', 'payments', 'tasks', 'po', 'tracking', 'files'].map(t => (
+          {['details', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices'].map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
@@ -265,6 +265,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               )}
               {t === 'po' && linkedPO && (
                 <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">1</span>
+              )}
+              {t === 'invoices' && (order.invoice_files?.length || 0) > 0 && (
+                <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1 rounded-full">{order.invoice_files.length}</span>
               )}
             </button>
           ))}
@@ -535,6 +538,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               )}
             </div>
           )}
+
+          {tab === 'invoices' && (
+            <InvoicesTab order={order} onUpdate={onUpdate} />
+          )}
         </div>
 
         {/* Archive */}
@@ -603,6 +610,100 @@ function TimelineEntry({ icon, label, time }) {
         <p className="text-xs font-medium text-foreground">{label}</p>
         {time && <p className="text-xs text-muted-foreground">{format(new Date(time), 'MMM d, yyyy')}</p>}
       </div>
+    </div>
+  );
+}
+
+function InvoicesTab({ order, onUpdate }) {
+  const [uploading, setUploading] = useState(false);
+
+  const uploadInvoice = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+      const existing = order.invoice_files || [];
+      onUpdate(order.id, {
+        invoice_files: [
+          ...existing,
+          {
+            name: file.name,
+            url: file_url,
+            type: file.type,
+            uploaded_at: new Date().toISOString(),
+            source: 'zoho_books',
+          },
+        ],
+      });
+      toast.success("Invoice uploaded");
+    } catch {
+      toast.error("Upload failed");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  };
+
+  const removeInvoice = (idx) => {
+    const updated = (order.invoice_files || []).filter((_, i) => i !== idx);
+    onUpdate(order.id, { invoice_files: updated });
+  };
+
+  const invoices = order.invoice_files || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
+        <p className="text-xs font-semibold text-amber-800 mb-0.5">Zoho Books Invoices</p>
+        <p className="text-xs text-amber-700">
+          Upload manually invoiced Zoho Books PDFs here. These are stored directly on this order.
+        </p>
+      </div>
+
+      <label className="cursor-pointer block">
+        <div className={`flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-2xl transition-all ${
+          uploading ? 'border-border opacity-60' : 'border-amber-300 hover:border-amber-400 hover:bg-amber-50/50'
+        }`}>
+          <Paperclip className="w-4 h-4 text-amber-600" />
+          <span className="text-sm text-amber-700 font-medium">
+            {uploading ? 'Uploading invoice…' : 'Upload Zoho Books invoice'}
+          </span>
+        </div>
+        <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadInvoice} disabled={uploading} />
+      </label>
+
+      {invoices.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4 bg-secondary/30 rounded-xl">
+          No invoices uploaded yet
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {invoices.map((inv, i) => (
+            <div key={i} className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <FileText className="w-4 h-4 text-amber-700" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <a href={inv.url} target="_blank" rel="noopener noreferrer"
+                  className="text-sm font-medium text-amber-800 hover:underline truncate block">
+                  {inv.name}
+                </a>
+                <p className="text-xs text-amber-600 mt-0.5">
+                  Zoho Books · {inv.uploaded_at ? format(new Date(inv.uploaded_at), 'd MMM yyyy') : 'Uploaded'}
+                </p>
+              </div>
+              <button
+                onClick={() => removeInvoice(i)}
+                className="flex-shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                title="Remove"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

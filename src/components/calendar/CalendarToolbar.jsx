@@ -1,10 +1,8 @@
 import { Button } from '@/components/ui/button';
-import { Plus, LayoutGrid, List, Calendar, Rows3 } from 'lucide-react';
-import HelperHint from '@/components/common/HelperHint';
+import { Plus, LayoutGrid, List, Calendar } from 'lucide-react';
 import { eventColors } from './eventColors';
 
 const VIEWS = [
-  { key: 'twelveWeek', label: '12-Week Actions', icon: Rows3 },
   { key: 'calendar',   label: 'Calendar Events', icon: Calendar },
   { key: 'weekly',     label: 'Ops Week',  icon: LayoutGrid },
   { key: 'list',       label: 'Ops Tasks',    icon: List },
@@ -35,14 +33,6 @@ export default function CalendarToolbar({
           >
             <Icon className="w-3.5 h-3.5" />
             <span>{label}</span>
-            {key === 'twelveWeek' && (
-              <HelperHint
-                storageKey="twelve_week_view"
-                title="12 Week View"
-                body="Your full cycle on one screen — 12 weeks across, 7 days down. Today is highlighted."
-                learnMore="From the 12 Week Year — see the whole cycle at a glance."
-              />
-            )}
           </button>
         ))}
       </div>

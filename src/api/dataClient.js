@@ -161,8 +161,11 @@ const ENTITY_CONFIG = {
         tracking_number: payload.tracking_number ?? payload.tracking_code,
         file_urls: payload.file_urls,
         assigned_team: payload.assigned_team,
+        assigned_to: payload.assigned_to,
+        pipeline_stage: payload.pipeline_stage,
         print_type: normalizePrintType(payload.print_type),
         linked_po_id: payload.linked_po_id,
+        invoice_files: payload.invoice_files,
         is_archived: payload.is_archived,
         archived_at: payload.archived_at,
         archived_by: payload.archived_by,
@@ -229,6 +232,7 @@ const ENTITY_CONFIG = {
       due_date: 'deadline',
       week_number: 'week_number',
       status: 'status',
+      order_id: 'order_id',
     },
     normalize(row) {
       return {
