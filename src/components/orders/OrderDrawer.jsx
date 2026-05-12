@@ -4,7 +4,7 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, ShoppingCart, AlertTriangle, Copy, Check,
-  Play, User, FileText
+  Play, User, FileText, Plus
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -51,6 +51,11 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [uploading, setUploading] = useState(false);
   const [showException, setShowException] = useState(false);
   const [localPipelineStage, setLocalPipelineStage] = useState(order.pipeline_stage);
+  const [showNewTask, setShowNewTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskPriority, setNewTaskPriority] = useState("medium");
+  const [newTaskDeadline, setNewTaskDeadline] = useState("");
+  const [newTaskAssignee, setNewTaskAssignee] = useState("_none");
   const queryClient = useQueryClient();
 
   const { data: payments = [] } = useQuery({
@@ -58,10 +63,17 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     queryFn: () => dataClient.entities.Payment.filter({ order_id: order.id })
   });
 
-  const { data: orderTasks = [] } = useQuery({
+  const { data: legacyTasks = [] } = useQuery({
     queryKey: ['orderTasks', order.id],
     queryFn: () => dataClient.entities.Task.filter({ linked_order_id: order.id })
   });
+
+  const { data: linkedOpsTasks = [] } = useQuery({
+    queryKey: ['orderOpsTasks', order.id],
+    queryFn: () => dataClient.entities.OpsTask.filter({ order_id: order.id })
+  });
+
+  const allLinkedTasks = [...legacyTasks, ...linkedOpsTasks];
 
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
@@ -124,6 +136,33 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       payment_status: 'completed',
       payment_date: new Date().toISOString().split('T')[0],
       notes: paymentForm.notes,
+    });
+  };
+
+  const createTaskMutation = useMutation({
+    mutationFn: (data) => dataClient.entities.OpsTask.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['orderOpsTasks', order.id] });
+      queryClient.invalidateQueries({ queryKey: ['opsTasks'] });
+      setShowNewTask(false);
+      setNewTaskTitle("");
+      setNewTaskPriority("medium");
+      setNewTaskDeadline("");
+      setNewTaskAssignee("_none");
+      toast.success("Task created and linked to this order");
+    }
+  });
+
+  const handleCreateTask = () => {
+    if (!newTaskTitle.trim()) return;
+    createTaskMutation.mutate({
+      title: newTaskTitle.trim(),
+      status: "not_started",
+      priority: newTaskPriority,
+      deadline: newTaskDeadline || undefined,
+      assigned_to: newTaskAssignee && newTaskAssignee !== "_none" ? [newTaskAssignee] : [],
+      order_id: order.id,
+      notes: `Order #${order.order_number || ''} — ${order.client_name || ''}`.trim(),
     });
   };
 
@@ -260,8 +299,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               {t === 'payments' && payments.length > 0 && (
                 <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">{payments.length}</span>
               )}
-              {t === 'tasks' && orderTasks.length > 0 && (
-                <span className="ml-1 text-xs bg-secondary text-muted-foreground px-1 rounded-full">{orderTasks.length}</span>
+              {t === 'tasks' && allLinkedTasks.length > 0 && (
+                <span className="ml-1 text-xs bg-secondary text-muted-foreground px-1 rounded-full">{allLinkedTasks.length}</span>
               )}
               {t === 'po' && linkedPO && (
                 <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">1</span>
@@ -407,20 +446,100 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           )}
 
           {tab === 'tasks' && (
-            <div className="space-y-2">
-              {orderTasks.length === 0 ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Linked Tasks ({allLinkedTasks.length})
+                </p>
+                <button
+                  onClick={() => setShowNewTask(v => !v)}
+                  className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Task
+                </button>
+              </div>
+
+              {showNewTask && (
+                <div className="bg-secondary/30 rounded-2xl p-3 space-y-2.5 border border-border">
+                  <Input
+                    value={newTaskTitle}
+                    onChange={e => setNewTaskTitle(e.target.value)}
+                    placeholder={`Task for ${order.client_name || 'this order'}…`}
+                    className="rounded-xl h-9 text-sm"
+                    autoFocus
+                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleCreateTask()}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Select value={newTaskPriority} onValueChange={setNewTaskPriority}>
+                      <SelectTrigger className="h-8 rounded-xl text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {['urgent','high','medium','low'].map(p => (
+                          <SelectItem key={p} value={p} className="capitalize text-xs">{p}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input type="date" value={newTaskDeadline} onChange={e => setNewTaskDeadline(e.target.value)} className="h-8 rounded-xl text-xs" />
+                  </div>
+                  <Select value={newTaskAssignee} onValueChange={setNewTaskAssignee}>
+                    <SelectTrigger className="h-8 rounded-xl text-xs"><SelectValue placeholder="Assign to…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_none">Unassigned</SelectItem>
+                      {users.filter(u => u.is_active !== false).map(u => (
+                        <SelectItem key={u.id || u.email} value={u.email || u.user_email} className="text-xs">
+                          {u.full_name || u.name || u.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1 h-8 rounded-xl text-xs"
+                      onClick={handleCreateTask}
+                      disabled={!newTaskTitle.trim() || createTaskMutation.isPending}
+                    >
+                      {createTaskMutation.isPending ? 'Creating…' : 'Create Task'}
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => setShowNewTask(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {allLinkedTasks.length === 0 ? (
                 <div className="text-center py-8">
                   <CheckCircle2 className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">No tasks linked to this order</p>
+                  <button onClick={() => setShowNewTask(true)} className="mt-2 text-xs text-primary font-medium">Add first task</button>
                 </div>
-              ) : orderTasks.map(task => (
+              ) : allLinkedTasks.map(task => (
                 <div key={task.id} className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${task.status === 'done' ? 'bg-green-500' : task.status === 'in_progress' ? 'bg-blue-500' : 'bg-amber-500'}`} />
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    task.status === 'complete' || task.status === 'done' ? 'bg-green-500' :
+                    task.status === 'in_progress' ? 'bg-primary' :
+                    task.status === 'on_hold' ? 'bg-orange-400' : 'bg-amber-400'
+                  }`} />
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium ${task.status === 'done' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{task.title}</p>
-                    {task.deadline && <p className="text-xs text-muted-foreground">{format(new Date(task.deadline), 'MMM d')}</p>}
+                    <p className={`text-sm font-medium truncate ${task.status === 'complete' || task.status === 'done' ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+                      {task.title}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {task.deadline && <span className="text-xs text-muted-foreground">{format(new Date(task.deadline), 'MMM d')}</span>}
+                      {Array.isArray(task.assigned_to) && task.assigned_to.length > 0 && (
+                        <span className="text-xs text-muted-foreground truncate">{task.assigned_to[0]}</span>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-xs capitalize text-muted-foreground">{task.status?.replace('_', ' ')}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${
+                    task.status === 'complete' || task.status === 'done' ? 'bg-green-100 text-green-700' :
+                    task.status === 'in_progress' ? 'bg-primary/10 text-primary' :
+                    task.status === 'on_hold' ? 'bg-orange-100 text-orange-700' :
+                    'bg-slate-100 text-slate-600'
+                  }`}>
+                    {(task.status || 'pending').replace(/_/g, ' ')}
+                  </span>
                 </div>
               ))}
             </div>
