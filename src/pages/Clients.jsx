@@ -85,7 +85,7 @@ export default function Clients() {
   });
 
   const statusConfig = {
-    lead: { label: "Lead", color: "bg-blue-100 text-blue-700" },
+    lead: { label: "Lead", color: "bg-primary/10 text-primary" },
     active: { label: "Active", color: "bg-green-100 text-green-700" },
     completed: { label: "Completed", color: "bg-slate-100 text-slate-700" },
     dormant: { label: "Dormant", color: "bg-amber-100 text-amber-700" }
@@ -111,7 +111,7 @@ export default function Clients() {
             >
               <RefreshCw className="w-4 h-4" />
             </Button>
-            <Button onClick={() => setShowForm(true)} className="bg-slate-900 hover:bg-slate-800">
+            <Button onClick={() => setShowForm(true)}>
               <Plus className="w-4 h-4 mr-2" /> New Client
             </Button>
           </div>

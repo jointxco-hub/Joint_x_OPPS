@@ -30,7 +30,7 @@ import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import MediaPreview from "@/components/common/MediaPreview";
 
 const statusConfig = {
-  confirmed: { label: "Confirmed", color: "bg-blue-100 text-blue-700" },
+  confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
   in_production: { label: "In Production", color: "bg-purple-100 text-purple-700" },
   ready: { label: "Ready", color: "bg-green-100 text-green-700" },
   shipped: { label: "Shipped", color: "bg-teal-100 text-teal-700" },
@@ -215,7 +215,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
             <CreditCard className="w-3 h-3" /> Add Payment
           </button>
           <label className="flex-shrink-0 cursor-pointer">
-            <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all">
+            <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all">
               <Paperclip className="w-3 h-3" /> {uploading ? 'Uploading...' : 'Upload File'}
             </span>
             <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />

@@ -8,12 +8,12 @@ export const sourceMeta = {
   },
   x1: {
     label: "X1",
-    tone: "bg-blue-50 text-blue-700 border-blue-100",
+    tone: "bg-primary/10 text-primary border-primary/20",
     Icon: Package,
   },
   x1_sample: {
     label: "X1",
-    tone: "bg-blue-50 text-blue-700 border-blue-100",
+    tone: "bg-primary/10 text-primary border-primary/20",
     Icon: Package,
   },
   manual: {

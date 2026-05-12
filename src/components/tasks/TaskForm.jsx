@@ -164,7 +164,7 @@ export default function TaskForm({ task, orders = [], onSubmit, onCancel }) {
             <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
               Cancel
             </Button>
-            <Button type="submit" className="flex-1 bg-slate-900 hover:bg-slate-800">
+            <Button type="submit" className="flex-1">
               {task ? "Update Task" : "Create Task"}
             </Button>
           </div>

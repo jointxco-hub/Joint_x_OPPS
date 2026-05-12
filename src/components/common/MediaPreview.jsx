@@ -12,7 +12,8 @@ function isVideo(url = "") {
 
 export default function MediaPreview({ url, title = "Attachment", className = "" }) {
   const [open, setOpen] = useState(false);
-  const image = isImage(url);
+  const [imgError, setImgError] = useState(false);
+  const image = isImage(url) && !imgError;
   const video = isVideo(url);
 
   return (
@@ -23,7 +24,7 @@ export default function MediaPreview({ url, title = "Attachment", className = ""
         className={`aspect-square overflow-hidden rounded-xl border border-border bg-secondary/30 transition-all hover:border-primary/40 ${className}`}
       >
         {image ? (
-          <img src={url} alt={title} loading="lazy" className="h-full w-full object-cover" />
+          <img src={url} alt={title} loading="lazy" className="h-full w-full object-cover" onError={() => setImgError(true)} />
         ) : video ? (
           <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-muted-foreground">
             <Play className="h-6 w-6" />
@@ -54,8 +55,8 @@ export default function MediaPreview({ url, title = "Attachment", className = ""
               </div>
             </div>
             <div className="flex max-h-[78vh] items-center justify-center overflow-hidden rounded-xl bg-secondary/30">
-              {image ? (
-                <img src={url} alt={title} className="max-h-[78vh] max-w-full object-contain" />
+              {isImage(url) && !imgError ? (
+                <img src={url} alt={title} className="max-h-[78vh] max-w-full object-contain" onError={() => setImgError(true)} />
               ) : video ? (
                 <video src={url} controls className="max-h-[78vh] max-w-full" />
               ) : (

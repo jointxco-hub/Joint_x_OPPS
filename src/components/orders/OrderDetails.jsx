@@ -24,7 +24,7 @@ const printTypeLabels = {
 
 const priorityColors = {
   low: "bg-slate-100 text-slate-700",
-  normal: "bg-blue-100 text-blue-700",
+  normal: "bg-primary/10 text-primary",
   high: "bg-orange-100 text-orange-700",
   urgent: "bg-red-100 text-red-700"
 };
@@ -172,7 +172,7 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
           {/* Tracking & WhatsApp */}
           <div className="space-y-4">
             <h3 className="font-semibold text-slate-700">Client Tracking</h3>
-            <div className="bg-slate-900 text-white rounded-lg p-4">
+            <div className="bg-foreground text-white rounded-lg p-4">
               <p className="text-xs text-slate-400 mb-1">Tracking Code</p>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-2xl font-mono font-bold">{order.tracking_code}</span>

@@ -34,7 +34,7 @@ import WamPanel from "@/components/hub/WamPanel";
 
 const opsStatusColors = {
   not_started: "bg-slate-100 text-slate-700",
-  in_progress: "bg-blue-100 text-blue-700",
+  in_progress: "bg-primary/10 text-primary",
   complete: "bg-green-100 text-green-700",
   on_hold: "bg-orange-100 text-orange-700",
 };

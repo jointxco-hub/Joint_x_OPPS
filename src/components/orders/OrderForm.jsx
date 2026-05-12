@@ -230,7 +230,7 @@ export default function OrderForm({ order, onSubmit, onCancel }) {
             <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
               Cancel
             </Button>
-            <Button type="submit" className="flex-1 bg-slate-900 hover:bg-slate-800">
+            <Button type="submit" className="flex-1">
               {order ? "Update Order" : "Create Order"}
             </Button>
           </div>

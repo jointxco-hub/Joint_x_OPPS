@@ -8,7 +8,7 @@ import { ShoppingCart, AlertTriangle, Check } from "lucide-react";
 const statusConfig = {
   draft: { label: "Draft", className: "bg-slate-100 text-slate-700" },
   pending: { label: "Pending Approval", className: "bg-amber-100 text-amber-700" },
-  approved: { label: "Approved", className: "bg-blue-100 text-blue-700" },
+  approved: { label: "Approved", className: "bg-primary/10 text-primary" },
   ordered: { label: "Ordered", className: "bg-purple-100 text-purple-700" },
   partial: { label: "Partial", className: "bg-orange-100 text-orange-700" },
   received: { label: "Received", className: "bg-emerald-100 text-emerald-700" },

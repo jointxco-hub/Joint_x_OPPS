@@ -8,7 +8,7 @@ import CommentThread from "@/components/common/CommentThread";
 const statusConfig = {
   draft: { label: "Draft", className: "bg-slate-100 text-slate-700", icon: Package },
   pending: { label: "Pending", className: "bg-amber-100 text-amber-700", icon: AlertTriangle },
-  approved: { label: "Approved", className: "bg-blue-100 text-blue-700", icon: Check },
+  approved: { label: "Approved", className: "bg-primary/10 text-primary", icon: Check },
   ordered: { label: "Ordered", className: "bg-purple-100 text-purple-700", icon: Truck },
   partial: { label: "Partial", className: "bg-orange-100 text-orange-700", icon: Package },
   received: { label: "Received", className: "bg-emerald-100 text-emerald-700", icon: Check },
@@ -80,7 +80,7 @@ export default function POModal({ po, supplier, users = [], onClose, onStatusCha
             </div>
           </div>
 
-          <div className="flex items-center justify-between rounded-2xl bg-slate-950 p-4 text-white">
+          <div className="flex items-center justify-between rounded-2xl bg-foreground p-4 text-white">
             <p className="font-medium">Total</p>
             <p className="text-2xl font-bold">R{total.toFixed(2)}</p>
           </div>
@@ -112,7 +112,7 @@ export default function POModal({ po, supplier, users = [], onClose, onStatusCha
           <div className="flex gap-3">
             {po.status === "draft" && (
               <>
-                <Button onClick={() => onStatusChange(po, "pending")} className="h-12 flex-1 rounded-xl bg-slate-950 hover:bg-slate-800">Submit for Approval</Button>
+                <Button onClick={() => onStatusChange(po, "pending")} className="h-12 flex-1 rounded-xl">Submit for Approval</Button>
                 <Button variant="outline" onClick={() => onStatusChange(po, "cancelled")} className="h-12 rounded-xl">Cancel</Button>
               </>
             )}

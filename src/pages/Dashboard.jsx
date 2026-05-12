@@ -14,7 +14,7 @@ const getGreeting = () => {
 };
 
 const statusColors = {
-  confirmed: "bg-blue-100 text-blue-700",
+  confirmed: "bg-primary/10 text-primary",
   in_production: "bg-orange-100 text-orange-700",
   ready: "bg-green-100 text-green-700",
   shipped: "bg-purple-100 text-purple-700",
@@ -203,7 +203,7 @@ function TaskRow({ task, overdue }) {
 
 function OrderRow({ order }) {
   const statusColors = {
-    confirmed: "bg-blue-100 text-blue-700",
+    confirmed: "bg-primary/10 text-primary",
     in_production: "bg-orange-100 text-orange-700",
     ready: "bg-green-100 text-green-700",
     shipped: "bg-purple-100 text-purple-700",

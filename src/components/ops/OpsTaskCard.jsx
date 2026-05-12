@@ -10,7 +10,7 @@ import {
 
 const statusColors = {
   not_started: "bg-slate-100 text-slate-700",
-  in_progress: "bg-blue-100 text-blue-700",
+  in_progress: "bg-primary/10 text-primary",
   complete: "bg-green-100 text-green-700",
   on_hold: "bg-orange-100 text-orange-700",
   archived: "bg-slate-100 text-slate-400"
@@ -79,7 +79,7 @@ export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onE
     : Circle;
 
   const statusIconColor = task.status === 'complete' ? 'text-green-500'
-    : task.status === 'in_progress' ? 'text-blue-500'
+    : task.status === 'in_progress' ? 'text-primary'
     : task.status === 'on_hold' ? 'text-orange-400'
     : 'text-slate-300';
 
@@ -209,7 +209,7 @@ export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onE
               <div className="space-y-1">
                 {task.supporting_files.map((f, i) => (
                   <a key={i} href={f.url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-xs text-blue-600 hover:underline bg-blue-50 rounded p-1.5">
+                    className="flex items-center gap-2 text-xs text-primary hover:underline bg-primary/5 rounded p-1.5">
                     <Paperclip className="w-3 h-3" />
                     {f.name}
                   </a>

@@ -29,7 +29,7 @@ const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'
 
 const statusColors = {
   not_started: "bg-slate-100 text-slate-700",
-  in_progress: "bg-blue-100 text-blue-700",
+  in_progress: "bg-primary/10 text-primary",
   complete: "bg-green-100 text-green-700",
   on_hold: "bg-orange-100 text-orange-700",
   archived: "bg-slate-100 text-slate-400"
@@ -326,7 +326,7 @@ export default function OpsCalendar() {
                               <div key={t.id} className={`text-xs px-1 py-0.5 rounded truncate
                                 ${t.status === 'complete' ? 'bg-green-100 text-green-700' :
                                   t.priority === 'urgent' ? 'bg-red-100 text-red-700' :
-                                  t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                                  t.status === 'in_progress' ? 'bg-primary/10 text-primary' :
                                   'bg-secondary text-muted-foreground'}`}>
                                 {t.title}
                               </div>

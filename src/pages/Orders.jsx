@@ -13,7 +13,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 
 const statusConfig = {
-  confirmed:     { label: "Confirmed",     color: "bg-blue-100 text-blue-700" },
+  confirmed:     { label: "Confirmed",     color: "bg-primary/10 text-primary" },
   in_production: { label: "In Production", color: "bg-orange-100 text-orange-700" },
   ready:         { label: "Ready",         color: "bg-green-100 text-green-700" },
   shipped:       { label: "Shipped",       color: "bg-purple-100 text-purple-700" },

@@ -57,13 +57,14 @@ export default function Calculator() {
   // Keep saves in sync with localStorage
   useEffect(() => { persistSaves(saves); }, [saves]);
 
-  const totalCost = items.reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
-  const costPerUnit = quantity > 0 ? totalCost / quantity : 0;
-  const profitAmount = costPerUnit * (margin / 100);
-  const finalPrice = costPerUnit + profitAmount;
-  const actualMargin = finalPrice > 0 ? (profitAmount / finalPrice) * 100 : 0;
-  // Use exact unrounded value so total revenue is consistent
-  const totalRevenue = finalPrice * quantity;
+  // Items represent per-unit costs — budget needed = total per-unit × quantity
+  const totalCostPerUnit = items.reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
+  const budgetNeeded = totalCostPerUnit * quantity;
+  const profitPerUnit = totalCostPerUnit * (margin / 100);
+  const sellingPricePerUnit = totalCostPerUnit + profitPerUnit;
+  const actualMargin = sellingPricePerUnit > 0 ? (profitPerUnit / sellingPricePerUnit) * 100 : 0;
+  const totalRevenue = sellingPricePerUnit * quantity;
+  const totalProfit = profitPerUnit * quantity;
 
   const updateItem = (id, field, val) => setItems(items.map(i => i.id === id ? { ...i, [field]: val } : i));
   const removeItem = (id) => setItems(items.filter(i => i.id !== id));
@@ -276,21 +277,23 @@ export default function Calculator() {
         </div>
 
         {/* Results */}
-        <div className="mb-4 rounded-[1.35rem] bg-slate-950 p-5 text-white shadow-apple">
-          <div className="mb-4 flex items-end justify-between gap-3">
-            <h2 className="text-sm font-semibold text-white/60">Budget needed</h2>
-            <p className="text-3xl font-bold tracking-tight">R{totalCost.toFixed(2)}</p>
+        <div className="mb-4 rounded-[1.35rem] bg-foreground p-5 text-white shadow-apple">
+          <div className="mb-1 flex items-end justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-white/60">Budget Needed</h2>
+              <p className="text-[11px] text-white/40">{quantity} unit{quantity !== 1 ? "s" : ""} × R{totalCostPerUnit.toFixed(2)} cost/unit</p>
+            </div>
+            <p className="text-3xl font-bold tracking-tight">R{budgetNeeded.toFixed(2)}</p>
           </div>
-          <div className="space-y-2.5">
-            <ResultRow label="Total Cost" value={`R${totalCost.toFixed(2)}`} />
-            <ResultRow label={`Cost per Unit (÷${quantity})`} value={`R${costPerUnit.toFixed(2)}`} />
-            <ResultRow label={`Profit (${margin}%)`} value={`+R${profitAmount.toFixed(2)}`} />
+          <div className="mt-4 space-y-2.5">
+            <ResultRow label="Cost per Unit" value={`R${totalCostPerUnit.toFixed(2)}`} />
+            <ResultRow label={`Markup (${margin}%)`} value={`+R${profitPerUnit.toFixed(2)} / unit`} />
             <ResultRow label="True Profit Margin" value={`${actualMargin.toFixed(1)}%`} />
             <div className="pt-3 border-t border-white/20">
-              <ResultRow label="EST. SELLING PRICE / UNIT" value={`R${finalPrice.toFixed(2)}`} large />
+              <ResultRow label="SELLING PRICE / UNIT" value={`R${sellingPricePerUnit.toFixed(2)}`} large />
             </div>
-            <ResultRow label={`Budget needed (${quantity} x supplier cost)`} value={`R${totalCost.toFixed(2)}`} />
-            <ResultRow label={`Total Revenue (${quantity} × R${finalPrice.toFixed(2)})`} value={`R${totalRevenue.toFixed(2)}`} />
+            <ResultRow label={`Total Revenue (${quantity} × R${sellingPricePerUnit.toFixed(2)})`} value={`R${totalRevenue.toFixed(2)}`} />
+            <ResultRow label="Total Profit" value={`+R${totalProfit.toFixed(2)}`} />
           </div>
         </div>
 
