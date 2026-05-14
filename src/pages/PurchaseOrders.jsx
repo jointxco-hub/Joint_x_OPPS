@@ -24,7 +24,7 @@ import RefreshButton from "@/components/common/RefreshButton";
 const statusConfig = {
   draft: { label: "Draft", className: "bg-secondary text-muted-foreground", icon: Package },
   pending: { label: "Pending", className: "bg-amber-100 text-amber-700", icon: AlertTriangle },
-  approved: { label: "Approved", className: "bg-blue-100 text-blue-700", icon: Check },
+  approved: { label: "Approved", className: "bg-primary/10 text-primary", icon: Check },
   ordered: { label: "Ordered", className: "bg-purple-100 text-purple-700", icon: Truck },
   partial: { label: "Partial", className: "bg-orange-100 text-orange-700", icon: Package },
   received: { label: "Received", className: "bg-emerald-100 text-emerald-700", icon: Check },

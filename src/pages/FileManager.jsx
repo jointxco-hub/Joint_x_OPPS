@@ -28,16 +28,22 @@ function getFileExt(url, type) {
 }
 
 function FilePill({ file }) {
+  const [imgError, setImgError] = useState(false);
   const ext = getFileExt(file.file_url, file.file_type);
   const isImage = ext && ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
   const isPdf = ext === "pdf";
   const isDoc = ext && ["doc", "docx"].includes(ext);
   const isSheet = ext && ["xls", "xlsx", "csv"].includes(ext);
 
-  if (isImage) {
+  if (isImage && !imgError) {
     return (
       <div className="w-full h-28 overflow-hidden bg-secondary">
-        <img src={file.file_url} alt={file.title} className="w-full h-full object-cover" />
+        <img
+          src={file.file_url}
+          alt={file.title}
+          className="w-full h-full object-cover"
+          onError={() => setImgError(true)}
+        />
       </div>
     );
   }
@@ -47,9 +53,11 @@ function FilePill({ file }) {
     ? "bg-blue-50 text-blue-500"
     : isSheet
     ? "bg-green-50 text-green-500"
+    : isImage
+    ? "bg-secondary text-muted-foreground"
     : "bg-secondary text-muted-foreground";
   const Icon = isPdf || isDoc ? FileText : isSheet ? FileSpreadsheet : File;
-  const label = isPdf ? "PDF" : isDoc ? "DOC" : isSheet ? "SHEET" : (ext || "FILE").toUpperCase();
+  const label = isPdf ? "PDF" : isDoc ? "DOC" : isSheet ? "SHEET" : isImage ? (ext || "IMG").toUpperCase() : (ext || "FILE").toUpperCase();
 
   return (
     <div className={`w-full h-28 flex flex-col items-center justify-center gap-1.5 ${colorClass}`}>

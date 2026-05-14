@@ -238,7 +238,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
         {/* Quick Actions */}
         <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
-          {ORDER_STATUSES.filter(s => s !== order.status).slice(0,3).map(s => (
+          {ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled').map(s => (
             <button
               key={s}
               onClick={() => onUpdate(order.id, { status: s })}

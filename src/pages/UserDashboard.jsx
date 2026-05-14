@@ -101,25 +101,25 @@ export default function UserDashboard() {
       }),
   });
 
-  // ── Regular tasks ────────────────────────────────────────────────────────
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery({
+  // ── Ops tasks (primary task entity used across the app) ──────────────────
+  const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
+  const { data: opsTasks = [], isLoading: tasksLoading } = useQuery({
+    queryKey: ["user-opsTasks", userEmail],
+    enabled: !!userEmail && !!opsEntity,
+    queryFn: () => opsEntity.list("-created_date", 500),
+  });
+
+  // ── Legacy Task entity (kept for backwards compat) ────────────────────────
+  const { data: legacyTasks = [] } = useQuery({
     queryKey: ["user-tasks", userEmail],
     enabled: !!userEmail,
     queryFn: () =>
       dataClient.entities.Task.filter({ assigned_to: userEmail, is_archived: false }),
   });
 
-  // ── Ops tasks ────────────────────────────────────────────────────────────
-  const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
-  const { data: opsTasks = [] } = useQuery({
-    queryKey: ["user-opsTasks", userEmail],
-    enabled: !!userEmail && !!opsEntity,
-    queryFn: () => opsEntity.list("-created_date", 200),
-  });
-
   const updateTaskMutation = useMutation({
-    mutationFn: ({ id, data }) => dataClient.entities.Task.update(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["user-tasks"] }),
+    mutationFn: (/** @type {any} */ { id, data }) => /** @type {any} */ (dataClient.entities).OpsTask.update(id, data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["user-opsTasks"] }),
   });
 
   const handlePhotoUpload = async (e) => {
@@ -149,19 +149,28 @@ export default function UserDashboard() {
   };
 
   // ── Derived stats ─────────────────────────────────────────────────────────
-  const pendingTasks = tasks.filter(t => t.status !== "done");
-  const urgentTasks = pendingTasks.filter(t => t.priority === "urgent");
-  const todayTasks = tasks.filter(
-    t => t.due_date && isToday(new Date(t.due_date)) && t.status !== "done"
-  );
-  const overdueTasks = tasks.filter(
-    t => t.due_date && isPast(new Date(t.due_date)) && !isToday(new Date(t.due_date)) && t.status !== "done"
-  );
-
+  // All OpsTask items assigned to me (primary task entity)
   const myOpsTasks = opsTasks.filter(t =>
     t.status !== "archived" &&
     (Array.isArray(t.assigned_to) ? t.assigned_to.includes(userEmail) : t.assigned_to === userEmail)
   );
+
+  // Merge with legacy Task items assigned to me
+  const allMyTasks = [
+    ...myOpsTasks,
+    ...legacyTasks.filter((/** @type {any} */ lt) => !myOpsTasks.some((/** @type {any} */ ot) => ot.id === lt.id)),
+  ];
+
+  const pendingTasks = allMyTasks.filter(t => t.status !== "complete" && t.status !== "done");
+  const urgentTasks = pendingTasks.filter(t => t.priority === "urgent");
+  const todayTasks = allMyTasks.filter(t => {
+    const d = t.deadline || t.due_date;
+    return d && isToday(new Date(d)) && t.status !== "complete" && t.status !== "done";
+  });
+  const overdueTasks = allMyTasks.filter(t => {
+    const d = t.deadline || t.due_date;
+    return d && isPast(new Date(d)) && !isToday(new Date(d)) && t.status !== "complete" && t.status !== "done";
+  });
   const urgentOpsTasks = myOpsTasks.filter(t => t.priority === "urgent" && t.status !== "complete");
   const myWeekOpsTasks = myOpsTasks.filter(t => t.week_number === currentWeek);
   const weekDone = myWeekOpsTasks.filter(t => t.status === "complete").length;
@@ -388,16 +397,18 @@ export default function UserDashboard() {
           ) : (
             <div className="grid md:grid-cols-2 gap-2">
               {pendingTasks.slice(0, 6).map(t => {
-                const isOver = t.due_date && isPast(new Date(t.due_date)) && !isToday(new Date(t.due_date));
+                const dueDate = t.deadline || t.due_date;
+                const isOver = dueDate && isPast(new Date(dueDate)) && !isToday(new Date(dueDate));
+                const doneStatus = t.deadline !== undefined ? "complete" : "done";
                 return (
                   <div key={t.id} className={`flex items-center gap-3 p-3 rounded-xl ${isOver ? "bg-red-50 border border-red-100" : "bg-secondary/40"}`}>
                     <Circle className={`w-4 h-4 flex-shrink-0 ${isOver ? "text-red-400" : "text-muted-foreground"}`} />
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-medium truncate ${isOver ? "text-red-700" : "text-foreground"}`}>{t.title}</p>
-                      {t.due_date && <p className={`text-xs ${isOver ? "text-red-400" : "text-muted-foreground"}`}>{format(new Date(t.due_date), "d MMM")}</p>}
+                      {dueDate && <p className={`text-xs ${isOver ? "text-red-400" : "text-muted-foreground"}`}>{format(new Date(dueDate), "d MMM")}</p>}
                     </div>
                     <button
-                      onClick={() => updateTaskMutation.mutate({ id: t.id, data: { status: "done" } })}
+                      onClick={() => updateTaskMutation.mutate({ id: t.id, data: { status: doneStatus } })}
                       className="text-muted-foreground hover:text-primary transition-all flex-shrink-0"
                       title="Mark done"
                     >

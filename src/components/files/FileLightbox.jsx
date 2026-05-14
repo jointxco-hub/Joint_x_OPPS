@@ -12,6 +12,7 @@ import { format } from "date-fns";
 
 export default function FileLightbox({ file, onClose }) {
   const [showCommentForm, setShowCommentForm] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const [commentData, setCommentData] = useState({
     comment_text: "",
     mentioned_user: "",
@@ -81,12 +82,18 @@ export default function FileLightbox({ file, onClose }) {
         <div className="flex-1 overflow-y-auto space-y-4">
           {/* File Preview */}
           <div className="bg-slate-50 rounded-lg p-4 flex items-center justify-center min-h-[300px]">
-            {isImage ? (
-              <img 
-                src={fileUrl} 
+            {isImage && !imgError ? (
+              <img
+                src={fileUrl}
                 alt={file.title || "File preview"}
                 className="max-w-full max-h-[70vh] object-contain rounded"
+                onError={() => setImgError(true)}
               />
+            ) : isImage && imgError ? (
+              <div className="text-center text-slate-500">
+                <p className="mb-2 text-sm font-medium">Image could not be loaded</p>
+                <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-primary text-xs underline">Open original URL</a>
+              </div>
             ) : isPdf ? (
               <iframe 
                 src={fileUrl}

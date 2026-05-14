@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Package, LayoutGrid, List, AlertTriangle } from "lucide-react";
@@ -11,6 +12,7 @@ import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
+import { toast } from "sonner";
 
 const statusConfig = {
   confirmed:     { label: "Confirmed",     color: "bg-primary/10 text-primary" },
@@ -35,11 +37,24 @@ export default function Orders() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["orders"],
     queryFn: () => dataClient.entities.Order.list("-created_date", 200),
   });
+
+  // Auto-open drawer when navigated from Dashboard with ?open=<id>
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (openId && orders.length > 0) {
+      const target = orders.find((/** @type {any} */ o) => o.id === openId);
+      if (target) {
+        setSelectedOrder(target);
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, orders]);
 
   const { data: stages = [] } = useQuery({
     queryKey: ["orderStages"],
@@ -48,8 +63,9 @@ export default function Orders() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => dataClient.entities.Order.update(id, data),
+    mutationFn: (/** @type {any} */ { id, data }) => dataClient.entities.Order.update(id, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] }),
+    onError: () => toast.error("Failed to update order — please try again"),
   });
 
   const { archive: archiveOrder, isPending: isArchiving } = useArchive("Order", {
