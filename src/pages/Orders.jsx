@@ -71,7 +71,13 @@ export default function Orders() {
 
   const updateMutation = useMutation({
     mutationFn: (/** @type {any} */ { id, data }) => dataClient.entities.Order.update(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orders"] }),
+    onSuccess: (/** @type {any} */ updatedOrder) => {
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      // Keep the open drawer in sync so selects don't snap back to stale values
+      if (updatedOrder && selectedOrder?.id === updatedOrder.id) {
+        setSelectedOrder((/** @type {any} */ prev) => ({ ...prev, ...updatedOrder }));
+      }
+    },
     onError: () => toast.error("Failed to update order — please try again"),
   });
 

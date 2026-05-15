@@ -24,6 +24,7 @@ const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2, adminOnly: true },
   { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
+  { name: "Clients", page: "Clients", icon: Building2 },
   { name: "Goals", page: "Goals", icon: Flag },
   { name: "My Expenses", page: "TeamExpenses", icon: CreditCard },
   { name: "Ops Calendar", page: "OpsCalendar", icon: Target },

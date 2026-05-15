@@ -215,16 +215,7 @@ export default function NotesHub() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {notes.map(note => (
-                <Card key={note.id}>
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <h3 className="font-semibold text-slate-900">{note.title}</h3>
-                      <Badge variant="outline" className="capitalize">{note.category}</Badge>
-                    </div>
-                    {note.body && <p className="text-sm text-slate-600 whitespace-pre-wrap">{note.body}</p>}
-                    <p className="text-xs text-slate-400 mt-3">{note.created_date ? format(new Date(note.created_date), 'MMM d') : 'Saved offline'}</p>
-                  </CardContent>
-                </Card>
+                <NoteCard key={note.id} note={note} currentUser={currentUser} />
               ))}
             </div>
             {notes.length === 0 && (
@@ -246,46 +237,49 @@ export default function NotesHub() {
 }
 
 function BugCard({ bug, users }) {
+  const [editing, setEditing] = useState(false);
   const assignedUser = users.find(u => u.email === bug.assigned_to);
-  
+
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1">
-            <h3 className="font-semibold text-slate-900 mb-1">{bug.description}</h3>
-            <p className="text-sm text-slate-600">
-              {bug.page_feature}
-            </p>
+    <>
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex-1">
+              <h3 className="font-semibold text-slate-900 mb-1">{bug.description}</h3>
+              <p className="text-sm text-slate-600">{bug.page_feature}</p>
+            </div>
+            <Badge className={bugStatusColors[bug.status]}>
+              {bug.status.replace('_', ' ')}
+            </Badge>
           </div>
-          <Badge className={bugStatusColors[bug.status]}>
-            {bug.status.replace('_', ' ')}
-          </Badge>
-        </div>
 
-        {bug.screenshot_url && (
-          <FileThumbnail 
-            fileUrl={bug.screenshot_url}
-            title="Screenshot"
-            className="w-full h-32 mb-3"
-          />
-        )}
-
-        <div className="flex items-center gap-2">
-          <Badge className={bugPriorityColors[bug.priority]}>
-            {bug.priority}
-          </Badge>
-          {assignedUser && (
-            <span className="text-xs text-slate-600 px-2 py-1 bg-slate-100 rounded">
-              {assignedUser.full_name || assignedUser.email}
-            </span>
+          {bug.screenshot_url && (
+            <FileThumbnail
+              fileUrl={bug.screenshot_url}
+              title="Screenshot"
+              className="w-full h-32 mb-3"
+            />
           )}
-          <span className="text-xs text-slate-400 ml-auto">
-            {format(new Date(bug.created_date), 'MMM d')}
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+
+          <div className="flex items-center gap-2">
+            <Badge className={bugPriorityColors[bug.priority]}>{bug.priority}</Badge>
+            {assignedUser && (
+              <span className="text-xs text-slate-600 px-2 py-1 bg-slate-100 rounded">
+                {assignedUser.full_name || assignedUser.email}
+              </span>
+            )}
+            <span className="text-xs text-slate-400 ml-auto">
+              {bug.created_date ? format(new Date(bug.created_date), 'MMM d') : ''}
+            </span>
+            <button onClick={() => setEditing(true)} className="text-xs text-primary font-medium hover:underline">
+              Edit
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+      {editing && <BugFormDialog users={users} existing={bug} onClose={() => setEditing(false)} />}
+    </>
   );
 }
 
@@ -333,8 +327,15 @@ function IdeaCard({ idea, users }) {
   );
 }
 
-function BugFormDialog({ users, onClose }) {
-  const [formData, setFormData] = useState({
+function BugFormDialog({ users, onClose, existing }) {
+  const [formData, setFormData] = useState(existing ? {
+    description: existing.description || "",
+    page_feature: existing.page_feature || "",
+    screenshot_url: existing.screenshot_url || "",
+    priority: existing.priority || "medium",
+    assigned_to: existing.assigned_to || "",
+    status: existing.status || "open",
+  } : {
     description: "",
     page_feature: "",
     screenshot_url: "",
@@ -347,12 +348,15 @@ function BugFormDialog({ users, onClose }) {
 
   const createMutation = useMutation({
     mutationFn: async (data) => {
+      if (existing) {
+        return dataClient.entities.BugReport.update(existing.id, data);
+      }
       const user = await dataClient.auth.me().catch(() => null);
       return createWithOfflineQueue("BugReport", { ...data, reported_by: user?.email });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bugReports'] });
-      toast.success("Bug reported!");
+      toast.success(existing ? "Bug updated!" : "Bug reported!");
       onClose();
     }
   });
@@ -377,7 +381,7 @@ function BugFormDialog({ users, onClose }) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Report Bug</DialogTitle>
+          <DialogTitle>{existing ? "Edit Bug Report" : "Report Bug"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to === "unassigned" ? null : formData.assigned_to }); }} className="space-y-4">
           <div>
@@ -464,7 +468,9 @@ function BugFormDialog({ users, onClose }) {
 
           <div className="flex justify-end gap-3">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit">Report Bug</Button>
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Saving…" : existing ? "Save Changes" : "Report Bug"}
+            </Button>
           </div>
         </form>
       </DialogContent>
@@ -609,8 +615,35 @@ function IdeaFormDialog({ users, onClose }) {
   );
 }
 
-function NoteFormDialog({ currentUser, onClose }) {
-  const [formData, setFormData] = useState({
+function NoteCard({ note, currentUser }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <>
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <h3 className="font-semibold text-slate-900">{note.title}</h3>
+            <Badge variant="outline" className="capitalize flex-shrink-0">{note.category}</Badge>
+          </div>
+          {note.body && <p className="text-sm text-slate-600 whitespace-pre-wrap">{note.body}</p>}
+          <div className="flex items-center justify-between mt-3">
+            <p className="text-xs text-slate-400">{note.created_date ? format(new Date(note.created_date), 'MMM d') : 'Saved offline'}</p>
+            <button onClick={() => setEditing(true)} className="text-xs text-primary font-medium hover:underline">Edit</button>
+          </div>
+        </CardContent>
+      </Card>
+      {editing && <NoteFormDialog currentUser={currentUser} existing={note} onClose={() => setEditing(false)} />}
+    </>
+  );
+}
+
+function NoteFormDialog({ currentUser, onClose, existing }) {
+  const [formData, setFormData] = useState(existing ? {
+    title: existing.title || "",
+    body: existing.body || "",
+    category: existing.category || "note",
+    is_shared: existing.is_shared || false,
+  } : {
     title: "",
     body: "",
     category: "note",
@@ -619,13 +652,12 @@ function NoteFormDialog({ currentUser, onClose }) {
   const queryClient = useQueryClient();
 
   const createMutation = useMutation({
-    mutationFn: (data) => createWithOfflineQueue("PersonalNote", {
-      ...data,
-      user_email: currentUser?.email,
-    }),
+    mutationFn: (data) => existing
+      ? dataClient.entities.PersonalNote.update(existing.id, data)
+      : createWithOfflineQueue("PersonalNote", { ...data, user_email: currentUser?.email }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['personalNotes'] });
-      toast.success("Note saved");
+      toast.success(existing ? "Note updated" : "Note saved");
       onClose();
     }
   });
@@ -634,7 +666,7 @@ function NoteFormDialog({ currentUser, onClose }) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New Note</DialogTitle>
+          <DialogTitle>{existing ? "Edit Note" : "New Note"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate(formData); }} className="space-y-4">
           <div>
@@ -679,7 +711,9 @@ function NoteFormDialog({ currentUser, onClose }) {
           </label>
           <div className="flex justify-end gap-3">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={!currentUser?.email}>Save Note</Button>
+            <Button type="submit" disabled={createMutation.isPending || (!existing && !currentUser?.email)}>
+              {createMutation.isPending ? "Saving…" : existing ? "Save Changes" : "Save Note"}
+            </Button>
           </div>
         </form>
       </DialogContent>

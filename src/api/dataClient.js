@@ -1751,9 +1751,25 @@ export const dataClient = {
   integrations: {
     Core: {
       async UploadFile({ file }) {
-        return {
-          file_url: file ? URL.createObjectURL(file) : '',
-        };
+        if (!file) return { file_url: '' };
+        if (!supabase) return { file_url: URL.createObjectURL(file) };
+
+        const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+
+        const { error } = await supabase.storage
+          .from('uploads')
+          .upload(path, file, { cacheControl: '31536000', upsert: false });
+
+        if (error) {
+          console.warn('[UploadFile] Supabase Storage error:', error.message,
+            '— Make sure you have created a public bucket named "uploads" in your Supabase project Storage tab.');
+          // fallback: blob URL works for this session only
+          return { file_url: URL.createObjectURL(file) };
+        }
+
+        const { data } = supabase.storage.from('uploads').getPublicUrl(path);
+        return { file_url: data.publicUrl };
       },
       async InvokeLLM() {
         throw new Error('LLM integration is not configured in the Supabase-only build.');

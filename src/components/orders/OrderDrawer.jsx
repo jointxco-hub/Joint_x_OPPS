@@ -4,7 +4,7 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, ShoppingCart, AlertTriangle, Copy, Check,
-  Play, User, FileText, Plus
+  User, FileText, Plus
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -56,6 +56,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
   const [newTaskDeadline, setNewTaskDeadline] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState("_none");
+  const [showNewPO, setShowNewPO] = useState(false);
+  const [newPOForm, setNewPOForm] = useState({ supplier_name: "", expected_delivery: "", notes: "" });
   const queryClient = useQueryClient();
 
   const { data: payments = [] } = useQuery({
@@ -151,6 +153,22 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       setNewTaskAssignee("_none");
       toast.success("Task created and linked to this order");
     }
+  });
+
+  const createPOMutation = useMutation({
+    mutationFn: async (data) => {
+      const po = await dataClient.entities.PurchaseOrder.create(data);
+      await dataClient.entities.Order.update(order.id, { linked_po_id: po.id });
+      return po;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      setShowNewPO(false);
+      setNewPOForm({ supplier_name: "", expected_delivery: "", notes: "" });
+      toast.success("Purchase order created and linked");
+    },
+    onError: () => toast.error("Failed to create PO")
   });
 
   const handleCreateTask = () => {
@@ -548,12 +566,21 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           {tab === 'po' && (
             <div className="space-y-4">
               <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                  <ShoppingCart className="w-3.5 h-3.5" /> Linked Purchase Order
-                </p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                    <ShoppingCart className="w-3.5 h-3.5" /> Linked Purchase Order
+                  </p>
+                  <button
+                    onClick={() => setShowNewPO(v => !v)}
+                    className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    New PO
+                  </button>
+                </div>
                 <Select value={order.linked_po_id || '__none'} onValueChange={v => onUpdate(order.id, { linked_po_id: v === '__none' ? '' : v })}>
                   <SelectTrigger className="rounded-xl">
-                    <SelectValue placeholder="Link a PO..." />
+                    <SelectValue placeholder="Link existing PO..." />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">No PO linked</SelectItem>
@@ -568,6 +595,54 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   </SelectContent>
                 </Select>
               </div>
+
+              {showNewPO && (
+                <div className="bg-secondary/30 rounded-2xl p-4 space-y-3 border border-border">
+                  <p className="text-xs font-semibold text-foreground">Create New Purchase Order</p>
+                  <Input
+                    placeholder="Supplier name *"
+                    value={newPOForm.supplier_name}
+                    onChange={e => setNewPOForm(f => ({ ...f, supplier_name: e.target.value }))}
+                    className="rounded-xl h-9 text-sm"
+                    autoFocus
+                  />
+                  <Input
+                    type="date"
+                    value={newPOForm.expected_delivery}
+                    onChange={e => setNewPOForm(f => ({ ...f, expected_delivery: e.target.value }))}
+                    className="rounded-xl h-9 text-sm"
+                  />
+                  <Input
+                    placeholder="Notes (optional)"
+                    value={newPOForm.notes}
+                    onChange={e => setNewPOForm(f => ({ ...f, notes: e.target.value }))}
+                    className="rounded-xl h-9 text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1 h-8 rounded-xl text-xs"
+                      disabled={!newPOForm.supplier_name.trim() || createPOMutation.isPending}
+                      onClick={() => {
+                        const poNumber = `PO-${Date.now().toString().slice(-6)}`;
+                        createPOMutation.mutate({
+                          po_number: poNumber,
+                          supplier_name: newPOForm.supplier_name.trim(),
+                          expected_delivery: newPOForm.expected_delivery || undefined,
+                          notes: newPOForm.notes || undefined,
+                          status: 'draft',
+                          items: [],
+                        });
+                      }}
+                    >
+                      {createPOMutation.isPending ? 'Creating…' : 'Create & Link PO'}
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => setShowNewPO(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {linkedPO ? (
                 <div className="bg-secondary/40 rounded-2xl p-4 space-y-3">
@@ -599,11 +674,13 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   )}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <ShoppingCart className="w-10 h-10 text-muted-foreground/20 mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">No purchase order linked</p>
-                  <p className="text-xs text-muted-foreground mt-1">Select a PO above to link supplier materials to this order</p>
-                </div>
+                !showNewPO && (
+                  <div className="text-center py-8">
+                    <ShoppingCart className="w-10 h-10 text-muted-foreground/20 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">No purchase order linked</p>
+                    <p className="text-xs text-muted-foreground mt-1">Link an existing PO or create a new one above</p>
+                  </div>
+                )
               )}
             </div>
           )}
@@ -705,7 +782,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   );
 }
 
-function EditField({ label, field, value, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options }) {
+function EditField({ label, value, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options }) {
   return (
     <div className="bg-secondary/30 rounded-xl p-3">
       <div className="flex items-center justify-between mb-1">
