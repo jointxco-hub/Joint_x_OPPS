@@ -122,10 +122,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       onUpdate(order.id, updated);
       toast.success("File uploaded");
     } catch (err) {
-      const isStorage = /** @type {any} */ (err)?.isStorageError;
-      toast.error(isStorage
-        ? "Upload failed — go to Supabase → Storage → uploads → Policies and add an INSERT policy for authenticated users"
-        : "Upload failed");
+      toast.error((/** @type {any} */ (err))?.message || "Upload failed");
     }
     setUploading(false);
     e.target.value = "";
@@ -162,14 +159,21 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const createPOMutation = useMutation({
     mutationFn: (data) => dataClient.entities.PurchaseOrder.create(data),
     onSuccess: (po) => {
-      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
-      // Use onUpdate so selectedOrder state is patched and the PO tab reflects the link immediately
+      if (!po?.id) {
+        toast.error("PO created but no ID returned — check Supabase RLS on purchase_orders");
+        return;
+      }
+      // Inject into cache immediately so linkedPO resolves before the async refetch
+      queryClient.setQueryData(['purchaseOrders'], (/** @type {any} */ old) =>
+        Array.isArray(old) ? [po, ...old] : [po]
+      );
+      // Link to order (updates DB + patches selectedOrder so the PO tab shows it instantly)
       onUpdate(order.id, { linked_po_id: po.id });
       setShowNewPO(false);
       setNewPOForm({ supplier_name: "", expected_delivery: "", notes: "" });
       toast.success("Purchase order created and linked");
     },
-    onError: (err) => toast.error("Failed to create PO — " + (/** @type {any} */ (err)?.message || "check console"))
+    onError: (err) => toast.error("Failed to create PO — " + (/** @type {any} */ (err)?.message || "check Supabase RLS on purchase_orders table"))
   });
 
   const handleCreateTask = () => {

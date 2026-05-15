@@ -1763,11 +1763,19 @@ export const dataClient = {
           .upload(path, file, { cacheControl: '31536000', upsert: false });
 
         if (error) {
-          // Throw so the upload caller can show a clear error toast to the user.
-          // Most common cause: bucket exists but has no INSERT policy.
-          // Fix: Supabase dashboard → Storage → uploads → Policies → New policy →
-          //   INSERT, authenticated role, WITH CHECK (bucket_id = 'uploads')
-          throw Object.assign(new Error(error.message || 'Storage upload failed'), { isStorageError: true });
+          const msg = error.message || '';
+          const isBucketMissing = msg.includes('not found') || msg.includes('does not exist') || msg.includes('Bucket not found');
+          const isRLS = msg.includes('row-level security') || msg.includes('policy') || msg.includes('403') || msg.includes('violates');
+          throw Object.assign(
+            new Error(
+              isBucketMissing
+                ? 'Bucket "uploads" not found — create a public bucket named exactly "uploads" in Supabase → Storage'
+                : isRLS
+                ? 'Missing Storage INSERT policy — Supabase → Storage → uploads → Policies → add INSERT for authenticated'
+                : msg || 'Storage upload failed'
+            ),
+            { isStorageError: true }
+          );
         }
 
         const { data } = supabase.storage.from('uploads').getPublicUrl(path);
