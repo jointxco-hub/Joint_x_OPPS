@@ -158,8 +158,11 @@ export default function FileManager() {
       }
       qc.invalidateQueries({ queryKey: ["clientAssets"] });
       toast.success(files.length === 1 ? "File uploaded" : `${files.length} files uploaded`);
-    } catch {
-      toast.error("Upload failed");
+    } catch (err) {
+      const isStorage = /** @type {any} */ (err)?.isStorageError;
+      toast.error(isStorage
+        ? "Upload failed — add a Storage INSERT policy in Supabase (Storage → uploads → Policies)"
+        : "Upload failed");
     }
     setUploading(false);
     e.target.value = "";

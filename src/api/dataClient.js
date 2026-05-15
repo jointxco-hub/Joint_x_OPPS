@@ -142,7 +142,7 @@ const ENTITY_CONFIG = {
                 price: Number(payload.quoted_price ?? payload.total_amount ?? 0),
               },
             ]
-          : [];
+          : undefined;
 
       return compactObject({
         client_name: payload.client_name,
@@ -166,6 +166,7 @@ const ENTITY_CONFIG = {
         print_type: normalizePrintType(payload.print_type),
         linked_po_id: payload.linked_po_id,
         invoice_files: payload.invoice_files,
+        invoice_numbers: payload.invoice_numbers,
         is_archived: payload.is_archived,
         archived_at: payload.archived_at,
         archived_by: payload.archived_by,
@@ -1762,10 +1763,11 @@ export const dataClient = {
           .upload(path, file, { cacheControl: '31536000', upsert: false });
 
         if (error) {
-          console.warn('[UploadFile] Supabase Storage error:', error.message,
-            '— Make sure you have created a public bucket named "uploads" in your Supabase project Storage tab.');
-          // fallback: blob URL works for this session only
-          return { file_url: URL.createObjectURL(file) };
+          // Throw so the upload caller can show a clear error toast to the user.
+          // Most common cause: bucket exists but has no INSERT policy.
+          // Fix: Supabase dashboard → Storage → uploads → Policies → New policy →
+          //   INSERT, authenticated role, WITH CHECK (bucket_id = 'uploads')
+          throw Object.assign(new Error(error.message || 'Storage upload failed'), { isStorageError: true });
         }
 
         const { data } = supabase.storage.from('uploads').getPublicUrl(path);

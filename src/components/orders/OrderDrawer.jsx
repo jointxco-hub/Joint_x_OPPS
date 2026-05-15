@@ -121,10 +121,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       const updated = { file_urls: [...(order.file_urls || []), file_url] };
       onUpdate(order.id, updated);
       toast.success("File uploaded");
-    } catch {
-      toast.error("Upload failed");
+    } catch (err) {
+      const isStorage = /** @type {any} */ (err)?.isStorageError;
+      toast.error(isStorage
+        ? "Upload failed — go to Supabase → Storage → uploads → Policies and add an INSERT policy for authenticated users"
+        : "Upload failed");
     }
     setUploading(false);
+    e.target.value = "";
   };
 
   const addPayment = () => {
