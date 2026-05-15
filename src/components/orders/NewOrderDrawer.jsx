@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { X, Plus, Trash2, Search, ShoppingCart } from "lucide-react";
+import { X, Plus, Trash2, Search, ShoppingCart, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,6 +7,27 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
+
+/**
+ * Fuzzy score between query and target string.
+ * Returns 1.0 for exact match down to ~0 for no relation.
+ * @param {string} query
+ * @param {string} target
+ */
+function fuzzyScore(query, target) {
+  const q = query.toLowerCase().trim();
+  const t = target.toLowerCase();
+  if (!q) return 0;
+  if (t === q) return 1;
+  if (t.includes(q)) return 0.9;
+  const words = q.split(/\s+/);
+  if (words.every(w => t.includes(w))) return 0.75;
+  let qi = 0;
+  for (let i = 0; i < t.length && qi < q.length; i++) {
+    if (t[i] === q[qi]) qi++;
+  }
+  return (qi / q.length) * 0.5;
+}
 
 export default function NewOrderDrawer({ onClose, onCreate }) {
   const [form, setForm] = useState({
@@ -35,18 +56,58 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     queryFn: () => dataClient.entities.Client.list('-created_date', 200)
   });
 
+  const { data: existingOrders = [] } = useQuery({
+    queryKey: ['orders-names'],
+    queryFn: () => dataClient.entities.Order.list('-created_date', 300),
+    select: (data) => {
+      const seen = new Set(clients.map((/** @type {any} */ c) => c.name?.toLowerCase()));
+      return [...new Set(
+        data
+          .map((/** @type {any} */ o) => o.client_name)
+          .filter((/** @type {any} */ n) => n && !seen.has(n?.toLowerCase()))
+      )];
+    },
+    staleTime: 60_000,
+  });
+
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
     queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100)
   });
 
-  const filteredClients = useMemo(() => {
-    if (!clientSearch) return clients.slice(0, 6);
-    return clients.filter(c =>
-      c.name?.toLowerCase().includes(clientSearch.toLowerCase()) ||
-      c.email?.toLowerCase().includes(clientSearch.toLowerCase())
-    ).slice(0, 6);
-  }, [clients, clientSearch]);
+  // Scored client suggestions — includes fuzzy matches from Client entity + order history names
+  const { clientSuggestions, didYouMean } = useMemo(() => {
+    const q = (clientSearch || form.client_name || "").trim();
+    if (!q) {
+      return {
+        clientSuggestions: clients.slice(0, 6).map((/** @type {any} */ c) => ({ type: "client", item: c, score: 0 })),
+        didYouMean: /** @type {string|null} */ (null),
+      };
+    }
+
+    const scored = clients
+      .map((/** @type {any} */ c) => ({ type: "client", item: c, score: fuzzyScore(q, c.name || "") }))
+      .filter((/** @type {any} */ x) => x.score > 0.3)
+      .sort((/** @type {any} */ a, /** @type {any} */ b) => b.score - a.score)
+      .slice(0, 5);
+
+    const historyMatches = existingOrders
+      .map((/** @type {string} */ name) => ({ type: "history", item: { name }, score: fuzzyScore(q, name) }))
+      .filter((/** @type {any} */ x) => x.score > 0.3)
+      .sort((/** @type {any} */ a, /** @type {any} */ b) => b.score - a.score)
+      .slice(0, 3);
+
+    const combined = [...scored, ...historyMatches]
+      .sort((/** @type {any} */ a, /** @type {any} */ b) => b.score - a.score)
+      .slice(0, 6);
+
+    const hasExact = combined.some((/** @type {any} */ x) => x.score >= 0.9);
+    const fuzzyOnly = !hasExact && combined.length > 0 && combined[0].score >= 0.55
+      ? combined[0].item.name
+      : null;
+
+    return { clientSuggestions: combined, didYouMean: /** @type {string|null} */ (fuzzyOnly) };
+  }, [clients, existingOrders, clientSearch, form.client_name]);
 
   const selectClient = (client) => {
     setForm(f => ({
@@ -176,16 +237,41 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                 required
               />
             </div>
-            {showClientDropdown && filteredClients.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-apple-lg z-20 max-h-48 overflow-y-auto">
-                {filteredClients.map(c => (
-                  <button key={c.id} type="button" onClick={() => selectClient(c)}
-                    className="w-full text-left px-3 py-2.5 hover:bg-secondary transition-all flex items-center justify-between first:rounded-t-xl last:rounded-b-xl">
+            {showClientDropdown && (clientSuggestions.length > 0 || didYouMean) && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-apple-lg z-20 max-h-56 overflow-y-auto">
+                {didYouMean && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForm(f => ({ ...f, client_name: didYouMean, client_id: '' }));
+                      setClientSearch(didYouMean);
+                      setShowClientDropdown(true);
+                    }}
+                    className="w-full text-left px-3 py-2 bg-amber-50 border-b border-amber-100 flex items-center gap-2 first:rounded-t-xl hover:bg-amber-100 transition-all"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                    <span className="text-xs text-amber-800">Did you mean <span className="font-semibold">{didYouMean}</span>?</span>
+                  </button>
+                )}
+                {clientSuggestions.map((/** @type {any} */ s, /** @type {number} */ i) => (
+                  <button
+                    key={s.type === "client" ? s.item.id : `hist-${i}`}
+                    type="button"
+                    onClick={() => s.type === "client" ? selectClient(s.item) : (() => {
+                      setForm(f => ({ ...f, client_name: s.item.name, client_id: '' }));
+                      setClientSearch(s.item.name);
+                      setShowClientDropdown(false);
+                    })()}
+                    className="w-full text-left px-3 py-2.5 hover:bg-secondary transition-all flex items-center justify-between last:rounded-b-xl"
+                  >
                     <div>
-                      <p className="text-sm font-medium text-foreground">{c.name}</p>
-                      {c.email && <p className="text-xs text-muted-foreground">{c.email}</p>}
+                      <p className="text-sm font-medium text-foreground">{s.item.name}</p>
+                      {s.item.email && <p className="text-xs text-muted-foreground">{s.item.email}</p>}
+                      {s.type === "history" && <p className="text-xs text-muted-foreground/60">from order history</p>}
                     </div>
-                    {c.status && <span className="text-xs text-muted-foreground capitalize">{c.status}</span>}
+                    {s.item.status && s.type === "client" && (
+                      <span className="text-xs text-muted-foreground capitalize">{s.item.status}</span>
+                    )}
                   </button>
                 ))}
               </div>

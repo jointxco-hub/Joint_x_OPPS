@@ -610,11 +610,24 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
           {tab === 'tracking' && (
             <div className="space-y-4">
-              <EditField label="Courier" field="courier" value={courier?.label || order.courier}
-                editing={editingField === 'courier'} editValue={fieldValue}
-                onEdit={() => startEdit('courier', order.courier)}
-                onChange={setFieldValue} onSave={saveEdit}
-                isSelect options={resolvedCouriers.map((/** @type {any} */ c) => ({ value: c.value, label: c.label }))} />
+              {/* Courier — saves immediately on selection */}
+              <div className="bg-secondary/30 rounded-xl p-3">
+                <p className="text-xs text-muted-foreground mb-1.5">Courier</p>
+                <Select
+                  value={order.courier || '__none'}
+                  onValueChange={v => onUpdate(order.id, { courier: v === '__none' ? null : v })}
+                >
+                  <SelectTrigger className="h-8 border-0 bg-transparent p-0 text-sm font-medium">
+                    <SelectValue placeholder="Select courier…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">No courier selected</SelectItem>
+                    {resolvedCouriers.map((/** @type {any} */ c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <EditField label="Tracking Number" field="tracking_number" value={order.tracking_number}
                 editing={editingField === 'tracking_number'} editValue={fieldValue}
                 onEdit={() => startEdit('tracking_number', order.tracking_number)}
@@ -733,6 +746,23 @@ function TimelineEntry({ icon, label, time }) {
   );
 }
 
+// Extract an invoice/reference number from a filename.
+// Matches patterns like INV-1234, ZB-5678, INV_001, ZB001, 2024-INV-99, etc.
+function extractInvoiceNumber(/** @type {string} */ filename) {
+  const stem = filename.replace(/\.[^.]+$/, "");
+  const patterns = [
+    /\b(INV[-_]?\d+)\b/i,
+    /\b(ZB[-_]?\d+)\b/i,
+    /\b([A-Z]{2,6}[-_]\d{3,})\b/i,
+    /\b(\d{4,})\b/,
+  ];
+  for (const re of patterns) {
+    const m = stem.match(re);
+    if (m) return m[1].toUpperCase().replace(/[_\s]/g, "-");
+  }
+  return null;
+}
+
 function InvoicesTab({ order, onUpdate }) {
   const [uploading, setUploading] = useState(false);
 
@@ -743,6 +773,9 @@ function InvoicesTab({ order, onUpdate }) {
     try {
       const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       const existing = order.invoice_files || [];
+      const invoiceNumber = extractInvoiceNumber(file.name);
+      const existingNumbers = order.invoice_numbers || [];
+
       onUpdate(order.id, {
         invoice_files: [
           ...existing,
@@ -752,10 +785,17 @@ function InvoicesTab({ order, onUpdate }) {
             type: file.type,
             uploaded_at: new Date().toISOString(),
             source: 'zoho_books',
+            invoice_number: invoiceNumber,
           },
         ],
+        // Append extracted number to the searchable invoice_numbers array
+        invoice_numbers: invoiceNumber && !existingNumbers.includes(invoiceNumber)
+          ? [...existingNumbers, invoiceNumber]
+          : existingNumbers,
       });
-      toast.success("Invoice uploaded");
+      toast.success(invoiceNumber
+        ? `Invoice uploaded — reference ${invoiceNumber} added to tracking`
+        : "Invoice uploaded");
     } catch {
       toast.error("Upload failed");
     } finally {
@@ -765,8 +805,16 @@ function InvoicesTab({ order, onUpdate }) {
   };
 
   const removeInvoice = (idx) => {
-    const updated = (order.invoice_files || []).filter((_, i) => i !== idx);
-    onUpdate(order.id, { invoice_files: updated });
+    const files = order.invoice_files || [];
+    const updated = files.filter((/** @type {any} */ _, /** @type {number} */ i) => i !== idx);
+    // Also remove the invoice number from the tracking array if no other file uses it
+    const remainingNumbers = updated
+      .map((/** @type {any} */ f) => f.invoice_number)
+      .filter(Boolean);
+    const updatedNumbers = (order.invoice_numbers || []).filter(
+      (/** @type {string} */ n) => remainingNumbers.includes(n)
+    );
+    onUpdate(order.id, { invoice_files: updated, invoice_numbers: updatedNumbers });
   };
 
   const invoices = order.invoice_files || [];
@@ -776,8 +824,17 @@ function InvoicesTab({ order, onUpdate }) {
       <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
         <p className="text-xs font-semibold text-amber-800 mb-0.5">Zoho Books Invoices</p>
         <p className="text-xs text-amber-700">
-          Upload manually invoiced Zoho Books PDFs here. These are stored directly on this order.
+          Upload invoices here. Invoice numbers are extracted from filenames and added to order tracking automatically.
         </p>
+        {(order.invoice_numbers || []).length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {(order.invoice_numbers || []).map((/** @type {string} */ n) => (
+              <span key={n} className="text-xs font-mono bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md">
+                {n}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       <label className="cursor-pointer block">
@@ -809,6 +866,9 @@ function InvoicesTab({ order, onUpdate }) {
                   {inv.name}
                 </a>
                 <p className="text-xs text-amber-600 mt-0.5">
+                  {inv.invoice_number && (
+                    <span className="font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded mr-1.5">{inv.invoice_number}</span>
+                  )}
                   Zoho Books · {inv.uploaded_at ? format(new Date(inv.uploaded_at), 'd MMM yyyy') : 'Uploaded'}
                 </p>
               </div>

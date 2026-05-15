@@ -93,13 +93,16 @@ export default function TrackOrder() {
     setOrder(null);
 
     const val = trackingCode.trim().toUpperCase();
-    
-    // Search across multiple fields
+
+    // Search across order number, tracking number, id, and extracted invoice numbers
     let orders = await dataClient.entities.Order.list();
-    const found = orders.find(o => 
-      o.tracking_number?.toUpperCase() === val ||
+    const found = orders.find(o =>
       o.order_number?.toUpperCase() === val ||
-      o.id === val
+      o.tracking_number?.toUpperCase() === val ||
+      o.id === val ||
+      (Array.isArray(o.invoice_numbers) && o.invoice_numbers.some(
+        (/** @type {string} */ n) => n.toUpperCase() === val
+      ))
     );
     
     if (found) {
@@ -136,7 +139,7 @@ export default function TrackOrder() {
             </div>
           </div>
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Track Your Order</h1>
-          <p className="text-white/50 text-sm">Enter your order number or tracking code</p>
+          <p className="text-white/50 text-sm">Enter your order number, tracking code, or invoice number</p>
         </div>
 
         {/* Search */}
