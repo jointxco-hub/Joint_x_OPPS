@@ -33,6 +33,7 @@ const priorityDot = {
 export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [viewMode, setViewMode] = useState("list");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showNew, setShowNew] = useState(false);
@@ -42,6 +43,12 @@ export default function Orders() {
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["orders"],
     queryFn: () => dataClient.entities.Order.list("-created_date", 200),
+  });
+
+  const { data: users = [] } = useQuery({
+    queryKey: ["users"],
+    queryFn: () => dataClient.entities.User.list("name", 100),
+    staleTime: 300_000,
   });
 
   // Auto-open drawer when navigated from Dashboard with ?open=<id>
@@ -77,6 +84,7 @@ export default function Orders() {
     if (statusFilter === "active" && ["delivered", "cancelled"].includes(o.status)) return false;
     if (statusFilter === "delivered" && o.status !== "delivered") return false;
     if (statusFilter === "cancelled" && o.status !== "cancelled") return false;
+    if (assigneeFilter !== "all" && o.assigned_to !== assigneeFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       return o.client_name?.toLowerCase().includes(q) || o.order_number?.toLowerCase().includes(q);
@@ -151,7 +159,7 @@ export default function Orders() {
               className="pl-9 bg-card rounded-xl h-9"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {[
               { key: "active",    label: `Active (${counts.active})` },
               { key: "delivered", label: `Delivered (${counts.delivered})` },
@@ -169,6 +177,22 @@ export default function Orders() {
                 {s.label}
               </button>
             ))}
+            {users.length > 0 && (
+              <select
+                value={assigneeFilter}
+                onChange={e => setAssigneeFilter(e.target.value)}
+                className={`px-3 py-1.5 rounded-xl text-sm font-medium transition-all border appearance-none cursor-pointer ${
+                  assigneeFilter !== "all"
+                    ? "bg-primary text-primary-foreground border-primary shadow-apple-sm"
+                    : "bg-card border-border text-muted-foreground"
+                }`}
+              >
+                <option value="all">All assignees</option>
+                {(/** @type {any[]} */ (users)).map((/** @type {any} */ u) => (
+                  <option key={u.id} value={u.email}>{u.full_name || u.name || u.email}</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 

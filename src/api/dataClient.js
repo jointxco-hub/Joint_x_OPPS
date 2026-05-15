@@ -1165,6 +1165,46 @@ const ENTITY_CONFIG = {
     },
   },
 
+  CatalogItem: {
+    table: 'products',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      display_order: 'display_order',
+      name: 'name',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      category: 'category',
+      status: 'status',
+    },
+    normalize(row) {
+      const images = row.images ?? row.image_urls ?? [];
+      const firstImage = Array.isArray(images) ? images[0] : (images?.src ?? images);
+      return {
+        ...row,
+        image_url: firstImage?.src ?? firstImage ?? row.image_url ?? null,
+        price: Number(row.price ?? row.selling_price ?? 0),
+        created_date: row.created_at,
+        updated_date: row.updated_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        name: payload.name,
+        description: payload.description,
+        category: payload.category,
+        price: numberOrUndefined(payload.price),
+        image_url: payload.image_url,
+        images: payload.images,
+        status: payload.status ?? 'active',
+        display_order: numberOrUndefined(payload.display_order),
+        is_archived: payload.is_archived,
+      });
+    },
+  },
+
   ClientAsset: {
     table: 'client_assets',
     sortMap: { created_date: 'created_at', updated_date: 'updated_at' },

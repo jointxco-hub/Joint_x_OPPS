@@ -1,17 +1,22 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import ResponsiveModal from "@/components/common/ResponsiveModal";
 
-const CATEGORIES = [
+const INV_CATEGORIES = [
   "tees","hoodies","sweaters","bottoms","headwear","accessories",
   "vinyl","dtf_materials","embroidery_materials","ink","labels","packaging","other",
 ];
+
+const CATALOG_CATEGORIES = [
+  "all","tshirts","hoodies","sweaters","hats","bottoms","printing","labels","accessories","other",
+];
+
 const UNITS = ["pieces","meters","rolls","liters"];
 
 const EMPTY_FORM = {
@@ -88,7 +93,7 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
             <label className="text-xs font-medium text-foreground block mb-1">Category</label>
             <select value={form.category} onChange={set("category")}
               className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
-              {CATEGORIES.map(c => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
+              {INV_CATEGORIES.map(c => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
             </select>
           </div>
           <div>
@@ -127,29 +132,107 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
         </div>
 
         <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Location / bin</label>
+          <Input value={form.location} onChange={set("location")} placeholder="Shelf A3" className="h-11 md:h-10" />
+        </div>
+
+        <div>
           <label className="text-xs font-medium text-foreground block mb-1">Preferred Supplier</label>
           <select value={form.preferred_supplier_id} onChange={set("preferred_supplier_id")}
             className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
             <option value="">— None —</option>
-            {suppliers.map(s => (
+            {(/** @type {any[]} */ (suppliers)).map((/** @type {any} */ s) => (
               <option key={s.id} value={s.id}>{s.name ?? s.vendor}</option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <label className="text-xs font-medium text-foreground block mb-1">Location / bin</label>
-          <Input value={form.location} onChange={set("location")} placeholder="Shelf A3" className="h-11 md:h-10" />
         </div>
       </form>
     </ResponsiveModal>
   );
 }
 
+function ProductImage({ url, name }) {
+  const [err, setErr] = useState(false);
+  if (!url || err) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-secondary">
+        <Package className="w-8 h-8 text-muted-foreground/30" />
+      </div>
+    );
+  }
+  return <img src={url} alt={name} className="w-full h-full object-cover" onError={() => setErr(true)} />;
+}
+
+function CatalogGrid({ products, onAddToStock, addingId }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+      {(/** @type {any[]} */ (products)).map((/** @type {any} */ p) => (
+        <div key={p.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
+          <div className="aspect-square overflow-hidden relative">
+            <ProductImage url={p.image_url} name={p.name} />
+            {p.status === "draft" && (
+              <span className="absolute top-2 left-2 text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full font-medium">Draft</span>
+            )}
+          </div>
+          <div className="p-3">
+            <p className="text-xs font-semibold text-foreground leading-tight truncate">{p.name}</p>
+            {p.category && (
+              <p className="text-[10px] text-muted-foreground mt-0.5 capitalize">{p.category.replace(/_/g, " ")}</p>
+            )}
+            {p.price > 0 && (
+              <p className="text-xs font-bold text-primary mt-1">R{Number(p.price).toLocaleString()}</p>
+            )}
+            <button
+              onClick={() => onAddToStock(p)}
+              disabled={addingId === p.id}
+              className="mt-2 w-full text-[10px] py-1.5 rounded-lg bg-primary/10 text-primary font-semibold hover:bg-primary hover:text-primary-foreground transition-all disabled:opacity-50"
+            >
+              {addingId === p.id ? "Adding…" : "+ Add to Stock"}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CatalogList({ products, onAddToStock, addingId }) {
+  return (
+    <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
+      {(/** @type {any[]} */ (products)).map((/** @type {any} */ p, i) => (
+        <div key={p.id} className={`flex items-center gap-4 px-4 py-3 hover:bg-secondary/30 transition-all ${i > 0 ? "border-t border-border" : ""}`}>
+          <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 border border-border">
+            <ProductImage url={p.image_url} name={p.name} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+            <p className="text-xs text-muted-foreground capitalize">{p.category?.replace(/_/g, " ") || "—"}</p>
+          </div>
+          {p.price > 0 && (
+            <p className="text-sm font-bold text-primary flex-shrink-0">R{Number(p.price).toLocaleString()}</p>
+          )}
+          <button
+            onClick={() => onAddToStock(p)}
+            disabled={addingId === p.id}
+            className="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg bg-primary/10 text-primary font-semibold hover:bg-primary hover:text-primary-foreground transition-all disabled:opacity-50"
+          >
+            {addingId === p.id ? "…" : "+ Stock"}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Inventory() {
+  const [tab, setTab] = useState("stock");
   const [search, setSearch] = useState("");
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogCategory, setCatalogCategory] = useState("all");
+  const [catalogView, setCatalogView] = useState("grid");
   const [editItem, setEditItem] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [addingId, setAddingId] = useState(null);
   const queryClient = useQueryClient();
 
   const { data: inventory = [], isLoading } = useQuery({
@@ -163,8 +246,14 @@ export default function Inventory() {
     staleTime: 300_000,
   });
 
+  const { data: catalogItems = [], isLoading: catalogLoading, refetch: refetchCatalog } = useQuery({
+    queryKey: ["catalogItems"],
+    queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
+    staleTime: 120_000,
+  });
+
   const archiveMutation = useMutation({
-    mutationFn: (id) => dataClient.entities.InventoryItem.update(id, {
+    mutationFn: (/** @type {string} */ id) => dataClient.entities.InventoryItem.update(id, {
       is_archived: true, archived_at: new Date().toISOString(),
     }),
     onSuccess: () => {
@@ -173,139 +262,310 @@ export default function Inventory() {
     },
   });
 
-  const supplierMap = Object.fromEntries(suppliers.map(s => [s.id, s.name ?? s.vendor]));
+  const addToStockMutation = useMutation({
+    mutationFn: (/** @type {any} */ product) => dataClient.entities.InventoryItem.create({
+      name: product.name,
+      sku: product.slug ?? product.sku ?? null,
+      category: product.category ?? "other",
+      unit: "pieces",
+      current_stock: 0,
+      selling_price: product.price ?? null,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      toast.success("Added to stock inventory");
+      setAddingId(null);
+    },
+    onError: () => {
+      toast.error("Failed to add to inventory");
+      setAddingId(null);
+    },
+  });
 
-  const filtered = inventory.filter(i =>
+  const handleAddToStock = (/** @type {any} */ product) => {
+    const exists = inventory.find(i =>
+      !i.is_archived && (i.name?.toLowerCase() === product.name?.toLowerCase())
+    );
+    if (exists) {
+      toast("Already in stock inventory", { description: exists.name });
+      return;
+    }
+    setAddingId(product.id);
+    addToStockMutation.mutate(product);
+  };
+
+  const supplierMap = Object.fromEntries((/** @type {any[]} */ (suppliers)).map((/** @type {any} */ s) => [s.id, s.name ?? s.vendor]));
+
+  const filteredStock = inventory.filter(i =>
     !i.is_archived &&
-    (!search || i.name?.toLowerCase().includes(search.toLowerCase()) || i.sku?.toLowerCase().includes(search.toLowerCase()))
+    (!search || (/** @type {any} */ (i)).name?.toLowerCase().includes(search.toLowerCase()) || (/** @type {any} */ (i)).sku?.toLowerCase().includes(search.toLowerCase()))
   );
 
+  const filteredCatalog = (/** @type {any[]} */ (catalogItems)).filter((/** @type {any} */ p) => {
+    if (p.is_archived) return false;
+    if (catalogCategory !== "all" && p.category !== catalogCategory) return false;
+    if (catalogSearch) {
+      const q = catalogSearch.toLowerCase();
+      return p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
   const lowStock = inventory.filter(i => !i.is_archived && i.reorder_point != null && i.current_stock <= i.reorder_point);
+
+  const inStockNames = new Set(inventory.filter(i => !i.is_archived).map(i => (/** @type {any} */ (i)).name?.toLowerCase()));
 
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
+
+        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-foreground tracking-tight">Inventory</h1>
-            <p className="text-muted-foreground text-sm mt-0.5">{filtered.length} items tracked</p>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              {tab === "stock" ? `${filteredStock.length} items tracked` : `${filteredCatalog.length} products`}
+            </p>
           </div>
-          <Button onClick={() => setShowAdd(true)} className="gap-2 shadow-apple-sm">
-            <Plus className="w-4 h-4" /> Add Item
-          </Button>
+          <div className="flex items-center gap-2">
+            {tab === "catalog" && (
+              <button
+                onClick={() => refetchCatalog()}
+                className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-all"
+                title="Refresh catalog"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            )}
+            {tab === "stock" && (
+              <Button onClick={() => setShowAdd(true)} className="gap-2 shadow-apple-sm">
+                <Plus className="w-4 h-4" /> Add Item
+              </Button>
+            )}
+          </div>
         </div>
 
-        {lowStock.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-red-800">{lowStock.length} item{lowStock.length > 1 ? "s" : ""} running low</p>
-              <p className="text-xs text-red-600 mt-0.5">{lowStock.map(i => i.name).join(", ")}</p>
+        {/* Tabs */}
+        <div className="flex gap-1 bg-secondary rounded-xl p-1 mb-6 w-fit">
+          {[
+            { key: "stock", label: "Stock" },
+            { key: "catalog", label: "Shop Catalog" },
+          ].map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                tab === t.key ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── STOCK TAB ── */}
+        {tab === "stock" && (
+          <>
+            {lowStock.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-5 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-red-800">{lowStock.length} item{lowStock.length > 1 ? "s" : ""} running low</p>
+                  <p className="text-xs text-red-600 mt-0.5">{(/** @type {any[]} */ (lowStock)).map(i => i.name).join(", ")}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="relative mb-5">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
+                className="pl-9 bg-card rounded-xl h-10" />
             </div>
-          </div>
+
+            {isLoading ? (
+              <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-16 bg-card rounded-2xl animate-pulse" />)}</div>
+            ) : (
+              <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
+                <div className="hidden md:grid grid-cols-12 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-5 py-3 border-b border-border bg-secondary/30">
+                  <span className="col-span-3">Item</span>
+                  <span className="col-span-2 text-center">Stock</span>
+                  <span className="col-span-2 text-center">Pricing</span>
+                  <span className="col-span-2">Supplier</span>
+                  <span className="col-span-2 text-center">Status</span>
+                  <span className="col-span-1" />
+                </div>
+                {filteredStock.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">No inventory items</p>
+                  </div>
+                ) : filteredStock.map(item => {
+                  const i = /** @type {any} */ (item);
+                  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
+                  const supplierName = i.preferred_supplier_id ? supplierMap[i.preferred_supplier_id] : null;
+                  const cost = Number(i.cost_price) || 0;
+                  const selling = Number(i.selling_price) || 0;
+                  const profit = selling - cost;
+                  const margin = selling > 0 ? Math.round((profit / selling) * 100) : null;
+                  return (
+                    <div key={i.id} className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
+                      {/* Mobile */}
+                      <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-foreground">{i.name}</p>
+                          {i.sku && <p className="text-xs text-muted-foreground">SKU: {i.sku}</p>}
+                          {supplierName && <p className="text-xs text-primary mt-0.5">{supplierName}</p>}
+                          <p className={`text-xs mt-1 font-semibold ${isLow ? "text-red-600" : "text-foreground"}`}>
+                            {i.current_stock ?? 0} {i.unit}
+                            {isLow && " — Low stock"}
+                          </p>
+                          {(cost > 0 || selling > 0) && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Cost R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
+                              {margin !== null && ` / ${margin}% margin`}
+                            </p>
+                          )}
+                        </div>
+                        <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground mt-0.5">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Desktop */}
+                      <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
+                        <div className="col-span-3">
+                          <p className="text-sm font-medium text-foreground">{i.name}</p>
+                          {i.sku && <p className="text-xs text-muted-foreground font-mono">{i.sku}</p>}
+                        </div>
+                        <div className="col-span-2 text-center">
+                          <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
+                            {i.current_stock ?? 0} {i.unit}
+                          </span>
+                        </div>
+                        <div className="col-span-2 text-center text-xs text-muted-foreground">
+                          {(cost > 0 || selling > 0) ? `R${cost.toFixed(0)} / R${selling.toFixed(0)}${margin !== null ? ` · ${margin}%` : ""}` : "—"}
+                        </div>
+                        <div className="col-span-2">
+                          {supplierName ? (
+                            <span className="text-xs text-primary font-medium truncate block">{supplierName}</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </div>
+                        <div className="col-span-2 flex justify-center">
+                          {isLow ? (
+                            <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
+                          )}
+                        </div>
+                        <div className="col-span-1 flex items-center gap-1.5 justify-end">
+                          <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground transition-all">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }}
+                            className="text-muted-foreground hover:text-foreground transition-all">
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
 
-        <div className="relative mb-5">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
-            className="pl-9 bg-card rounded-xl h-10" />
-        </div>
-
-        {isLoading ? (
-          <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-16 bg-card rounded-2xl animate-pulse" />)}</div>
-        ) : (
-          <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
-            <div className="hidden md:grid grid-cols-12 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-5 py-3 border-b border-border bg-secondary/30">
-              <span className="col-span-3">Item</span>
-              <span className="col-span-2 text-center">Stock</span>
-              <span className="col-span-2 text-center">Pricing</span>
-              <span className="col-span-2">Supplier</span>
-              <span className="col-span-2 text-center">Status</span>
-              <span className="col-span-1" />
-            </div>
-            {filtered.length === 0 ? (
-              <div className="text-center py-12">
-                <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
-                <p className="text-sm text-muted-foreground">No inventory items</p>
+        {/* ── CATALOG TAB ── */}
+        {tab === "catalog" && (
+          <>
+            {/* Filter bar */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <div className="relative flex-1 min-w-[180px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input placeholder="Search products…" value={catalogSearch} onChange={e => setCatalogSearch(e.target.value)}
+                  className="pl-9 bg-card rounded-xl h-9 text-sm" />
               </div>
-            ) : filtered.map(item => {
-              const isLow = item.reorder_point != null && item.current_stock <= item.reorder_point;
-              const supplierName = item.preferred_supplier_id ? supplierMap[item.preferred_supplier_id] : null;
-              const cost = Number(item.cost_price) || 0;
-              const selling = Number(item.selling_price) || 0;
-              const profit = selling - cost;
-              const margin = selling > 0 ? Math.round((profit / selling) * 100) : null;
-              return (
-                <div key={item.id} className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
-                  {/* Mobile */}
-                  <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{item.name}</p>
-                      {item.sku && <p className="text-xs text-muted-foreground">SKU: {item.sku}</p>}
-                      {supplierName && <p className="text-xs text-primary mt-0.5">{supplierName}</p>}
-                      <p className={`text-xs mt-1 font-semibold ${isLow ? "text-red-600" : "text-foreground"}`}>
-                        {item.current_stock ?? 0} {item.unit}
-                        {isLow && " — Low stock"}
-                      </p>
-                      {(cost > 0 || selling > 0) && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Stock R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
-                          {margin !== null && ` / ${margin}% margin`}
-                        </p>
-                      )}
-                    </div>
-                    <button onClick={() => setEditItem(item)} className="text-muted-foreground hover:text-foreground mt-0.5">
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                  </div>
+              <div className="flex bg-secondary rounded-xl p-0.5">
+                <button
+                  onClick={() => setCatalogView("grid")}
+                  className={`p-1.5 rounded-lg transition-all ${catalogView === "grid" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setCatalogView("list")}
+                  className={`p-1.5 rounded-lg transition-all ${catalogView === "list" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}
+                >
+                  <List className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
 
-                  {/* Desktop */}
-                  <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
-                    <div className="col-span-3">
-                      <p className="text-sm font-medium text-foreground">{item.name}</p>
-                      {item.sku && <p className="text-xs text-muted-foreground font-mono">{item.sku}</p>}
-                    </div>
-                    <div className="col-span-2 text-center">
-                      <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
-                        {item.current_stock ?? 0} {item.unit}
-                      </span>
-                      {(cost > 0 || selling > 0) && (
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                          R{cost.toFixed(2)} / R{selling.toFixed(2)}
-                        </p>
-                      )}
-                    </div>
-                    <div className="col-span-2 text-center text-xs">
-                      {margin !== null ? `${margin}% margin` : "-"}
-                    </div>
-                    <div className="col-span-2">
-                      {supplierName ? (
-                        <span className="text-xs text-primary font-medium truncate block">{supplierName}</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </div>
-                    <div className="col-span-2 flex justify-center">
-                      {isLow ? (
-                        <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
-                      )}
-                    </div>
-                    <div className="col-span-1 flex items-center gap-1.5 justify-end">
-                      <button onClick={() => setEditItem(item)} className="text-muted-foreground hover:text-foreground transition-all">
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => { if (confirm(`Archive ${item.name}?`)) archiveMutation.mutate(item.id); }}
-                        className="text-muted-foreground hover:text-foreground transition-all">
-                        <Archive className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+            {/* Category pills */}
+            <div className="flex gap-1.5 flex-wrap mb-5">
+              {CATALOG_CATEGORIES.map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setCatalogCategory(cat)}
+                  className={`px-3 py-1 rounded-xl text-xs font-medium transition-all capitalize ${
+                    catalogCategory === cat
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-card border border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {cat === "all" ? "All" : cat.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+
+            {catalogLoading ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {[1,2,3,4,5,6,7,8].map(i => <div key={i} className="aspect-square bg-card rounded-2xl animate-pulse" />)}
+              </div>
+            ) : catalogItems.length === 0 ? (
+              <div className="text-center py-20 bg-card rounded-2xl border border-border">
+                <Package className="w-12 h-12 text-muted-foreground/20 mx-auto mb-3" />
+                <p className="font-semibold text-foreground mb-1">No shop products found</p>
+                <p className="text-sm text-muted-foreground max-w-xs mx-auto">
+                  Products from your xlab shop will appear here once synced from the shared Supabase database.
+                </p>
+                <button
+                  onClick={() => refetchCatalog()}
+                  className="mt-4 text-sm text-primary font-medium flex items-center gap-1.5 mx-auto hover:underline"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                </button>
+              </div>
+            ) : filteredCatalog.length === 0 ? (
+              <div className="text-center py-16">
+                <p className="text-muted-foreground text-sm">No products match this filter</p>
+              </div>
+            ) : catalogView === "grid" ? (
+              <CatalogGrid
+                products={filteredCatalog.map(p => ({
+                  ...p,
+                  _inStock: inStockNames.has((/** @type {any} */ (p)).name?.toLowerCase()),
+                }))}
+                onAddToStock={handleAddToStock}
+                addingId={addingId}
+              />
+            ) : (
+              <CatalogList
+                products={filteredCatalog}
+                onAddToStock={handleAddToStock}
+                addingId={addingId}
+              />
+            )}
+
+            {filteredCatalog.length > 0 && (
+              <p className="text-center text-xs text-muted-foreground mt-6">
+                {filteredCatalog.length} product{filteredCatalog.length !== 1 ? "s" : ""}
+                {catalogCategory !== "all" && ` in ${catalogCategory}`}
+              </p>
+            )}
+          </>
         )}
       </div>
 

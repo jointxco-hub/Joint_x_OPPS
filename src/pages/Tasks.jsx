@@ -53,6 +53,8 @@ const TYPE_LABELS = {
 export default function Tasks() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [selectedTask, setSelectedTask] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState({});
@@ -84,6 +86,8 @@ export default function Tasks() {
     if (t.status === "archived") return false;
     if (statusFilter === "active" && t.status === "complete") return false;
     if (statusFilter === "done" && t.status !== "complete") return false;
+    if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+    if (typeFilter !== "all" && (t.production_type || "general") !== typeFilter) return false;
     if (search && !t.title?.toLowerCase().includes(search.toLowerCase()) &&
         !t.client_name?.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -153,6 +157,38 @@ export default function Tasks() {
                 {s.label}
               </button>
             ))}
+            <select
+              value={priorityFilter}
+              onChange={e => setPriorityFilter(e.target.value)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border appearance-none cursor-pointer transition-all ${
+                priorityFilter !== "all"
+                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                  : "bg-card border-border text-muted-foreground"
+              }`}
+            >
+              <option value="all">Priority</option>
+              <option value="urgent">Urgent</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="normal">Normal</option>
+              <option value="low">Low</option>
+            </select>
+            <select
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border appearance-none cursor-pointer transition-all ${
+                typeFilter !== "all"
+                  ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                  : "bg-card border-border text-muted-foreground"
+              }`}
+            >
+              <option value="all">Type</option>
+              <option value="single">Single</option>
+              <option value="bulk">Bulk</option>
+              <option value="x1_sample_pack">X1 Sample Pack</option>
+              <option value="alethea">Alethea</option>
+              <option value="general">General</option>
+            </select>
           </div>
         </div>
 
