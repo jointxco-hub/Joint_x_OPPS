@@ -160,19 +160,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   });
 
   const createPOMutation = useMutation({
-    mutationFn: async (data) => {
-      const po = await dataClient.entities.PurchaseOrder.create(data);
-      await dataClient.entities.Order.update(order.id, { linked_po_id: po.id });
-      return po;
-    },
-    onSuccess: () => {
+    mutationFn: (data) => dataClient.entities.PurchaseOrder.create(data),
+    onSuccess: (po) => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      // Use onUpdate so selectedOrder state is patched and the PO tab reflects the link immediately
+      onUpdate(order.id, { linked_po_id: po.id });
       setShowNewPO(false);
       setNewPOForm({ supplier_name: "", expected_delivery: "", notes: "" });
       toast.success("Purchase order created and linked");
     },
-    onError: () => toast.error("Failed to create PO")
+    onError: (err) => toast.error("Failed to create PO — " + (/** @type {any} */ (err)?.message || "check console"))
   });
 
   const handleCreateTask = () => {
