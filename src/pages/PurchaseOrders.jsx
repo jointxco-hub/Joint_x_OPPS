@@ -230,8 +230,10 @@ export default function PurchaseOrders() {
   const handleSubmit = async (data) => {
     if (editingPO) {
       await updateMutation.mutateAsync({ id: editingPO.id, data });
+      toast.success("Purchase order updated");
     } else {
       await createMutation.mutateAsync(data);
+      toast.success("Purchase order created");
     }
   };
 

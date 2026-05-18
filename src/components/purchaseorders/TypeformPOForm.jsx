@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function TypeformPOForm({
   purchaseOrder,
@@ -105,22 +106,27 @@ export default function TypeformPOForm({
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
-    const items = (formData.items || []).map(item => ({
-      ...item,
-      quantity: parseFloat(item.quantity) || 0,
-      unit_price: parseFloat(item.unit_price) || 0,
-      total: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0),
-    }));
-    const subtotal = items.reduce((sum, item) => sum + item.total, 0);
-    await onSubmit({
-      ...formData,
-      items,
-      subtotal,
-      total: subtotal + (parseFloat(formData.tax) || 0),
-      total_amount: subtotal + (parseFloat(formData.tax) || 0),
-      expected_date: formData.expected_delivery,
-    });
-    setIsSubmitting(false);
+    try {
+      const items = (formData.items || []).map(item => ({
+        ...item,
+        quantity: parseFloat(item.quantity) || 0,
+        unit_price: parseFloat(item.unit_price) || 0,
+        total: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0),
+      }));
+      const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+      await onSubmit({
+        ...formData,
+        items,
+        subtotal,
+        total: subtotal + (parseFloat(formData.tax) || 0),
+        total_amount: subtotal + (parseFloat(formData.tax) || 0),
+        expected_date: formData.expected_delivery,
+      });
+    } catch (err) {
+      toast.error("Failed to save PO — " + (err?.message || "check Supabase purchase_orders table"));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -161,7 +167,7 @@ export default function TypeformPOForm({
                     onClick={() => toggleSupplier(supplier.id)}
                     className={`text-left p-3 rounded-lg border-2 transition-all ${
                       (formData.supplier_ids || []).includes(supplier.id)
-                        ? 'border-[#0F9B8E] bg-[#0F9B8E]/5'
+                        ? 'border-primary bg-primary/5'
                         : 'border-slate-200 hover:border-slate-300 bg-white'
                     }`}
                   >
@@ -252,7 +258,7 @@ export default function TypeformPOForm({
                 <Plus className="w-4 h-4 mr-2" /> Add Item
               </Button>
 
-              <div className="bg-slate-900 text-white rounded-xl p-4 flex justify-between items-center">
+              <div className="bg-primary text-primary-foreground rounded-xl p-4 flex justify-between items-center">
                 <span className="font-semibold">Total</span>
                 <span className="text-lg font-bold">R{(formData.total || 0).toFixed(2)}</span>
               </div>
