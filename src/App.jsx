@@ -15,6 +15,7 @@ import TrackOrder from '@/pages/TrackOrder';
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : () => <></>;
+const SignInPage = Pages['SignIn'];
 
 // Paths that are public — rendered without the internal layout and no auth check
 const PUBLIC_PATHS = ['/TrackOrder', '/SignIn'];
@@ -32,7 +33,7 @@ const AuthenticatedApp = () => {
     return (
       <Routes>
         <Route path="/TrackOrder" element={<TrackOrder />} />
-        <Route path="/SignIn" element={Pages['SignIn'] ? <Pages['SignIn'] /> : <PageNotFound />} />
+        <Route path="/SignIn" element={SignInPage ? <SignInPage /> : <PageNotFound />} />
       </Routes>
     );
   }
