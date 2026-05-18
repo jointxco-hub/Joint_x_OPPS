@@ -123,17 +123,16 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   };
 
   const [pickerOpenIdx, setPickerOpenIdx] = useState(/** @type {number|null} */ (null));
-  const [pickerSearch, setPickerSearch] = useState("");
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
     queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
-    staleTime: 300_000,
+    staleTime: 0,
   });
   const { data: inventoryItems = [] } = useQuery({
     queryKey: ["inventory"],
     queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
-    staleTime: 300_000,
+    staleTime: 0,
   });
 
   const allPickerItems = [
@@ -412,7 +411,6 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                         value={p.name}
                         onChange={(/** @type {any} */ e) => {
                           updateProduct(i, 'name', e.target.value);
-                          setPickerSearch(e.target.value);
                           setPickerOpenIdx(i);
                         }}
                         onFocus={() => setPickerOpenIdx(i)}
@@ -421,10 +419,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                         className="rounded-xl h-9 text-sm w-full"
                       />
                       {pickerOpenIdx === i && (
-                        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-apple-lg z-30 max-h-48 overflow-y-auto">
-                          {pickerFiltered(pickerOpenIdx === i ? p.name : "").length === 0 ? (
-                            <p className="text-xs text-muted-foreground px-3 py-2">No matches — will save as typed</p>
-                          ) : pickerFiltered(pickerOpenIdx === i ? p.name : "").map((item, idx) => (
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-apple-lg z-30 max-h-56 overflow-y-auto">
+                          {pickerFiltered(pickerOpenIdx === i ? p.name : "").map((item, idx) => (
                             <button
                               key={idx}
                               type="button"
@@ -432,14 +428,29 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                                 updateProduct(i, 'name', item.name);
                                 if (item.price) updateProduct(i, 'price', String(item.price));
                                 setPickerOpenIdx(null);
-                                setPickerSearch("");
                               }}
-                              className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between last:rounded-b-xl first:rounded-t-xl"
+                              className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between"
                             >
                               <span className="text-sm text-foreground">{item.name}</span>
                               {item.price ? <span className="text-xs font-semibold text-primary ml-2 flex-shrink-0">R{Number(item.price).toLocaleString()}</span> : null}
                             </button>
                           ))}
+                          {/* Always-visible custom item option */}
+                          {p.name.trim() && (
+                            <button
+                              type="button"
+                              onMouseDown={() => setPickerOpenIdx(null)}
+                              className="w-full text-left px-3 py-2.5 border-t border-border hover:bg-primary/5 transition-all rounded-b-xl flex items-center gap-2"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                              <span className="text-sm text-primary font-medium">
+                                Add &ldquo;{p.name.trim()}&rdquo; as custom item
+                              </span>
+                            </button>
+                          )}
+                          {!p.name.trim() && pickerFiltered("").length === 0 && (
+                            <p className="text-xs text-muted-foreground px-3 py-2">Type a product name above</p>
+                          )}
                         </div>
                       )}
                     </div>
