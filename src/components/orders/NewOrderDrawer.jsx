@@ -122,6 +122,31 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     setShowClientDropdown(false);
   };
 
+  const [pickerOpenIdx, setPickerOpenIdx] = useState(/** @type {number|null} */ (null));
+  const [pickerSearch, setPickerSearch] = useState("");
+
+  const { data: catalogItems = [] } = useQuery({
+    queryKey: ["catalogItems"],
+    queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
+    staleTime: 300_000,
+  });
+  const { data: inventoryItems = [] } = useQuery({
+    queryKey: ["inventory"],
+    queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
+    staleTime: 300_000,
+  });
+
+  const allPickerItems = [
+    ...(/** @type {any[]} */ (catalogItems)).map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? "" })),
+    ...(/** @type {any[]} */ (inventoryItems))
+      .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
+      .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "" })),
+  ];
+
+  const pickerFiltered = (/** @type {string} */ q) =>
+    q ? allPickerItems.filter(p => p.name?.toLowerCase().includes(q.toLowerCase())).slice(0, 8)
+      : allPickerItems.slice(0, 8);
+
   const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '' }] }));
   const removeProduct = (i) => setForm(f => ({ ...f, products: f.products.filter((_, idx) => idx !== i) }));
   const updateProduct = (i, field, val) => setForm(f => ({
@@ -379,18 +404,55 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
             <div className="space-y-2">
               {form.products.map((p, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Input value={p.name} onChange={e => updateProduct(i, 'name', e.target.value)}
-                    placeholder="Product name" className="rounded-xl flex-1 h-9 text-sm" />
-                  <Input value={p.quantity} onChange={e => updateProduct(i, 'quantity', e.target.value)}
-                    placeholder="Qty" type="number" className="rounded-xl w-14 h-9 text-sm" />
-                  <Input value={p.price} onChange={e => updateProduct(i, 'price', e.target.value)}
-                    placeholder="R" type="number" className="rounded-xl w-16 h-9 text-sm" />
-                  {form.products.length > 1 && (
-                    <button type="button" onClick={() => removeProduct(i)} className="text-muted-foreground hover:text-destructive transition-all">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                <div key={i} className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    {/* Name with catalog/inventory picker */}
+                    <div className="relative flex-1">
+                      <Input
+                        value={p.name}
+                        onChange={(/** @type {any} */ e) => {
+                          updateProduct(i, 'name', e.target.value);
+                          setPickerSearch(e.target.value);
+                          setPickerOpenIdx(i);
+                        }}
+                        onFocus={() => setPickerOpenIdx(i)}
+                        onBlur={() => setTimeout(() => setPickerOpenIdx(null), 150)}
+                        placeholder="Search inventory or type name…"
+                        className="rounded-xl h-9 text-sm w-full"
+                      />
+                      {pickerOpenIdx === i && (
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-apple-lg z-30 max-h-48 overflow-y-auto">
+                          {pickerFiltered(pickerOpenIdx === i ? p.name : "").length === 0 ? (
+                            <p className="text-xs text-muted-foreground px-3 py-2">No matches — will save as typed</p>
+                          ) : pickerFiltered(pickerOpenIdx === i ? p.name : "").map((item, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onMouseDown={() => {
+                                updateProduct(i, 'name', item.name);
+                                if (item.price) updateProduct(i, 'price', String(item.price));
+                                setPickerOpenIdx(null);
+                                setPickerSearch("");
+                              }}
+                              className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between last:rounded-b-xl first:rounded-t-xl"
+                            >
+                              <span className="text-sm text-foreground">{item.name}</span>
+                              {item.price ? <span className="text-xs font-semibold text-primary ml-2 flex-shrink-0">R{Number(item.price).toLocaleString()}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <Input value={p.quantity} onChange={(/** @type {any} */ e) => updateProduct(i, 'quantity', e.target.value)}
+                      placeholder="Qty" type="number" className="rounded-xl w-14 h-9 text-sm" />
+                    <Input value={p.price} onChange={(/** @type {any} */ e) => updateProduct(i, 'price', e.target.value)}
+                      placeholder="R" type="number" className="rounded-xl w-16 h-9 text-sm" />
+                    {form.products.length > 1 && (
+                      <button type="button" onClick={() => removeProduct(i)} className="text-muted-foreground hover:text-destructive transition-all">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

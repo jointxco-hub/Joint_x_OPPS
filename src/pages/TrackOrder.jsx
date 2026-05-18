@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Search, Package, CheckCircle2, Truck, Clock,
   Shirt, MapPin, X, ChevronLeft, ChevronRight,
-  Image, FileText, Play, Copy, Check
+  Image, FileText, Play, Copy, Check, AlertTriangle, MessageSquare
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -94,15 +94,23 @@ export default function TrackOrder() {
 
     const val = trackingCode.trim().toUpperCase();
 
-    // Search across order number, tracking number, id, and extracted invoice numbers
+    // Normalise input the same way filenames are normalised on upload
+    const valNorm = val.replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "");
+
+    // Search across order number, tracking number, id, extracted invoice numbers,
+    // and invoice file names (stem only, normalised) so "xlab labels" finds its order
     let orders = await dataClient.entities.Order.list();
     const found = orders.find(o =>
       o.order_number?.toUpperCase() === val ||
       o.tracking_number?.toUpperCase() === val ||
       o.id === val ||
       (Array.isArray(o.invoice_numbers) && o.invoice_numbers.some(
-        (/** @type {string} */ n) => n.toUpperCase() === val
-      ))
+        (/** @type {string} */ n) => n.toUpperCase() === val || n.toUpperCase() === valNorm
+      )) ||
+      (Array.isArray(o.invoice_files) && o.invoice_files.some((/** @type {any} */ f) => {
+        const stem = (f.name || "").replace(/\.[^.]+$/, "").toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "");
+        return stem === val || stem === valNorm;
+      }))
     );
     
     if (found) {
@@ -243,8 +251,58 @@ export default function TrackOrder() {
               )}
             </div>
 
+            {/* Portal: message from team */}
+            {order.portal_message && (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 flex gap-3">
+                <MessageSquare className="w-4 h-4 text-[#4ade80] flex-shrink-0 mt-0.5" />
+                <p className="text-white/90 text-sm leading-relaxed">{order.portal_message}</p>
+              </div>
+            )}
+
+            {/* Portal: attention items */}
+            {Array.isArray(order.portal_attention_items) && order.portal_attention_items.length > 0 && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4">
+                <p className="text-amber-300 text-xs font-semibold uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Action Required
+                </p>
+                <div className="space-y-1.5">
+                  {order.portal_attention_items.map((item, i) => (
+                    <p key={i} className="text-amber-200 text-sm">• {item}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Portal: outstanding balance */}
+            {order.portal_show_balance && order.total_amount && (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-white/40 text-xs mb-1">Order Total</p>
+                  <p className="text-white font-semibold">R{Number(order.total_amount).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-white/40 text-xs mb-1">Amount Paid</p>
+                  <p className="text-[#4ade80] font-semibold">
+                    R{Math.min(Number(order.total_amount), Number(order.amount_paid ?? 0)).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Design Files */}
-            {order.file_urls?.length > 0 && (
+            {order.portal_show_files && order.file_urls?.length > 0 && (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4">
+                <p className="text-white/40 text-xs mb-3">Files &amp; Approvals</p>
+                <div className="flex flex-wrap gap-2">
+                  {order.file_urls.map((url, i) => (
+                    <FileThumb key={i} url={url} onClick={setMediaUrl} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Design Files fallback (portal toggle off — still show if no portal config at all) */}
+            {!order.portal_show_files && !order.portal_message && !order.portal_attention_items?.length && order.file_urls?.length > 0 && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4">
                 <p className="text-white/40 text-xs mb-3">Design Files</p>
                 <div className="flex flex-wrap gap-2">

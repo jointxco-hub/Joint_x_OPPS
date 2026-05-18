@@ -4,12 +4,13 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, ShoppingCart, AlertTriangle, Copy, Check,
-  User, FileText, Plus
+  User, FileText, Plus, Trash2, Pencil
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
   { value: "the_courier_guy", label: "The Courier Guy", url: "https://www.thecourierguy.co.za/tracking/?ref=" },
   { value: "courier_it", label: "Courier IT", url: "https://www.courier-it.co.za/tracking/?tracking=" },
+  { value: "pep_paxi", label: "Pep Paxi", url: "https://www.paxi.co.za/track?parcelref=" },
   { value: "aramex", label: "Aramex", url: "https://www.aramex.com/tools/track?l=" },
   { value: "dhl", label: "DHL", url: "https://www.dhl.com/za-en/home/tracking.html?tracking-id=" },
   { value: "fedex", label: "FedEx", url: "https://www.fedex.com/apps/fedextrack/?tracknumbers=" },
@@ -313,12 +314,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
         {/* Tabs */}
         <div className="flex border-b border-border px-5 overflow-x-auto">
-          {['details', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices'].map(t => (
+          {['details', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices', 'portal'].map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all
+              className={`px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all whitespace-nowrap
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >
-              {t}
+              {t === 'portal' ? 'Client Portal' : t}
               {t === 'payments' && payments.length > 0 && (
                 <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">{payments.length}</span>
               )}
@@ -330,6 +331,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               )}
               {t === 'invoices' && (order.invoice_files?.length || 0) > 0 && (
                 <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1 rounded-full">{order.invoice_files.length}</span>
+              )}
+              {t === 'portal' && order.portal_message && (
+                <span className="ml-1 text-xs bg-blue-100 text-blue-700 px-1 rounded-full">ON</span>
               )}
             </button>
           ))}
@@ -382,23 +386,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 </Select>
               </div>
 
-              {/* Products */}
-              {order.products && order.products.length > 0 && (
-                <div className="bg-secondary/30 rounded-xl p-4">
-                  <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Products</h3>
-                  <div className="space-y-2">
-                    {order.products.map((p, i) => (
-                      <div key={i} className="flex items-center justify-between">
-                        <span className="text-sm text-foreground">{p.name}</span>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-muted-foreground">x{p.quantity}</span>
-                          {p.price && <span className="text-sm font-medium">R{p.price}</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {/* Products — fully editable */}
+              <ProductsEditor order={order} onUpdate={onUpdate} />
 
               {/* Notes */}
               <div className="bg-secondary/30 rounded-xl p-4">
@@ -756,6 +745,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           {tab === 'invoices' && (
             <InvoicesTab order={order} onUpdate={onUpdate} />
           )}
+
+          {tab === 'portal' && (
+            <PortalTab order={order} onUpdate={onUpdate} balance={balance} />
+          )}
         </div>
 
         {/* Archive */}
@@ -784,6 +777,162 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         }}
       />
     </>
+  );
+}
+
+function ProductsEditor({ order, onUpdate }) {
+  const { data: catalogItems = [] } = useQuery({
+    queryKey: ["catalogItems"],
+    queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
+    staleTime: 300_000,
+  });
+  const { data: inventoryItems = [] } = useQuery({
+    queryKey: ["inventory"],
+    queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
+    staleTime: 300_000,
+  });
+
+  const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
+  const [editRow, setEditRow] = useState({ name: "", quantity: 1, price: "" });
+  const [addMode, setAddMode] = useState(false);
+  const [newRow, setNewRow] = useState({ name: "", quantity: 1, price: "" });
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
+
+  const products = order.products || [];
+
+  const saveRow = () => {
+    if (!editRow.name.trim()) return;
+    const updated = products.map((p, i) =>
+      i === editingIdx ? { name: editRow.name, quantity: Number(editRow.quantity) || 1, price: editRow.price } : p
+    );
+    onUpdate(order.id, { products: updated });
+    setEditingIdx(null);
+  };
+
+  const removeRow = (/** @type {number} */ idx) => {
+    const updated = products.filter((_, i) => i !== idx);
+    onUpdate(order.id, { products: updated });
+  };
+
+  const addRow = () => {
+    if (!newRow.name.trim()) return;
+    const updated = [...products, { name: newRow.name, quantity: Number(newRow.quantity) || 1, price: newRow.price }];
+    onUpdate(order.id, { products: updated });
+    setNewRow({ name: "", quantity: 1, price: "" });
+    setAddMode(false);
+    setPickerSearch("");
+    setShowPicker(false);
+  };
+
+  const allPickerItems = [
+    ...(/** @type {any[]} */ (catalogItems)).map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? "", source: "catalog" })),
+    ...(/** @type {any[]} */ (inventoryItems))
+      .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
+      .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "", source: "stock" })),
+  ];
+
+  const filtered = pickerSearch
+    ? allPickerItems.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
+    : allPickerItems.slice(0, 8);
+
+  return (
+    <div className="bg-secondary/30 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Products</h3>
+        {!addMode && (
+          <button onClick={() => setAddMode(true)} className="flex items-center gap-1 text-xs text-primary font-medium">
+            <Plus className="w-3 h-3" /> Add
+          </button>
+        )}
+      </div>
+
+      {/* Existing rows */}
+      <div className="space-y-2 mb-3">
+        {products.length === 0 && !addMode && (
+          <p className="text-xs text-muted-foreground italic">No products — click Add to start</p>
+        )}
+        {products.map((/** @type {any} */ p, /** @type {number} */ i) =>
+          editingIdx === i ? (
+            <div key={i} className="flex items-center gap-1.5 bg-card rounded-lg px-2 py-1.5 border border-border">
+              <Input value={editRow.name} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, name: e.target.value }))}
+                className="h-7 text-xs flex-1 rounded-lg" placeholder="Name" autoFocus />
+              <Input value={editRow.quantity} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, quantity: e.target.value }))}
+                type="number" className="h-7 text-xs w-12 rounded-lg" placeholder="Qty" />
+              <Input value={editRow.price} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, price: e.target.value }))}
+                type="number" className="h-7 text-xs w-16 rounded-lg" placeholder="R" />
+              <button onClick={saveRow} className="text-xs text-primary font-medium whitespace-nowrap">Save</button>
+              <button onClick={() => setEditingIdx(null)} className="text-xs text-muted-foreground">✕</button>
+            </div>
+          ) : (
+            <div key={i} className="flex items-center justify-between group px-1 py-1 rounded-lg hover:bg-card/60 transition-all">
+              <span className="text-sm text-foreground flex-1 truncate">{p.name}</span>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-xs text-muted-foreground">×{p.quantity || 1}</span>
+                {p.price && <span className="text-sm font-semibold text-foreground">R{Number(p.price).toLocaleString()}</span>}
+                <button onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "" }); }}
+                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all">
+                  <Pencil className="w-3 h-3" />
+                </button>
+                <button onClick={() => removeRow(i)}
+                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all">
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Add new row */}
+      {addMode && (
+        <div className="bg-card rounded-xl border border-border p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Add product</p>
+          <div className="relative">
+            <Input
+              value={newRow.name}
+              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value })); setPickerSearch(e.target.value); setShowPicker(true); }}
+              onFocus={() => setShowPicker(true)}
+              onBlur={() => setTimeout(() => setShowPicker(false), 150)}
+              placeholder="Search inventory or type name…"
+              className="h-8 text-sm rounded-xl"
+              autoFocus
+            />
+            {showPicker && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-apple-lg z-30 max-h-48 overflow-y-auto">
+                {filtered.length === 0 ? (
+                  <p className="text-xs text-muted-foreground px-3 py-2">No matches — will save as typed</p>
+                ) : filtered.map((item, idx) => (
+                  <button key={idx} type="button"
+                    onMouseDown={() => {
+                      setNewRow(r => ({ ...r, name: item.name, price: item.price ? String(item.price) : r.price }));
+                      setPickerSearch("");
+                      setShowPicker(false);
+                    }}
+                    className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between last:rounded-b-xl first:rounded-t-xl">
+                    <span className="text-sm text-foreground">{item.name}</span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {item.price ? <span className="text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
+                      <span className="text-[10px] text-muted-foreground capitalize">{item.source}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Input value={newRow.quantity} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, quantity: e.target.value }))}
+              type="number" placeholder="Qty" className="h-8 text-sm rounded-xl w-16" />
+            <Input value={newRow.price} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, price: e.target.value }))}
+              type="number" placeholder="Price (R)" className="h-8 text-sm rounded-xl flex-1" />
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={addRow} disabled={!newRow.name.trim()}>Add</Button>
+            <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setShowPicker(false); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -830,6 +979,7 @@ function TimelineEntry({ icon, label, time }) {
 
 // Extract an invoice/reference number from a filename.
 // Matches patterns like INV-1234, ZB-5678, INV_001, ZB001, 2024-INV-99, etc.
+// Falls back to the full filename stem so any name (e.g. "xlab labels") is trackable.
 function extractInvoiceNumber(/** @type {string} */ filename) {
   const stem = filename.replace(/\.[^.]+$/, "");
   const patterns = [
@@ -842,11 +992,124 @@ function extractInvoiceNumber(/** @type {string} */ filename) {
     const m = stem.match(re);
     if (m) return m[1].toUpperCase().replace(/[_\s]/g, "-");
   }
-  return null;
+  // Fallback: normalise the full stem so the tracker can still find this order
+  return stem.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "") || null;
+}
+
+function PortalTab({ order, onUpdate, balance = 0 }) {
+  const [newItem, setNewItem] = useState("");
+
+  const portalMessage   = order.portal_message || "";
+  const showBalance     = !!order.portal_show_balance;
+  const showFiles       = !!order.portal_show_files;
+  const attentionItems  = Array.isArray(order.portal_attention_items) ? order.portal_attention_items : [];
+
+  const toggle = (field) => onUpdate(order.id, { [field]: !order[field] });
+
+  const addAttention = () => {
+    const item = newItem.trim();
+    if (!item) return;
+    onUpdate(order.id, { portal_attention_items: [...attentionItems, item] });
+    setNewItem("");
+  };
+
+  const removeAttention = (/** @type {number} */ idx) => {
+    onUpdate(order.id, { portal_attention_items: attentionItems.filter((_, i) => i !== idx) });
+  };
+
+  return (
+    <div className="space-y-5">
+      {/* Info banner */}
+      <div className="rounded-xl bg-blue-50 border border-blue-200 p-3">
+        <p className="text-xs font-semibold text-blue-800 mb-0.5">Client Portal Settings</p>
+        <p className="text-xs text-blue-700">
+          Choose what your client sees when they track this order. Share the tracking link from the Tracking tab.
+        </p>
+      </div>
+
+      {/* Message to client */}
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block">
+          Message to Client
+        </label>
+        <textarea
+          value={portalMessage}
+          onChange={(/** @type {any} */ e) => onUpdate(order.id, { portal_message: e.target.value })}
+          placeholder="e.g. Hi! Your order is in production. Outstanding balance of R500 due on collection."
+          className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-24 outline-none focus:ring-2 focus:ring-primary/20"
+        />
+        <p className="text-xs text-muted-foreground">Shown at the top of the client tracker when set.</p>
+      </div>
+
+      {/* Toggles */}
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block">Show on Tracker</label>
+        <div className="space-y-2">
+          <label className="flex items-center justify-between p-3 bg-secondary/30 rounded-xl cursor-pointer hover:bg-secondary/50 transition-all">
+            <div>
+              <p className="text-sm font-medium text-foreground">Outstanding Balance</p>
+              <p className="text-xs text-muted-foreground">
+                Shows R{Math.abs(balance).toLocaleString()} {balance > 0 ? "owed" : "— fully paid"}
+              </p>
+            </div>
+            <div
+              onClick={() => toggle("portal_show_balance")}
+              className={`w-10 h-6 rounded-full transition-colors flex items-center px-0.5 ${showBalance ? "bg-primary" : "bg-border"}`}
+            >
+              <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${showBalance ? "translate-x-4" : "translate-x-0"}`} />
+            </div>
+          </label>
+          <label className="flex items-center justify-between p-3 bg-secondary/30 rounded-xl cursor-pointer hover:bg-secondary/50 transition-all">
+            <div>
+              <p className="text-sm font-medium text-foreground">Uploaded Files</p>
+              <p className="text-xs text-muted-foreground">Design approvals, proofs, artwork</p>
+            </div>
+            <div
+              onClick={() => toggle("portal_show_files")}
+              className={`w-10 h-6 rounded-full transition-colors flex items-center px-0.5 ${showFiles ? "bg-primary" : "bg-border"}`}
+            >
+              <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${showFiles ? "translate-x-4" : "translate-x-0"}`} />
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* Attention items */}
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide block">
+          Attention Items
+        </label>
+        <p className="text-xs text-muted-foreground -mt-1">Things the client needs to action or be aware of.</p>
+        <div className="space-y-1.5">
+          {attentionItems.map((item, i) => (
+            <div key={i} className="flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-100 rounded-xl">
+              <span className="text-xs font-medium text-amber-900 flex-1">⚠ {item}</span>
+              <button onClick={() => removeAttention(i)} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <Input
+            value={newItem}
+            onChange={(/** @type {any} */ e) => setNewItem(e.target.value)}
+            placeholder='e.g. "Approve artwork by Friday" or "Balance R1 200 due"'
+            className="h-9 rounded-xl text-sm flex-1"
+            onKeyDown={(/** @type {any} */ e) => e.key === "Enter" && addAttention()}
+          />
+          <Button size="sm" variant="outline" className="h-9 rounded-xl px-3 text-xs" onClick={addAttention} disabled={!newItem.trim()}>
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function InvoicesTab({ order, onUpdate }) {
   const [uploading, setUploading] = useState(false);
+  const [manualRef, setManualRef] = useState("");
 
   const uploadInvoice = async (e) => {
     const file = e.target.files?.[0];
@@ -903,20 +1166,64 @@ function InvoicesTab({ order, onUpdate }) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl bg-amber-50 border border-amber-200 p-3">
-        <p className="text-xs font-semibold text-amber-800 mb-0.5">Zoho Books Invoices</p>
+      <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2">
+        <p className="text-xs font-semibold text-amber-800 mb-0.5">Invoices &amp; Tracking References</p>
         <p className="text-xs text-amber-700">
-          Upload invoices here. Invoice numbers are extracted from filenames and added to order tracking automatically.
+          Upload invoices — reference numbers are extracted from filenames automatically. You can also add a reference manually so any name (e.g. &ldquo;xlab labels&rdquo;) works in the tracker.
         </p>
         {(order.invoice_numbers || []).length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
+          <div className="flex flex-wrap gap-1.5 mt-1">
             {(order.invoice_numbers || []).map((/** @type {string} */ n) => (
-              <span key={n} className="text-xs font-mono bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md">
+              <span key={n} className="text-xs font-mono bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md flex items-center gap-1">
                 {n}
+                <button
+                  onClick={() => {
+                    const updated = (order.invoice_numbers || []).filter((/** @type {string} */ x) => x !== n);
+                    onUpdate(order.id, { invoice_numbers: updated });
+                  }}
+                  className="text-amber-600 hover:text-red-600 transition-colors leading-none"
+                  title="Remove reference"
+                >×</button>
               </span>
             ))}
           </div>
         )}
+        {/* Manual reference number */}
+        <div className="flex gap-2 pt-1">
+          <Input
+            value={manualRef}
+            onChange={(/** @type {any} */ e) => setManualRef(e.target.value.toUpperCase())}
+            placeholder="Add reference manually (e.g. XLAB-LABELS)"
+            className="h-8 rounded-lg text-xs font-mono flex-1"
+            onKeyDown={(/** @type {any} */ e) => {
+              if (e.key === "Enter") {
+                const ref = manualRef.trim().replace(/\s+/g, "-");
+                if (!ref) return;
+                const existing = order.invoice_numbers || [];
+                if (!existing.includes(ref)) {
+                  onUpdate(order.id, { invoice_numbers: [...existing, ref] });
+                }
+                setManualRef("");
+              }
+            }}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-lg text-xs px-3 border-amber-300 text-amber-800 hover:bg-amber-100"
+            onClick={() => {
+              const ref = manualRef.trim().replace(/\s+/g, "-");
+              if (!ref) return;
+              const existing = order.invoice_numbers || [];
+              if (!existing.includes(ref)) {
+                onUpdate(order.id, { invoice_numbers: [...existing, ref] });
+              }
+              setManualRef("");
+            }}
+          >
+            Add
+          </Button>
+        </div>
       </div>
 
       <label className="cursor-pointer block">

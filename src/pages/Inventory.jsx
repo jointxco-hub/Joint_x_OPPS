@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,100 @@ const CATALOG_CATEGORIES = [
 ];
 
 const UNITS = ["pieces","meters","rolls","liters"];
+
+const EMPTY_CATALOG_FORM = {
+  name: "", description: "", category: "tshirts",
+  price: "", image_url: "", status: "active",
+};
+
+function CatalogItemFormModal({ open, onClose, existing }) {
+  const qc = useQueryClient();
+  const [form, setForm] = useState(existing ?? EMPTY_CATALOG_FORM);
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const mutation = useMutation({
+    mutationFn: (data) =>
+      existing
+        ? dataClient.entities.CatalogItem.update(existing.id, data)
+        : dataClient.entities.CatalogItem.create(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["catalogItems"] });
+      toast.success(existing ? "Product updated" : "Product added");
+      onClose();
+    },
+    onError: (err) => toast.error(err?.message || "Failed to save"),
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    mutation.mutate({
+      name: form.name.trim(),
+      description: form.description || null,
+      category: form.category || "other",
+      price: form.price !== "" ? Number(form.price) : null,
+      image_url: form.image_url || null,
+      status: form.status || "active",
+    });
+  };
+
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={existing ? "Edit Product" : "Add Catalog Product"}
+      size="md"
+      footer={
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button onClick={handleSubmit} disabled={mutation.isPending}>
+            {mutation.isPending ? "Saving…" : existing ? "Save" : "Add Product"}
+          </Button>
+        </div>
+      }
+    >
+      <form className="space-y-3 py-2" onSubmit={handleSubmit}>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Name *</label>
+          <Input value={form.name} onChange={set("name")} placeholder="Cotton Tee" className="h-11 md:h-10" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Description</label>
+          <textarea value={form.description} onChange={set("description")}
+            placeholder="Brief product description…"
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-20" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Category</label>
+            <select value={form.category} onChange={set("category")}
+              className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+              {CATALOG_CATEGORIES.filter(c => c !== "all").map(c => (
+                <option key={c} value={c}>{c.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Price (R)</label>
+            <Input type="number" value={form.price} onChange={set("price")} placeholder="0.00" className="h-11 md:h-10" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Image URL</label>
+          <Input value={form.image_url} onChange={set("image_url")} placeholder="https://…" className="h-11 md:h-10" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Status</label>
+          <select value={form.status} onChange={set("status")}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+            <option value="active">Active</option>
+            <option value="draft">Draft</option>
+          </select>
+        </div>
+      </form>
+    </ResponsiveModal>
+  );
+}
 
 const EMPTY_FORM = {
   name: "", sku: "", category: "other", unit: "pieces",
@@ -163,7 +257,7 @@ function ProductImage({ url, name }) {
   return <img src={url} alt={name} className="w-full h-full object-cover" onError={() => setErr(true)} />;
 }
 
-function CatalogGrid({ products, onAddToStock, addingId }) {
+function CatalogGrid({ products, onAddToStock, addingId, onEdit, onDelete }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
       {(/** @type {any[]} */ (products)).map((/** @type {any} */ p) => (
@@ -173,6 +267,16 @@ function CatalogGrid({ products, onAddToStock, addingId }) {
             {p.status === "draft" && (
               <span className="absolute top-2 left-2 text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full font-medium">Draft</span>
             )}
+            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => onEdit(p)}
+                className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+                <Pencil className="w-3 h-3 text-foreground" />
+              </button>
+              <button onClick={() => { if (window.confirm(`Delete "${p.name}"?`)) onDelete(p.id); }}
+                className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-red-50 transition-all">
+                <Trash2 className="w-3 h-3 text-red-500" />
+              </button>
+            </div>
           </div>
           <div className="p-3">
             <p className="text-xs font-semibold text-foreground leading-tight truncate">{p.name}</p>
@@ -196,7 +300,7 @@ function CatalogGrid({ products, onAddToStock, addingId }) {
   );
 }
 
-function CatalogList({ products, onAddToStock, addingId }) {
+function CatalogList({ products, onAddToStock, addingId, onEdit, onDelete }) {
   return (
     <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
       {(/** @type {any[]} */ (products)).map((/** @type {any} */ p, i) => (
@@ -218,11 +322,36 @@ function CatalogList({ products, onAddToStock, addingId }) {
           >
             {addingId === p.id ? "…" : "+ Stock"}
           </button>
+          <button onClick={() => onEdit(p)} className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-all">
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => { if (window.confirm(`Delete "${p.name}"?`)) onDelete(p.id); }}
+            className="flex-shrink-0 text-muted-foreground hover:text-red-500 transition-all">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
       ))}
     </div>
   );
 }
+
+// Static XLab shop product list — same items as ClientCatalog.jsx
+const XLAB_SHOP_PRODUCTS = [
+  { name: "JV1 T-Shirt",     category: "tshirts",  price: 95,  description: "180gsm · 100% Cotton",           image_url: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400" },
+  { name: "JET T-Shirt",     category: "tshirts",  price: 155, description: "220gsm · 100% Combed Cotton",    image_url: "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=400" },
+  { name: "JHG T-Shirt",     category: "tshirts",  price: 229, description: "300gsm · 100% Carded Cotton",    image_url: "https://images.unsplash.com/photo-1576566588028-4147f3842f27?w=400" },
+  { name: "Hoodie 260gsm",   category: "hoodies",  price: 240, description: "260gsm · Cotton Blend",          image_url: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400" },
+  { name: "Hoodie 360gsm",   category: "hoodies",  price: 320, description: "360gsm · Brushed Fleece",        image_url: "https://images.unsplash.com/photo-1620799140408-edc6dcb6d633?w=400" },
+  { name: "Hoodie 430gsm",   category: "hoodies",  price: 400, description: "430gsm · 100% Cotton Fleece",    image_url: "https://images.unsplash.com/photo-1578768079052-aa76e52ff62e?w=400" },
+  { name: "Sweater 260gsm",  category: "sweaters", price: 220, description: "260gsm · Cotton Blend",          image_url: "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=400" },
+  { name: "Sweater 360gsm",  category: "sweaters", price: 300, description: "360gsm · Brushed Fleece",        image_url: "https://images.unsplash.com/photo-1578587018452-892bacefd3f2?w=400" },
+  { name: "Sweater 430gsm",  category: "sweaters", price: 380, description: "430gsm · 100% Cotton Fleece",    image_url: "https://images.unsplash.com/photo-1572495532056-8583af1cbae0?w=400" },
+  { name: "5-Panel Cap",     category: "hats",     price: 75,  description: "Cotton Twill",                   image_url: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=400" },
+  { name: "Bucket Hat",      category: "hats",     price: 120, description: "Poly-Cotton",                    image_url: "https://images.unsplash.com/photo-1572460556623-78f47de5d81c?w=400" },
+  { name: "Trucker Cap",     category: "hats",     price: 75,  description: "Cotton/Mesh",                    image_url: "https://images.unsplash.com/photo-1534215754734-18e55d13e346?w=400" },
+  { name: "Trackpants",      category: "bottoms",  price: 260, description: "280g Brushed Fleece",            image_url: "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=400" },
+  { name: "Shorts",          category: "bottoms",  price: 180, description: "Cotton Jersey",                  image_url: "https://images.unsplash.com/photo-1591195853828-11db59a44f6b?w=400" },
+];
 
 export default function Inventory() {
   const [tab, setTab] = useState("stock");
@@ -233,6 +362,8 @@ export default function Inventory() {
   const [editItem, setEditItem] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [addingId, setAddingId] = useState(null);
+  const [showAddCatalog, setShowAddCatalog] = useState(false);
+  const [editCatalogItem, setEditCatalogItem] = useState(/** @type {any} */ (null));
   const queryClient = useQueryClient();
 
   const { data: inventory = [], isLoading } = useQuery({
@@ -282,6 +413,39 @@ export default function Inventory() {
     },
   });
 
+  const deleteCatalogMutation = useMutation({
+    mutationFn: (/** @type {string} */ id) => dataClient.entities.CatalogItem.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["catalogItems"] });
+      toast.success("Product removed from catalog");
+    },
+    onError: (err) => toast.error((/** @type {any} */ (err))?.message || "Failed to delete"),
+  });
+
+  const [importing, setImporting] = useState(false);
+  const importShopProducts = async () => {
+    setImporting(true);
+    const existingNames = new Set(
+      (/** @type {any[]} */ (catalogItems)).map((/** @type {any} */ c) => c.name?.toLowerCase())
+    );
+    const toImport = XLAB_SHOP_PRODUCTS.filter(p => !existingNames.has(p.name.toLowerCase()));
+    if (toImport.length === 0) {
+      toast("All shop products are already in catalog");
+      setImporting(false);
+      return;
+    }
+    let added = 0;
+    for (const p of toImport) {
+      try {
+        await dataClient.entities.CatalogItem.create({ ...p, status: "active" });
+        added++;
+      } catch { /* skip duplicates silently */ }
+    }
+    await queryClient.invalidateQueries({ queryKey: ["catalogItems"] });
+    toast.success(`${added} shop product${added !== 1 ? "s" : ""} imported`);
+    setImporting(false);
+  };
+
   const handleAddToStock = (/** @type {any} */ product) => {
     const exists = inventory.find(i =>
       !i.is_archived && (i.name?.toLowerCase() === product.name?.toLowerCase())
@@ -329,13 +493,28 @@ export default function Inventory() {
           </div>
           <div className="flex items-center gap-2">
             {tab === "catalog" && (
-              <button
-                onClick={() => refetchCatalog()}
-                className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-all"
-                title="Refresh catalog"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
+              <>
+                <button
+                  onClick={() => refetchCatalog()}
+                  className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-all"
+                  title="Refresh catalog"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+                <Button
+                  variant="outline"
+                  onClick={importShopProducts}
+                  disabled={importing}
+                  className="gap-2 shadow-apple-sm text-sm"
+                  title="Import all XLab shop products into catalog (skips duplicates)"
+                >
+                  <Download className="w-4 h-4" />
+                  {importing ? "Importing…" : "Import Shop"}
+                </Button>
+                <Button onClick={() => setShowAddCatalog(true)} className="gap-2 shadow-apple-sm">
+                  <Plus className="w-4 h-4" /> Add Product
+                </Button>
+              </>
             )}
             {tab === "stock" && (
               <Button onClick={() => setShowAdd(true)} className="gap-2 shadow-apple-sm">
@@ -527,15 +706,15 @@ export default function Inventory() {
             ) : catalogItems.length === 0 ? (
               <div className="text-center py-20 bg-card rounded-2xl border border-border">
                 <Package className="w-12 h-12 text-muted-foreground/20 mx-auto mb-3" />
-                <p className="font-semibold text-foreground mb-1">No shop products found</p>
+                <p className="font-semibold text-foreground mb-1">No catalog products yet</p>
                 <p className="text-sm text-muted-foreground max-w-xs mx-auto">
-                  Products from your xlab shop will appear here once synced from the shared Supabase database.
+                  Add your shop products here. They'll be available to quickly add to stock inventory when needed.
                 </p>
                 <button
-                  onClick={() => refetchCatalog()}
+                  onClick={() => setShowAddCatalog(true)}
                   className="mt-4 text-sm text-primary font-medium flex items-center gap-1.5 mx-auto hover:underline"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                  <Plus className="w-3.5 h-3.5" /> Add first product
                 </button>
               </div>
             ) : filteredCatalog.length === 0 ? (
@@ -550,12 +729,16 @@ export default function Inventory() {
                 }))}
                 onAddToStock={handleAddToStock}
                 addingId={addingId}
+                onEdit={(p) => setEditCatalogItem(p)}
+                onDelete={(id) => deleteCatalogMutation.mutate(id)}
               />
             ) : (
               <CatalogList
                 products={filteredCatalog}
                 onAddToStock={handleAddToStock}
                 addingId={addingId}
+                onEdit={(p) => setEditCatalogItem(p)}
+                onDelete={(id) => deleteCatalogMutation.mutate(id)}
               />
             )}
 
@@ -574,6 +757,12 @@ export default function Inventory() {
       )}
       {editItem && (
         <ItemFormModal open={!!editItem} onClose={() => setEditItem(null)} existing={editItem} suppliers={suppliers} />
+      )}
+      {showAddCatalog && (
+        <CatalogItemFormModal open={showAddCatalog} onClose={() => setShowAddCatalog(false)} />
+      )}
+      {editCatalogItem && (
+        <CatalogItemFormModal open={!!editCatalogItem} onClose={() => setEditCatalogItem(null)} existing={editCatalogItem} />
       )}
     </div>
   );
