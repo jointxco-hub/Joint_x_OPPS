@@ -10,10 +10,14 @@ import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'r
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import TrackOrder from '@/pages/TrackOrder';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : () => <></>;
+
+// Paths that are public — rendered without the internal layout and no auth check
+const PUBLIC_PATHS = ['/TrackOrder', '/SignIn'];
 
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
@@ -22,6 +26,16 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, isAuthenticated, navigateToLogin } = useAuth();
   const location = useLocation();
+
+  // Public pages — bypass auth and layout entirely
+  if (PUBLIC_PATHS.includes(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/TrackOrder" element={<TrackOrder />} />
+        <Route path="/SignIn" element={Pages['SignIn'] ? <Pages['SignIn'] /> : <PageNotFound />} />
+      </Routes>
+    );
+  }
 
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
@@ -42,8 +56,8 @@ const AuthenticatedApp = () => {
     }
   }
 
-  // Redirect unauthenticated users to sign-in (allow /SignIn through)
-  if (!isAuthenticated && location.pathname !== '/SignIn') {
+  // Redirect unauthenticated users to sign-in
+  if (!isAuthenticated) {
     return <Navigate to={`/SignIn?next=${encodeURIComponent(location.pathname)}`} replace />;
   }
 
