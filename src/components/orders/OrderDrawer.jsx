@@ -200,9 +200,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     ? `${courier.url}${order.tracking_number}`
     : null;
   const [copiedTracking, setCopiedTracking] = useState(false);
+  const [copiedXlab, setCopiedXlab] = useState(false);
   const copyTrackingLink = () => {
     const link = `${window.location.origin}/TrackOrder?code=${order.order_number}`;
     navigator.clipboard.writeText(link).then(() => { setCopiedTracking(true); setTimeout(() => setCopiedTracking(false), 2000); });
+  };
+  const copyXlabTrackingLink = () => {
+    const link = `https://xlab.jointx.co.za/track?order=${order.order_number}`;
+    navigator.clipboard.writeText(link).then(() => { setCopiedXlab(true); setTimeout(() => setCopiedXlab(false), 2000); });
   };
 
   return (
@@ -716,7 +721,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all"
               >
                 {copiedTracking ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                {copiedTracking ? "Link copied — send to client" : "Copy client tracking link"}
+                {copiedTracking ? "OPS link copied!" : "Copy OPS tracker link"}
+              </button>
+              <button
+                onClick={copyXlabTrackingLink}
+                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all"
+              >
+                {copiedXlab ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                {copiedXlab ? "X LAB link copied!" : "Copy X LAB tracker link"}
               </button>
             </div>
           )}
