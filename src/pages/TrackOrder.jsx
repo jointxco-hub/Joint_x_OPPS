@@ -301,17 +301,6 @@ export default function TrackOrder() {
               </div>
             )}
 
-            {/* Design Files fallback (portal toggle off — still show if no portal config at all) */}
-            {!order.portal_show_files && !order.portal_message && !order.portal_attention_items?.length && order.file_urls?.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4">
-                <p className="text-white/40 text-xs mb-3">Design Files</p>
-                <div className="flex flex-wrap gap-2">
-                  {order.file_urls.map((url, i) => (
-                    <FileThumb key={i} url={url} onClick={setMediaUrl} />
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Current Step Message */}
             <div className="bg-[#1a7a5e]/15 border border-[#1a7a5e]/30 rounded-xl p-4 mb-3">
