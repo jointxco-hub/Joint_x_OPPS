@@ -29,6 +29,7 @@ import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import MediaPreview from "@/components/common/MediaPreview";
+import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
@@ -60,6 +61,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [showNewPO, setShowNewPO] = useState(false);
   const [newPOForm, setNewPOForm] = useState({ supplier_name: "", expected_delivery: "", notes: "" });
   const [poCreateError, setPoCreateError] = useState("");
+  const [editingLinkedPO, setEditingLinkedPO] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: payments = [] } = useQuery({
@@ -89,8 +91,33 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
+  const { data: suppliers = [] } = useQuery({
+    queryKey: ['suppliers'],
+    queryFn: () => dataClient.entities.Supplier.list('name', 100),
+    enabled: editingLinkedPO,
+  });
+
+  const { data: inventoryItems = [] } = useQuery({
+    queryKey: ['inventory'],
+    queryFn: () => dataClient.entities.InventoryItem.list('name', 100),
+    enabled: editingLinkedPO,
+  });
+
   const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
   const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
+
+  const updatePOMutation = useMutation({
+    mutationFn: ({ id, data }) => dataClient.entities.PurchaseOrder.update(id, data),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['purchaseOrders'], (/** @type {any} */ old) =>
+        Array.isArray(old) ? old.map(po => po.id === updated?.id ? updated : po) : old
+      );
+      queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
+      setEditingLinkedPO(false);
+      toast.success("Purchase order updated");
+    },
+    onError: (err) => toast.error("PO update failed — " + ((/** @type {any} */ err)?.message || "unknown error")),
+  });
 
   const addPaymentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.Payment.create(data),
@@ -670,11 +697,29 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 </div>
               )}
 
+              {editingLinkedPO && linkedPO && (
+                <TypeformPOForm
+                  purchaseOrder={linkedPO}
+                  suppliers={suppliers}
+                  inventoryItems={inventoryItems}
+                  onSubmit={(data) => updatePOMutation.mutateAsync({ id: linkedPO.id, data })}
+                  onCancel={() => setEditingLinkedPO(false)}
+                />
+              )}
+
               {linkedPO ? (
                 <div className="bg-secondary/40 rounded-2xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="font-semibold text-foreground">{linkedPO.po_number}</p>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium capitalize">{linkedPO.status}</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setEditingLinkedPO(true)}
+                        className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+                      >
+                        <Pencil className="w-3 h-3" /> Edit PO
+                      </button>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium capitalize">{linkedPO.status}</span>
+                    </div>
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-sm text-muted-foreground">Supplier: <span className="text-foreground font-medium">{linkedPO.supplier_name}</span></p>
@@ -1174,11 +1219,30 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
   const [uploading, setUploading] = useState(false);
   const [manualRef, setManualRef] = useState("");
   const [invoiceTotal, setInvoiceTotal] = useState("");
+  const [amountIdx, setAmountIdx] = useState(/** @type {number|null} */ (null));
+  const [amountInput, setAmountInput] = useState("");
   const orderTotal = Number(order.total_amount || 0);
   const typedInvoiceTotal = parseMoneyInput(invoiceTotal);
   const visibleInvoiceTotal = typedInvoiceTotal ?? orderTotal;
   const visibleBalance = Math.max(visibleInvoiceTotal - totalPaid, 0);
   const hasOrderTotal = orderTotal > 0;
+
+  const saveInvoiceAmount = (idx) => {
+    const amount = parseMoneyInput(amountInput);
+    if (!amount) return;
+    const files = [...(order.invoice_files || [])];
+    files[idx] = {
+      ...files[idx],
+      invoice_total: amount,
+      balance_after_payments: Math.max(amount - totalPaid, 0),
+    };
+    onUpdate(order.id, {
+      invoice_files: files,
+      ...(!hasOrderTotal ? { total_amount: amount } : {}),
+    });
+    setAmountIdx(null);
+    setAmountInput("");
+  };
 
   const uploadInvoice = async (e) => {
     const file = e.target.files?.[0];
@@ -1380,26 +1444,47 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
                   )}
                   Zoho Books · {inv.uploaded_at ? format(new Date(inv.uploaded_at), 'd MMM yyyy') : 'Uploaded'}
                 </p>
-                {(inv.invoice_total || inv.paid_at_upload) && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {inv.invoice_total && (
-                      <span className="text-[11px] font-semibold bg-white/70 text-amber-900 border border-amber-200 rounded-full px-2 py-0.5">
-                        Invoice {formatCurrency(inv.invoice_total)}
-                      </span>
-                    )}
-                    <span className="text-[11px] font-semibold bg-green-50 text-green-800 border border-green-100 rounded-full px-2 py-0.5">
-                      Paid {formatCurrency(inv.paid_at_upload ?? totalPaid)}
-                    </span>
-                    {inv.invoice_total && (
-                      <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 border ${
-                        Number(inv.balance_after_payments || 0) > 0
-                          ? 'bg-red-50 text-red-800 border-red-100'
-                          : 'bg-green-50 text-green-800 border-green-100'
-                      }`}>
-                        Balance {formatCurrency(inv.balance_after_payments)}
-                      </span>
-                    )}
+                {amountIdx === i ? (
+                  <div className="mt-2 flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      placeholder="Invoice total (R)"
+                      value={amountInput}
+                      onChange={(/** @type {any} */ e) => setAmountInput(e.target.value)}
+                      className="h-7 text-xs rounded-lg flex-1"
+                      autoFocus
+                      onKeyDown={(/** @type {any} */ e) => e.key === 'Enter' && saveInvoiceAmount(i)}
+                    />
+                    <Button size="sm" onClick={() => saveInvoiceAmount(i)} className="h-7 text-xs px-2 rounded-lg">Save</Button>
+                    <button onClick={() => { setAmountIdx(null); setAmountInput(""); }} className="text-xs text-muted-foreground px-1">✕</button>
                   </div>
+                ) : inv.invoice_total ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => { setAmountIdx(i); setAmountInput(String(inv.invoice_total)); }}
+                      className="text-[11px] font-semibold bg-white/70 text-amber-900 border border-amber-200 rounded-full px-2 py-0.5 hover:bg-amber-100 transition-colors"
+                      title="Click to edit"
+                    >
+                      Invoice {formatCurrency(inv.invoice_total)}
+                    </button>
+                    <span className="text-[11px] font-semibold bg-green-50 text-green-800 border border-green-100 rounded-full px-2 py-0.5">
+                      Paid {formatCurrency(totalPaid)}
+                    </span>
+                    <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 border ${
+                      Math.max(inv.invoice_total - totalPaid, 0) > 0
+                        ? 'bg-red-50 text-red-800 border-red-100'
+                        : 'bg-green-50 text-green-800 border-green-100'
+                    }`}>
+                      Balance {formatCurrency(Math.max(inv.invoice_total - totalPaid, 0))}
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setAmountIdx(i); setAmountInput(""); }}
+                    className="mt-1 text-xs text-amber-700 hover:text-amber-900 underline underline-offset-2 transition-colors block"
+                  >
+                    + Set invoice total
+                  </button>
                 )}
               </div>
               <button
