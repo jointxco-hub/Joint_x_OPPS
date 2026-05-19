@@ -445,8 +445,11 @@ const ENTITY_CONFIG = {
       };
     },
     serialize(payload) {
-      const items = Array.isArray(payload.items) ? payload.items.map((item) => ({
+      const items = Array.isArray(payload.items) ? payload.items
+        .filter((item) => item?.name || item?.inventory_item_id || Number(item?.quantity) > 0 || Number(item?.unit_price) > 0)
+        .map((item) => ({
         ...item,
+        inventory_item_id: idOrUndefined(item.inventory_item_id),
         quantity: numberOrUndefined(item.quantity) ?? 0,
         unit_price: numberOrUndefined(item.unit_price) ?? 0,
         total: numberOrUndefined(item.total) ?? ((Number(item.quantity) || 0) * (Number(item.unit_price) || 0)),
@@ -455,24 +458,24 @@ const ENTITY_CONFIG = {
         ? items.reduce((sum, item) => sum + Number(item.total ?? 0), 0)
         : undefined;
       return compactObject({
-        po_number: payload.po_number,
-        supplier_id: payload.supplier_id,
-        supplier_name: payload.supplier_name,
-        project_id: payload.project_id,
-        linked_order_id: payload.linked_order_id ?? payload.order_id,
+        po_number: payload.po_number || undefined,
+        supplier_id: idOrUndefined(payload.supplier_id),
+        supplier_name: payload.supplier_name || undefined,
+        project_id: idOrUndefined(payload.project_id),
+        linked_order_id: idOrUndefined(payload.linked_order_id ?? payload.order_id),
         status: payload.status,
         items,
         notes: payload.notes,
         subtotal: numberOrUndefined(payload.subtotal) ?? computedTotal,
         total_amount: numberOrUndefined(payload.total_amount ?? payload.total) ?? computedTotal,
         total: numberOrUndefined(payload.total) ?? numberOrUndefined(payload.total_amount) ?? computedTotal,
-        order_date: payload.order_date,
-        expected_date: payload.expected_date ?? payload.expected_delivery ?? payload.due_date,
-        expected_delivery: payload.expected_delivery ?? payload.expected_date ?? payload.due_date,
-        received_date: payload.received_date,
+        order_date: dateOrUndefined(payload.order_date),
+        expected_date: dateOrUndefined(payload.expected_date ?? payload.expected_delivery ?? payload.due_date),
+        expected_delivery: dateOrUndefined(payload.expected_delivery ?? payload.expected_date ?? payload.due_date),
+        received_date: dateOrUndefined(payload.received_date),
         comments: payload.comments,
         is_archived: payload.is_archived,
-        archived_at: payload.archived_at,
+        archived_at: dateTimeOrUndefined(payload.archived_at),
       });
     },
   },
@@ -1254,6 +1257,30 @@ function numberOrUndefined(value) {
 
   const parsed = Number(value);
   return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function idOrUndefined(value) {
+  if (value == null || value === '' || value === '_none') {
+    return undefined;
+  }
+
+  return value;
+}
+
+function dateOrUndefined(value) {
+  if (value == null || value === '' || value === '_none') {
+    return undefined;
+  }
+
+  return value;
+}
+
+function dateTimeOrUndefined(value) {
+  if (value == null || value === '' || value === '_none') {
+    return undefined;
+  }
+
+  return value;
 }
 
 function compactObject(object) {

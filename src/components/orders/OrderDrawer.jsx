@@ -148,6 +148,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orderOpsTasks', order.id] });
       queryClient.invalidateQueries({ queryKey: ['opsTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['legacyTasks'] });
       setShowNewTask(false);
       setNewTaskTitle("");
       setNewTaskPriority("medium");
@@ -599,7 +600,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <div className="bg-secondary/30 rounded-2xl p-4 space-y-3 border border-border">
                   <p className="text-xs font-semibold text-foreground">Create New Purchase Order</p>
                   <Input
-                    placeholder="Supplier name *"
+                    placeholder="Supplier name (optional)"
                     value={newPOForm.supplier_name}
                     onChange={e => setNewPOForm(f => ({ ...f, supplier_name: e.target.value }))}
                     className="rounded-xl h-9 text-sm"
@@ -621,12 +622,13 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                     <Button
                       size="sm"
                       className="flex-1 h-8 rounded-xl text-xs"
-                      disabled={!newPOForm.supplier_name.trim() || createPOMutation.isPending}
+                      disabled={createPOMutation.isPending}
                       onClick={() => {
                         const poNumber = `PO-${Date.now().toString().slice(-6)}`;
                         createPOMutation.mutate({
                           po_number: poNumber,
-                          supplier_name: newPOForm.supplier_name.trim(),
+                          supplier_name: newPOForm.supplier_name.trim() || undefined,
+                          linked_order_id: order.id,
                           expected_delivery: newPOForm.expected_delivery || undefined,
                           notes: newPOForm.notes || undefined,
                           status: 'draft',
@@ -755,7 +757,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           )}
 
           {tab === 'invoices' && (
-            <InvoicesTab order={order} onUpdate={onUpdate} />
+            <InvoicesTab order={order} onUpdate={onUpdate} totalPaid={totalPaid} />
           )}
 
           {tab === 'portal' && (
@@ -1022,6 +1024,16 @@ function extractInvoiceNumber(/** @type {string} */ filename) {
   return stem.trim().toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "") || null;
 }
 
+function parseMoneyInput(/** @type {string | number | null | undefined} */ value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(String(value).replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatCurrency(/** @type {number | null | undefined} */ value) {
+  return `R${Number(value || 0).toLocaleString()}`;
+}
+
 function PortalTab({ order, onUpdate, balance = 0 }) {
   const [newItem, setNewItem] = useState("");
 
@@ -1133,9 +1145,15 @@ function PortalTab({ order, onUpdate, balance = 0 }) {
   );
 }
 
-function InvoicesTab({ order, onUpdate }) {
+function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
   const [uploading, setUploading] = useState(false);
   const [manualRef, setManualRef] = useState("");
+  const [invoiceTotal, setInvoiceTotal] = useState("");
+  const orderTotal = Number(order.total_amount || 0);
+  const typedInvoiceTotal = parseMoneyInput(invoiceTotal);
+  const visibleInvoiceTotal = typedInvoiceTotal ?? orderTotal;
+  const visibleBalance = Math.max(visibleInvoiceTotal - totalPaid, 0);
+  const hasOrderTotal = orderTotal > 0;
 
   const uploadInvoice = async (e) => {
     const file = e.target.files?.[0];
@@ -1146,8 +1164,12 @@ function InvoicesTab({ order, onUpdate }) {
       const existing = order.invoice_files || [];
       const invoiceNumber = extractInvoiceNumber(file.name);
       const existingNumbers = order.invoice_numbers || [];
+      const invoiceAmountInput = parseMoneyInput(invoiceTotal);
+      const invoiceAmount = invoiceAmountInput ?? (hasOrderTotal ? orderTotal : null);
+      const shouldSetOrderTotal = !hasOrderTotal && invoiceAmountInput;
 
       onUpdate(order.id, {
+        ...(shouldSetOrderTotal ? { total_amount: invoiceAmount } : {}),
         invoice_files: [
           ...existing,
           {
@@ -1157,6 +1179,9 @@ function InvoicesTab({ order, onUpdate }) {
             uploaded_at: new Date().toISOString(),
             source: 'zoho_books',
             invoice_number: invoiceNumber,
+            invoice_total: invoiceAmount,
+            balance_after_payments: invoiceAmount ? Math.max(invoiceAmount - totalPaid, 0) : undefined,
+            paid_at_upload: totalPaid,
           },
         ],
         // Append extracted number to the searchable invoice_numbers array
@@ -1164,6 +1189,7 @@ function InvoicesTab({ order, onUpdate }) {
           ? [...existingNumbers, invoiceNumber]
           : existingNumbers,
       });
+      setInvoiceTotal("");
       toast.success(invoiceNumber
         ? `Invoice uploaded — reference ${invoiceNumber} added to tracking`
         : "Invoice uploaded");
@@ -1252,6 +1278,49 @@ function InvoicesTab({ order, onUpdate }) {
         </div>
       </div>
 
+      <div className="rounded-xl bg-card border border-border p-3 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold text-foreground">Invoice pricing</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {hasOrderTotal
+                ? "Order total already exists, so the invoice gets a reference highlight."
+                : "Add the invoice total before upload to set the missing order price."}
+            </p>
+          </div>
+          {hasOrderTotal && (
+            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-0.5">
+              Order {formatCurrency(orderTotal)}
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <Input
+            value={invoiceTotal}
+            onChange={(/** @type {any} */ e) => setInvoiceTotal(e.target.value)}
+            placeholder={hasOrderTotal ? "Invoice total (optional)" : "Invoice total"}
+            type="number"
+            min="0"
+            step="0.01"
+            className="h-9 rounded-xl text-sm"
+          />
+          <div className="sm:col-span-2 grid grid-cols-3 gap-2">
+            <div className="rounded-lg bg-secondary/50 px-2 py-1.5">
+              <p className="text-[10px] text-muted-foreground">Invoice</p>
+              <p className="text-xs font-semibold text-foreground">{formatCurrency(visibleInvoiceTotal)}</p>
+            </div>
+            <div className="rounded-lg bg-green-50 px-2 py-1.5">
+              <p className="text-[10px] text-green-700">Paid</p>
+              <p className="text-xs font-semibold text-green-800">{formatCurrency(totalPaid)}</p>
+            </div>
+            <div className={`rounded-lg px-2 py-1.5 ${visibleBalance > 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+              <p className={`text-[10px] ${visibleBalance > 0 ? 'text-red-700' : 'text-green-700'}`}>Balance</p>
+              <p className={`text-xs font-semibold ${visibleBalance > 0 ? 'text-red-800' : 'text-green-800'}`}>{formatCurrency(visibleBalance)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <label className="cursor-pointer block">
         <div className={`flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-2xl transition-all ${
           uploading ? 'border-border opacity-60' : 'border-amber-300 hover:border-amber-400 hover:bg-amber-50/50'
@@ -1286,6 +1355,27 @@ function InvoicesTab({ order, onUpdate }) {
                   )}
                   Zoho Books · {inv.uploaded_at ? format(new Date(inv.uploaded_at), 'd MMM yyyy') : 'Uploaded'}
                 </p>
+                {(inv.invoice_total || inv.paid_at_upload) && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {inv.invoice_total && (
+                      <span className="text-[11px] font-semibold bg-white/70 text-amber-900 border border-amber-200 rounded-full px-2 py-0.5">
+                        Invoice {formatCurrency(inv.invoice_total)}
+                      </span>
+                    )}
+                    <span className="text-[11px] font-semibold bg-green-50 text-green-800 border border-green-100 rounded-full px-2 py-0.5">
+                      Paid {formatCurrency(inv.paid_at_upload ?? totalPaid)}
+                    </span>
+                    {inv.invoice_total && (
+                      <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 border ${
+                        Number(inv.balance_after_payments || 0) > 0
+                          ? 'bg-red-50 text-red-800 border-red-100'
+                          : 'bg-green-50 text-green-800 border-green-100'
+                      }`}>
+                        Balance {formatCurrency(inv.balance_after_payments)}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               <button
                 onClick={() => removeInvoice(i)}

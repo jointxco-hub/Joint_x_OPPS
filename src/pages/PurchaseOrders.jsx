@@ -75,7 +75,8 @@ export default function PurchaseOrders() {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setShowForm(false);
       setEditingPO(null);
-    }
+    },
+    onError: (err) => toast.error(err?.message || "Failed to create purchase order"),
   });
 
   const updateMutation = useMutation({
@@ -88,7 +89,10 @@ export default function PurchaseOrders() {
   });
 
   const archiveMutation = useMutation({
-    mutationFn: (id) => dataClient.entities.PurchaseOrder.update(id, { status: "archived" }),
+    mutationFn: (id) => dataClient.entities.PurchaseOrder.update(id, {
+      is_archived: true,
+      archived_at: new Date().toISOString(),
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders'] });
       setSelectedPOs([]);
@@ -106,7 +110,10 @@ export default function PurchaseOrders() {
   const bulkArchiveMutation = useMutation({
     mutationFn: async (ids) => {
       for (const id of ids) {
-        await dataClient.entities.PurchaseOrder.update(id, { status: "archived" });
+        await dataClient.entities.PurchaseOrder.update(id, {
+          is_archived: true,
+          archived_at: new Date().toISOString(),
+        });
       }
     },
     onSuccess: () => {
@@ -208,10 +215,12 @@ export default function PurchaseOrders() {
     return "normal";
   };
 
-  const activePOs = enrichedPOs.filter(po => 
+  const visiblePOs = enrichedPOs.filter(po => !po.is_archived);
+
+  const activePOs = visiblePOs.filter(po => 
     ['draft', 'pending', 'approved', 'ordered', 'partial'].includes(po.status)
   );
-  const completedPOs = enrichedPOs.filter(po => 
+  const completedPOs = visiblePOs.filter(po => 
     ['received', 'cancelled'].includes(po.status)
   );
 

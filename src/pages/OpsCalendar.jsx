@@ -24,6 +24,7 @@ import EventModal from "@/components/calendar/EventModal";
 import { useActiveCompanyCycle } from "@/hooks/useActiveCompanyCycle";
 import { eventColors } from "@/components/calendar/eventColors";
 import RefreshButton from "@/components/common/RefreshButton";
+import { getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
@@ -61,10 +62,15 @@ export default function OpsCalendar() {
 
   const { data: activeCycle } = useActiveCompanyCycle();
 
-  const { data: tasks = [] } = useQuery({
+  const { data: opsTasks = [] } = useQuery({
     queryKey: ['opsTasks'],
     queryFn: () => dataClient.entities.OpsTask.list('-created_date', 500)
   });
+  const { data: legacyTasks = [] } = useQuery({
+    queryKey: ['legacyTasks'],
+    queryFn: () => dataClient.entities.Task.filter({ is_archived: false }, '-created_date', 500)
+  });
+  const tasks = mergeTaskLists(opsTasks, legacyTasks);
   const { data: events = [] } = useQuery({
     queryKey: ['calendarEvents'],
     queryFn: () => dataClient.entities.CalendarEvent.list('-created_date', 500)
@@ -96,29 +102,49 @@ export default function OpsCalendar() {
     onError: (err) => toast.error(err?.message || 'Failed to create task'),
   });
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => dataClient.entities.OpsTask.update(id, data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setShowForm(false); setEditingTask(null); toast.success("Task updated!"); },
+    mutationFn: ({ task, data }) => {
+      const entityName = getTaskEntityName(task);
+      return dataClient.entities[entityName].update(task.id, toEntityTaskPayload(task, data));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['opsTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['legacyTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['orderTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['orderOpsTasks'] });
+      setShowForm(false);
+      setEditingTask(null);
+      toast.success("Task updated!");
+    },
     onError: (err) => toast.error(err?.message || 'Failed to update task'),
   });
   const deleteMutation = useMutation({
-    mutationFn: (id) => dataClient.entities.OpsTask.delete(id),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); setDeleteConfirm(null); toast.success("Task deleted!"); },
+    mutationFn: (task) => dataClient.entities[getTaskEntityName(task)].delete(task.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['opsTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['legacyTasks'] });
+      setDeleteConfirm(null);
+      toast.success("Task deleted!");
+    },
     onError: (err) => toast.error(err?.message || 'Failed to delete task'),
   });
   const archiveMutation = useMutation({
-    mutationFn: (task) => dataClient.entities.OpsTask.update(task.id, { ...task, status: 'archived' }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['opsTasks'] }); toast.success("Task archived!"); },
+    mutationFn: (task) => dataClient.entities[getTaskEntityName(task)].update(task.id, toEntityTaskPayload(task, { status: 'archived' })),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['opsTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['legacyTasks'] });
+      toast.success("Task archived!");
+    },
     onError: (err) => toast.error(err?.message || 'Failed to archive task'),
   });
 
   const handleStatusToggle = (task) => {
     const next = task.status === 'complete' ? 'not_started' : task.status === 'not_started' ? 'in_progress' : 'complete';
-    updateMutation.mutate({ id: task.id, data: { ...task, status: next } });
+    updateMutation.mutate({ task, data: { status: next } });
   };
 
   const handleSubmit = (data) => {
     if (editingTask) {
-      updateMutation.mutate({ id: editingTask.id, data });
+      updateMutation.mutate({ task: editingTask, data });
     } else {
       createMutation.mutate(data);
     }
@@ -369,11 +395,11 @@ export default function OpsCalendar() {
                         <div className="space-y-2">
                           {selectedDayTasks.map(task => (
                             <OpsTaskCard
-                              key={task.id}
+                              key={task._viewId || task.id}
                               task={task}
                               users={users}
                               onStatusToggle={handleStatusToggle}
-                              onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                              onUpdate={(data) => updateMutation.mutate({ task, data })}
                               onEdit={() => { setEditingTask(task); setShowForm(true); }}
                               onDelete={() => setDeleteConfirm(task)}
                               onArchive={() => archiveMutation.mutate(task)}
@@ -433,11 +459,11 @@ export default function OpsCalendar() {
                       <div className="space-y-2">
                         {dayTasks.map(task => (
                           <OpsTaskCard
-                            key={task.id}
+                            key={task._viewId || task.id}
                             task={task}
                             users={users}
                             onStatusToggle={handleStatusToggle}
-                            onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                            onUpdate={(data) => updateMutation.mutate({ task, data })}
                             onEdit={() => { setEditingTask(task); setShowForm(true); }}
                             onDelete={() => setDeleteConfirm(task)}
                           />
@@ -497,11 +523,11 @@ export default function OpsCalendar() {
                   <div className="space-y-2">
                     {group.tasks.map(task => (
                       <OpsTaskCard
-                        key={task.id}
+                        key={task._viewId || task.id}
                         task={task}
                         users={users}
                         onStatusToggle={handleStatusToggle}
-                        onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                        onUpdate={(data) => updateMutation.mutate({ task, data })}
                         onEdit={() => { setEditingTask(task); setShowForm(true); }}
                         onDelete={() => setDeleteConfirm(task)}
                         onArchive={() => archiveMutation.mutate(task)}
@@ -519,11 +545,11 @@ export default function OpsCalendar() {
                   <div className="space-y-2 opacity-60">
                     {completed.slice(0, 5).map(task => (
                       <OpsTaskCard
-                        key={task.id}
+                        key={task._viewId || task.id}
                         task={task}
                         users={users}
                         onStatusToggle={handleStatusToggle}
-                        onUpdate={(data) => updateMutation.mutate({ id: task.id, data })}
+                        onUpdate={(data) => updateMutation.mutate({ task, data })}
                         onEdit={() => { setEditingTask(task); setShowForm(true); }}
                         onDelete={() => setDeleteConfirm(task)}
                         onArchive={() => archiveMutation.mutate(task)}
@@ -565,7 +591,7 @@ export default function OpsCalendar() {
           title="Delete Task?"
           description={`Delete "${deleteConfirm?.title}"? This cannot be undone.`}
           confirmText="Delete"
-          onConfirm={() => deleteMutation.mutate(deleteConfirm.id)}
+          onConfirm={() => deleteMutation.mutate(deleteConfirm)}
           variant="destructive"
         />
       </div>

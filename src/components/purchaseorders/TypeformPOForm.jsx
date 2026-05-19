@@ -107,31 +107,24 @@ export default function TypeformPOForm({
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      // Validate items
       const items = (formData.items || []);
       const validItems = items.filter(item => {
-        const hasName = item.is_custom && item.name?.trim();
+        const hasName = item.name?.trim();
         const hasInventoryId = !item.is_custom && item.inventory_item_id;
         const hasQuantity = parseFloat(item.quantity) > 0;
         const hasPrice = parseFloat(item.unit_price) > 0;
-        return (hasName || hasInventoryId) && hasQuantity && hasPrice;
+        return (hasName || hasInventoryId || hasQuantity || hasPrice) && (hasName || hasInventoryId);
       });
-      
-      if (validItems.length === 0) {
-        toast.error("Add at least one valid item with name/selection, quantity, and price");
-        setIsSubmitting(false);
-        return;
-      }
-      
+
       if (validItems.length < items.length) {
         toast.warning(`${items.length - validItems.length} empty item(s) skipped`);
       }
       
       const processedItems = validItems.map(item => ({
         ...item,
-        quantity: parseFloat(item.quantity) || 0,
+        quantity: parseFloat(item.quantity) || 1,
         unit_price: parseFloat(item.unit_price) || 0,
-        total: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0),
+        total: (parseFloat(item.quantity) || 1) * (parseFloat(item.unit_price) || 0),
       }));
       const subtotal = processedItems.reduce((sum, item) => sum + item.total, 0);
       await onSubmit({
@@ -140,7 +133,11 @@ export default function TypeformPOForm({
         subtotal,
         total: subtotal + (parseFloat(formData.tax) || 0),
         total_amount: subtotal + (parseFloat(formData.tax) || 0),
-        expected_date: formData.expected_delivery,
+        supplier_id: formData.supplier_id || undefined,
+        supplier_name: formData.supplier_name?.trim() || undefined,
+        order_date: formData.order_date || undefined,
+        expected_delivery: formData.expected_delivery || undefined,
+        expected_date: formData.expected_delivery || undefined,
       });
     } catch (err) {
       toast.error("Failed to save PO — " + (err?.message || "check Supabase purchase_orders table"));

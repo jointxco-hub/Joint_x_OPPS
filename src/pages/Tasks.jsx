@@ -11,6 +11,7 @@ import { format, isPast } from "date-fns";
 import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 import RefreshButton from "@/components/common/RefreshButton";
+import { getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
 
 const priorityBar = {
   urgent: "bg-red-500",
@@ -61,10 +62,16 @@ export default function Tasks() {
 
   const queryClient = useQueryClient();
 
-  const { data: tasks = [], isLoading } = useQuery({
+  const { data: opsTasks = [], isLoading: opsLoading } = useQuery({
     queryKey: ["opsTasks"],
     queryFn: () => dataClient.entities.OpsTask.list("-created_date", 500),
   });
+  const { data: legacyTasks = [], isLoading: legacyLoading } = useQuery({
+    queryKey: ["legacyTasks"],
+    queryFn: () => dataClient.entities.Task.filter({ is_archived: false }, "-created_date", 500),
+  });
+  const tasks = mergeTaskLists(opsTasks, legacyTasks);
+  const isLoading = opsLoading || legacyLoading;
 
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
@@ -72,13 +79,21 @@ export default function Tasks() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => dataClient.entities.OpsTask.update(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["opsTasks"] }),
+    mutationFn: ({ task, data }) => {
+      const entityName = getTaskEntityName(task);
+      return dataClient.entities[entityName].update(task.id, toEntityTaskPayload(task, data));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["opsTasks"] });
+      queryClient.invalidateQueries({ queryKey: ["legacyTasks"] });
+      queryClient.invalidateQueries({ queryKey: ["orderTasks"] });
+      queryClient.invalidateQueries({ queryKey: ["orderOpsTasks"] });
+    },
   });
 
   const toggleDone = (task) => {
     const next = task.status === "complete" ? "not_started" : "complete";
-    updateMutation.mutate({ id: task.id, data: { ...task, status: next } });
+    updateMutation.mutate({ task, data: { status: next } });
     if (selectedTask?.id === task.id) setSelectedTask(prev => ({ ...prev, status: next }));
   };
 
@@ -244,7 +259,7 @@ export default function Tasks() {
 
                         return (
                           <div
-                            key={task.id}
+                            key={task._viewId || task.id}
                             className={`flex items-start gap-3 px-4 py-3 border-b border-border last:border-0 group transition-all hover:bg-secondary/20 ${isDone ? "opacity-55" : ""}`}
                           >
                             <div className={`w-1 self-stretch rounded-full flex-shrink-0 mt-1 ${priorityBar[task.priority] || priorityBar.normal}`} />
@@ -323,11 +338,11 @@ export default function Tasks() {
           users={users}
           onClose={() => setSelectedTask(null)}
           onUpdate={(data) => {
-            updateMutation.mutate({ id: selectedTask.id, data: { ...selectedTask, ...data } });
+            updateMutation.mutate({ task: selectedTask, data });
             setSelectedTask(prev => ({ ...prev, ...data }));
           }}
           onArchive={() => {
-            updateMutation.mutate({ id: selectedTask.id, data: { ...selectedTask, status: "archived" } });
+            updateMutation.mutate({ task: selectedTask, data: { status: "archived" } });
             setSelectedTask(null);
           }}
         />
@@ -339,6 +354,7 @@ export default function Tasks() {
           onClose={() => setShowNew(false)}
           onCreate={(createdTask) => {
             queryClient.invalidateQueries({ queryKey: ["opsTasks"] });
+            queryClient.invalidateQueries({ queryKey: ["legacyTasks"] });
             setShowNew(false);
             if (createdTask) setSelectedTask(createdTask);
           }}
