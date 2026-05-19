@@ -76,7 +76,6 @@ export default function PurchaseOrders() {
       setShowForm(false);
       setEditingPO(null);
     },
-    onError: (err) => toast.error(err?.message || "Failed to create purchase order"),
   });
 
   const updateMutation = useMutation({

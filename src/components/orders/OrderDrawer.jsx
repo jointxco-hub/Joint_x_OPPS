@@ -59,6 +59,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [newTaskAssignee, setNewTaskAssignee] = useState("_none");
   const [showNewPO, setShowNewPO] = useState(false);
   const [newPOForm, setNewPOForm] = useState({ supplier_name: "", expected_delivery: "", notes: "" });
+  const [poCreateError, setPoCreateError] = useState("");
   const queryClient = useQueryClient();
 
   const { data: payments = [] } = useQuery({
@@ -96,9 +97,13 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['income'] });
       setShowPayment(false);
+      setPaymentForm({ amount: '', method: 'eft', notes: '' });
       toast.success("Payment added");
-    }
+    },
+    onError: (err) => toast.error("Payment failed — " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
   });
 
   const startEdit = (field, value) => {
@@ -162,20 +167,22 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     mutationFn: (data) => dataClient.entities.PurchaseOrder.create(data),
     onSuccess: (po) => {
       if (!po?.id) {
-        toast.error("PO created but no ID returned — check Supabase RLS on purchase_orders");
+        setPoCreateError("PO created but no ID returned — check Supabase RLS on purchase_orders");
         return;
       }
-      // Inject into cache immediately so linkedPO resolves before the async refetch
+      setPoCreateError("");
       queryClient.setQueryData(['purchaseOrders'], (/** @type {any} */ old) =>
         Array.isArray(old) ? [po, ...old] : [po]
       );
-      // Link to order (updates DB + patches selectedOrder so the PO tab shows it instantly)
       onUpdate(order.id, { linked_po_id: po.id });
       setShowNewPO(false);
       setNewPOForm({ supplier_name: "", expected_delivery: "", notes: "" });
       toast.success("Purchase order created and linked");
     },
-    onError: (err) => toast.error("Failed to create PO — " + (/** @type {any} */ (err)?.message || "check Supabase RLS on purchase_orders table"))
+    onError: (err) => {
+      const msg = (/** @type {any} */ (err))?.message || "Unknown error — check Supabase purchase_orders table";
+      setPoCreateError(msg);
+    },
   });
 
   const handleCreateTask = () => {
@@ -278,7 +285,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
             </button>
           ))}
           <button
-            onClick={() => setShowPayment(!showPayment)}
+            onClick={() => {
+              if (!showPayment && balance > 0) {
+                setPaymentForm(pf => ({ ...pf, amount: pf.amount || String(balance) }));
+              }
+              setShowPayment(v => !v);
+            }}
             className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 transition-all"
           >
             <CreditCard className="w-3 h-3" /> Add Payment
@@ -624,6 +636,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                       className="flex-1 h-8 rounded-xl text-xs"
                       disabled={createPOMutation.isPending}
                       onClick={() => {
+                        setPoCreateError("");
                         const poNumber = `PO-${Date.now().toString().slice(-6)}`;
                         createPOMutation.mutate({
                           po_number: poNumber,
@@ -638,10 +651,22 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                     >
                       {createPOMutation.isPending ? 'Creating…' : 'Create & Link PO'}
                     </Button>
-                    <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => setShowNewPO(false)}>
+                    <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setShowNewPO(false); setPoCreateError(""); }}>
                       Cancel
                     </Button>
                   </div>
+                  {poCreateError && (
+                    <div className="rounded-lg border border-red-300 bg-red-50 p-2.5 text-xs text-red-800 break-words">
+                      <p className="font-semibold mb-0.5">Create failed</p>
+                      <p className="font-mono">{poCreateError}</p>
+                      {poCreateError.includes('migration') && (
+                        <p className="mt-1 text-red-700">Run <code>supabase/migrations/202605180002_create_purchase_orders_table.sql</code> in Supabase SQL Editor.</p>
+                      )}
+                      {poCreateError.includes('RLS') && (
+                        <p className="mt-1 text-red-700">Go to Supabase → Authentication → Policies and add an ALL policy for the <code>purchase_orders</code> table.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

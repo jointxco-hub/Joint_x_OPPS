@@ -16,6 +16,7 @@ export default function TypeformPOForm({
   onCancel
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [formData, setFormData] = useState(purchaseOrder ? {
     ...purchaseOrder,
     supplier_ids: purchaseOrder.supplier_ids || (purchaseOrder.supplier_id ? [purchaseOrder.supplier_id] : []),
@@ -105,6 +106,7 @@ export default function TypeformPOForm({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSaveError("");
     setIsSubmitting(true);
     try {
       const items = (formData.items || []);
@@ -140,7 +142,9 @@ export default function TypeformPOForm({
         expected_date: formData.expected_delivery || undefined,
       });
     } catch (err) {
-      toast.error("Failed to save PO — " + (err?.message || "check Supabase purchase_orders table"));
+      const msg = err?.message || "Unknown error — check Supabase purchase_orders table";
+      setSaveError(msg);
+      toast.error("PO save failed — see error above");
     } finally {
       setIsSubmitting(false);
     }
@@ -292,6 +296,24 @@ export default function TypeformPOForm({
               rows={3}
             />
           </div>
+
+          {saveError && (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800 break-words">
+              <p className="font-semibold mb-1">Save failed</p>
+              <p className="font-mono text-xs">{saveError}</p>
+              {saveError.includes('migration') && (
+                <p className="mt-2 text-xs text-red-700">
+                  Go to <strong>Supabase → SQL Editor</strong> and run the file{' '}
+                  <code>supabase/migrations/202605180002_create_purchase_orders_table.sql</code>
+                </p>
+              )}
+              {saveError.includes('RLS') && (
+                <p className="mt-2 text-xs text-red-700">
+                  Go to <strong>Supabase → Authentication → Policies</strong> and add an ALL policy for <code>purchase_orders</code> table.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>

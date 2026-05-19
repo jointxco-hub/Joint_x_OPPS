@@ -1469,6 +1469,14 @@ async function runSelect(entityName, filter = {}, sort, limit) {
   return (data ?? []).map((row) => entityConfig.normalize(row));
 }
 
+function supabaseErrorMessage(error) {
+  if (!error) return 'Unknown error';
+  const msg = error.message || error.hint || JSON.stringify(error);
+  if (msg.includes('does not exist')) return `DB table/column missing — run the purchase_orders migration in Supabase SQL Editor. (${msg})`;
+  if (msg.includes('violates row-level security')) return `Supabase RLS is blocking this insert — add an INSERT policy for purchase_orders in Supabase → Auth → Policies. (${msg})`;
+  return msg;
+}
+
 async function runInsert(entityName, payload = {}) {
   if (!supabase) {
     return null;
@@ -1487,8 +1495,9 @@ async function runInsert(entityName, payload = {}) {
     .single();
 
   if (error) {
-    console.warn(`[dataClient] ${entityName} create failed:`, error.message);
-    return null;
+    const msg = supabaseErrorMessage(error);
+    console.error(`[dataClient] ${entityName} insert failed:`, msg, error);
+    throw new Error(msg);
   }
 
   return entityConfig.normalize(data);
@@ -1513,8 +1522,9 @@ async function runUpdate(entityName, id, payload = {}) {
     .single();
 
   if (error) {
-    console.warn(`[dataClient] ${entityName} update failed:`, error.message);
-    return null;
+    const msg = supabaseErrorMessage(error);
+    console.error(`[dataClient] ${entityName} update failed:`, msg, error);
+    throw new Error(msg);
   }
 
   return entityConfig.normalize(data);
@@ -1621,31 +1631,21 @@ function createEntityApi(entityName) {
       return handleLocalEntity(entityName, 'filter', filter, sort, limit);
     },
 
-   async create(payload = {}) {
-  if (isSupported) {
-    const row = await runInsert(entityName, payload);
-    if (row) {
-      return row;
-    }
-    if (supabase) {
-      throw new Error(`[dataClient] ${entityName} failed to save. Check console for details.`);
-    }
-  }
-  return handleLocalEntity(entityName, 'create', payload);
-},
+    async create(payload = {}) {
+      if (isSupported) {
+        const row = await runInsert(entityName, payload);
+        if (row) return row;
+      }
+      return handleLocalEntity(entityName, 'create', payload);
+    },
 
     async update(id, payload = {}) {
-  if (isSupported) {
-    const row = await runUpdate(entityName, id, payload);
-    if (row) {
-      return row;
-    }
-    if (supabase) {
-      throw new Error(`[dataClient] ${entityName} update failed. Check console for details.`);
-    }
-  }
-  return handleLocalEntity(entityName, 'update', id, payload);
-},
+      if (isSupported) {
+        const row = await runUpdate(entityName, id, payload);
+        if (row) return row;
+      }
+      return handleLocalEntity(entityName, 'update', id, payload);
+    },
     async delete(id) {
       if (isSupported) {
         const deleted = await runDelete(entityName, id);
