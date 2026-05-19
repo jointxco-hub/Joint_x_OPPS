@@ -425,25 +425,38 @@ export default function Inventory() {
   const [importing, setImporting] = useState(false);
   const importShopProducts = async () => {
     setImporting(true);
-    const existingNames = new Set(
-      (/** @type {any[]} */ (catalogItems)).map((/** @type {any} */ c) => c.name?.toLowerCase())
-    );
-    const toImport = XLAB_SHOP_PRODUCTS.filter(p => !existingNames.has(p.name.toLowerCase()));
-    if (toImport.length === 0) {
-      toast("All shop products are already in catalog");
+    try {
+      const existingNames = new Set(
+        (/** @type {any[]} */ (catalogItems)).map((/** @type {any} */ c) => c.name?.toLowerCase())
+      );
+      const toImport = XLAB_SHOP_PRODUCTS.filter(p => !existingNames.has(p.name.toLowerCase()));
+      if (toImport.length === 0) {
+        toast("All shop products are already in catalog");
+        setImporting(false);
+        return;
+      }
+      let added = 0;
+      for (const p of toImport) {
+        try {
+          await dataClient.entities.CatalogItem.create({ ...p, status: "active" });
+          added++;
+        } catch (err) {
+          console.error(`Failed to import ${p.name}:`, err);
+        }
+      }
+      // Force refresh catalog items after import completes
+      await refetchCatalog();
+      if (added > 0) {
+        toast.success(`${added} shop product${added !== 1 ? "s" : ""} imported successfully`);
+      } else {
+        toast.error("No products were imported. Check console for errors.");
+      }
+    } catch (err) {
+      toast.error("Import failed: " + ((/** @type {any} */ err)?.message || "Unknown error"));
+      console.error("Import error:", err);
+    } finally {
       setImporting(false);
-      return;
     }
-    let added = 0;
-    for (const p of toImport) {
-      try {
-        await dataClient.entities.CatalogItem.create({ ...p, status: "active" });
-        added++;
-      } catch { /* skip duplicates silently */ }
-    }
-    await queryClient.invalidateQueries({ queryKey: ["catalogItems"] });
-    toast.success(`${added} shop product${added !== 1 ? "s" : ""} imported`);
-    setImporting(false);
   };
 
   const handleAddToStock = (/** @type {any} */ product) => {

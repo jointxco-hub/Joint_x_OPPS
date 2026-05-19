@@ -107,16 +107,36 @@ export default function TypeformPOForm({
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const items = (formData.items || []).map(item => ({
+      // Validate items
+      const items = (formData.items || []);
+      const validItems = items.filter(item => {
+        const hasName = item.is_custom && item.name?.trim();
+        const hasInventoryId = !item.is_custom && item.inventory_item_id;
+        const hasQuantity = parseFloat(item.quantity) > 0;
+        const hasPrice = parseFloat(item.unit_price) > 0;
+        return (hasName || hasInventoryId) && hasQuantity && hasPrice;
+      });
+      
+      if (validItems.length === 0) {
+        toast.error("Add at least one valid item with name/selection, quantity, and price");
+        setIsSubmitting(false);
+        return;
+      }
+      
+      if (validItems.length < items.length) {
+        toast.warning(`${items.length - validItems.length} empty item(s) skipped`);
+      }
+      
+      const processedItems = validItems.map(item => ({
         ...item,
         quantity: parseFloat(item.quantity) || 0,
         unit_price: parseFloat(item.unit_price) || 0,
         total: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0),
       }));
-      const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+      const subtotal = processedItems.reduce((sum, item) => sum + item.total, 0);
       await onSubmit({
         ...formData,
-        items,
+        items: processedItems,
         subtotal,
         total: subtotal + (parseFloat(formData.tax) || 0),
         total_amount: subtotal + (parseFloat(formData.tax) || 0),

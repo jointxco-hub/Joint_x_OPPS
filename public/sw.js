@@ -45,25 +45,77 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  let payload = {};
+  let payload = {
+    title: "Joint X update",
+    body: "You have a new notification.",
+    icon: "/icons/icon-192.svg",
+    badge: "/icons/icon-192.svg",
+    data: { url: "/" }
+  };
+
   try {
-    payload = event.data ? event.data.json() : {};
-  } catch {
-    payload = { title: "Joint X update", body: event.data?.text() || "You have a new app update." };
+    if (event.data) {
+      const data = event.data.json();
+      payload = {
+        title: data.title || payload.title,
+        body: data.body || payload.body,
+        icon: data.icon || payload.icon,
+        badge: data.badge || payload.badge,
+        tag: data.tag || 'joint-x-notification',
+        data: {
+          url: data.url || "/",
+          event_type: data.event_type || 'generic',
+          payload: data.payload || {}
+        },
+        actions: data.actions || [],
+        requireInteraction: data.requireInteraction || false,
+      };
+    }
+  } catch (err) {
+    console.error("Failed to parse push payload:", err);
+    if (event.data?.text) {
+      payload.body = event.data.text();
+    }
   }
 
   event.waitUntil(
-    self.registration.showNotification(payload.title || "Joint X update", {
-      body: payload.body || "You have a new notification.",
-      icon: "/icons/icon-192.svg",
-      badge: "/icons/icon-192.svg",
-      data: payload.url || "/",
-    })
+    self.registration.showNotification(payload.title, payload)
+      .then(() => {
+        // Notify all clients about the notification
+        return self.clients.matchAll({ type: 'window' }).then(clients => {
+          clients.forEach(client => {
+            client.postMessage({
+              type: 'NOTIFICATION_RECEIVED',
+              payload: payload.data
+            });
+          });
+        });
+      })
   );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = event.notification.data || "/";
-  event.waitUntil(self.clients.openWindow(url));
+  const url = event.notification.data?.url || "/";
+  const eventType = event.notification.data?.event_type || 'generic';
+  
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then(clients => {
+      // Try to find a window that matches the URL
+      for (const client of clients) {
+        if (client.url.includes(new URL(url, self.location).pathname) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // If no matching window, open a new one
+      if (self.clients.openWindow) {
+        return self.clients.openWindow(url);
+      }
+    })
+  );
+});
+
+self.addEventListener("notificationclose", (event) => {
+  // Can track notification dismissals here if needed
+  console.log("Notification closed:", event.notification.tag);
 });

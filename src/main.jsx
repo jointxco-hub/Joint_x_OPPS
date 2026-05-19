@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './index.css'
+import { subscribeToPush } from './lib/push.js'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   // <React.StrictMode>
@@ -9,10 +10,33 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   // </React.StrictMode>,
 )
 
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      await navigator.serviceWorker.register('/sw.js');
+      
+      // Attempt to subscribe to push notifications after a short delay
+      // to ensure user is authenticated
+      setTimeout(() => {
+        subscribeToPush().catch(err => {
+          console.warn('Push notification setup failed:', err);
+        });
+      }, 2000);
+    } catch (err) {
+      console.error('Service Worker registration failed:', err);
+    }
   });
+  
+  // Listen for messages from service worker about new orders/updates
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const { type, payload } = event.data || {};
+      if (type === 'ORDER_SYNCED' && payload) {
+        // Re-fetch orders or update UI as needed
+        window.dispatchEvent(new CustomEvent('orderSynced', { detail: payload }));
+      }
+    });
+  }
 }
 
 if (import.meta.hot) {

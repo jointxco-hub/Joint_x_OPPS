@@ -15,6 +15,10 @@ node_modules
 dist
 dist-ssr
 *.local
+*.zip
+build_out*.txt
+build_output*.txt
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*

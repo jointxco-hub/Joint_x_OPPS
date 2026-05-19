@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m ' *)",
+      "Read(//c/Users/Jasper Jai/.claude/projects/c--Users-Jasper-Jai-Desktop-Joint-x-App-Development-Alethea-Brand-OS--files-GitHub-X1-Sample-Pack-Sales-Page-Store-Joint-x-OPPS/memory/**)",
+      "Bash(git pull *)",
+      "PowerShell(cd \"c:\\\\Users\\\\Jasper Jai\\\\Desktop\\\\Joint_x\\\\App Development\\\\Alethea Brand OS™_files\\\\GitHub\\\\X1_Sample_Pack_Sales_Page_Store\\\\Joint_x_OPPS\"; node --input-type=module --eval \"import\\('./src/api/dataClient.js'\\).then\\(\\(\\) => console.log\\('OK'\\)\\).catch\\(e => console.error\\(e.message\\)\\)\" 2>&1; echo \"exit: $LASTEXITCODE\")",
+      "Bash(npx vite *)",
+      "Bash(git commit -m 'fix: disable RLS on all Phase 2 tables to match Phase 1 pattern *)",
+      "Bash(node -e \"require\\('@hello-pangea/dnd'\\); console.log\\('ok'\\)\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\Jasper Jai\\\\Desktop\\\\Joint_x\\\\App Development\\\\Alethea Brand OS™_files\\\\GitHub\\\\X1_Sample_Pack_Sales_Page_Store\\\\Joint_x_OPPS\"; $proc = Start-Process -FilePath \"npm\" -ArgumentList \"run\",\"build\" -Wait -PassThru -RedirectStandardOutput \"$env:TEMP\\\\build_out.txt\" -RedirectStandardError \"$env:TEMP\\\\build_err.txt\" -NoNewWindow; $proc.ExitCode; Get-Content \"$env:TEMP\\\\build_out.txt\"; Get-Content \"$env:TEMP\\\\build_err.txt\")",
+      "Read(//c/Users/Jasper Jai/.claude/projects/c--Users-Jasper-Jai-Desktop-Joint-x-App-Development-Alethea-Brand-OS--files-GitHub-X1-Sample-Pack-Sales-Page-Store-Joint-x-OPPS/86244a7d-ea65-43d5-9a43-9a69af505594/tool-results/**)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Jasper Jai\\\\Desktop\\\\Joint_x\\\\App Development\\\\Alethea Brand OS™_files\\\\GitHub\\\\X1_Sample_Pack_Sales_Page_Store\\\\Joint_x_OPPS\" -Recurse -Filter \"*.jsx\" -o \"*.js\")",
+      "Bash(Select-Object FullName)",
+      "Bash(vercel --prod)",
+      "Bash(npx vercel *)",
+      "Bash(ls public/icons/)",
+      "Bash(ls public/)",
+      "Bash(cat public/manifest.webmanifest)",
+      "Bash(cat manifest.webmanifest)",
+      "Bash(node -e \"const sharp = require\\('sharp'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(npx tsc *)",
+      "Bash(curl -s \"https://xlab.jointx.co.za/wp-json/wc/v3/products?per_page=3&consumer_key=ck_demo&consumer_secret=cs_demo\")",
+      "Bash(curl -s \"https://xlab.jointx.co.za/wp-json/wp/v2/posts?per_page=2\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\([{k:v for k,v in x.items\\(\\) if k in ['id','title','slug','type']} for x in d[:2]], indent=2\\)\\)\")",
+      "Bash(curl -s \"https://xlab.jointx.co.za/wp-json/wc/v3/products?per_page=5&status=publish\")",
+      "Bash(curl -s \"https://xlab.jointx.co.za/wp-json/\" -o /dev/null -w \"%{http_code}\")",
+      "Bash(curl -s \"https://xlab.jointx.co.za/wp-json/\")",
+      "Bash(curl -s -I \"https://xlab.jointx.co.za/wp-admin/\")"
+    ]
+  }
+}
