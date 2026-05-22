@@ -1,0 +1,2 @@
+-- Placeholder for an already-applied remote migration that predates this local migrations folder.
+-- Keep this file empty so Supabase CLI can reconcile migration history safely.

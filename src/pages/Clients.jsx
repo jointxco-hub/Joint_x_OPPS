@@ -20,15 +20,24 @@ function normalizeKey(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function orderClientKey(order) {
-  return normalizeKey(order.client_email) || normalizeKey(order.client_name);
+function clientLinkKeys({ id, client_id, email, client_email, name, client_name }) {
+  return [
+    client_id || id ? `id:${client_id || id}` : '',
+    normalizeKey(email ?? client_email) ? `email:${normalizeKey(email ?? client_email)}` : '',
+    normalizeKey(name ?? client_name) ? `name:${normalizeKey(name ?? client_name)}` : '',
+  ].filter(Boolean);
 }
 
 function clientKeys(client) {
-  return [
-    normalizeKey(client.email ?? client.client_email),
-    normalizeKey(client.name ?? client.client_name),
-  ].filter(Boolean);
+  return clientLinkKeys(client);
+}
+
+function orderClientKeys(order) {
+  return clientLinkKeys(order);
+}
+
+function orderPrimaryClientKey(order) {
+  return orderClientKeys(order)[0] || '';
 }
 
 function orderAmount(order) {
@@ -177,14 +186,21 @@ export default function Clients() {
 
   const clientsWithStats = useMemo(() => {
     const ordersByClientKey = new Map();
+    const primaryOrdersByClientKey = new Map();
 
     orders
-      .filter((order) => !order.is_archived && orderClientKey(order))
+      .filter((order) => !order.is_archived && orderPrimaryClientKey(order))
       .forEach((order) => {
-        const key = orderClientKey(order);
-        const group = ordersByClientKey.get(key) || [];
-        group.push(order);
-        ordersByClientKey.set(key, group);
+        const primaryKey = orderPrimaryClientKey(order);
+        const primaryGroup = primaryOrdersByClientKey.get(primaryKey) || [];
+        primaryGroup.push(order);
+        primaryOrdersByClientKey.set(primaryKey, primaryGroup);
+
+        orderClientKeys(order).forEach((key) => {
+          const group = ordersByClientKey.get(key) || [];
+          group.push(order);
+          ordersByClientKey.set(key, group);
+        });
       });
 
     const linkedOrderKeys = new Set();
@@ -211,7 +227,8 @@ export default function Clients() {
     const existingClientKeys = new Set(clients.flatMap(clientKeys));
     const orderOnlyClients = [];
 
-    ordersByClientKey.forEach((group, key) => {
+    primaryOrdersByClientKey.forEach((group, key) => {
+      if (key.startsWith('id:')) return;
       if (linkedOrderKeys.has(key) || existingClientKeys.has(key)) return;
       const newestOrder = [...group].sort((a, b) => getOrderDate(b) - getOrderDate(a))[0] || {};
       const stats = buildStats(group);
