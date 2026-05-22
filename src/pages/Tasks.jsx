@@ -12,6 +12,7 @@ import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 import RefreshButton from "@/components/common/RefreshButton";
 import { getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
+import { toast } from "sonner";
 
 const priorityBar = {
   urgent: "bg-red-500",
@@ -88,6 +89,9 @@ export default function Tasks() {
       queryClient.invalidateQueries({ queryKey: ["legacyTasks"] });
       queryClient.invalidateQueries({ queryKey: ["orderTasks"] });
       queryClient.invalidateQueries({ queryKey: ["orderOpsTasks"] });
+    },
+    onError: (error) => {
+      toast.error(error?.message || "Could not update task");
     },
   });
 

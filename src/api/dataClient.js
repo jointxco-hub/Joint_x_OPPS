@@ -252,7 +252,7 @@ const ENTITY_CONFIG = {
       return compactObject({
         title: payload.title,
         description: payload.description || undefined,
-        production_type: payload.production_type || undefined,
+        production_type: payload.production_type && payload.production_type !== 'general' ? payload.production_type : undefined,
         production_stage: payload.production_stage || undefined,
         status: payload.status,
         priority: payload.priority,
