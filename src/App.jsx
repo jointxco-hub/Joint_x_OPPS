@@ -18,7 +18,7 @@ const MainPage = mainPageKey ? Pages[mainPageKey] : () => <></>;
 const SignInPage = Pages['SignIn'];
 
 // Paths that are public — rendered without the internal layout and no auth check
-const PUBLIC_PATHS = ['/TrackOrder', '/SignIn'];
+const PUBLIC_PATHS = ['/TrackOrder', '/track', '/SignIn'];
 
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
@@ -33,6 +33,7 @@ const AuthenticatedApp = () => {
     return (
       <Routes>
         <Route path="/TrackOrder" element={<TrackOrder />} />
+        <Route path="/track" element={<TrackOrder />} />
         <Route path="/SignIn" element={SignInPage ? <SignInPage /> : <PageNotFound />} />
       </Routes>
     );

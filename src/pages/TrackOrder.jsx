@@ -70,7 +70,7 @@ function FileThumb({ url, onClick }) {
 export default function TrackOrder() {
   const [trackingCode, setTrackingCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return (params.get("code") || "").toUpperCase();
+    return (params.get("code") || params.get("order") || params.get("tracking") || "").toUpperCase();
   });
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -79,7 +79,8 @@ export default function TrackOrder() {
   const [copied, setCopied] = useState(false);
 
   const copyTrackingLink = () => {
-    const link = `${window.location.origin}/TrackOrder?code=${order?.order_number}`;
+    const code = encodeURIComponent(order?.order_number || order?.tracking_number || order?.id || "");
+    const link = `${window.location.origin}/track?order=${code}`;
     navigator.clipboard.writeText(link).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -128,6 +129,12 @@ export default function TrackOrder() {
     
     setLoading(false);
   };
+
+  useEffect(() => {
+    if (trackingCode.trim()) {
+      handleSearch();
+    }
+  }, []);
 
   const currentStepIndex = order ? getStepIndex(order.status) : 0;
 

@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
-  { value: "the_courier_guy", label: "The Courier Guy", url: "https://www.thecourierguy.co.za/tracking/?ref=" },
+  { value: "the_courier_guy", label: "The Courier Guy", url: "https://portal.thecourierguy.co.za/track", appendTracking: false },
   { value: "courier_it", label: "Courier IT", url: "https://www.courier-it.co.za/tracking/?tracking=" },
   { value: "pep_paxi", label: "Pep Paxi", url: "https://www.paxi.co.za/track?parcelref=" },
   { value: "aramex", label: "Aramex", url: "https://www.aramex.com/tools/track?l=" },
@@ -19,6 +19,23 @@ const DEFAULT_COURIERS = [
   { value: "dawn_wing", label: "Dawn Wing", url: "https://www.dawnwing.co.za/tracking?waybill=" },
   { value: "other", label: "Other / Hand delivery", url: "" },
 ];
+
+const buildCourierTrackingUrl = (courier, trackingNumber) => {
+  if (!courier?.url || !trackingNumber) return null;
+
+  const encodedTracking = encodeURIComponent(String(trackingNumber).trim());
+  if (!encodedTracking) return null;
+
+  if (courier.url.includes("{tracking}")) {
+    return courier.url.replace("{tracking}", encodedTracking);
+  }
+
+  if (courier.appendTracking === false) {
+    return courier.url;
+  }
+
+  return `${courier.url}${encodedTracking}`;
+};
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -231,17 +248,17 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const resolvedCouriers = couriers?.length ? couriers : DEFAULT_COURIERS;
   const courier = resolvedCouriers.find(c => c.value === order.courier);
-  const trackingUrl = courier?.url && order.tracking_number
-    ? `${courier.url}${order.tracking_number}`
-    : null;
+  const trackingUrl = buildCourierTrackingUrl(courier, order.tracking_number);
   const [copiedTracking, setCopiedTracking] = useState(false);
   const [copiedXlab, setCopiedXlab] = useState(false);
   const copyTrackingLink = () => {
-    const link = `${window.location.origin}/TrackOrder?code=${order.order_number}`;
+    const code = encodeURIComponent(order.order_number || order.tracking_number || order.id || "");
+    const link = `${window.location.origin}/track?order=${code}`;
     navigator.clipboard.writeText(link).then(() => { setCopiedTracking(true); setTimeout(() => setCopiedTracking(false), 2000); });
   };
   const copyXlabTrackingLink = () => {
-    const link = `https://xlab.jointx.co.za/track?order=${order.order_number}`;
+    const code = encodeURIComponent(order.order_number || order.tracking_number || order.id || "");
+    const link = `${window.location.origin}/track?order=${code}`;
     navigator.clipboard.writeText(link).then(() => { setCopiedXlab(true); setTimeout(() => setCopiedXlab(false), 2000); });
   };
 
@@ -784,7 +801,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <a href={trackingUrl} target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-2 p-4 bg-primary/5 rounded-xl border border-primary/20 text-primary hover:bg-primary/10 transition-all">
                   <ExternalLink className="w-4 h-4" />
-                  <span className="text-sm font-medium">Track with {courier?.label}</span>
+                  <span className="text-sm font-medium">
+                    {courier?.appendTracking === false ? `Open ${courier?.label} tracker` : `Track with ${courier?.label}`}
+                  </span>
                   <ChevronRight className="w-4 h-4 ml-auto" />
                 </a>
               )}
