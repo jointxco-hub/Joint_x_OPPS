@@ -84,6 +84,34 @@ const BULK_DISCOUNTS = [
   { min: 250, max: Infinity, discount: 20, label: "Custom Quote" }
 ];
 
+const getProductImageUrl = (product) => {
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const firstImage = images.find(Boolean);
+  return product?.image_url || (typeof firstImage === "string" ? firstImage : firstImage?.src) || product?.image || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400";
+};
+
+const dedupeProducts = (products) => {
+  const byName = new Map();
+  for (const product of products) {
+    const key = `${product.name || ""}`.trim().toLowerCase();
+    if (!key) continue;
+    const score =
+      (getProductImageUrl(product) ? 4 : 0) +
+      ((product.addons?.length || 0) > 0 ? 2 : 0) +
+      ((product.print_options?.length || 0) > 0 ? 2 : 0) +
+      (Date.parse(product.updated_date || product.updated_at || product.created_date || product.created_at || 0) / 10000000000000);
+    const current = byName.get(key);
+    const currentScore = current
+      ? (getProductImageUrl(current) ? 4 : 0) +
+        ((current.addons?.length || 0) > 0 ? 2 : 0) +
+        ((current.print_options?.length || 0) > 0 ? 2 : 0) +
+        (Date.parse(current.updated_date || current.updated_at || current.created_date || current.created_at || 0) / 10000000000000)
+      : -1;
+    if (!current || score >= currentScore) byName.set(key, product);
+  }
+  return Array.from(byName.values());
+};
+
 function getBulkDiscount(totalQty) {
   const tier = BULK_DISCOUNTS.find(t => totalQty >= t.min && totalQty <= t.max);
   return tier || BULK_DISCOUNTS[0];
@@ -342,7 +370,7 @@ export default function ClientCatalog() {
           <div className="grid md:grid-cols-2 gap-8">
             <div>
               <img 
-                src={selectedItem.image_url || selectedItem.image || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400"} 
+                src={getProductImageUrl(selectedItem)}
                 alt={selectedItem.name} 
                 className="w-full aspect-square object-cover rounded-2xl" 
               />
@@ -737,7 +765,7 @@ export default function ClientCatalog() {
   }
 
   // Group catalog items by category
-  const groupedCatalog = catalogItems
+  const groupedCatalog = dedupeProducts(catalogItems)
     .filter(item => item.is_active !== false && item.is_archived !== true && item.status !== "draft" && item.store_visible !== false)
     .reduce((acc, item) => {
       const category = item.category || 'other';
@@ -813,7 +841,7 @@ export default function ClientCatalog() {
                 {category.items.map(item => (
                   <Card key={item.id} className="bg-slate-800 border-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all" onClick={() => setSelectedItem(item)}>
                     <img 
-                      src={item.image_url || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400"} 
+                      src={getProductImageUrl(item)}
                       alt={item.name} 
                       className="w-full aspect-square object-cover" 
                     />

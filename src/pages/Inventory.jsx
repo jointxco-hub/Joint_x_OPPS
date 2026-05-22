@@ -19,6 +19,44 @@ const CATALOG_CATEGORIES = [
 
 const UNITS = ["pieces","meters","rolls","liters"];
 
+const INVENTORY_CATEGORY_MAP = {
+  tshirts: "tees",
+  hats: "headwear",
+  printing: "dtf_materials",
+};
+
+const getInventoryCategory = (category) => INVENTORY_CATEGORY_MAP[category] || category || "other";
+
+const getProductImageUrl = (product) => {
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const firstImage = images.find(Boolean);
+  return product?.image_url || (typeof firstImage === "string" ? firstImage : firstImage?.src) || "";
+};
+
+const dedupeProducts = (products) => {
+  const byName = new Map();
+  for (const product of products) {
+    const key = `${product.name || ""}`.trim().toLowerCase();
+    if (!key) continue;
+    const current = byName.get(key);
+    const productScore =
+      (getProductImageUrl(product) ? 4 : 0) +
+      ((product.addons?.length || 0) > 0 ? 2 : 0) +
+      ((product.print_options?.length || 0) > 0 ? 2 : 0) +
+      (product.store_visible !== false ? 1 : 0) +
+      (Date.parse(product.updated_date || product.updated_at || product.created_date || product.created_at || 0) / 10000000000000);
+    const currentScore = current
+      ? (getProductImageUrl(current) ? 4 : 0) +
+        ((current.addons?.length || 0) > 0 ? 2 : 0) +
+        ((current.print_options?.length || 0) > 0 ? 2 : 0) +
+        (current.store_visible !== false ? 1 : 0) +
+        (Date.parse(current.updated_date || current.updated_at || current.created_date || current.created_at || 0) / 10000000000000)
+      : -1;
+    if (!current || productScore >= currentScore) byName.set(key, product);
+  }
+  return Array.from(byName.values());
+};
+
 const EMPTY_CATALOG_FORM = {
   name: "", description: "", category: "tshirts",
   price: "", image_url: "", code: "", gsm: "", material: "",
@@ -374,7 +412,7 @@ function CatalogGrid({ products, onAddToStock, addingId, onEdit, onDelete }) {
       {(/** @type {any[]} */ (products)).map((/** @type {any} */ p) => (
         <div key={p.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
           <div className="aspect-square overflow-hidden relative">
-            <ProductImage url={p.image_url} name={p.name} />
+            <ProductImage url={getProductImageUrl(p)} name={p.name} />
             <span className={`absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStoreStatus(p).className}`}>{getStoreStatus(p).label}</span>
             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button onClick={() => onEdit(p)}
@@ -420,7 +458,7 @@ function CatalogList({ products, onAddToStock, addingId, onEdit, onDelete }) {
       {(/** @type {any[]} */ (products)).map((/** @type {any} */ p, i) => (
         <div key={p.id} className={`flex items-center gap-4 px-4 py-3 hover:bg-secondary/30 transition-all ${i > 0 ? "border-t border-border" : ""}`}>
           <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 border border-border">
-            <ProductImage url={p.image_url} name={p.name} />
+            <ProductImage url={getProductImageUrl(p)} name={p.name} />
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
@@ -511,7 +549,7 @@ export default function Inventory() {
     mutationFn: (/** @type {any} */ product) => dataClient.entities.InventoryItem.create({
       name: product.name,
       sku: product.slug ?? product.sku ?? null,
-      category: product.category ?? "other",
+      category: getInventoryCategory(product.category),
       unit: "pieces",
       current_stock: 0,
       selling_price: product.price ?? null,
@@ -521,8 +559,8 @@ export default function Inventory() {
       toast.success("Added to stock inventory");
       setAddingId(null);
     },
-    onError: () => {
-      toast.error("Failed to add to inventory");
+    onError: (err) => {
+      toast.error((/** @type {any} */ (err))?.message || "Failed to add to inventory");
       setAddingId(null);
     },
   });
@@ -592,7 +630,9 @@ export default function Inventory() {
     (!search || (/** @type {any} */ (i)).name?.toLowerCase().includes(search.toLowerCase()) || (/** @type {any} */ (i)).sku?.toLowerCase().includes(search.toLowerCase()))
   );
 
-  const filteredCatalog = (/** @type {any[]} */ (catalogItems)).filter((/** @type {any} */ p) => {
+  const visibleCatalogItems = dedupeProducts((/** @type {any[]} */ (catalogItems)).filter((/** @type {any} */ p) => !p.is_archived));
+
+  const filteredCatalog = visibleCatalogItems.filter((/** @type {any} */ p) => {
     if (p.is_archived) return false;
     if (catalogCategory !== "all" && p.category !== catalogCategory) return false;
     if (catalogSearch) {
