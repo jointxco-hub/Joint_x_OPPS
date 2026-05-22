@@ -97,6 +97,7 @@ export default function ClientCatalog() {
   const [selectedColor, setSelectedColor] = useState("Black");
   const [sizeQuantities, setSizeQuantities] = useState({});
   const [printConfigs, setPrintConfigs] = useState([]);
+  const [selectedAddons, setSelectedAddons] = useState([]);
   const [clientInfo, setClientInfo] = useState({
     name: "", email: "", phone: "", company: "", notes: "", specialInstructions: ""
   });
@@ -134,10 +135,11 @@ export default function ClientCatalog() {
   };
 
   const addPrintConfig = () => {
+    const firstOption = getProductPrintOptions(selectedItem)[0];
     setPrintConfigs([...printConfigs, {
       id: Date.now(),
-      material: "dtf_epic",
-      location: "Front",
+      material: firstOption?.key || "dtf_epic",
+      location: firstOption?.locations?.[0] || "Front",
       customWidth: 400,
       customHeight: 400
     }]);
@@ -154,6 +156,9 @@ export default function ClientCatalog() {
   };
 
   const calculatePrintCost = (config) => {
+    const productOption = getProductPrintOptions(selectedItem).find(option => option.key === config.material);
+    if (productOption?.source === "product") return Number(productOption.price) || 0;
+
     const material = PRINT_MATERIALS[config.material];
     if (!material) return 0;
     
@@ -168,12 +173,44 @@ export default function ClientCatalog() {
     return calculateClientPrice(materialCost);
   };
 
+  const getProductPrintOptions = (item) => {
+    const productOptions = Array.isArray(item?.print_options) ? item.print_options.filter(option => option.name) : [];
+    if (productOptions.length > 0) {
+      return productOptions.map((option, index) => ({
+        key: `product-${index}`,
+        source: "product",
+        name: option.name,
+        type: option.type || "other",
+        price: Number(option.price) || 0,
+        locations: Array.isArray(option.locations) && option.locations.length > 0 ? option.locations : PRINT_LOCATIONS,
+      }));
+    }
+
+    return Object.entries(PRINT_MATERIALS).map(([key, option]) => ({
+      key,
+      source: "default",
+      ...option,
+      price: calculateClientPrice(option.cost),
+      locations: PRINT_LOCATIONS,
+    }));
+  };
+
+  const toggleAddon = (addon) => {
+    const key = addon.name;
+    setSelectedAddons(current =>
+      current.some(item => item.name === key)
+        ? current.filter(item => item.name !== key)
+        : [...current, { name: addon.name, price: Number(addon.price) || 0 }]
+    );
+  };
+
   const itemTotalQty = Object.values(sizeQuantities).reduce((sum, q) => sum + q, 0);
 
   const addToCart = () => {
     if (!selectedItem || itemTotalQty === 0) return;
     
     const printTotal = printConfigs.reduce((sum, config) => sum + calculatePrintCost(config), 0);
+    const addonTotal = selectedAddons.reduce((sum, addon) => sum + (Number(addon.price) || 0), 0);
     const itemPrice = selectedItem.base_price || selectedItem.price;
 
     // Create cart items for each size with qty > 0
@@ -186,22 +223,28 @@ export default function ClientCatalog() {
         size,
         color: selectedColor,
         quantity,
-        printOptions: printConfigs.map(config => ({
-          type: PRINT_MATERIALS[config.material].name,
+        addons: selectedAddons,
+        printOptions: printConfigs.map(config => {
+          const option = getProductPrintOptions(selectedItem).find(item => item.key === config.material);
+          return ({
+          type: option?.name || PRINT_MATERIALS[config.material]?.name || "Print option",
           location: config.location,
           customSize: `${config.customWidth}mm x ${config.customHeight}mm`,
           price: calculatePrintCost(config)
-        })),
+        });
+        }),
         basePrice: itemPrice,
         printCost: printTotal,
-        unitPrice: itemPrice + printTotal,
-        total: (itemPrice + printTotal) * quantity
+        addonCost: addonTotal,
+        unitPrice: itemPrice + printTotal + addonTotal,
+        total: (itemPrice + printTotal + addonTotal) * quantity
       }));
 
     setCart([...cart, ...newItems]);
     setSelectedItem(null);
     setSizeQuantities({});
     setPrintConfigs([]);
+    setSelectedAddons([]);
     setSelectedColor("Black");
     toast.success(`Added ${itemTotalQty} items to cart!`);
   };
@@ -264,7 +307,8 @@ export default function ClientCatalog() {
         size: item.size,
         color: item.color,
         quantity: item.quantity,
-        print_options: item.printOptions.map(p => ({ type: p.name, price: p.price })),
+        addons: item.addons || [],
+        print_options: item.printOptions.map(p => ({ type: p.type, location: p.location, price: p.price })),
         unit_price: item.unitPrice,
         total: item.total
       })),
@@ -282,15 +326,16 @@ export default function ClientCatalog() {
   // Item Configuration with Multi-Size Selection
   if (selectedItem) {
     const printTotal = printConfigs.reduce((sum, config) => sum + calculatePrintCost(config), 0);
+    const addonTotal = selectedAddons.reduce((sum, addon) => sum + (Number(addon.price) || 0), 0);
     const itemPrice = selectedItem.base_price || selectedItem.price;
-    const unitPrice = itemPrice + printTotal;
+    const unitPrice = itemPrice + printTotal + addonTotal;
     const itemTotal = unitPrice * itemTotalQty;
     const currentBulkTier = getBulkDiscount(cartQty + itemTotalQty);
 
     return (
       <div className="min-h-screen bg-slate-900 text-white">
         <div className="max-w-4xl mx-auto p-4 md:p-8">
-          <Button variant="ghost" onClick={() => { setSelectedItem(null); setSizeQuantities({}); setPrintConfigs([]); }} className="mb-6 text-slate-400">
+          <Button variant="ghost" onClick={() => { setSelectedItem(null); setSizeQuantities({}); setPrintConfigs([]); setSelectedAddons([]); }} className="mb-6 text-slate-400">
             ← Back to Catalog
           </Button>
 
@@ -314,6 +359,14 @@ export default function ClientCatalog() {
                 {selectedItem.gsm && <p>GSM: {selectedItem.gsm}</p>}
                 {selectedItem.material && <p>Material: {selectedItem.material}</p>}
               </div>
+
+              {Array.isArray(selectedItem.images) && selectedItem.images.length > 1 && (
+                <div className="flex gap-2 overflow-x-auto">
+                  {selectedItem.images.slice(0, 6).map((image, index) => (
+                    <img key={index} src={typeof image === "string" ? image : image?.src} alt={`${selectedItem.name} ${index + 1}`} className="h-16 w-16 rounded-lg object-cover border border-slate-700" />
+                  ))}
+                </div>
+              )}
 
               {/* Color Selection */}
               <div className="space-y-3">
@@ -407,8 +460,8 @@ export default function ClientCatalog() {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {Object.entries(PRINT_MATERIALS).map(([key, mat]) => (
-                                  <SelectItem key={key} value={key}>{mat.name}</SelectItem>
+                                {getProductPrintOptions(selectedItem).map((option) => (
+                                  <SelectItem key={option.key} value={option.key}>{option.name}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -421,7 +474,7 @@ export default function ClientCatalog() {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {PRINT_LOCATIONS.map(loc => (
+                                {(getProductPrintOptions(selectedItem).find(option => option.key === config.material)?.locations || PRINT_LOCATIONS).map(loc => (
                                   <SelectItem key={loc} value={loc}>{loc}</SelectItem>
                                 ))}
                               </SelectContent>
@@ -460,6 +513,28 @@ export default function ClientCatalog() {
                   </div>
                 )}
               </div>
+
+              {/* Bulk Discount Indicator */}
+              {Array.isArray(selectedItem.addons) && selectedItem.addons.length > 0 && (
+                <div className="space-y-3">
+                  <Label className="text-white">Add-ons</Label>
+                  <div className="space-y-2">
+                    {selectedItem.addons.map((addon, index) => (
+                      <label key={index} className="flex items-center justify-between gap-3 rounded-xl bg-slate-800 p-3 border border-slate-700 cursor-pointer">
+                        <span className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedAddons.some(item => item.name === addon.name)}
+                            onChange={() => toggleAddon(addon)}
+                          />
+                          <span className="text-sm">{addon.name}</span>
+                        </span>
+                        <span className="text-sm font-semibold text-emerald-400">R{Number(addon.price || 0).toFixed(2)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Bulk Discount Indicator */}
               {itemTotalQty > 0 && (
@@ -663,7 +738,7 @@ export default function ClientCatalog() {
 
   // Group catalog items by category
   const groupedCatalog = catalogItems
-    .filter(item => item.is_active !== false && item.is_archived !== true && item.status !== "draft")
+    .filter(item => item.is_active !== false && item.is_archived !== true && item.status !== "draft" && item.store_visible !== false)
     .reduce((acc, item) => {
       const category = item.category || 'other';
       if (!acc[category]) {

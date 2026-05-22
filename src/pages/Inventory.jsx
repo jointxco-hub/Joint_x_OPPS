@@ -21,13 +21,37 @@ const UNITS = ["pieces","meters","rolls","liters"];
 
 const EMPTY_CATALOG_FORM = {
   name: "", description: "", category: "tshirts",
-  price: "", image_url: "", status: "active",
+  price: "", image_url: "", code: "", gsm: "", material: "",
+  status: "active", store_visible: true,
+  addons: [], print_options: [], images: [],
 };
+
+const EMPTY_ADDON = { name: "", price: 0 };
+const EMPTY_PRINT_OPTION = { name: "", type: "dtf", price: 0, locations: "Front, Back" };
 
 function CatalogItemFormModal({ open, onClose, existing }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState(existing ?? EMPTY_CATALOG_FORM);
+  const [form, setForm] = useState({
+    ...EMPTY_CATALOG_FORM,
+    ...(existing ?? {}),
+    addons: Array.isArray(existing?.addons) ? existing.addons : [],
+    print_options: Array.isArray(existing?.print_options) ? existing.print_options : [],
+    images: Array.isArray(existing?.images) ? existing.images : [],
+    store_visible: existing?.store_visible !== false,
+  });
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+  const setChecked = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.checked }));
+
+  const updateArrayItem = (key, index, field, value) => {
+    setForm(f => ({
+      ...f,
+      [key]: f[key].map((item, i) => i === index ? { ...item, [field]: value } : item),
+    }));
+  };
+
+  const removeArrayItem = (key, index) => {
+    setForm(f => ({ ...f, [key]: f[key].filter((_, i) => i !== index) }));
+  };
 
   const mutation = useMutation({
     mutationFn: (data) =>
@@ -51,7 +75,27 @@ function CatalogItemFormModal({ open, onClose, existing }) {
       category: form.category || "other",
       price: form.price !== "" ? Number(form.price) : null,
       image_url: form.image_url || null,
+      images: form.images,
+      code: form.code || null,
+      gsm: form.gsm || null,
+      material: form.material || null,
       status: form.status || "active",
+      store_visible: form.store_visible !== false,
+      addons: form.addons
+        .filter(addon => addon.name?.trim())
+        .map(addon => ({ ...addon, name: addon.name.trim(), price: Number(addon.price) || 0 })),
+      print_options: form.print_options
+        .filter(option => option.name?.trim())
+        .map(option => ({
+          ...option,
+          name: option.name.trim(),
+          type: option.type || "dtf",
+          price: Number(option.price) || 0,
+          locations: String(Array.isArray(option.locations) ? option.locations.join(",") : option.locations || "")
+            .split(",")
+            .map(location => location.trim())
+            .filter(Boolean),
+        })),
     });
   };
 
@@ -81,6 +125,20 @@ function CatalogItemFormModal({ open, onClose, existing }) {
             placeholder="Brief product description…"
             className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-20" />
         </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Code</label>
+            <Input value={form.code || ""} onChange={set("code")} placeholder="JV1" className="h-11 md:h-10" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">GSM</label>
+            <Input value={form.gsm || ""} onChange={set("gsm")} placeholder="220gsm" className="h-11 md:h-10" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Material</label>
+            <Input value={form.material || ""} onChange={set("material")} placeholder="Cotton" className="h-11 md:h-10" />
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-foreground block mb-1">Category</label>
@@ -100,13 +158,59 @@ function CatalogItemFormModal({ open, onClose, existing }) {
           <label className="text-xs font-medium text-foreground block mb-1">Image URL</label>
           <Input value={form.image_url} onChange={set("image_url")} placeholder="https://…" className="h-11 md:h-10" />
         </div>
-        <div>
-          <label className="text-xs font-medium text-foreground block mb-1">Status</label>
-          <select value={form.status} onChange={set("status")}
-            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
-            <option value="active">Active</option>
-            <option value="draft">Draft</option>
-          </select>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Status</label>
+            <select value={form.status} onChange={set("status")}
+              className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+              <option value="active">Active</option>
+              <option value="draft">Draft</option>
+            </select>
+          </div>
+          <label className="flex items-center gap-2 rounded-xl border border-input px-3 text-sm">
+            <input type="checkbox" checked={form.store_visible !== false} onChange={setChecked("store_visible")} />
+            Visible on XLab store
+          </label>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-foreground">Add-ons</label>
+            <button type="button" className="text-xs text-primary font-medium" onClick={() => setForm(f => ({ ...f, addons: [...f.addons, EMPTY_ADDON] }))}>Add</button>
+          </div>
+          {form.addons.map((addon, index) => (
+            <div key={index} className="grid grid-cols-[1fr_92px_28px] gap-2">
+              <Input value={addon.name || ""} onChange={e => updateArrayItem("addons", index, "name", e.target.value)} placeholder="Neck tag" className="h-9" />
+              <Input type="number" value={addon.price ?? 0} onChange={e => updateArrayItem("addons", index, "price", e.target.value)} className="h-9" />
+              <button type="button" onClick={() => removeArrayItem("addons", index)} className="text-muted-foreground hover:text-destructive"><X className="w-4 h-4" /></button>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-foreground">Print Options</label>
+            <button type="button" className="text-xs text-primary font-medium" onClick={() => setForm(f => ({ ...f, print_options: [...f.print_options, EMPTY_PRINT_OPTION] }))}>Add</button>
+          </div>
+          {form.print_options.map((option, index) => (
+            <div key={index} className="rounded-xl border border-border p-2 space-y-2">
+              <div className="grid grid-cols-[1fr_90px_28px] gap-2">
+                <Input value={option.name || ""} onChange={e => updateArrayItem("print_options", index, "name", e.target.value)} placeholder="DTF Front" className="h-9" />
+                <Input type="number" value={option.price ?? 0} onChange={e => updateArrayItem("print_options", index, "price", e.target.value)} className="h-9" />
+                <button type="button" onClick={() => removeArrayItem("print_options", index)} className="text-muted-foreground hover:text-destructive"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <select value={option.type || "dtf"} onChange={e => updateArrayItem("print_options", index, "type", e.target.value)} className="h-9 rounded-xl border border-input bg-background px-3 text-sm">
+                  <option value="dtf">DTF</option>
+                  <option value="vinyl">Vinyl</option>
+                  <option value="embroidery">Embroidery</option>
+                  <option value="screen">Screen</option>
+                  <option value="other">Other</option>
+                </select>
+                <Input value={Array.isArray(option.locations) ? option.locations.join(", ") : option.locations || ""} onChange={e => updateArrayItem("print_options", index, "locations", e.target.value)} placeholder="Front, Back" className="h-9" />
+              </div>
+            </div>
+          ))}
         </div>
       </form>
     </ResponsiveModal>
@@ -257,6 +361,13 @@ function ProductImage({ url, name }) {
   return <img src={url} alt={name} className="w-full h-full object-cover" onError={() => setErr(true)} />;
 }
 
+function getStoreStatus(product) {
+  if (product.is_archived) return { label: "Archived", className: "bg-slate-100 text-slate-500" };
+  if (product.status === "draft") return { label: "Draft", className: "bg-yellow-100 text-yellow-700" };
+  if (product.store_visible === false) return { label: "Hidden", className: "bg-slate-100 text-slate-600" };
+  return { label: "Live", className: "bg-emerald-100 text-emerald-700" };
+}
+
 function CatalogGrid({ products, onAddToStock, addingId, onEdit, onDelete }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -264,9 +375,7 @@ function CatalogGrid({ products, onAddToStock, addingId, onEdit, onDelete }) {
         <div key={p.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
           <div className="aspect-square overflow-hidden relative">
             <ProductImage url={p.image_url} name={p.name} />
-            {p.status === "draft" && (
-              <span className="absolute top-2 left-2 text-[10px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full font-medium">Draft</span>
-            )}
+            <span className={`absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStoreStatus(p).className}`}>{getStoreStatus(p).label}</span>
             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button onClick={() => onEdit(p)}
                 className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
@@ -285,6 +394,11 @@ function CatalogGrid({ products, onAddToStock, addingId, onEdit, onDelete }) {
             )}
             {p.price > 0 && (
               <p className="text-xs font-bold text-primary mt-1">R{Number(p.price).toLocaleString()}</p>
+            )}
+            {(p.addons?.length > 0 || p.print_options?.length > 0) && (
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {p.addons?.length || 0} add-ons / {p.print_options?.length || 0} print opts
+              </p>
             )}
             <button
               onClick={() => onAddToStock(p)}
