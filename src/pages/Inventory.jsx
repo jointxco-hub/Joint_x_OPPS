@@ -27,11 +27,36 @@ const INVENTORY_CATEGORY_MAP = {
 
 const getInventoryCategory = (category) => INVENTORY_CATEGORY_MAP[category] || category || "other";
 
-const getProductImageUrl = (product) => {
-  const images = Array.isArray(product?.images) ? product.images : [];
-  const firstImage = images.find(Boolean);
-  return product?.image_url || (typeof firstImage === "string" ? firstImage : firstImage?.src) || "";
+const PRODUCT_IMAGE_FALLBACKS = {
+  "5-panel cap": "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=800",
+  "bucket hat": "https://images.unsplash.com/photo-1572307480813-ceb0e59d8325?w=800",
+  "trucker cap": "https://images.unsplash.com/photo-1534215754734-18e55d13e346?w=800",
+  "custom labels": "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=800",
+  "jv1 t-shirt": "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800",
+  "jet t-shirt": "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=800",
+  "jhg t-shirt": "https://images.unsplash.com/photo-1576566588028-4147f3842f27?w=800",
 };
+
+const CATEGORY_IMAGE_FALLBACKS = {
+  tshirts: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800",
+  hoodies: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=800",
+  sweaters: "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=800",
+  hats: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=800",
+  bottoms: "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=800",
+  labels: "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=800",
+};
+
+const getProductImageUrls = (product) => {
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const galleryUrls = images
+    .map(image => typeof image === "string" ? image : image?.src)
+    .filter(Boolean);
+  const nameFallback = PRODUCT_IMAGE_FALLBACKS[String(product?.name || "").trim().toLowerCase()];
+  const categoryFallback = CATEGORY_IMAGE_FALLBACKS[product?.category];
+  return [product?.image_url, ...galleryUrls, nameFallback, categoryFallback].filter(Boolean);
+};
+
+const getProductImageUrl = (product) => getProductImageUrls(product)[0] || "";
 
 const dedupeProducts = (products) => {
   const byName = new Map();
@@ -387,16 +412,18 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
   );
 }
 
-function ProductImage({ url, name }) {
-  const [err, setErr] = useState(false);
-  if (!url || err) {
+function ProductImage({ urls, url, name }) {
+  const candidates = Array.isArray(urls) && urls.length > 0 ? urls : [url].filter(Boolean);
+  const [index, setIndex] = useState(0);
+  const currentUrl = candidates[index];
+  if (!currentUrl) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-secondary">
         <Package className="w-8 h-8 text-muted-foreground/30" />
       </div>
     );
   }
-  return <img src={url} alt={name} className="w-full h-full object-cover" onError={() => setErr(true)} />;
+  return <img src={currentUrl} alt={name} className="w-full h-full object-cover" onError={() => setIndex(i => i + 1)} />;
 }
 
 function getStoreStatus(product) {
@@ -412,7 +439,7 @@ function CatalogGrid({ products, onAddToStock, addingId, onEdit, onDelete }) {
       {(/** @type {any[]} */ (products)).map((/** @type {any} */ p) => (
         <div key={p.id} className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
           <div className="aspect-square overflow-hidden relative">
-            <ProductImage url={getProductImageUrl(p)} name={p.name} />
+            <ProductImage urls={getProductImageUrls(p)} name={p.name} />
             <span className={`absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${getStoreStatus(p).className}`}>{getStoreStatus(p).label}</span>
             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               <button onClick={() => onEdit(p)}
@@ -458,7 +485,7 @@ function CatalogList({ products, onAddToStock, addingId, onEdit, onDelete }) {
       {(/** @type {any[]} */ (products)).map((/** @type {any} */ p, i) => (
         <div key={p.id} className={`flex items-center gap-4 px-4 py-3 hover:bg-secondary/30 transition-all ${i > 0 ? "border-t border-border" : ""}`}>
           <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 border border-border">
-            <ProductImage url={getProductImageUrl(p)} name={p.name} />
+            <ProductImage urls={getProductImageUrls(p)} name={p.name} />
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground truncate">{p.name}</p>

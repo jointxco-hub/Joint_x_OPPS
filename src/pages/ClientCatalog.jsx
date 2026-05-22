@@ -84,11 +84,39 @@ const BULK_DISCOUNTS = [
   { min: 250, max: Infinity, discount: 20, label: "Custom Quote" }
 ];
 
-const getProductImageUrl = (product) => {
-  const images = Array.isArray(product?.images) ? product.images : [];
-  const firstImage = images.find(Boolean);
-  return product?.image_url || (typeof firstImage === "string" ? firstImage : firstImage?.src) || product?.image || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400";
+const PRODUCT_IMAGE_FALLBACKS = {
+  "5-panel cap": "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=800",
+  "bucket hat": "https://images.unsplash.com/photo-1572307480813-ceb0e59d8325?w=800",
+  "trucker cap": "https://images.unsplash.com/photo-1534215754734-18e55d13e346?w=800",
+  "custom labels": "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=800",
 };
+
+const CATEGORY_IMAGE_FALLBACKS = {
+  tshirts: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800",
+  hoodies: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=800",
+  sweaters: "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=800",
+  hats: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=800",
+  bottoms: "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=800",
+  labels: "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=800",
+};
+
+const getProductImageUrls = (product) => {
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const galleryUrls = images
+    .map(image => typeof image === "string" ? image : image?.src)
+    .filter(Boolean);
+  const nameFallback = PRODUCT_IMAGE_FALLBACKS[String(product?.name || "").trim().toLowerCase()];
+  const categoryFallback = CATEGORY_IMAGE_FALLBACKS[product?.category];
+  return [product?.image_url, ...galleryUrls, product?.image, nameFallback, categoryFallback, "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=800"].filter(Boolean);
+};
+
+const getProductImageUrl = (product) => getProductImageUrls(product)[0];
+
+function ProductImage({ product, alt, className }) {
+  const urls = getProductImageUrls(product);
+  const [index, setIndex] = useState(0);
+  return <img src={urls[index]} alt={alt} className={className} onError={() => setIndex(i => Math.min(i + 1, urls.length - 1))} />;
+}
 
 const dedupeProducts = (products) => {
   const byName = new Map();
@@ -369,8 +397,8 @@ export default function ClientCatalog() {
 
           <div className="grid md:grid-cols-2 gap-8">
             <div>
-              <img 
-                src={getProductImageUrl(selectedItem)}
+              <ProductImage 
+                product={selectedItem}
                 alt={selectedItem.name} 
                 className="w-full aspect-square object-cover rounded-2xl" 
               />
@@ -840,8 +868,8 @@ export default function ClientCatalog() {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {category.items.map(item => (
                   <Card key={item.id} className="bg-slate-800 border-0 overflow-hidden cursor-pointer hover:ring-2 hover:ring-emerald-500 transition-all" onClick={() => setSelectedItem(item)}>
-                    <img 
-                      src={getProductImageUrl(item)}
+                    <ProductImage 
+                      product={item}
                       alt={item.name} 
                       className="w-full aspect-square object-cover" 
                     />
