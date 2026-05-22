@@ -14,6 +14,7 @@ import { toast } from "sonner";
 
 // lib
 import { getWeekNumber, scoreColor } from "@/lib/twelveWeekYear";
+import { getTaskCompletionPatch, getTaskEntityName, isTaskComplete, toEntityTaskPayload } from "@/lib/taskAdapters";
 
 // hooks
 import { useCompanyNorthStar } from "@/hooks/useCompanyNorthStar";
@@ -118,8 +119,19 @@ export default function UserDashboard() {
   });
 
   const updateTaskMutation = useMutation({
-    mutationFn: (/** @type {any} */ { id, data }) => /** @type {any} */ (dataClient.entities).OpsTask.update(id, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["user-opsTasks"] }),
+    mutationFn: (/** @type {any} */ { task, data }) => {
+      const entityName = getTaskEntityName(task);
+      return dataClient.entities[entityName].update(task.id, toEntityTaskPayload(task, data));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["user-opsTasks"] });
+      queryClient.invalidateQueries({ queryKey: ["user-tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["opsTasks"] });
+      queryClient.invalidateQueries({ queryKey: ["legacyTasks"] });
+    },
+    onError: (error) => {
+      toast.error(error?.message || "Could not update task");
+    },
   });
 
   const handlePhotoUpload = async (e) => {
@@ -161,19 +173,19 @@ export default function UserDashboard() {
     ...legacyTasks.filter((/** @type {any} */ lt) => !myOpsTasks.some((/** @type {any} */ ot) => ot.id === lt.id)),
   ];
 
-  const pendingTasks = allMyTasks.filter(t => t.status !== "complete" && t.status !== "done");
+  const pendingTasks = allMyTasks.filter(t => !isTaskComplete(t));
   const urgentTasks = pendingTasks.filter(t => t.priority === "urgent");
   const todayTasks = allMyTasks.filter(t => {
     const d = t.deadline || t.due_date;
-    return d && isToday(new Date(d)) && t.status !== "complete" && t.status !== "done";
+    return d && isToday(new Date(d)) && !isTaskComplete(t);
   });
   const overdueTasks = allMyTasks.filter(t => {
     const d = t.deadline || t.due_date;
-    return d && isPast(new Date(d)) && !isToday(new Date(d)) && t.status !== "complete" && t.status !== "done";
+    return d && isPast(new Date(d)) && !isToday(new Date(d)) && !isTaskComplete(t);
   });
-  const urgentOpsTasks = myOpsTasks.filter(t => t.priority === "urgent" && t.status !== "complete");
+  const urgentOpsTasks = myOpsTasks.filter(t => t.priority === "urgent" && !isTaskComplete(t));
   const myWeekOpsTasks = myOpsTasks.filter(t => t.week_number === currentWeek);
-  const weekDone = myWeekOpsTasks.filter(t => t.status === "complete").length;
+  const weekDone = myWeekOpsTasks.filter(isTaskComplete).length;
   const weekScore = myWeekOpsTasks.length > 0
     ? Math.round((weekDone / myWeekOpsTasks.length) * 100)
     : 0;
@@ -399,16 +411,24 @@ export default function UserDashboard() {
               {pendingTasks.slice(0, 6).map(t => {
                 const dueDate = t.deadline || t.due_date;
                 const isOver = dueDate && isPast(new Date(dueDate)) && !isToday(new Date(dueDate));
-                const doneStatus = t.deadline !== undefined ? "complete" : "done";
+                const completeTask = () => updateTaskMutation.mutate({ task: t, data: getTaskCompletionPatch(t) });
                 return (
                   <div key={t.id} className={`flex items-center gap-3 p-3 rounded-xl ${isOver ? "bg-red-50 border border-red-100" : "bg-secondary/40"}`}>
-                    <Circle className={`w-4 h-4 flex-shrink-0 ${isOver ? "text-red-400" : "text-muted-foreground"}`} />
+                    <button
+                      type="button"
+                      onClick={completeTask}
+                      className="flex-shrink-0"
+                      title="Mark done"
+                      aria-label={`Mark ${t.title || "task"} done`}
+                    >
+                      <Circle className={`w-4 h-4 ${isOver ? "text-red-400" : "text-muted-foreground hover:text-primary"}`} />
+                    </button>
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-medium truncate ${isOver ? "text-red-700" : "text-foreground"}`}>{t.title}</p>
                       {dueDate && <p className={`text-xs ${isOver ? "text-red-400" : "text-muted-foreground"}`}>{format(new Date(dueDate), "d MMM")}</p>}
                     </div>
                     <button
-                      onClick={() => updateTaskMutation.mutate({ id: t.id, data: { status: doneStatus } })}
+                      onClick={completeTask}
                       className="text-muted-foreground hover:text-primary transition-all flex-shrink-0"
                       title="Mark done"
                     >

@@ -11,7 +11,7 @@ import { format, isPast } from "date-fns";
 import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 import RefreshButton from "@/components/common/RefreshButton";
-import { getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
+import { getTaskCompletionPatch, getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
 import { toast } from "sonner";
 
 const priorityBar = {
@@ -96,9 +96,9 @@ export default function Tasks() {
   });
 
   const toggleDone = (task) => {
-    const next = task.status === "complete" ? "not_started" : "complete";
-    updateMutation.mutate({ task, data: { status: next } });
-    if (selectedTask?.id === task.id) setSelectedTask(prev => ({ ...prev, status: next }));
+    const patch = getTaskCompletionPatch(task);
+    updateMutation.mutate({ task, data: patch });
+    if (selectedTask?.id === task.id) setSelectedTask(prev => ({ ...prev, ...patch }));
   };
 
   const filtered = tasks.filter(t => {

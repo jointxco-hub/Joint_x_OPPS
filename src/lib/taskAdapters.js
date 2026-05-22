@@ -57,6 +57,14 @@ export function getTaskEntityName(task) {
   return task?._entity === "Task" ? "Task" : "OpsTask";
 }
 
+export function isTaskComplete(task) {
+  return task?.status === "complete" || task?.status === "done" || task?.status === "completed";
+}
+
+export function getTaskCompletionPatch(task) {
+  return { status: isTaskComplete(task) ? "not_started" : "complete" };
+}
+
 export function toEntityTaskPayload(task, patch = {}) {
   const entityName = getTaskEntityName(task);
   const merged = { ...task, ...patch };

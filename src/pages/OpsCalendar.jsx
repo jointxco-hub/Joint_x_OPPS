@@ -24,7 +24,7 @@ import EventModal from "@/components/calendar/EventModal";
 import { useActiveCompanyCycle } from "@/hooks/useActiveCompanyCycle";
 import { eventColors } from "@/components/calendar/eventColors";
 import RefreshButton from "@/components/common/RefreshButton";
-import { getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
+import { getTaskCompletionPatch, getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
@@ -138,8 +138,7 @@ export default function OpsCalendar() {
   });
 
   const handleStatusToggle = (task) => {
-    const next = task.status === 'complete' ? 'not_started' : task.status === 'not_started' ? 'in_progress' : 'complete';
-    updateMutation.mutate({ task, data: { status: next } });
+    updateMutation.mutate({ task, data: getTaskCompletionPatch(task) });
   };
 
   const handleSubmit = (data) => {
