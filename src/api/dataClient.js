@@ -1190,10 +1190,12 @@ const ENTITY_CONFIG = {
     normalize(row) {
       const images = row.images ?? row.image_urls ?? [];
       const firstImage = Array.isArray(images) ? images[0] : (images?.src ?? images);
+      const price = Number(row.price ?? row.base_price ?? row.selling_price ?? 0);
       return {
         ...row,
         image_url: firstImage?.src ?? firstImage ?? row.image_url ?? null,
-        price: Number(row.price ?? row.selling_price ?? 0),
+        price,
+        base_price: price,
         created_date: row.created_at,
         updated_date: row.updated_at,
       };
@@ -1203,7 +1205,7 @@ const ENTITY_CONFIG = {
         name: payload.name,
         description: payload.description,
         category: payload.category,
-        price: numberOrUndefined(payload.price),
+        price: numberOrUndefined(payload.price ?? payload.base_price ?? payload.selling_price),
         image_url: payload.image_url,
         images: payload.images,
         status: payload.status ?? 'active',

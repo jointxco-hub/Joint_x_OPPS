@@ -59,6 +59,12 @@ export default function PurchaseOrders() {
     queryFn: () => dataClient.entities.InventoryItem.list('name', 100)
   });
 
+  const { data: catalogItems = [] } = useQuery({
+    queryKey: ['catalogItems'],
+    queryFn: () => dataClient.entities.CatalogItem.list('name', 500),
+    staleTime: 0,
+  });
+
   const { data: orders = [] } = useQuery({
     queryKey: ['orders'],
     queryFn: () => dataClient.entities.Order.list('-created_date', 100)
@@ -251,6 +257,7 @@ export default function PurchaseOrders() {
         purchaseOrder={editingPO}
         suppliers={suppliers}
         inventoryItems={inventory}
+        catalogItems={catalogItems}
         onSubmit={handleSubmit}
         onCancel={() => {
           setShowForm(false);

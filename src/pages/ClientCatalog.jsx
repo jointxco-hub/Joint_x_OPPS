@@ -663,7 +663,7 @@ export default function ClientCatalog() {
 
   // Group catalog items by category
   const groupedCatalog = catalogItems
-    .filter(item => item.is_active !== false)
+    .filter(item => item.is_active !== false && item.is_archived !== true && item.status !== "draft")
     .reduce((acc, item) => {
       const category = item.category || 'other';
       if (!acc[category]) {
@@ -745,7 +745,7 @@ export default function ClientCatalog() {
                     <CardContent className="p-4">
                       <h4 className="font-semibold text-white">{item.name}</h4>
                       {item.gsm && <p className="text-xs text-slate-400">{item.gsm}</p>}
-                      <p className="text-lg font-bold text-emerald-400 mt-2">R{item.base_price}</p>
+                      <p className="text-lg font-bold text-emerald-400 mt-2">R{item.base_price ?? item.price ?? 0}</p>
                     </CardContent>
                   </Card>
                 ))}

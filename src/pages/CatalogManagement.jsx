@@ -213,7 +213,7 @@ export default function CatalogManagement() {
                       {item.gsm && <p>GSM: {item.gsm}</p>}
                       {item.material && <p>Material: {item.material}</p>}
                       <p className="text-lg font-bold text-emerald-600 mt-2">
-                        R{item.base_price}
+                        R{item.base_price ?? item.price ?? 0}
                       </p>
                     </div>
                   </CardContent>
@@ -356,7 +356,7 @@ export default function CatalogManagement() {
                       <Label>Base Price (R)</Label>
                       <Input
                         type="number"
-                        value={editingItem.base_price}
+                        value={editingItem.base_price ?? editingItem.price ?? ""}
                         onChange={(e) => setEditingItem({...editingItem, base_price: parseFloat(e.target.value)})}
                       />
                     </div>

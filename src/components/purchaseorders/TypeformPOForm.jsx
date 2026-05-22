@@ -12,6 +12,7 @@ export default function TypeformPOForm({
   purchaseOrder,
   suppliers = [],
   inventoryItems = [],
+  catalogItems = [],
   onSubmit,
   onCancel
 }) {
@@ -58,14 +59,38 @@ export default function TypeformPOForm({
     handleChange("supplier_ids", updated);
   };
 
-  const handleInventorySelect = (index, inventoryId) => {
-    const item = inventoryItems.find(i => i.id === inventoryId);
+  const selectableItems = [
+    ...catalogItems
+      .filter(item => item.is_archived !== true && item.status !== "draft")
+      .map(item => ({
+        id: `catalog:${item.id}`,
+        raw_id: item.id,
+        source: "catalog",
+        name: item.name,
+        unit: item.unit || "pieces",
+        current_stock: null,
+        cost_price: item.cost_price ?? item.price ?? item.base_price ?? 0,
+        selling_price: item.price ?? item.base_price ?? item.selling_price ?? 0,
+      })),
+    ...inventoryItems
+      .filter(item => !catalogItems.some(c => c.name?.toLowerCase() === item.name?.toLowerCase()))
+      .map(item => ({
+        ...item,
+        id: `inventory:${item.id}`,
+        raw_id: item.id,
+        source: "inventory",
+      })),
+  ];
+
+  const handleInventorySelect = (index, itemId) => {
+    const item = selectableItems.find(i => i.id === itemId);
     if (item) {
       setFormData(prev => {
         const newItems = [...prev.items];
         newItems[index] = {
           ...newItems[index],
-          inventory_item_id: inventoryId,
+          inventory_item_id: item.source === "inventory" ? item.raw_id : "",
+          catalog_item_id: item.source === "catalog" ? item.raw_id : undefined,
           name: item.name,
           unit: item.unit,
           unit_price: item.cost_price || 0,
@@ -234,12 +259,15 @@ export default function TypeformPOForm({
                       className="bg-white"
                     />
                   ) : (
-                    <Select value={item.inventory_item_id} onValueChange={v => handleInventorySelect(index, v)}>
-                      <SelectTrigger className="bg-white"><SelectValue placeholder="Select from inventory..." /></SelectTrigger>
+                    <Select
+                      value={item.catalog_item_id ? `catalog:${item.catalog_item_id}` : item.inventory_item_id ? `inventory:${item.inventory_item_id}` : ""}
+                      onValueChange={v => handleInventorySelect(index, v)}
+                    >
+                      <SelectTrigger className="bg-white"><SelectValue placeholder="Select from catalog or inventory..." /></SelectTrigger>
                       <SelectContent>
-                        {inventoryItems.map(inv => (
+                        {selectableItems.map(inv => (
                           <SelectItem key={inv.id} value={inv.id}>
-                            {inv.name} ({inv.current_stock} {inv.unit})
+                            {inv.name} {inv.source === "inventory" ? `(${inv.current_stock} ${inv.unit})` : "(catalog)"}
                           </SelectItem>
                         ))}
                       </SelectContent>

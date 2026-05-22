@@ -136,7 +136,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   });
 
   const allPickerItems = [
-    ...(/** @type {any[]} */ (catalogItems)).map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? "" })),
+    ...(/** @type {any[]} */ (catalogItems))
+      .filter((/** @type {any} */ c) => c.is_archived !== true && c.status !== "draft")
+      .map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? c.base_price ?? "" })),
     ...(/** @type {any[]} */ (inventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
       .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "" })),
