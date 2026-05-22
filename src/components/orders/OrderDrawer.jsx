@@ -265,7 +265,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   };
   const copyXlabTrackingLink = () => {
     const code = encodeURIComponent(order.order_number || order.tracking_number || order.id || "");
-    const link = `${window.location.origin}/track?order=${code}`;
+    const link = `https://xlab.jointx.co.za/track?order=${code}`;
     navigator.clipboard.writeText(link).then(() => { setCopiedXlab(true); setTimeout(() => setCopiedXlab(false), 2000); });
   };
 
