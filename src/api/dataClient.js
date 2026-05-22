@@ -4,6 +4,32 @@ const localStore = new Map();
 const warnedEntities = new Set();
 let currentUser = null;
 
+const LOCAL_ENTITY_CACHE_PREFIX = 'jx_entity_cache:';
+const LOCAL_USER_CACHE_KEY = 'jx_current_user';
+
+function readJson(key, fallback = null) {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key, value) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage can be unavailable in private mode or full devices.
+  }
+}
+
+function isOnline() {
+  return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+}
+
 const ORDER_STATUS_MAP = {
   received: 'confirmed',
   materials_needed: 'confirmed',
@@ -1305,10 +1331,20 @@ function compactObject(object) {
 
 function getLocalRows(entityName) {
   if (!localStore.has(entityName)) {
-    localStore.set(entityName, []);
+    localStore.set(entityName, readJson(`${LOCAL_ENTITY_CACHE_PREFIX}${entityName}`, []));
   }
 
   return localStore.get(entityName);
+}
+
+function cacheEntityRows(entityName, rows = []) {
+  localStore.set(entityName, rows);
+  writeJson(`${LOCAL_ENTITY_CACHE_PREFIX}${entityName}`, rows);
+}
+
+function readCachedRows(entityName, filter = {}, sort, limit = 100) {
+  const rows = getLocalRows(entityName);
+  return sortRows(filterRows(rows, filter), sort).slice(0, limit);
 }
 
 function createLocalId() {
@@ -1454,6 +1490,10 @@ async function runSelect(entityName, filter = {}, sort, limit) {
     return null;
   }
 
+  if (!isOnline()) {
+    return readCachedRows(entityName, filter, sort, limit);
+  }
+
   let query = supabase.from(entityConfig.table).select('*');
   const combinedFilter = {
     ...(entityConfig.baseFilter ?? {}),
@@ -1477,10 +1517,12 @@ async function runSelect(entityName, filter = {}, sort, limit) {
 
   if (error) {
     console.warn(`[dataClient] ${entityName} query failed:`, error.message);
-    return null;
+    return readCachedRows(entityName, filter, sort, limit);
   }
 
-  return (data ?? []).map((row) => entityConfig.normalize(row));
+  const rows = (data ?? []).map((row) => entityConfig.normalize(row));
+  cacheEntityRows(entityName, rows);
+  return rows;
 }
 
 function supabaseErrorMessage(error) {
@@ -1689,22 +1731,51 @@ const entities = new Proxy(
 );
 
 async function getCurrentUser() {
+  const cachedUser = currentUser ?? readJson(LOCAL_USER_CACHE_KEY, null);
+
   if (!supabase) {
+    currentUser = cachedUser;
+    return currentUser;
+  }
+
+  const { data: sessionData } = await supabase.auth.getSession();
+  const sessionUser = sessionData?.session?.user;
+
+  if (!isOnline() && sessionUser) {
+    currentUser = {
+      id: sessionUser.id,
+      email: sessionUser.email,
+      full_name:
+        cachedUser?.full_name ??
+        sessionUser.user_metadata?.full_name ??
+        sessionUser.user_metadata?.name ??
+        sessionUser.email ??
+        'Supabase User',
+      role: cachedUser?.role ?? sessionUser.user_metadata?.role ?? 'user',
+      department: cachedUser?.department,
+      phone: cachedUser?.phone,
+      profile_photo: cachedUser?.profile_photo ?? sessionUser.user_metadata?.avatar_url ?? null,
+      auth_user_id: sessionUser.id,
+    };
+    writeJson(LOCAL_USER_CACHE_KEY, currentUser);
     return currentUser;
   }
 
   const { data, error } = await supabase.auth.getUser();
   if (error || !data?.user) {
+    currentUser = cachedUser;
     return currentUser;
   }
 
   const authUser = data.user;
-  const { data: profile } = await supabase
-    .from('users')
-    .select('*')
-    .or(`auth_user_id.eq.${authUser.id},user_email.eq.${authUser.email}`)
-    .limit(1)
-    .maybeSingle();
+  const { data: profile } = isOnline()
+    ? await supabase
+        .from('users')
+        .select('*')
+        .or(`auth_user_id.eq.${authUser.id},user_email.eq.${authUser.email}`)
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
 
   currentUser = {
     id: authUser.id,
@@ -1722,6 +1793,7 @@ async function getCurrentUser() {
     auth_user_id: authUser.id,
   };
 
+  writeJson(LOCAL_USER_CACHE_KEY, currentUser);
   return currentUser;
 }
 
@@ -1788,6 +1860,9 @@ export const dataClient = {
         await supabase.auth.signOut();
       }
       currentUser = null;
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(LOCAL_USER_CACHE_KEY);
+      }
     },
 
     redirectToLogin() {

@@ -1,13 +1,63 @@
-const CACHE_NAME = "joint-x-shell-v1";
+const CACHE_NAME = "joint-x-shell-v2";
 const APP_SHELL = [
   "/",
+  "/index.html",
   "/manifest.webmanifest",
+  "/favicon.ico",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/apple-touch-icon.png",
   "/icons/icon-192.svg",
   "/icons/icon-512.svg"
 ];
 
+async function safeCacheAll(cache, urls) {
+  await Promise.all(
+    urls.map((url) =>
+      cache.add(url).catch((error) => {
+        console.warn("[sw] cache skipped", url, error);
+      })
+    )
+  );
+}
+
+function extractAssetUrls(html) {
+  const urls = new Set(APP_SHELL);
+  const assetPattern = /["'](\/assets\/[^"']+)["']/g;
+  const publicPattern = /(?:href|src)=["'](\/(?:icons|manifest\.webmanifest|favicon\.ico)[^"']*)["']/g;
+  let match;
+
+  while ((match = assetPattern.exec(html))) {
+    urls.add(match[1]);
+  }
+
+  while ((match = publicPattern.exec(html))) {
+    urls.add(match[1]);
+  }
+
+  return [...urls];
+}
+
+async function warmAppShell() {
+  const cache = await caches.open(CACHE_NAME);
+  await safeCacheAll(cache, APP_SHELL);
+
+  try {
+    const response = await fetch("/", { cache: "no-store" });
+    if (!response.ok) return;
+
+    const copy = response.clone();
+    const html = await response.text();
+    await cache.put("/", copy.clone());
+    await cache.put("/index.html", copy);
+    await safeCacheAll(cache, extractAssetUrls(html));
+  } catch (error) {
+    console.warn("[sw] app shell warm failed", error);
+  }
+}
+
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(warmAppShell());
   self.skipWaiting();
 });
 
@@ -28,7 +78,39 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match("/")));
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(request, copy.clone());
+            cache.put("/", copy);
+          });
+          return response;
+        })
+        .catch(async () => {
+          return (
+            (await caches.match(request)) ||
+            (await caches.match("/")) ||
+            (await caches.match("/index.html"))
+          );
+        })
+    );
+    return;
+  }
+
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+
+        return fetch(request).then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        });
+      })
+    );
     return;
   }
 
