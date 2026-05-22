@@ -10,7 +10,7 @@ import {
 const DEFAULT_COURIERS = [
   { value: "the_courier_guy", label: "The Courier Guy", url: "https://portal.thecourierguy.co.za/track", appendTracking: false },
   { value: "courier_it", label: "Courier IT", url: "https://www.courier-it.co.za/tracking/?tracking=" },
-  { value: "pep_paxi", label: "Pep Paxi", url: "https://www.paxi.co.za/track-a-parcel", appendTracking: false },
+  { value: "pep_paxi", label: "Pep Paxi", url: "https://www.paxi.co.za/track?parcelref=" },
   { value: "aramex", label: "Aramex", url: "https://www.aramex.com/tools/track?l=" },
   { value: "dhl", label: "DHL", url: "https://www.dhl.com/za-en/home/tracking.html?tracking-id=" },
   { value: "fedex", label: "FedEx", url: "https://www.fedex.com/apps/fedextrack/?tracknumbers=" },
@@ -21,9 +21,16 @@ const DEFAULT_COURIERS = [
 ];
 
 const buildCourierTrackingUrl = (courier, trackingNumber) => {
-  if (!courier?.url || !trackingNumber) return null;
+  if (!trackingNumber) return null;
 
-  const encodedTracking = encodeURIComponent(String(trackingNumber).trim());
+  const rawTracking = String(trackingNumber).trim();
+  if (/^https?:\/\//i.test(rawTracking)) {
+    return rawTracking;
+  }
+
+  if (!courier?.url) return null;
+
+  const encodedTracking = encodeURIComponent(rawTracking);
   if (!encodedTracking) return null;
 
   if (courier.url.includes("{tracking}")) {
