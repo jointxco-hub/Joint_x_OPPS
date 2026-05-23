@@ -11,7 +11,7 @@ function calcSBCTax(taxableIncome) {
   return 57698 + (taxableIncome - 550000) * 0.28;
 }
 
-export default function ProfitSummary({ payments, expenses }) {
+export default function ProfitSummary({ payments, expenses, onNavigate }) {
   const completed = payments.filter(p => p.status === "completed");
   const totalRevenue = completed.reduce((s, p) => s + (p.amount || 0), 0);
   const totalVAT = completed.reduce((s, p) => s + (p.tax_amount || 0), 0);
@@ -32,10 +32,10 @@ export default function ProfitSummary({ payments, expenses }) {
   const daysUntilDue = Math.ceil((provisionalDue - now) / (1000 * 60 * 60 * 24));
 
   const rows = [
-    { label: "Gross Revenue", value: totalRevenue, positive: true },
+    { label: "Gross Revenue", value: totalRevenue, positive: true, drilldown: { type: "income" } },
     { label: "VAT Collected (Output)", value: -totalVAT, positive: false },
     { label: "Net Revenue", value: netRevenue, positive: true, bold: true },
-    { label: "Total Expenses (incl. VAT)", value: -totalExpenses, positive: false },
+    { label: "Total Expenses (incl. VAT)", value: -totalExpenses, positive: false, drilldown: { type: "expense" } },
     { label: "Gross Profit", value: grossProfit, positive: grossProfit >= 0, bold: true },
     null,
     { label: "VAT on Expenses (Input)", value: expenseVAT, positive: true },
@@ -51,14 +51,23 @@ export default function ProfitSummary({ payments, expenses }) {
     <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5">
       <h2 className="text-sm font-semibold text-foreground mb-1">P&L Summary</h2>
       <p className="text-xs text-muted-foreground mb-4">All time · {thisMonth}</p>
+      {onNavigate && (
+        <p className="text-[10px] text-muted-foreground mb-3">Click a line to inspect supporting records.</p>
+      )}
       <div className="space-y-1.5">
         {rows.map((row, i) => {
           if (row === null) return <div key={i} className="border-t border-border my-2" />;
+          const clickable = onNavigate && row.drilldown;
           return (
-            <div key={i} className={`flex items-center justify-between py-1 ${row.bold ? "border-t border-border mt-1 pt-2" : ""}`}>
+            <div
+              key={i}
+              className={`flex items-center justify-between py-1 ${row.bold ? "border-t border-border mt-1 pt-2" : ""} ${clickable ? "cursor-pointer hover:bg-secondary/40 rounded-lg px-1 -mx-1 transition-colors" : ""}`}
+              onClick={clickable ? () => onNavigate("transactions", row.drilldown) : undefined}
+            >
               <span className={`text-xs ${row.bold ? "font-semibold text-foreground" : "text-muted-foreground"}`}>
                 {row.label}
                 {row.tax && <span className="ml-1 text-[10px] text-orange-500 font-normal">(SBC estimate)</span>}
+                {clickable && <span className="ml-1 text-[10px] text-primary opacity-60">↗</span>}
               </span>
               <span className={`text-xs font-medium ${
                 row.bold

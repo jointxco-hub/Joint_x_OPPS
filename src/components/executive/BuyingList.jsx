@@ -266,7 +266,7 @@ function ItemMenu({ item, user, onEdit, onRefetch }) {
 
 // ── Main component ────────────────────────────────────────────
 
-export default function BuyingList({ user }) {
+export default function BuyingList({ user, onNavigateToBudget }) {
   const qc = useQueryClient();
   const [showDrawer, setShowDrawer] = useState(false);
   const [editItem, setEditItem] = useState(null);
@@ -401,7 +401,14 @@ export default function BuyingList({ user }) {
                       <span className="text-xs text-muted-foreground truncate max-w-[240px]">{item.reason}</span>
                     )}
                     {bucket && (
-                      <span className="text-xs text-muted-foreground">Bucket: {bucket.name}</span>
+                      onNavigateToBudget
+                        ? <button
+                            onClick={e => { e.stopPropagation(); onNavigateToBudget(bucket.id); }}
+                            className="text-xs text-primary underline underline-offset-2 hover:opacity-80"
+                          >
+                            Bucket: {bucket.name}
+                          </button>
+                        : <span className="text-xs text-muted-foreground">Bucket: {bucket.name}</span>
                     )}
                   </div>
                   {item.target_date && (

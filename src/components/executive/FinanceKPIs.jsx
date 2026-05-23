@@ -5,7 +5,7 @@ import {
   Banknote, Clock,
 } from "lucide-react";
 
-function KPICard({ label, value, sub, icon: Icon, color, trend, warning }) {
+function KPICard({ label, value, sub, icon: Icon, color, trend, warning, onClick }) {
   const colors = {
     green:  "bg-green-50 text-green-700 border-green-100",
     blue:   "bg-blue-50 text-blue-700 border-blue-100",
@@ -16,8 +16,12 @@ function KPICard({ label, value, sub, icon: Icon, color, trend, warning }) {
     amber:  "bg-amber-50 text-amber-700 border-amber-100",
     slate:  "bg-slate-50 text-slate-600 border-slate-200",
   };
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className={`rounded-2xl p-4 border ${colors[color] || colors.slate} flex flex-col gap-1 relative`}>
+    <Tag
+      onClick={onClick}
+      className={`rounded-2xl p-4 border ${colors[color] || colors.slate} flex flex-col gap-1 relative text-left w-full ${onClick ? "cursor-pointer hover:brightness-95 transition-all active:scale-[0.98]" : ""}`}
+    >
       {warning && (
         <AlertTriangle className="absolute top-3 right-3 w-3 h-3 text-amber-400 opacity-70" />
       )}
@@ -31,11 +35,12 @@ function KPICard({ label, value, sub, icon: Icon, color, trend, warning }) {
           {sub}
         </p>
       )}
-    </div>
+    </Tag>
   );
 }
 
-export default function FinanceKPIs({ payments, expenses, orders, monthlyData }) {
+export default function FinanceKPIs({ payments, expenses, orders, monthlyData, onNavigate }) {
+  const nav = onNavigate ? (tab, filters) => onNavigate(tab, filters) : undefined;
   // ── Revenue ─────────────────────────────────────────────────
   const activePayments = payments.filter(p =>
     p.status === "completed" && !p.is_archived && !p.is_test && !p.excluded_from_reports
@@ -58,7 +63,9 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
   const profitMargin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : 0;
 
   // ── Month data ───────────────────────────────────────────────
-  const thisMonthRevenue = monthlyData[monthlyData.length - 1]?.revenue || 0;
+  const thisMonthEntry   = monthlyData[monthlyData.length - 1];
+  const thisMonthRevenue = thisMonthEntry?.revenue || 0;
+  const thisMonthKey     = thisMonthEntry?.monthKey || "";
   const lastMonthRevenue = monthlyData[monthlyData.length - 2]?.revenue || 0;
   const revenueGrowth = lastMonthRevenue > 0
     ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1)
@@ -109,6 +116,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
           value={`R${totalRevenue.toLocaleString()}`}
           icon={DollarSign}
           color="green"
+          onClick={nav ? () => nav("transactions", { type: "income" }) : undefined}
         />
         <KPICard
           label="This Month"
@@ -119,6 +127,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
           trend={Number(revenueGrowth) > 0 ? "up" : "down"}
           icon={TrendingUp}
           color="blue"
+          onClick={nav && thisMonthKey ? () => nav("transactions", { type: "income", month: thisMonthKey }) : undefined}
         />
         <KPICard
           label="Total Expenses"
@@ -127,6 +136,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
           icon={CreditCard}
           color={totalExpenses === 0 && totalRevenue > 0 ? "amber" : "red"}
           warning={totalExpenses === 0 && totalRevenue > 0}
+          onClick={nav ? () => nav("transactions", { type: "expense" }) : undefined}
         />
         <KPICard
           label="Gross Profit"
@@ -135,6 +145,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
           icon={TrendingUp}
           color={grossProfit >= 0 ? "teal" : "red"}
           warning={noExpenses}
+          onClick={nav ? () => nav("insights", {}) : undefined}
         />
         <KPICard
           label="VAT Collected"
@@ -142,6 +153,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
           sub="Output VAT on income"
           icon={Receipt}
           color="purple"
+          onClick={nav ? () => nav("transactions", { type: "income" }) : undefined}
         />
         <KPICard
           label="Outstanding"
@@ -149,6 +161,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
           sub={`${activeOrders.length} active order${activeOrders.length !== 1 ? "s" : ""}`}
           icon={ShoppingBag}
           color="orange"
+          onClick={nav ? () => nav("transactions", { status: "outstanding" }) : undefined}
         />
         {pendingExpenses > 0 && (
           <KPICard
@@ -157,6 +170,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
             sub="Awaiting approval"
             icon={Clock}
             color="amber"
+            onClick={nav ? () => nav("transactions", { type: "expense", status: "pending" }) : undefined}
           />
         )}
         {testCount > 0 && (
@@ -166,6 +180,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
             sub="Excluded from totals"
             icon={TestTube}
             color="slate"
+            onClick={nav ? () => nav("transactions", { showTestOnly: true }) : undefined}
           />
         )}
         {archivedCount > 0 && (
@@ -175,6 +190,7 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData })
             sub="Not in totals"
             icon={Archive}
             color="slate"
+            onClick={nav ? () => nav("transactions", { showArchived: true }) : undefined}
           />
         )}
       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
@@ -161,7 +161,7 @@ function BucketDrawer({ bucket, user, onClose, onSaved }) {
 
 // ── Bucket card ───────────────────────────────────────────────
 
-function BucketCard({ bucket, user, onEdit, onRefetch }) {
+function BucketCard({ bucket, user, onEdit, onRefetch, highlighted, cardRef }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const budget = bucket.monthly_budget || 0;
   const used = bucket.used_amount || 0;
@@ -188,7 +188,10 @@ function BucketCard({ bucket, user, onEdit, onRefetch }) {
   };
 
   return (
-    <div className={`bg-card border rounded-2xl p-4 shadow-apple-sm relative ${overBudget ? "border-red-200" : "border-border"}`}>
+    <div
+      ref={cardRef}
+      className={`bg-card border rounded-2xl p-4 shadow-apple-sm relative transition-shadow ${overBudget ? "border-red-200" : highlighted ? "border-primary ring-2 ring-primary/30" : "border-border"}`}
+    >
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex-1 min-w-0">
@@ -268,11 +271,20 @@ function BucketCard({ bucket, user, onEdit, onRefetch }) {
 
 // ── Main component ────────────────────────────────────────────
 
-export default function BudgetBuckets({ user }) {
+export default function BudgetBuckets({ user, highlightBucketId }) {
   const qc = useQueryClient();
   const [showDrawer, setShowDrawer] = useState(false);
   const [editBucket, setEditBucket] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
+  const bucketRefs = useRef({});
+
+  useEffect(() => {
+    if (!highlightBucketId) return;
+    const el = bucketRefs.current[highlightBucketId];
+    if (el) {
+      setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "center" }), 150);
+    }
+  }, [highlightBucketId]);
 
   const { data: buckets = [], isLoading } = useQuery({
     queryKey: ["budget-buckets"],
@@ -369,6 +381,8 @@ export default function BudgetBuckets({ user }) {
               user={user}
               onEdit={() => { setEditBucket(bucket); setShowDrawer(true); }}
               onRefetch={onRefetch}
+              highlighted={bucket.id === highlightBucketId}
+              cardRef={el => { bucketRefs.current[bucket.id] = el; }}
             />
           ))}
         </div>

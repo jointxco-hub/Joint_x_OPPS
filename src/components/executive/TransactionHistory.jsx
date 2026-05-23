@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { format, parseISO, isValid, startOfDay, endOfDay } from "date-fns";
 import { supabase } from "@/lib/supabaseClient";
 import { toast } from "sonner";
@@ -256,7 +256,7 @@ const SORT_OPTIONS = [
   { value: "category",     label: "Category" },
 ];
 
-export default function TransactionHistory({ payments = [], expenses = [], user, onRefetch }) {
+export default function TransactionHistory({ payments = [], expenses = [], user, onRefetch, initialFilters, filtersVersion }) {
   const [showFilters, setShowFilters] = useState(false);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
@@ -265,9 +265,26 @@ export default function TransactionHistory({ payments = [], expenses = [], user,
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterMonth, setFilterMonth] = useState("");
   const [showTestOnly, setShowTestOnly] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [sortBy, setSortBy] = useState("date_desc");
+
+  // Apply initialFilters when filtersVersion changes (navigation from KPIs/insights/chart)
+  useEffect(() => {
+    if (!initialFilters) return;
+    setFilterType(initialFilters.type || "all");
+    setFilterStatus(initialFilters.status || "all");
+    setFilterSource("all");
+    setFilterCategory("all");
+    setFilterDateFrom("");
+    setFilterDateTo("");
+    setFilterMonth(initialFilters.month || "");
+    setShowTestOnly(!!initialFilters.showTestOnly);
+    setShowArchived(!!initialFilters.showArchived);
+    setSearch("");
+    if (Object.keys(initialFilters).length > 0) setShowFilters(true);
+  }, [filtersVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Merge + normalise
   const allTransactions = useMemo(() => {
@@ -301,13 +318,20 @@ export default function TransactionHistory({ payments = [], expenses = [], user,
     if (filterCategory !== "all") {
       rows = rows.filter(r => r.category === filterCategory);
     }
-    if (filterDateFrom) {
-      const from = startOfDay(new Date(filterDateFrom));
-      rows = rows.filter(r => r.date && new Date(r.date) >= from);
-    }
-    if (filterDateTo) {
-      const to = endOfDay(new Date(filterDateTo));
-      rows = rows.filter(r => r.date && new Date(r.date) <= to);
+    if (filterMonth) {
+      const [y, m] = filterMonth.split("-").map(Number);
+      const mStart = new Date(y, m - 1, 1);
+      const mEnd = new Date(y, m, 0, 23, 59, 59);
+      rows = rows.filter(r => r.date && new Date(r.date) >= mStart && new Date(r.date) <= mEnd);
+    } else {
+      if (filterDateFrom) {
+        const from = startOfDay(new Date(filterDateFrom));
+        rows = rows.filter(r => r.date && new Date(r.date) >= from);
+      }
+      if (filterDateTo) {
+        const to = endOfDay(new Date(filterDateTo));
+        rows = rows.filter(r => r.date && new Date(r.date) <= to);
+      }
     }
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -320,7 +344,7 @@ export default function TransactionHistory({ payments = [], expenses = [], user,
       );
     }
     return rows;
-  }, [allTransactions, showTestOnly, showArchived, filterType, filterStatus, filterSource, filterCategory, filterDateFrom, filterDateTo, search]);
+  }, [allTransactions, showTestOnly, showArchived, filterType, filterStatus, filterSource, filterCategory, filterDateFrom, filterDateTo, filterMonth, search]);
 
   // Sort
   const sorted = useMemo(() => {
@@ -343,13 +367,17 @@ export default function TransactionHistory({ payments = [], expenses = [], user,
   const resetFilters = () => {
     setSearch(""); setFilterType("all"); setFilterStatus("all");
     setFilterSource("all"); setFilterCategory("all");
-    setFilterDateFrom(""); setFilterDateTo("");
+    setFilterDateFrom(""); setFilterDateTo(""); setFilterMonth("");
     setShowTestOnly(false); setShowArchived(false);
   };
 
   const hasActiveFilters = search || filterType !== "all" || filterStatus !== "all" ||
     filterSource !== "all" || filterCategory !== "all" || filterDateFrom || filterDateTo ||
-    showTestOnly || showArchived;
+    filterMonth || showTestOnly || showArchived;
+
+  const filterMonthLabel = filterMonth
+    ? (() => { try { return format(new Date(filterMonth + "-01"), "MMMM yyyy"); } catch { return filterMonth; } })()
+    : "";
 
   return (
     <div className="space-y-4">
@@ -393,8 +421,18 @@ export default function TransactionHistory({ payments = [], expenses = [], user,
       {/* Filter panel */}
       {showFilters && (
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-foreground">Filters</p>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs font-semibold text-foreground">Filters</p>
+              {filterMonthLabel && (
+                <span className="inline-flex items-center gap-1 text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                  {filterMonthLabel}
+                  <button onClick={() => setFilterMonth("")} className="hover:opacity-70">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              )}
+            </div>
             {hasActiveFilters && (
               <button onClick={resetFilters} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
                 <X className="w-3 h-3" /> Clear all

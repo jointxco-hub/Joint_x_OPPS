@@ -36,13 +36,13 @@ const vatTypeLabels = {
   non_vat: "No VAT",
 };
 
-export default function AddExpenseDrawer({ onClose, onSaved }) {
+export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) {
   const today = new Date().toISOString().split("T")[0];
   const [form, setForm] = useState({
     date: today,
     vendor: "",
     amount: "",
-    category: "production",
+    category: initialCategory || "production",
     vat_type: "vatable",
     payment_method: "eft",
     notes: "",

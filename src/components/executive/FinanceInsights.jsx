@@ -36,7 +36,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "alert",
       title: "Test transactions detected",
       message: `${testTxCount} test transaction${testTxCount !== 1 ? "s are" : " is"} included. Archive or exclude them so your totals are accurate.`,
-      action: "Review test transactions",
+      actionLabel: "Review test transactions",
+      navigate: { tab: "transactions", filters: { showTestOnly: true } },
     });
   }
 
@@ -48,6 +49,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "alert",
       title: "No expenses recorded",
       message: "Revenue is being tracked but no expenses have been added. Your profit figure is overstated — add costs to get an accurate picture.",
+      actionLabel: "Add expense",
+      addExpenseCategory: "production",
     });
   }
 
@@ -66,6 +69,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "warning",
       title: `${outstandingOrders.length} orders have outstanding balances`,
       message: `R${outstandingTotal.toLocaleString()} is still owed across ${outstandingOrders.length} active order${outstandingOrders.length !== 1 ? "s" : ""}. Follow up to improve cash flow.`,
+      actionLabel: "View outstanding",
+      navigate: { tab: "transactions", filters: { status: "outstanding" } },
     });
   }
 
@@ -79,6 +84,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "info",
       title: `${uncatCount} uncategorised transaction${uncatCount !== 1 ? "s" : ""}`,
       message: "Some transactions have no category. Categorise them for accurate reporting and expense breakdowns.",
+      actionLabel: "View transactions",
+      navigate: { tab: "transactions", filters: {} },
     });
   }
 
@@ -91,6 +98,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "tip",
       title: "Courier costs not tracked",
       message: "No delivery or courier expenses recorded. If you ship orders, add these costs to keep profit accurate.",
+      actionLabel: "Add courier expense",
+      addExpenseCategory: "shipping",
     });
   }
   if (totalRevenue > 0 && !expenseCategories.has("bank_fees") && !expenseCategories.has("bank_payment_fees")) {
@@ -100,6 +109,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "tip",
       title: "Payment fees not tracked",
       message: "PayFast and bank fees are not recorded as expenses. Adding them will reduce your overstated profit.",
+      actionLabel: "Add bank fee",
+      addExpenseCategory: "admin",
     });
   }
 
@@ -113,6 +124,7 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
 
   if (lastMonthRev > 0) {
     const change = ((thisMonthRev - lastMonthRev) / lastMonthRev) * 100;
+    const monthKey = format(now, "yyyy-MM");
     if (change < -20) {
       insights.push({
         id: "revenue_down",
@@ -120,6 +132,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
         icon: "down",
         title: `Revenue is down ${Math.abs(change).toFixed(0)}% this month`,
         message: `This month: R${thisMonthRev.toLocaleString()} vs last month: R${lastMonthRev.toLocaleString()}. Review your pipeline.`,
+        actionLabel: "View this month",
+        navigate: { tab: "transactions", filters: { type: "income", month: monthKey } },
       });
     } else if (change > 20) {
       insights.push({
@@ -128,6 +142,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
         icon: "up",
         title: `Revenue up ${change.toFixed(0)}% this month`,
         message: `This month: R${thisMonthRev.toLocaleString()} vs last month: R${lastMonthRev.toLocaleString()}. Strong performance.`,
+        actionLabel: "View this month",
+        navigate: { tab: "transactions", filters: { type: "income", month: monthKey } },
       });
     }
   } else if (thisMonthRev === 0) {
@@ -137,6 +153,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "info",
       title: `No revenue recorded for ${format(now, "MMMM")} yet`,
       message: "No completed payments this month. If orders exist, make sure payments are recorded.",
+      actionLabel: "View income",
+      navigate: { tab: "transactions", filters: { type: "income" } },
     });
   }
 
@@ -151,6 +169,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "alert",
       title: "Expenses exceed revenue this month",
       message: `Expenses (R${thisMonthExp.toLocaleString()}) are higher than revenue (R${thisMonthRev.toLocaleString()}) this month. Review your spending.`,
+      actionLabel: "View expenses",
+      navigate: { tab: "transactions", filters: { type: "expense", month: format(now, "yyyy-MM") } },
     });
   }
 
@@ -164,6 +184,8 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
       icon: "info",
       title: `${pendingExpenses.length} expense${pendingExpenses.length !== 1 ? "s" : ""} awaiting approval`,
       message: `R${pendingTotal.toLocaleString()} in expenses are submitted but not yet approved.`,
+      actionLabel: "Review pending",
+      navigate: { tab: "transactions", filters: { type: "expense", status: "pending" } },
     });
   }
 
@@ -188,7 +210,7 @@ function InsightIcon({ type, cls }) {
   return <Info className={`w-4 h-4 ${cls}`} />;
 }
 
-export default function FinanceInsights({ payments, expenses, orders }) {
+export default function FinanceInsights({ payments, expenses, orders, onNavigate, onOpenAddExpense }) {
   const [dismissed, setDismissed] = useState(() => getDismissed());
 
   const insights = useMemo(() => generateInsights({ payments, expenses, orders }), [payments, expenses, orders]);
@@ -246,12 +268,28 @@ export default function FinanceInsights({ payments, expenses, orders }) {
         <div className="space-y-2.5">
           {visible.map(insight => {
             const s = LEVEL_STYLES[insight.level] || LEVEL_STYLES.info;
+            const handleAction = () => {
+              if (insight.navigate && onNavigate) {
+                onNavigate(insight.navigate.tab, insight.navigate.filters);
+              } else if (insight.addExpenseCategory && onOpenAddExpense) {
+                onOpenAddExpense(insight.addExpenseCategory);
+              }
+            };
+            const hasAction = (insight.navigate && onNavigate) || (insight.addExpenseCategory && onOpenAddExpense);
             return (
               <div key={insight.id} className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${s.bg}`}>
                 <InsightIcon type={insight.icon} cls={s.icon} />
                 <div className="flex-1 min-w-0">
                   <p className={`text-xs font-semibold ${s.text}`}>{insight.title}</p>
                   <p className={`text-xs mt-0.5 opacity-80 ${s.text}`}>{insight.message}</p>
+                  {hasAction && insight.actionLabel && (
+                    <button
+                      onClick={handleAction}
+                      className={`mt-2 text-[10px] font-semibold underline underline-offset-2 ${s.text} opacity-80 hover:opacity-100`}
+                    >
+                      {insight.actionLabel} →
+                    </button>
+                  )}
                 </div>
                 <button onClick={() => dismiss(insight.id)}
                   className={`flex-shrink-0 w-5 h-5 rounded-full hover:bg-black/10 flex items-center justify-center transition-all ${s.text} opacity-50 hover:opacity-100`}>

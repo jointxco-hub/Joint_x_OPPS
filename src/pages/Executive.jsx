@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -101,7 +101,21 @@ const TABS = [
 function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [showAddExpense, setShowAddExpense] = useState(false);
+  const [addExpenseCategory, setAddExpenseCategory] = useState("");
+  const [transactionFilters, setTransactionFilters] = useState({});
+  const [filtersVersion, setFiltersVersion] = useState(0);
+  const [highlightBucketId, setHighlightBucketId] = useState("");
   const qc = useQueryClient();
+
+  const navigateTo = useCallback((tab, filters = {}) => {
+    if (tab === "transactions") {
+      setTransactionFilters(filters);
+      setFiltersVersion(v => v + 1);
+    } else if (tab === "budgets" && filters.bucketId) {
+      setHighlightBucketId(filters.bucketId);
+    }
+    setActiveTab(tab);
+  }, []);
 
   const { data: orders = [] } = useQuery({
     queryKey: ["exec-orders"],
@@ -139,7 +153,7 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
     });
     const revenue = monthPayments.reduce((s, p) => s + (p.amount || 0), 0);
     const exp = monthExpenses.reduce((s, e) => s + (e.amount || 0), 0);
-    return { month: format(month, "MMM"), revenue, expenses: exp, profit: revenue - exp };
+    return { month: format(month, "MMM"), monthKey: format(month, "yyyy-MM"), revenue, expenses: exp, profit: revenue - exp };
   });
 
   return (
@@ -193,8 +207,9 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
         {/* Modals */}
         {showAddExpense && (
           <AddExpenseDrawer
-            onClose={() => setShowAddExpense(false)}
+            onClose={() => { setShowAddExpense(false); setAddExpenseCategory(""); }}
             onSaved={() => { refetchExpenses(); }}
+            initialCategory={addExpenseCategory}
           />
         )}
         {showChangePIN && user?.role === "admin" && (
@@ -209,11 +224,12 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
               expenses={expenses}
               orders={orders}
               monthlyData={monthlyData}
+              onNavigate={navigateTo}
             />
-            <RevenueExpenseChart monthlyData={monthlyData} />
+            <RevenueExpenseChart monthlyData={monthlyData} onNavigate={navigateTo} />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <ExpenseBreakdown expenses={expenses} />
-              <ProfitSummary payments={payments} expenses={expenses} />
+              <ProfitSummary payments={payments} expenses={expenses} onNavigate={navigateTo} />
               {/* Goals placeholder */}
               <div className="bg-card rounded-2xl border border-border shadow-apple-sm p-5">
                 <h2 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
@@ -232,6 +248,8 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
             expenses={expenses}
             user={user}
             onRefetch={onRefetch}
+            initialFilters={transactionFilters}
+            filtersVersion={filtersVersion}
           />
         )}
 
@@ -242,10 +260,12 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
               payments={payments}
               expenses={expenses}
               orders={orders}
+              onNavigate={navigateTo}
+              onOpenAddExpense={cat => { setAddExpenseCategory(cat); setShowAddExpense(true); }}
             />
             {/* Also show the P&L summary inline */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <ProfitSummary payments={payments} expenses={expenses} />
+              <ProfitSummary payments={payments} expenses={expenses} onNavigate={navigateTo} />
               <ExpenseBreakdown expenses={expenses} />
             </div>
           </div>
@@ -253,12 +273,15 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
 
         {/* ── Buying list tab ──────────────────────────────── */}
         {activeTab === "buying" && (
-          <BuyingList user={user} />
+          <BuyingList
+            user={user}
+            onNavigateToBudget={bucketId => navigateTo("budgets", { bucketId })}
+          />
         )}
 
         {/* ── Budgets tab ──────────────────────────────────── */}
         {activeTab === "budgets" && (
-          <BudgetBuckets user={user} />
+          <BudgetBuckets user={user} highlightBucketId={highlightBucketId} />
         )}
 
       </div>
