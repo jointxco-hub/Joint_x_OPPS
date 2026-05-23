@@ -608,6 +608,65 @@ const ENTITY_CONFIG = {
     },
   },
 
+  // ── Finance Command Centre entities ──────────────────────────
+
+  FinanceBudgetBucket: {
+    table: 'finance_budget_buckets',
+    sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
+    filterMap: { created_date: 'created_at', updated_date: 'updated_at', status: 'status' },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        name: payload.name,
+        category: payload.category,
+        monthly_budget: numberOrUndefined(payload.monthly_budget),
+        used_amount: numberOrUndefined(payload.used_amount),
+        notes: payload.notes,
+        status: payload.status,
+        created_by: payload.created_by,
+        archived_at: payload.archived_at,
+        archived_by: payload.archived_by,
+      });
+    },
+  },
+
+  FinanceBuyingItem: {
+    table: 'finance_buying_items',
+    sortMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      priority: 'priority',
+      target_date: 'target_date',
+    },
+    filterMap: {
+      created_date: 'created_at',
+      updated_date: 'updated_at',
+      status: 'status',
+      priority: 'priority',
+      category: 'category',
+    },
+    normalize(row) {
+      return { ...row, created_date: row.created_at, updated_date: row.updated_at };
+    },
+    serialize(payload) {
+      return compactObject({
+        item_name: payload.item_name,
+        category: payload.category,
+        reason: payload.reason,
+        estimated_cost: numberOrUndefined(payload.estimated_cost),
+        priority: payload.priority,
+        status: payload.status,
+        target_date: dateOrUndefined(payload.target_date),
+        budget_bucket_id: idOrUndefined(payload.budget_bucket_id),
+        notes: payload.notes,
+        added_by: payload.added_by,
+        archived_at: payload.archived_at,
+      });
+    },
+  },
+
   // ── Phase 2 entities ─────────────────────────────────────────────
 
   BugReport: {

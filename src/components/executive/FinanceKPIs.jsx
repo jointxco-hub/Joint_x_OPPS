@@ -1,17 +1,26 @@
 import React from "react";
-import { TrendingUp, TrendingDown, DollarSign, ShoppingBag, CreditCard, Receipt } from "lucide-react";
+import {
+  TrendingUp, TrendingDown, DollarSign, ShoppingBag,
+  CreditCard, Receipt, AlertTriangle, TestTube, Archive,
+  Banknote, Clock,
+} from "lucide-react";
 
-function KPICard({ label, value, sub, icon: Icon, color, trend }) {
+function KPICard({ label, value, sub, icon: Icon, color, trend, warning }) {
   const colors = {
-    green: "bg-green-50 text-green-700 border-green-100",
-    blue: "bg-blue-50 text-blue-700 border-blue-100",
+    green:  "bg-green-50 text-green-700 border-green-100",
+    blue:   "bg-blue-50 text-blue-700 border-blue-100",
     orange: "bg-orange-50 text-orange-700 border-orange-100",
     purple: "bg-purple-50 text-purple-700 border-purple-100",
-    red: "bg-red-50 text-red-700 border-red-100",
-    teal: "bg-teal-50 text-teal-700 border-teal-100",
+    red:    "bg-red-50 text-red-700 border-red-100",
+    teal:   "bg-teal-50 text-teal-700 border-teal-100",
+    amber:  "bg-amber-50 text-amber-700 border-amber-100",
+    slate:  "bg-slate-50 text-slate-600 border-slate-200",
   };
   return (
-    <div className={`rounded-2xl p-4 border ${colors[color]} flex flex-col gap-1`}>
+    <div className={`rounded-2xl p-4 border ${colors[color] || colors.slate} flex flex-col gap-1 relative`}>
+      {warning && (
+        <AlertTriangle className="absolute top-3 right-3 w-3 h-3 text-amber-400 opacity-70" />
+      )}
       <Icon className="w-4 h-4 opacity-60 mb-1" />
       <p className="text-xl font-bold leading-tight">{value}</p>
       <p className="text-xs font-medium opacity-70">{label}</p>
@@ -27,68 +36,148 @@ function KPICard({ label, value, sub, icon: Icon, color, trend }) {
 }
 
 export default function FinanceKPIs({ payments, expenses, orders, monthlyData }) {
-  const completedPayments = payments.filter(p => p.status === "completed");
-  const totalRevenue = completedPayments.reduce((s, p) => s + (p.amount || 0), 0);
-  const totalTax = completedPayments.reduce((s, p) => s + (p.tax_amount || 0), 0);
-  const netRevenue = totalRevenue - totalTax;
+  // ── Revenue ─────────────────────────────────────────────────
+  const activePayments = payments.filter(p =>
+    p.status === "completed" && !p.is_archived && !p.is_test && !p.excluded_from_reports
+  );
+  const totalRevenue = activePayments.reduce((s, p) => s + (p.amount || 0), 0);
+  const totalTax     = activePayments.reduce((s, p) => s + (p.tax_amount || 0), 0);
+  const netRevenue   = totalRevenue - totalTax;
 
-  const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
-  const grossProfit = netRevenue - totalExpenses;
+  // ── Expenses ─────────────────────────────────────────────────
+  const activeExpenses = expenses.filter(e =>
+    !e.is_archived && !e.is_test && !e.excluded_from_reports
+  );
+  const totalExpenses    = activeExpenses.reduce((s, e) => s + (e.amount || 0), 0);
+  const pendingExpenses  = activeExpenses
+    .filter(e => e.approval_status === "submitted")
+    .reduce((s, e) => s + (e.amount || 0), 0);
+
+  // ── Profit ───────────────────────────────────────────────────
+  const grossProfit  = netRevenue - totalExpenses;
   const profitMargin = netRevenue > 0 ? ((grossProfit / netRevenue) * 100).toFixed(1) : 0;
 
+  // ── Month data ───────────────────────────────────────────────
   const thisMonthRevenue = monthlyData[monthlyData.length - 1]?.revenue || 0;
   const lastMonthRevenue = monthlyData[monthlyData.length - 2]?.revenue || 0;
   const revenueGrowth = lastMonthRevenue > 0
     ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1)
     : null;
 
-  const activeOrders = orders.filter(o => !["delivered", "cancelled"].includes(o.status) && !o.is_archived).length;
+  // ── Orders ───────────────────────────────────────────────────
+  const activeOrders = orders.filter(o =>
+    !["delivered", "cancelled"].includes(o.status) && !o.is_archived
+  );
   const outstandingBalance = orders
     .filter(o => !o.is_archived && !["cancelled"].includes(o.status))
-    .reduce((s, o) => s + ((o.total_amount || 0) - (o.deposit_paid || 0)), 0);
+    .reduce((s, o) => s + Math.max(0, (o.total_amount || 0) - (o.deposit_paid || 0)), 0);
+
+  // ── Test / archived counts ────────────────────────────────────
+  const testCount     = [...payments, ...expenses].filter(t => t.is_test).length;
+  const archivedCount = [...payments, ...expenses].filter(t => t.is_archived).length;
+
+  // ── Data completeness flags ───────────────────────────────────
+  const noExpenses  = totalRevenue > 0 && totalExpenses === 0;
+  const hasTestData = testCount > 0;
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
-      <KPICard
-        label="Total Revenue"
-        value={`R${totalRevenue.toLocaleString()}`}
-        icon={DollarSign}
-        color="green"
-      />
-      <KPICard
-        label="This Month"
-        value={`R${thisMonthRevenue.toLocaleString()}`}
-        sub={revenueGrowth !== null ? `${revenueGrowth > 0 ? "+" : ""}${revenueGrowth}% vs last` : undefined}
-        trend={revenueGrowth > 0 ? "up" : "down"}
-        icon={TrendingUp}
-        color="blue"
-      />
-      <KPICard
-        label="Total Expenses"
-        value={`R${totalExpenses.toLocaleString()}`}
-        icon={CreditCard}
-        color="red"
-      />
-      <KPICard
-        label="Gross Profit"
-        value={`R${grossProfit.toLocaleString()}`}
-        sub={`${profitMargin}% margin`}
-        icon={TrendingUp}
-        color={grossProfit >= 0 ? "teal" : "red"}
-      />
-      <KPICard
-        label="VAT Collected"
-        value={`R${totalTax.toLocaleString()}`}
-        icon={Receipt}
-        color="purple"
-      />
-      <KPICard
-        label="Outstanding"
-        value={`R${outstandingBalance.toLocaleString()}`}
-        sub={`${activeOrders} active orders`}
-        icon={ShoppingBag}
-        color="orange"
-      />
+    <div className="space-y-3 mb-6">
+      {/* Data health warnings */}
+      {noExpenses && (
+        <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <span>
+            <strong>Expenses may be incomplete.</strong> Revenue is being tracked but no expenses have been added yet.
+            Profit figures are overstated — add costs to get an accurate picture.
+          </span>
+        </div>
+      )}
+      {hasTestData && (
+        <div className="flex items-start gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs text-slate-600">
+          <TestTube className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+          <span>
+            <strong>{testCount} test transaction{testCount !== 1 ? "s" : ""}</strong> detected.
+            Totals above exclude them. Go to <em>Transactions</em> tab to archive or delete test data.
+          </span>
+        </div>
+      )}
+
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+        <KPICard
+          label="Total Revenue"
+          value={`R${totalRevenue.toLocaleString()}`}
+          icon={DollarSign}
+          color="green"
+        />
+        <KPICard
+          label="This Month"
+          value={`R${thisMonthRevenue.toLocaleString()}`}
+          sub={revenueGrowth !== null
+            ? `${Number(revenueGrowth) > 0 ? "+" : ""}${revenueGrowth}% vs last month`
+            : undefined}
+          trend={Number(revenueGrowth) > 0 ? "up" : "down"}
+          icon={TrendingUp}
+          color="blue"
+        />
+        <KPICard
+          label="Total Expenses"
+          value={`R${totalExpenses.toLocaleString()}`}
+          sub={pendingExpenses > 0 ? `R${pendingExpenses.toLocaleString()} pending` : undefined}
+          icon={CreditCard}
+          color={totalExpenses === 0 && totalRevenue > 0 ? "amber" : "red"}
+          warning={totalExpenses === 0 && totalRevenue > 0}
+        />
+        <KPICard
+          label="Gross Profit"
+          value={`R${grossProfit.toLocaleString()}`}
+          sub={`${profitMargin}% margin${noExpenses ? " · may be overstated" : ""}`}
+          icon={TrendingUp}
+          color={grossProfit >= 0 ? "teal" : "red"}
+          warning={noExpenses}
+        />
+        <KPICard
+          label="VAT Collected"
+          value={`R${totalTax.toLocaleString()}`}
+          sub="Output VAT on income"
+          icon={Receipt}
+          color="purple"
+        />
+        <KPICard
+          label="Outstanding"
+          value={`R${outstandingBalance.toLocaleString()}`}
+          sub={`${activeOrders.length} active order${activeOrders.length !== 1 ? "s" : ""}`}
+          icon={ShoppingBag}
+          color="orange"
+        />
+        {pendingExpenses > 0 && (
+          <KPICard
+            label="Pending Expenses"
+            value={`R${pendingExpenses.toLocaleString()}`}
+            sub="Awaiting approval"
+            icon={Clock}
+            color="amber"
+          />
+        )}
+        {testCount > 0 && (
+          <KPICard
+            label="Test Transactions"
+            value={testCount}
+            sub="Excluded from totals"
+            icon={TestTube}
+            color="slate"
+          />
+        )}
+        {archivedCount > 0 && (
+          <KPICard
+            label="Archived"
+            value={archivedCount}
+            sub="Not in totals"
+            icon={Archive}
+            color="slate"
+          />
+        )}
+      </div>
     </div>
   );
 }
