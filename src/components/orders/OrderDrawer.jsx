@@ -116,6 +116,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
+  const { data: linkedClient = null } = useQuery({
+    queryKey: ['orderClient', order.client_id],
+    queryFn: async () => {
+      if (!order.client_id) return null;
+      const rows = await dataClient.entities.Client.filter({ id: order.client_id }, '-updated_date', 1);
+      return rows?.[0] || null;
+    },
+    enabled: Boolean(order.client_id),
+  });
+
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers'],
     queryFn: () => dataClient.entities.Supplier.list('name', 100),
@@ -130,6 +140,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
   const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
+  const displayClientEmail = order.client_email || linkedClient?.email || linkedClient?.client_email || '';
 
   const updatePOMutation = useMutation({
     mutationFn: ({ id, data }) => dataClient.entities.PurchaseOrder.update(id, data),
@@ -421,9 +432,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   editing={editingField === 'client_name'} editValue={fieldValue}
                   onEdit={() => startEdit('client_name', order.client_name)}
                   onChange={setFieldValue} onSave={saveEdit} />
-                <EditField label="Client Email" field="client_email" value={order.client_email}
+                <EditField label="Client Email" field="client_email" value={displayClientEmail}
                   editing={editingField === 'client_email'} editValue={fieldValue}
-                  onEdit={() => startEdit('client_email', order.client_email)}
+                  onEdit={() => startEdit('client_email', displayClientEmail)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Order Number" field="order_number" value={order.order_number}
                   editing={editingField === 'order_number'} editValue={fieldValue}
