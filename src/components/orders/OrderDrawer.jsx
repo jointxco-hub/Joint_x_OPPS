@@ -54,6 +54,7 @@ import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import MediaPreview from "@/components/common/MediaPreview";
 import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
+import ProductionReadinessCard from "@/components/orders/ProductionReadinessCard";
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
@@ -383,12 +384,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
         {/* Tabs */}
         <div className="flex border-b border-border px-5 overflow-x-auto">
-          {['details', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices', 'portal'].map(t => (
+          {['details', 'readiness', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices', 'portal'].map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all whitespace-nowrap
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >
-              {t === 'portal' ? 'Client Portal' : t}
+              {t === 'portal' ? 'Client Portal' : t === 'readiness' ? 'Readiness' : t}
               {t === 'payments' && payments.length > 0 && (
                 <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">{payments.length}</span>
               )}
@@ -490,6 +491,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 </div>
               </div>
             </div>
+          )}
+
+          {tab === 'readiness' && (
+            <ProductionReadinessCard order={order} />
           )}
 
           {tab === 'payments' && (
