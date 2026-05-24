@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   FileSignature,
   Inbox,
@@ -66,6 +67,184 @@ const TYPE_META = {
 
 function readable(value = "") {
   return String(value || "").replace(/_/g, " ");
+}
+
+function titleCase(value = "") {
+  return readable(value)
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim();
+}
+
+function valueText(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (Array.isArray(value)) return value.filter(Boolean).join(", ");
+  if (typeof value === "object") {
+    const label = value.name || value.title || value.label || value.url || value.href;
+    return label ? String(label) : JSON.stringify(value, null, 2);
+  }
+  return String(value);
+}
+
+function pickFirst(source, keys) {
+  for (const key of keys) {
+    const value = source?.[key];
+    const text = valueText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function parseDetailLines(details = "") {
+  const parsed = {};
+  String(details || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const match = line.match(/^([^:]{2,60}):\s*(.+)$/);
+      if (!match) return;
+      parsed[match[1].toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "")] = match[2].trim();
+    });
+  return parsed;
+}
+
+function requestSections(request) {
+  const payload = request.payload || {};
+  const details = parseDetailLines(payload.details);
+  const specs = payload.specs || {};
+  const merged = { ...payload, ...details, ...specs };
+
+  if (request.request_type === "tech_pack") {
+    return [
+      {
+        title: "Brand Kit / Product Setup",
+        rows: [
+          ["Setup title", payload.title || request.preview],
+          ["Setup type", readable(payload.tech_pack_type)],
+          ["Template", payload.template_name],
+          ["Approval status", readable(request.status)],
+          ["Updated", payload.updated_at ? new Date(payload.updated_at).toLocaleString() : ""],
+        ],
+      },
+      {
+        title: "Product",
+        rows: [
+          ["Selected product", pickFirst(merged, ["selected_product_name", "product_name", "product", "product_type"])],
+          ["Product ID", pickFirst(merged, ["selected_product_id", "product_id"])],
+          ["Fabric / GSM", pickFirst(merged, ["preferred_gsm", "gsm", "fabric", "fabric_preference"])],
+          ["Colours", pickFirst(merged, ["color_preferences", "colour_preferences", "colours", "colors"])],
+        ],
+      },
+      {
+        title: "Design / Print",
+        rows: [
+          ["Print method", pickFirst(merged, ["print_method", "method"])],
+          ["Placement", pickFirst(merged, ["print_placement", "placement", "placements"])],
+          ["Print size", pickFirst(merged, ["print_size", "size"])],
+          ["Artwork", pickFirst(merged, ["artwork_note", "artwork_file", "artwork"])],
+        ],
+      },
+      {
+        title: "Sizing",
+        rows: [
+          ["Fit preference", pickFirst(merged, ["preferred_fit", "fit_preference", "fit"])],
+          ["Sizing rules", pickFirst(merged, ["fit_sizing_rules", "sizing_rules", "size_notes", "sizing"])],
+        ],
+      },
+      {
+        title: "Labels & Packaging",
+        rows: [
+          ["Labels", pickFirst(merged, ["label_packaging_rules", "neck_label_care_label_notes", "labels", "label_notes"])],
+          ["Packaging", pickFirst(merged, ["packaging_notes", "packaging"])],
+          ["Add-ons", pickFirst(merged, ["selected_add_ons", "add_ons", "addons"])],
+        ],
+      },
+      {
+        title: "Production Notes",
+        rows: [
+          ["Special instructions", pickFirst(merged, ["special_instructions", "special_production_notes", "production_notes", "notes"])],
+          ["Quality control", pickFirst(merged, ["quality_control_notes", "quality_control"])],
+          ["Substitution rules", pickFirst(merged, ["substitution_rules", "substitutions"])],
+        ],
+      },
+    ];
+  }
+
+  if (request.request_type === "special_instruction") {
+    return [
+      {
+        title: "Production Note",
+        rows: [
+          ["Title", payload.title || request.preview],
+          ["Type", readable(payload.instruction_type)],
+          ["Instruction", payload.instruction],
+          ["Client approval", payload.requires_approval ? (payload.approved_by_client ? "Approved" : "Required") : "Not required"],
+          ["Visibility", readable(payload.visibility)],
+        ],
+      },
+    ];
+  }
+
+  return [
+    {
+      title: "Request Summary",
+      rows: [
+        ["Project / subject", pickFirst(merged, ["project_name", "subject"]) || request.preview],
+        ["Request type", readable(request.request_type)],
+        ["Status", readable(request.status)],
+      ],
+    },
+    {
+      title: "Product / Item",
+      rows: [
+        ["Selected product", pickFirst(merged, ["selected_product", "selected_product_name", "product_name", "product", "product_type"])],
+        ["Product ID", pickFirst(merged, ["selected_product_id", "product_id"])],
+        ["Variant / size / colour", pickFirst(merged, ["variant", "size", "colour", "color", "sizes", "colours"])],
+        ["Custom item", pickFirst(merged, ["custom_item", "custom_item_name", "item_name"])],
+        ["Custom category", pickFirst(merged, ["custom_category", "category"])],
+        ["Custom details", pickFirst(merged, ["custom_details", "description"])],
+        ["Repeat order", pickFirst(merged, ["repeat_order", "repeat_order_number", "previous_order", "order_number"])],
+      ],
+    },
+    {
+      title: "Print & Add-ons",
+      rows: [
+        ["Print method", pickFirst(merged, ["print_method", "method"])],
+        ["Placements", pickFirst(merged, ["placements", "print_placement", "front_print", "back_print", "sleeve_print"])],
+        ["Labels", pickFirst(merged, ["labels", "neck_label", "care_label", "label_notes"])],
+        ["Packaging", pickFirst(merged, ["packaging", "packaging_notes"])],
+        ["Selected add-ons", pickFirst(merged, ["selected_add_ons", "add_ons", "addons"])],
+        ["Print notes", pickFirst(merged, ["print_notes", "print_add_on_notes"])],
+      ],
+    },
+    {
+      title: "Timing",
+      rows: [
+        ["Quantity", pickFirst(merged, ["quantity"])],
+        ["Deadline", pickFirst(merged, ["deadline", "preferred_date", "required_date"])],
+        ["Priority", pickFirst(merged, ["priority"])],
+        ["Rush note", pickFirst(merged, ["rush_note", "rush_request"])],
+      ],
+    },
+    {
+      title: "Files & References",
+      rows: [
+        ["Reference URL", pickFirst(merged, ["reference_url", "reference_link", "url"])],
+        ["Mockups", pickFirst(merged, ["mockups", "mockup"])],
+        ["Artwork / graphic files", pickFirst(merged, ["artwork_files", "artwork", "graphic_files"])],
+        ["Brand assets", pickFirst(merged, ["brand_assets"])],
+        ["References", pickFirst(merged, ["references", "reference_notes"])],
+        ["Production documents", pickFirst(merged, ["production_documents"])],
+      ],
+    },
+    {
+      title: "Notes",
+      rows: [
+        ["Customer notes", pickFirst(merged, ["notes", "message", "details"])],
+        ["Production notes", pickFirst(merged, ["production_notes", "special_instructions"])],
+      ],
+    },
+  ];
 }
 
 function statusClass(status = "") {
@@ -380,38 +559,41 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, isUp
 
 function PayloadView({ request }) {
   const payload = request.payload || {};
-
-  if (request.request_type === "tech_pack") {
-    const specs = payload.specs || {};
-    return (
-      <section className="rounded-xl border border-amber-100 bg-amber-50/40 p-4">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-amber-800">Brand Setup / Tech Pack</p>
-        <div className="mb-4 grid gap-3 md:grid-cols-2">
-          <Info label="Title" value={payload.title || request.preview} />
-          <Info label="Type" value={readable(payload.tech_pack_type)} />
-          <Info label="Template" value={payload.template_name || "Template"} />
-          <Info label="Updated" value={payload.updated_at ? new Date(payload.updated_at).toLocaleString() : "Unknown"} />
-        </div>
-        <KeyValueList data={specs} />
-      </section>
-    );
-  }
-
-  if (request.request_type === "special_instruction") {
-    return (
-      <section className="rounded-xl border border-red-100 bg-red-50/40 p-4">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-red-700">Production Instruction</p>
-        <Info label="Instruction type" value={readable(payload.instruction_type)} />
-        <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{payload.instruction}</p>
-      </section>
-    );
-  }
+  const sections = requestSections(request).filter((section) =>
+    section.rows.some(([, value]) => valueText(value))
+  );
 
   return (
-    <section className="rounded-xl border border-border p-4">
-      <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Details</p>
-      <KeyValueList data={payload} />
-    </section>
+    <div className="space-y-3">
+      {sections.length === 0 ? (
+        <section className="rounded-xl border border-border p-4">
+          <p className="text-sm text-muted-foreground">No structured details.</p>
+        </section>
+      ) : (
+        sections.map((section) => (
+          <section key={section.title} className="rounded-xl border border-border p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">{section.title}</p>
+            <div className="grid gap-2 md:grid-cols-2">
+              {section.rows
+                .filter(([, value]) => valueText(value))
+                .map(([label, value]) => (
+                  <Info key={label} label={label} value={valueText(value)} />
+                ))}
+            </div>
+          </section>
+        ))
+      )}
+
+      <details className="rounded-xl border border-border p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Technical payload
+          <ChevronDown className="h-4 w-4" />
+        </summary>
+        <div className="mt-3">
+          <KeyValueList data={payload} />
+        </div>
+      </details>
+    </div>
   );
 }
 
@@ -440,7 +622,7 @@ function Info({ label, value, mono }) {
   return (
     <div className="rounded-xl border border-border bg-card p-3">
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={`break-words text-sm text-foreground ${mono ? "font-mono" : ""}`}>{value || "-"}</p>
+      <p className={`whitespace-pre-wrap break-words text-sm text-foreground ${mono ? "font-mono" : ""}`}>{value || "-"}</p>
     </div>
   );
 }

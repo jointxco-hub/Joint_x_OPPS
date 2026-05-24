@@ -5,8 +5,10 @@ import {
   CheckCircle2,
   ClipboardCheck,
   FileCheck2,
+  Printer,
   RefreshCw,
   ShieldAlert,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -44,6 +46,7 @@ function stateCopy(state) {
 
 export default function ProductionReadinessCard({ order }) {
   const [notes, setNotes] = useState({});
+  const [showPrintSheet, setShowPrintSheet] = useState(false);
   const queryClient = useQueryClient();
   const queryKey = ["productionReadiness", order?.id];
 
@@ -126,6 +129,16 @@ export default function ProductionReadinessCard({ order }) {
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
           <Badge className={state.className}>{state.label}</Badge>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowPrintSheet(true)}
+            className="h-8 rounded-lg no-print"
+          >
+            <Printer className="mr-1.5 h-3.5 w-3.5" />
+            Print
+          </Button>
           <button
             type="button"
             onClick={() => refetch()}
@@ -207,7 +220,7 @@ export default function ProductionReadinessCard({ order }) {
               renderItem={(item) => (
                 <>
                   <p className="text-sm font-semibold text-foreground">{item.title || "Brand Setup"}</p>
-                  <p className="mt-0.5 text-xs capitalize text-muted-foreground">{readable(item.tech_pack_type)} · {readable(item.status)}</p>
+                  <p className="mt-0.5 text-xs capitalize text-muted-foreground">{readable(item.tech_pack_type)} - {readable(item.status)}</p>
                 </>
               )}
             />
@@ -239,6 +252,14 @@ export default function ProductionReadinessCard({ order }) {
           <SmallList title="Approvals" items={approvals} empty="No approval records found" />
           <SmallList title="Contracts" items={contracts} empty="No contract acceptances found" />
         </div>
+      )}
+
+      {showPrintSheet && (
+        <ProductionSheetModal
+          order={order}
+          readiness={data}
+          onClose={() => setShowPrintSheet(false)}
+        />
       )}
     </section>
   );
@@ -294,4 +315,275 @@ function SmallList({ title, items, empty }) {
       )}
     </div>
   );
+}
+
+function ProductionSheetModal({ order, readiness, onClose }) {
+  const readinessOrder = readiness.order || {};
+  const checks = readiness.checks || [];
+  const warnings = readiness.warnings || [];
+  const techPacks = readiness.tech_packs || [];
+  const instructions = readiness.special_instructions || [];
+  const approvals = readiness.approvals || [];
+  const contracts = readiness.contracts || [];
+  const products = Array.isArray(order.products) ? order.products : [];
+  const fileUrls = Array.isArray(order.file_urls) ? order.file_urls : [];
+  const invoices = Array.isArray(order.invoice_files) ? order.invoice_files : [];
+  const printedAt = new Date().toLocaleString();
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/30 p-4 print:static print:bg-white print:p-0">
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          .production-sheet-print, .production-sheet-print * { visibility: visible !important; }
+          .production-sheet-print {
+            position: absolute !important;
+            inset: 0 auto auto 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            box-shadow: none !important;
+            border: 0 !important;
+            color: #111 !important;
+            background: #fff !important;
+          }
+          .production-sheet-actions { display: none !important; }
+          .production-sheet-section { break-inside: avoid; page-break-inside: avoid; }
+          a { color: #111 !important; text-decoration: none !important; }
+        }
+      `}</style>
+      <div className="mx-auto flex max-h-[92vh] max-w-4xl flex-col overflow-hidden rounded-2xl bg-card shadow-apple-xl production-sheet-print print:max-h-none print:overflow-visible print:rounded-none">
+        <div className="production-sheet-actions flex items-center justify-between border-b border-border p-4">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Print Production Sheet</p>
+            <p className="text-xs text-muted-foreground">Browser print, A4-friendly, no generated PDF.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" onClick={() => window.print()} className="rounded-xl">
+              <Printer className="mr-2 h-4 w-4" />
+              Print
+            </Button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary text-muted-foreground hover:text-foreground"
+              aria-label="Close production sheet"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-y-auto p-6 print:overflow-visible print:p-8">
+          <header className="mb-6 border-b border-zinc-300 pb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Joint X / X LAB</p>
+                <h1 className="mt-1 text-2xl font-bold text-zinc-950">Production Sheet</h1>
+                <p className="mt-1 text-sm text-zinc-600">Confirm all details before production.</p>
+              </div>
+              <div className="text-left sm:text-right">
+                <p className="text-sm font-semibold text-zinc-950">#{readinessOrder.order_number || order.order_number || order.id}</p>
+                <p className="text-xs text-zinc-600">Printed {printedAt}</p>
+              </div>
+            </div>
+          </header>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <PrintSection title="Client">
+              <PrintRow label="Name" value={readinessOrder.client_name || order.client_name} />
+              <PrintRow label="Email" value={readinessOrder.client_email || order.client_email} />
+              <PrintRow label="Phone" value={order.client_phone || order.phone} />
+              <PrintRow label="Company" value={order.company_name || order.brand_name} />
+            </PrintSection>
+
+            <PrintSection title="Order">
+              <PrintRow label="Status" value={readable(readinessOrder.status || order.status)} />
+              <PrintRow label="Pipeline" value={readable(readinessOrder.pipeline_stage || order.pipeline_stage)} />
+              <PrintRow label="Total" value={order.total_amount ? `R${Number(order.total_amount).toLocaleString()}` : ""} />
+              <PrintRow label="Balance due" value={readinessOrder.balance_due ? `R${Number(readinessOrder.balance_due).toLocaleString()}` : "R0"} />
+            </PrintSection>
+          </div>
+
+          <PrintSection title="Product / Order Summary">
+            {products.length > 0 ? (
+              <div className="space-y-2">
+                {products.map((product, index) => (
+                  <div key={`${product.name || product.title || "product"}-${index}`} className="rounded-lg border border-zinc-200 p-3">
+                    <p className="font-semibold text-zinc-950">{product.name || product.title || "Product"}</p>
+                    <div className="mt-1 grid gap-1 text-sm text-zinc-700 sm:grid-cols-3">
+                      <span>Qty: {product.quantity || product.qty || "-"}</span>
+                      <span>Size: {product.size || product.sizes || "-"}</span>
+                      <span>Colour: {product.color || product.colour || "-"}</span>
+                    </div>
+                    {product.notes && <p className="mt-2 text-sm text-zinc-700">{product.notes}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-600">{order.notes || "No structured products on this order yet."}</p>
+            )}
+          </PrintSection>
+
+          {warnings.length > 0 && (
+            <PrintSection title="Production Warnings" tone="warn">
+              <div className="space-y-2">
+                {warnings.map((warning, index) => (
+                  <p key={`${warning.type}-${index}`} className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-sm font-medium text-amber-950">
+                    {warning.message}
+                  </p>
+                ))}
+              </div>
+            </PrintSection>
+          )}
+
+          <PrintSection title="Production Notes">
+            {instructions.length > 0 ? (
+              <div className="space-y-2">
+                {instructions.map((instruction) => (
+                  <div key={instruction.id} className="rounded-lg border border-zinc-200 p-3">
+                    <p className="font-semibold text-zinc-950">
+                      {instruction.title || readable(instruction.instruction_type)}
+                      {["sizing", "fit", "print", "quality_control"].includes(instruction.instruction_type) && (
+                        <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-800">{readable(instruction.instruction_type)}</span>
+                      )}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-700">{instruction.instruction}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-600">No active production notes found.</p>
+            )}
+          </PrintSection>
+
+          <PrintSection title="Brand Kit / Product Setup">
+            {techPacks.length > 0 ? (
+              <div className="space-y-2">
+                {techPacks.map((pack) => (
+                  <div key={pack.id} className="rounded-lg border border-zinc-200 p-3">
+                    <p className="font-semibold text-zinc-950">{pack.title || "Brand Setup"}</p>
+                    <p className="text-sm text-zinc-600">{readable(pack.tech_pack_type)} - {readable(pack.status)}</p>
+                    {pack.specs && Object.keys(pack.specs).length > 0 && (
+                      <div className="mt-2 grid gap-1 text-sm text-zinc-700 sm:grid-cols-2">
+                        {Object.entries(pack.specs).slice(0, 8).map(([key, value]) => (
+                          <span key={key}><strong>{titleCase(key)}:</strong> {formatPrintValue(value)}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-600">No linked product setup found.</p>
+            )}
+          </PrintSection>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <PrintSection title="Files">
+              <PrintFileList files={fileUrls.map((url) => ({ name: fileName(url), url }))} empty="No artwork/files attached." />
+            </PrintSection>
+            <PrintSection title="Invoices">
+              <PrintFileList files={invoices.map((file) => ({ name: file.name || file.invoice_number || file.url, url: file.url }))} empty="No invoice files attached." />
+            </PrintSection>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <PrintSection title="Approvals">
+              {approvals.length > 0 ? approvals.map((approval) => (
+                <PrintRow
+                  key={approval.id}
+                  label={readable(approval.approval_type)}
+                  value={readable(approval.status)}
+                />
+              )) : <p className="text-sm text-zinc-600">No approval records found.</p>}
+            </PrintSection>
+            <PrintSection title="Contracts">
+              {contracts.length > 0 ? contracts.map((contract) => (
+                <PrintRow
+                  key={contract.id}
+                  label={contract.contract_name || contract.contract_type || "Contract"}
+                  value={contract.accepted_at ? `Accepted ${new Date(contract.accepted_at).toLocaleDateString()}` : "Accepted"}
+                />
+              )) : <p className="text-sm text-zinc-600">No contract acceptances found.</p>}
+            </PrintSection>
+          </div>
+
+          <PrintSection title="Readiness Checklist">
+            <div className="space-y-2">
+              {checks.map((check) => (
+                <div key={check.check_key} className="grid gap-2 rounded-lg border border-zinc-200 p-3 sm:grid-cols-[1fr_140px]">
+                  <div>
+                    <p className="font-semibold text-zinc-950">{check.label}</p>
+                    {check.notes && <p className="mt-1 text-sm text-zinc-600">{check.notes}</p>}
+                  </div>
+                  <p className="text-sm font-semibold text-zinc-800">{readable(check.status || "pending")}</p>
+                </div>
+              ))}
+            </div>
+          </PrintSection>
+
+          <footer className="mt-6 border-t border-zinc-300 pt-4 text-xs text-zinc-600">
+            Confirm all details before production. OPPS order: {order.id}
+          </footer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrintSection({ title, children, tone }) {
+  return (
+    <section className={`production-sheet-section mt-4 rounded-xl border p-4 ${
+      tone === "warn" ? "border-amber-300 bg-amber-50" : "border-zinc-200 bg-white"
+    }`}>
+      <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function PrintRow({ label, value }) {
+  if (value === null || value === undefined || value === "") return null;
+  return (
+    <div className="mb-2 grid grid-cols-[120px_1fr] gap-3 text-sm">
+      <span className="font-semibold text-zinc-500">{label}</span>
+      <span className="break-words text-zinc-950">{value}</span>
+    </div>
+  );
+}
+
+function PrintFileList({ files, empty }) {
+  const validFiles = files.filter((file) => file.url || file.name);
+  if (validFiles.length === 0) return <p className="text-sm text-zinc-600">{empty}</p>;
+  return (
+    <div className="space-y-2">
+      {validFiles.map((file, index) => (
+        <div key={`${file.url || file.name}-${index}`} className="break-words rounded-lg border border-zinc-200 p-2 text-sm">
+          {file.url ? (
+            <a href={file.url} target="_blank" rel="noreferrer" className="text-zinc-950 underline underline-offset-2">
+              {file.name || file.url}
+            </a>
+          ) : (
+            <span>{file.name}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatPrintValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function fileName(url = "") {
+  try {
+    const path = new URL(url).pathname;
+    return decodeURIComponent(path.split("/").pop() || url);
+  } catch {
+    return String(url).split("/").pop() || String(url);
+  }
 }
