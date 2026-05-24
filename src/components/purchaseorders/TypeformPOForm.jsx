@@ -62,6 +62,7 @@ export default function TypeformPOForm({
   const selectableItems = [
     ...catalogItems
       .filter(item => item.is_archived !== true && item.status !== "draft")
+      .filter(item => item.is_active !== false && item.hidden !== true && item.is_hidden !== true && item.status !== "hidden")
       .map(item => ({
         id: `catalog:${item.id}`,
         raw_id: item.id,

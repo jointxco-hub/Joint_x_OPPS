@@ -181,6 +181,9 @@ export default function TrackOrder() {
   const courier = order ? COURIERS.find(c => c.value === order.courier) : null;
   const courierLabel = order?.courier ? formatCourierLabel(order.courier) : "";
   const trackingUrl = order ? buildCourierTrackingUrl(courier, order.tracking_number) : null;
+  const portalFiles = order?.portal_show_files
+    ? (Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [])
+    : [];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0d1117] via-[#111827] to-[#0d1117]">
@@ -300,6 +303,12 @@ export default function TrackOrder() {
                   <p className="text-white font-semibold font-mono text-sm">{order.tracking_number}</p>
                 </div>
               )}
+              {order.pep_code && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-white/40 text-xs mb-1">PEP / Courier Code</p>
+                  <p className="text-white font-semibold font-mono text-sm">{order.pep_code}</p>
+                </div>
+              )}
             </div>
 
             {trackingUrl && (
@@ -353,11 +362,11 @@ export default function TrackOrder() {
             )}
 
             {/* Design Files */}
-            {order.portal_show_files && order.file_urls?.length > 0 && (
+            {portalFiles.length > 0 && (
               <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4">
                 <p className="text-white/40 text-xs mb-3">Files &amp; Approvals</p>
                 <div className="flex flex-wrap gap-2">
-                  {order.file_urls.map((url, i) => (
+                  {portalFiles.map((url, i) => (
                     <FileThumb key={i} url={url} onClick={setMediaUrl} />
                   ))}
                 </div>

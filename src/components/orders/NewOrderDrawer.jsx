@@ -35,6 +35,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     client_name: '',
     client_email: '',
     client_phone: '',
+    pep_code: '',
+    delivery_note: '',
     order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
     status: 'confirmed',
     priority: 'normal',
@@ -43,7 +45,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     total_amount: '',
     due_date: '',
     linked_po_id: '',
-    products: [{ name: '', quantity: 1, price: '' }]
+    products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '' }]
   });
 
   const [clientSearch, setClientSearch] = useState('');
@@ -138,17 +140,18 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   const allPickerItems = [
     ...(/** @type {any[]} */ (catalogItems))
       .filter((/** @type {any} */ c) => c.is_archived !== true && c.status !== "draft")
-      .map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? c.base_price ?? "" })),
+      .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true && c.status !== "hidden")
+      .map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? c.base_price ?? "", source: "catalog" })),
     ...(/** @type {any[]} */ (inventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
-      .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "" })),
+      .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "", source: "stock" })),
   ];
 
   const pickerFiltered = (/** @type {string} */ q) =>
     q ? allPickerItems.filter(p => p.name?.toLowerCase().includes(q.toLowerCase())).slice(0, 8)
       : allPickerItems.slice(0, 8);
 
-  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '' }] }));
+  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '', size: '', color: '', notes: '' }] }));
   const removeProduct = (i) => setForm(f => ({ ...f, products: f.products.filter((_, idx) => idx !== i) }));
   const updateProduct = (i, field, val) => setForm(f => ({
     ...f,
@@ -323,6 +326,19 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">PEP / Courier Code</label>
+              <Input value={form.pep_code} onChange={e => setForm({ ...form, pep_code: e.target.value })}
+                placeholder="PAXI / locker / waybill" className="rounded-xl h-9 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Pickup / Delivery Note</label>
+              <Input value={form.delivery_note} onChange={e => setForm({ ...form, delivery_note: e.target.value })}
+                placeholder="Store, courier note, address hint" className="rounded-xl h-9 text-sm" />
+            </div>
+          </div>
+
           {/* Order number + due date */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -434,7 +450,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                               className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between"
                             >
                               <span className="text-sm text-foreground">{item.name}</span>
-                              {item.price ? <span className="text-xs font-semibold text-primary ml-2 flex-shrink-0">R{Number(item.price).toLocaleString()}</span> : null}
+                              <span className="flex items-center gap-2">
+                                {item.price ? <span className="text-xs font-semibold text-primary ml-2 flex-shrink-0">R{Number(item.price).toLocaleString()}</span> : null}
+                                <span className="text-[10px] text-muted-foreground capitalize">{item.source}</span>
+                              </span>
                             </button>
                           ))}
                           {/* Always-visible custom item option */}
@@ -465,6 +484,14 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Input value={p.size || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'size', e.target.value)}
+                      placeholder="Size" className="rounded-xl h-8 text-xs" />
+                    <Input value={p.color || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'color', e.target.value)}
+                      placeholder="Colour" className="rounded-xl h-8 text-xs" />
+                    <Input value={p.notes || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'notes', e.target.value)}
+                      placeholder="Item notes" className="rounded-xl h-8 text-xs" />
                   </div>
                 </div>
               ))}

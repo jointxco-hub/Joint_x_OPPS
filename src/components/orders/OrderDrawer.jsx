@@ -176,7 +176,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     setUploading(true);
     try {
       const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
-      const updated = { file_urls: [...(order.file_urls || []), file_url] };
+      const updated = {
+        file_urls: [...(order.file_urls || []), file_url],
+        portal_visible_file_urls: Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [],
+      };
       onUpdate(order.id, updated);
       toast.success("File uploaded");
     } catch (err) {
@@ -383,10 +386,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         )}
 
         {/* Tabs */}
-        <div className="flex border-b border-border px-5 overflow-x-auto">
+        <div className="flex min-w-0 gap-1 overflow-x-auto border-b border-border px-3 md:px-5">
           {['details', 'readiness', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices', 'portal'].map(t => (
             <button key={t} onClick={() => setTab(t)}
-              className={`px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all whitespace-nowrap
+              className={`shrink-0 px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all whitespace-nowrap
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >
               {t === 'portal' ? 'Client Portal' : t === 'readiness' ? 'Readiness' : t}
@@ -413,10 +416,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
           {tab === 'details' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <EditField label="Client Name" field="client_name" value={order.client_name}
                   editing={editingField === 'client_name'} editValue={fieldValue}
                   onEdit={() => startEdit('client_name', order.client_name)}
+                  onChange={setFieldValue} onSave={saveEdit} />
+                <EditField label="Client Email" field="client_email" value={order.client_email}
+                  editing={editingField === 'client_email'} editValue={fieldValue}
+                  onEdit={() => startEdit('client_email', order.client_email)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Order Number" field="order_number" value={order.order_number}
                   editing={editingField === 'order_number'} editValue={fieldValue}
@@ -809,6 +816,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 editing={editingField === 'tracking_number'} editValue={fieldValue}
                 onEdit={() => startEdit('tracking_number', order.tracking_number)}
                 onChange={setFieldValue} onSave={saveEdit} />
+              <EditField label="PEP / Courier Code" field="pep_code" value={order.pep_code}
+                editing={editingField === 'pep_code'} editValue={fieldValue}
+                onEdit={() => startEdit('pep_code', order.pep_code)}
+                onChange={setFieldValue} onSave={saveEdit} />
+              <EditField label="Delivery Note / Pickup Point" field="delivery_note" value={order.delivery_note}
+                editing={editingField === 'delivery_note'} editValue={fieldValue}
+                onEdit={() => startEdit('delivery_note', order.delivery_note)}
+                onChange={setFieldValue} onSave={saveEdit} />
               {trackingUrl && (
                 <a href={trackingUrl} target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-2 p-4 bg-primary/5 rounded-xl border border-primary/20 text-primary hover:bg-primary/10 transition-all">
@@ -846,9 +861,26 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />
               </label>
               {order.file_urls?.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid gap-3 sm:grid-cols-2">
                   {order.file_urls.map((/** @type {string} */ url, /** @type {number} */ i) => (
-                    <MediaPreview key={url} url={url} title={`Order file ${i + 1}`} />
+                    <div key={url} className="rounded-2xl border border-border bg-card p-2">
+                      <MediaPreview url={url} title={`Order file ${i + 1}`} />
+                      <label className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
+                        <span className="font-medium text-foreground">Client can see</span>
+                        <input
+                          type="checkbox"
+                          checked={(Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : []).includes(url)}
+                          onChange={(e) => {
+                            const current = Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [];
+                            onUpdate(order.id, {
+                              portal_visible_file_urls: e.target.checked
+                                ? Array.from(new Set([...current, url]))
+                                : current.filter((item) => item !== url),
+                            });
+                          }}
+                        />
+                      </label>
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -908,9 +940,9 @@ function ProductsEditor({ order, onUpdate }) {
   });
 
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
-  const [editRow, setEditRow] = useState({ name: "", quantity: 1, price: "" });
+  const [editRow, setEditRow] = useState({ name: "", quantity: 1, price: "", size: "", color: "", notes: "" });
   const [addMode, setAddMode] = useState(false);
-  const [newRow, setNewRow] = useState({ name: "", quantity: 1, price: "" });
+  const [newRow, setNewRow] = useState({ name: "", quantity: 1, price: "", size: "", color: "", notes: "" });
   const [pickerSearch, setPickerSearch] = useState("");
   const [showPicker, setShowPicker] = useState(false);
 
@@ -919,7 +951,7 @@ function ProductsEditor({ order, onUpdate }) {
   const saveRow = () => {
     if (!editRow.name.trim()) return;
     const updated = products.map((p, i) =>
-      i === editingIdx ? { name: editRow.name, quantity: Number(editRow.quantity) || 1, price: editRow.price } : p
+      i === editingIdx ? { ...p, name: editRow.name, quantity: Number(editRow.quantity) || 1, price: editRow.price, size: editRow.size, color: editRow.color, notes: editRow.notes } : p
     );
     onUpdate(order.id, { products: updated });
     setEditingIdx(null);
@@ -932,9 +964,9 @@ function ProductsEditor({ order, onUpdate }) {
 
   const addRow = () => {
     if (!newRow.name.trim()) return;
-    const updated = [...products, { name: newRow.name, quantity: Number(newRow.quantity) || 1, price: newRow.price }];
+    const updated = [...products, { name: newRow.name, quantity: Number(newRow.quantity) || 1, price: newRow.price, size: newRow.size, color: newRow.color, notes: newRow.notes }];
     onUpdate(order.id, { products: updated });
-    setNewRow({ name: "", quantity: 1, price: "" });
+    setNewRow({ name: "", quantity: 1, price: "", size: "", color: "", notes: "" });
     setAddMode(false);
     setPickerSearch("");
     setShowPicker(false);
@@ -943,6 +975,7 @@ function ProductsEditor({ order, onUpdate }) {
   const allPickerItems = [
     ...(/** @type {any[]} */ (catalogItems))
       .filter((/** @type {any} */ c) => c.is_archived !== true && c.status !== "draft")
+      .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true && c.status !== "hidden")
       .map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? c.base_price ?? "", source: "catalog" })),
     ...(/** @type {any[]} */ (inventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
@@ -958,7 +991,7 @@ function ProductsEditor({ order, onUpdate }) {
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Products</h3>
         {!addMode && (
-          <button onClick={() => setAddMode(true)} className="flex items-center gap-1 text-xs text-primary font-medium">
+          <button type="button" onClick={() => setAddMode(true)} className="flex items-center gap-1 text-xs text-primary font-medium">
             <Plus className="w-3 h-3" /> Add
           </button>
         )}
@@ -971,27 +1004,38 @@ function ProductsEditor({ order, onUpdate }) {
         )}
         {products.map((/** @type {any} */ p, /** @type {number} */ i) =>
           editingIdx === i ? (
-            <div key={i} className="flex items-center gap-1.5 bg-card rounded-lg px-2 py-1.5 border border-border">
+            <div key={i} className="grid gap-2 bg-card rounded-lg px-2 py-2 border border-border sm:grid-cols-[1fr_56px_84px]">
               <Input value={editRow.name} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, name: e.target.value }))}
                 className="h-7 text-xs flex-1 rounded-lg" placeholder="Name" autoFocus />
               <Input value={editRow.quantity} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, quantity: e.target.value }))}
                 type="number" className="h-7 text-xs w-12 rounded-lg" placeholder="Qty" />
               <Input value={editRow.price} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, price: e.target.value }))}
                 type="number" className="h-7 text-xs w-16 rounded-lg" placeholder="R" />
-              <button onClick={saveRow} className="text-xs text-primary font-medium whitespace-nowrap">Save</button>
-              <button onClick={() => setEditingIdx(null)} className="text-xs text-muted-foreground">✕</button>
+              <Input value={editRow.size} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, size: e.target.value }))}
+                className="h-7 text-xs rounded-lg" placeholder="Size" />
+              <Input value={editRow.color} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, color: e.target.value }))}
+                className="h-7 text-xs rounded-lg" placeholder="Colour" />
+              <Input value={editRow.notes} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, notes: e.target.value }))}
+                className="h-7 text-xs rounded-lg sm:col-span-3" placeholder="Item notes / print placement" />
+              <div className="flex gap-2 sm:col-span-3">
+                <button type="button" onClick={saveRow} className="text-xs text-primary font-medium whitespace-nowrap">Save</button>
+                <button type="button" onClick={() => setEditingIdx(null)} className="text-xs text-muted-foreground">Cancel</button>
+              </div>
             </div>
           ) : (
             <div key={i} className="flex items-center justify-between group px-1 py-1 rounded-lg hover:bg-card/60 transition-all">
-              <span className="text-sm text-foreground flex-1 truncate">{p.name}</span>
+              <span className="text-sm text-foreground flex-1 truncate">
+                {p.name}
+                {(p.size || p.color) && <span className="ml-2 text-xs text-muted-foreground">{[p.size, p.color].filter(Boolean).join(" / ")}</span>}
+              </span>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className="text-xs text-muted-foreground">×{p.quantity || 1}</span>
                 {p.price && <span className="text-sm font-semibold text-foreground">R{Number(p.price).toLocaleString()}</span>}
-                <button onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "" }); }}
+                <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "" }); }}
                   className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all">
                   <Pencil className="w-3 h-3" />
                 </button>
-                <button onClick={() => removeRow(i)}
+                <button type="button" onClick={() => removeRow(i)}
                   className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all">
                   <Trash2 className="w-3 h-3" />
                 </button>
@@ -1057,6 +1101,14 @@ function ProductsEditor({ order, onUpdate }) {
             <Input value={newRow.price} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, price: e.target.value }))}
               type="number" placeholder="Price (R)" className="h-8 text-sm rounded-xl flex-1" />
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input value={newRow.size} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, size: e.target.value }))}
+              placeholder="Size" className="h-8 text-sm rounded-xl" />
+            <Input value={newRow.color} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, color: e.target.value }))}
+              placeholder="Colour" className="h-8 text-sm rounded-xl" />
+          </div>
+          <Input value={newRow.notes} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, notes: e.target.value }))}
+            placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
           <div className="flex gap-2">
             <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={addRow} disabled={!newRow.name.trim()}>Add</Button>
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setShowPicker(false); }}>Cancel</Button>
@@ -1203,7 +1255,7 @@ function PortalTab({ order, onUpdate, balance = 0 }) {
           <label className="flex items-center justify-between p-3 bg-secondary/30 rounded-xl cursor-pointer hover:bg-secondary/50 transition-all">
             <div>
               <p className="text-sm font-medium text-foreground">Uploaded Files</p>
-              <p className="text-xs text-muted-foreground">Design approvals, proofs, artwork</p>
+              <p className="text-xs text-muted-foreground">Only files ticked in the Files tab are shown</p>
             </div>
             <div
               onClick={() => toggle("portal_show_files")}
@@ -1463,14 +1515,11 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
         <div className="space-y-2">
           {invoices.map((inv, i) => (
             <div key={i} className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
-              <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
-                <FileText className="w-4 h-4 text-amber-700" />
-              </div>
+              <MediaPreview url={inv.url || inv.file_url} title={inv.name || `Invoice ${i + 1}`} className="h-10 w-10 flex-shrink-0 rounded-lg border-amber-200 bg-amber-100" />
               <div className="flex-1 min-w-0">
-                <a href={inv.url} target="_blank" rel="noopener noreferrer"
-                  className="text-sm font-medium text-amber-800 hover:underline truncate block">
+                <p className="block max-w-full truncate text-sm font-medium text-amber-800">
                   {inv.name}
-                </a>
+                </p>
                 <p className="text-xs text-amber-600 mt-0.5">
                   {inv.invoice_number && (
                     <span className="font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded mr-1.5">{inv.invoice_number}</span>
