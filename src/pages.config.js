@@ -55,6 +55,7 @@ import AletheaProjectView from './pages/AletheaProjectView';
 import Calculator from './pages/Calculator';
 import CatalogManagement from './pages/CatalogManagement';
 import ClientCatalog from './pages/ClientCatalog';
+import ClientRequests from './pages/ClientRequests';
 import Clients from './pages/Clients';
 import Dashboard from './pages/Dashboard';
 import Executive from './pages/Executive';
@@ -97,6 +98,7 @@ export const PAGES = {
     "Calculator": Calculator,
     "CatalogManagement": CatalogManagement,
     "ClientCatalog": ClientCatalog,
+    "ClientRequests": ClientRequests,
     "Clients": Clients,
     "Dashboard": Dashboard,
     "Executive": Executive,
