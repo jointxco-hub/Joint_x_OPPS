@@ -227,6 +227,16 @@ function requestSections(request) {
       ],
     },
     {
+      title: "Estimate & Price Review",
+      rows: [
+        ["Estimate", pickFirst(merged, ["estimate"])],
+        ["Price review", pickFirst(merged, ["price_review_requested"])],
+        ["Budget range", pickFirst(merged, ["budget_range", "budget"])],
+        ["Reason", pickFirst(merged, ["price_review_reason", "reason"])],
+        ["Price note", pickFirst(merged, ["price_review_note", "customer_price_note"])],
+      ],
+    },
+    {
       title: "Files & References",
       rows: [
         ["Reference URL", pickFirst(merged, ["reference_url", "reference_link", "url"])],
