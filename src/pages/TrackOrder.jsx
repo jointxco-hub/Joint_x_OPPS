@@ -63,6 +63,16 @@ const getStepIndex = (status) => {
   return i === -1 ? 0 : i;
 };
 
+const getLatestInvoiceTotal = (invoiceFiles) => {
+  if (!Array.isArray(invoiceFiles)) return 0;
+  return [...invoiceFiles]
+    .reverse()
+    .map((file) => Number(file?.invoice_total || 0))
+    .find((amount) => amount > 0) || 0;
+};
+
+const formatMoney = (value) => `R${Number(value || 0).toLocaleString()}`;
+
 function MediaViewer({ url, onClose }) {
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
   const isVideo = /\.(mp4|mov|webm|avi)(\?|$)/i.test(url);
@@ -184,6 +194,11 @@ export default function TrackOrder() {
   const portalFiles = order?.portal_show_files
     ? (Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [])
     : [];
+  const invoiceTotal = getLatestInvoiceTotal(order?.invoice_files);
+  const orderTotal = Number(invoiceTotal || order?.total_amount || 0);
+  const amountPaid = Number(order?.amount_paid ?? order?.deposit_paid ?? 0);
+  const balanceDue = Math.max(orderTotal - amountPaid, 0);
+  const isPaidInFull = orderTotal > 0 && amountPaid >= orderTotal;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0d1117] via-[#111827] to-[#0d1117]">
@@ -285,10 +300,13 @@ export default function TrackOrder() {
                   <p className="text-white font-semibold">{format(new Date(order.due_date), "dd MMM yyyy")}</p>
                 </div>
               )}
-              {order.total_amount && (
+              {orderTotal > 0 && (
                 <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                  <p className="text-white/40 text-xs mb-1">Order Value</p>
-                  <p className="text-white font-semibold">R{order.total_amount?.toLocaleString()}</p>
+                  <p className="text-white/40 text-xs mb-1">Invoice Value</p>
+                  <p className="text-white font-semibold">{formatMoney(orderTotal)}</p>
+                  {isPaidInFull && (
+                    <p className="text-[#4ade80] text-xs font-semibold mt-1">Paid in full</p>
+                  )}
                 </div>
               )}
               {order.courier && (
@@ -346,16 +364,22 @@ export default function TrackOrder() {
             )}
 
             {/* Portal: outstanding balance */}
-            {order.portal_show_balance && order.total_amount && (
-              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 grid grid-cols-2 gap-3">
+            {order.portal_show_balance && orderTotal > 0 && (
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 grid grid-cols-3 gap-3">
                 <div>
-                  <p className="text-white/40 text-xs mb-1">Order Total</p>
-                  <p className="text-white font-semibold">R{Number(order.total_amount).toLocaleString()}</p>
+                  <p className="text-white/40 text-xs mb-1">Invoice</p>
+                  <p className="text-white font-semibold">{formatMoney(orderTotal)}</p>
                 </div>
                 <div>
                   <p className="text-white/40 text-xs mb-1">Amount Paid</p>
                   <p className="text-[#4ade80] font-semibold">
-                    R{Math.min(Number(order.total_amount), Number(order.amount_paid ?? 0)).toLocaleString()}
+                    {formatMoney(Math.min(orderTotal, amountPaid))}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-white/40 text-xs mb-1">Balance</p>
+                  <p className={`font-semibold ${balanceDue > 0 ? "text-amber-300" : "text-[#4ade80]"}`}>
+                    {balanceDue > 0 ? formatMoney(balanceDue) : "Paid in full"}
                   </p>
                 </div>
               </div>

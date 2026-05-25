@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
   X, Package, CreditCard, Paperclip,
@@ -157,7 +157,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const addPaymentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.Payment.create(data),
-    onSuccess: () => {
+    onSuccess: (_created, variables) => {
+      const paidAmount = Number((/** @type {any} */ variables)?.amount || 0);
+      const nextTotalPaid = totalPaid + paidAmount;
+      if (paidAmount > 0) {
+        onUpdate(order.id, { deposit_paid: nextTotalPaid });
+      }
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -266,7 +271,21 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const currentStageIndex = progressStages.indexOf(order.status);
   const totalPaid = payments.filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
-  const balance = (order.total_amount || 0) - totalPaid;
+  const invoiceFiles = Array.isArray(order.invoice_files) ? order.invoice_files : [];
+  const latestInvoiceTotal = [...invoiceFiles]
+    .reverse()
+    .map((inv) => Number(inv?.invoice_total || 0))
+    .find((amount) => amount > 0) || 0;
+  const payableTotal = Number(latestInvoiceTotal || order.total_amount || 0);
+  const balance = Math.max(payableTotal - totalPaid, 0);
+
+  useEffect(() => {
+    if (payments.length === 0) return;
+    const storedPaid = Number(order.deposit_paid || 0);
+    if (Math.abs(storedPaid - totalPaid) > 0.009) {
+      onUpdate(order.id, { deposit_paid: totalPaid });
+    }
+  }, [order.id, order.deposit_paid, onUpdate, payments.length, totalPaid]);
 
   const resolvedCouriers = couriers?.length ? couriers : DEFAULT_COURIERS;
   const courier = resolvedCouriers.find(c => c.value === order.courier);
@@ -1334,7 +1353,7 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
     };
     onUpdate(order.id, {
       invoice_files: files,
-      ...(!hasOrderTotal ? { total_amount: amount } : {}),
+      total_amount: amount,
     });
     setAmountIdx(null);
     setAmountInput("");
@@ -1351,7 +1370,7 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
       const existingNumbers = order.invoice_numbers || [];
       const invoiceAmountInput = parseMoneyInput(invoiceTotal);
       const invoiceAmount = invoiceAmountInput ?? (hasOrderTotal ? orderTotal : null);
-      const shouldSetOrderTotal = !hasOrderTotal && invoiceAmountInput;
+      const shouldSetOrderTotal = Boolean(invoiceAmountInput);
 
       onUpdate(order.id, {
         ...(shouldSetOrderTotal ? { total_amount: invoiceAmount } : {}),
@@ -1469,7 +1488,7 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
             <p className="text-xs font-semibold text-foreground">Invoice pricing</p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {hasOrderTotal
-                ? "Order total already exists, so the invoice gets a reference highlight."
+                ? "Saving an invoice total updates the order value used by tracking and balance checks."
                 : "Add the invoice total before upload to set the missing order price."}
             </p>
           </div>
