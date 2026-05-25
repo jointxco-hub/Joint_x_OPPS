@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { Component, useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,6 +13,43 @@ import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
+
+class OrderDrawerErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error("[Orders] Order drawer failed to render", error);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-xl">
+            <p className="text-sm font-semibold text-foreground">Order drawer could not open</p>
+            <p className="mt-2 text-sm text-muted-foreground">Close this and reopen the order. The rest of OPPS is still running.</p>
+            <Button className="mt-4 w-full rounded-xl" onClick={this.props.onClose}>Close drawer</Button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 const statusConfig = {
   confirmed:     { label: "Confirmed",     color: "bg-primary/10 text-primary" },
@@ -358,16 +395,19 @@ export default function Orders() {
       </div>
 
       {selectedOrder && (
-        <OrderDrawer
-          order={selectedOrder}
-          onClose={() => setSelectedOrder(null)}
-          onUpdate={(id, data) => {
-            updateMutation.mutate({ id, data });
-            setSelectedOrder(prev => ({ ...prev, ...data }));
-          }}
-          onArchive={() => archiveOrder(selectedOrder.id)}
-          isArchiving={isArchiving}
-        />
+        <OrderDrawerErrorBoundary resetKey={selectedOrder.id} onClose={() => setSelectedOrder(null)}>
+          <OrderDrawer
+            key={selectedOrder.id}
+            order={selectedOrder}
+            onClose={() => setSelectedOrder(null)}
+            onUpdate={(id, data) => {
+              updateMutation.mutate({ id, data });
+              setSelectedOrder(prev => ({ ...(prev || selectedOrder), ...data }));
+            }}
+            onArchive={() => archiveOrder(selectedOrder.id)}
+            isArchiving={isArchiving}
+          />
+        </OrderDrawerErrorBoundary>
       )}
 
       {showNew && (

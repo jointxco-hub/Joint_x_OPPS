@@ -48,14 +48,18 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
   const set = (field, value) => onUpdate({ [field]: value });
 
   const uploadFile = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
     setUploading(true);
     try {
-      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+      const uploaded = [];
+      for (const file of files) {
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+        uploaded.push({ name: file.name, url: file_url, type: file.type });
+      }
       const existing = task.supporting_files || [];
-      onUpdate({ supporting_files: [...existing, { name: file.name, url: file_url, type: file.type }] });
-      toast.success("File uploaded");
+      onUpdate({ supporting_files: [...existing, ...uploaded] });
+      toast.success(uploaded.length === 1 ? "File uploaded" : `${uploaded.length} files uploaded`);
     } catch {
       toast.error("Upload failed");
     } finally {
@@ -337,7 +341,7 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Attachments</p>
               <label className="cursor-pointer text-xs text-primary hover:underline">
                 {uploading ? "Uploading…" : <><Paperclip className="w-3 h-3 inline mr-1" />Upload</>}
-                <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />
+                <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
               </label>
             </div>
             {(task.supporting_files || task.file_urls || []).length > 0 ? (

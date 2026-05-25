@@ -220,17 +220,21 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   };
 
   const uploadFile = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     setUploading(true);
     try {
-      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+      const uploaded = [];
+      for (const file of files) {
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+        if (file_url) uploaded.push(file_url);
+      }
       const updated = {
-        file_urls: [...(order.file_urls || []), file_url],
+        file_urls: [...(order.file_urls || []), ...uploaded],
         portal_visible_file_urls: Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [],
       };
       onUpdate(order.id, updated);
-      toast.success("File uploaded");
+      toast.success(uploaded.length === 1 ? "File uploaded" : `${uploaded.length} files uploaded`);
     } catch (err) {
       toast.error((/** @type {any} */ (err))?.message || "Upload failed");
     }
@@ -461,7 +465,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
             <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all">
               <Paperclip className="w-3 h-3" /> {uploading ? 'Uploading...' : 'Upload File'}
             </span>
-            <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />
+            <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
           </label>
           <button
             onClick={() => setShowException(true)}
@@ -1025,7 +1029,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   <Paperclip className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">{uploading ? 'Uploading...' : 'Upload a file'}</span>
                 </div>
-                <input type="file" className="hidden" onChange={uploadFile} disabled={uploading} />
+                <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
               </label>
               {order.file_urls?.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1497,43 +1501,45 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
   };
 
   const uploadInvoice = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     setUploading(true);
     try {
-      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
       const existing = order.invoice_files || [];
-      const invoiceNumber = extractInvoiceNumber(file.name);
       const existingNumbers = order.invoice_numbers || [];
       const invoiceAmountInput = parseMoneyInput(invoiceTotal);
       const invoiceAmount = invoiceAmountInput ?? (hasOrderTotal ? orderTotal : null);
       const shouldSetOrderTotal = Boolean(invoiceAmountInput);
+      const uploadedInvoices = [];
+      const uploadedNumbers = [];
+
+      for (const file of files) {
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+        const invoiceNumber = extractInvoiceNumber(file.name);
+        if (invoiceNumber) uploadedNumbers.push(invoiceNumber);
+        uploadedInvoices.push({
+          name: file.name,
+          url: file_url,
+          type: file.type,
+          uploaded_at: new Date().toISOString(),
+          source: 'zoho_books',
+          invoice_number: invoiceNumber,
+          invoice_total: invoiceAmount,
+          balance_after_payments: invoiceAmount ? Math.max(invoiceAmount - totalPaid, 0) : undefined,
+          paid_at_upload: totalPaid,
+        });
+      }
 
       onUpdate(order.id, {
         ...(shouldSetOrderTotal ? { total_amount: invoiceAmount } : {}),
-        invoice_files: [
-          ...existing,
-          {
-            name: file.name,
-            url: file_url,
-            type: file.type,
-            uploaded_at: new Date().toISOString(),
-            source: 'zoho_books',
-            invoice_number: invoiceNumber,
-            invoice_total: invoiceAmount,
-            balance_after_payments: invoiceAmount ? Math.max(invoiceAmount - totalPaid, 0) : undefined,
-            paid_at_upload: totalPaid,
-          },
-        ],
+        invoice_files: [...existing, ...uploadedInvoices],
         // Append extracted number to the searchable invoice_numbers array
-        invoice_numbers: invoiceNumber && !existingNumbers.includes(invoiceNumber)
-          ? [...existingNumbers, invoiceNumber]
-          : existingNumbers,
+        invoice_numbers: Array.from(new Set([...existingNumbers, ...uploadedNumbers])),
       });
       setInvoiceTotal("");
-      toast.success(invoiceNumber
-        ? `Invoice uploaded — reference ${invoiceNumber} added to tracking`
-        : "Invoice uploaded");
+      toast.success(files.length === 1
+        ? (uploadedNumbers[0] ? `Invoice uploaded - reference ${uploadedNumbers[0]} added to tracking` : "Invoice uploaded")
+        : `${files.length} invoices uploaded`);
     } catch {
       toast.error("Upload failed");
     } finally {
@@ -1671,7 +1677,7 @@ function InvoicesTab({ order, onUpdate, totalPaid = 0 }) {
             {uploading ? 'Uploading invoice…' : 'Upload Zoho Books invoice'}
           </span>
         </div>
-        <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" onChange={uploadInvoice} disabled={uploading} />
+        <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" multiple onChange={uploadInvoice} disabled={uploading} />
       </label>
 
       {invoices.length === 0 ? (

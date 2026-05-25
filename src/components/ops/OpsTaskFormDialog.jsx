@@ -63,14 +63,23 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
   };
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
     setUploading(true);
-    const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
-    const newFile = { name: file.name, url: file_url, type: file.type };
-    setFormData(prev => ({ ...prev, supporting_files: [...(prev.supporting_files || []), newFile] }));
-    setUploading(false);
-    toast.success("File uploaded");
+    try {
+      const uploaded = [];
+      for (const file of files) {
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+        uploaded.push({ name: file.name, url: file_url, type: file.type });
+      }
+      setFormData(prev => ({ ...prev, supporting_files: [...(prev.supporting_files || []), ...uploaded] }));
+      toast.success(uploaded.length === 1 ? "File uploaded" : `${uploaded.length} files uploaded`);
+    } catch {
+      toast.error("Upload failed");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
 
   const removeFile = (idx) => {
@@ -320,7 +329,7 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
               <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700">
                 {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Paperclip className="w-3 h-3" />}
                 Upload file...
-                <input type="file" className="hidden" onChange={handleFileUpload} disabled={uploading} />
+                <input type="file" className="hidden" multiple onChange={handleFileUpload} disabled={uploading} />
               </label>
             </div>
           </div>
