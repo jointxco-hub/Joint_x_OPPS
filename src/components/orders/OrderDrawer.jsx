@@ -74,7 +74,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [editingField, setEditingField] = useState(null);
   const [fieldValue, setFieldValue] = useState("");
   const [showPayment, setShowPayment] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'eft', notes: '' });
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [paymentForm, setPaymentForm] = useState({
+    amount: '',
+    method: 'eft',
+    status: 'completed',
+    date: new Date().toISOString().split('T')[0],
+    notes: '',
+  });
   const [uploading, setUploading] = useState(false);
   const [showException, setShowException] = useState(false);
   const [localPipelineStage, setLocalPipelineStage] = useState(order.pipeline_stage);
@@ -168,10 +175,36 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['income'] });
       setShowPayment(false);
-      setPaymentForm({ amount: '', method: 'eft', notes: '' });
+      resetPaymentForm();
       toast.success("Payment added");
     },
     onError: (err) => toast.error("Payment failed — " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
+  });
+
+  const updatePaymentMutation = useMutation({
+    mutationFn: ({ id, data }) => dataClient.entities.Payment.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['income'] });
+      setShowPayment(false);
+      resetPaymentForm();
+      toast.success("Payment updated");
+    },
+    onError: (err) => toast.error("Payment update failed - " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
+  });
+
+  const deletePaymentMutation = useMutation({
+    mutationFn: (id) => dataClient.entities.Payment.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
+      queryClient.invalidateQueries({ queryKey: ['payments'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['income'] });
+      toast.success("Payment removed");
+    },
+    onError: (err) => toast.error("Payment delete failed - " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
   });
 
   const startEdit = (field, value) => {
@@ -207,16 +240,53 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const addPayment = () => {
     if (!paymentForm.amount) return;
-    addPaymentMutation.mutate({
+    const payload = {
       order_id: order.id,
       order_number: order.order_number,
       client_name: order.client_name,
       amount: parseFloat(paymentForm.amount),
       payment_method: paymentForm.method,
-      payment_status: 'completed',
-      payment_date: new Date().toISOString().split('T')[0],
+      payment_status: paymentForm.status,
+      payment_date: paymentForm.date || new Date().toISOString().split('T')[0],
       notes: paymentForm.notes,
+    };
+
+    if (editingPaymentId) {
+      updatePaymentMutation.mutate({ id: editingPaymentId, data: payload });
+      return;
+    }
+
+    addPaymentMutation.mutate(payload);
+  };
+
+  const resetPaymentForm = () => {
+    setEditingPaymentId(null);
+    setPaymentForm({
+      amount: '',
+      method: 'eft',
+      status: 'completed',
+      date: new Date().toISOString().split('T')[0],
+      notes: '',
     });
+  };
+
+  const startPaymentEdit = (payment) => {
+    setEditingPaymentId(payment.id);
+    setPaymentForm({
+      amount: payment.amount != null ? String(payment.amount) : '',
+      method: payment.method || payment.payment_method || 'eft',
+      status: payment.status || payment.payment_status || 'completed',
+      date: payment.payment_date || payment.date || new Date().toISOString().split('T')[0],
+      notes: payment.notes || '',
+    });
+    setShowPayment(true);
+  };
+
+  const removePayment = (payment) => {
+    if (!payment?.id) return;
+    const confirmed = window.confirm(`Remove payment of R${Number(payment.amount || 0).toLocaleString()} from this order?`);
+    if (!confirmed) return;
+    deletePaymentMutation.mutate(payment.id);
   };
 
   const createTaskMutation = useMutation({
@@ -270,7 +340,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   };
 
   const currentStageIndex = progressStages.indexOf(order.status);
-  const totalPaid = payments.filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
+  const totalPaid = payments
+    .filter(p => p.status === 'completed')
+    .reduce((s, p) => s + Number(p.amount || 0), 0);
   const invoiceFiles = Array.isArray(order.invoice_files) ? order.invoice_files : [];
   const latestInvoiceTotal = [...invoiceFiles]
     .reverse()
@@ -280,7 +352,6 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const balance = Math.max(payableTotal - totalPaid, 0);
 
   useEffect(() => {
-    if (payments.length === 0) return;
     const storedPaid = Number(order.deposit_paid || 0);
     if (Math.abs(storedPaid - totalPaid) > 0.009) {
       onUpdate(order.id, { deposit_paid: totalPaid });
@@ -371,8 +442,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           ))}
           <button
             onClick={() => {
+              setEditingPaymentId(null);
               if (!showPayment && balance > 0) {
-                setPaymentForm(pf => ({ ...pf, amount: pf.amount || String(balance) }));
+                setPaymentForm(pf => ({
+                  ...pf,
+                  amount: pf.amount || String(balance),
+                  status: pf.status || 'completed',
+                  date: pf.date || new Date().toISOString().split('T')[0],
+                }));
               }
               setShowPayment(v => !v);
             }}
@@ -398,20 +475,53 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         {showPayment && (
           <div className="px-5 py-3 bg-green-50/50 border-b border-border">
             <div className="flex items-center gap-2 mb-2">
-              <h4 className="text-xs font-semibold text-green-800">Add Payment</h4>
-              <button onClick={() => setShowPayment(false)}><X className="w-3 h-3 text-muted-foreground" /></button>
+              <h4 className="text-xs font-semibold text-green-800">{editingPaymentId ? 'Edit Payment' : 'Add Payment'}</h4>
+              <button
+                onClick={() => {
+                  setShowPayment(false);
+                  resetPaymentForm();
+                }}
+              >
+                <X className="w-3 h-3 text-muted-foreground" />
+              </button>
             </div>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_120px_120px_130px_auto]">
               <Input value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})}
-                placeholder="Amount (R)" type="number" className="rounded-lg h-8 text-sm flex-1" />
+                placeholder="Amount (R)" type="number" className="rounded-lg h-8 text-sm" />
               <Select value={paymentForm.method} onValueChange={v => setPaymentForm({...paymentForm, method: v})}>
-                <SelectTrigger className="h-8 rounded-lg text-xs w-28"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-8 rounded-lg text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {['cash','card','eft','bank_transfer'].map(m => <SelectItem key={m} value={m}>{m.replace('_',' ')}</SelectItem>)}
+                  {['cash','card','eft','bank_transfer','other'].map(m => <SelectItem key={m} value={m}>{m.replace('_',' ')}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button size="sm" onClick={addPayment} className="h-8 rounded-lg px-3">Add</Button>
+              <Select value={paymentForm.status} onValueChange={v => setPaymentForm({...paymentForm, status: v})}>
+                <SelectTrigger className="h-8 rounded-lg text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {['completed','pending','failed','refunded'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Input value={paymentForm.date} onChange={e => setPaymentForm({...paymentForm, date: e.target.value})}
+                type="date" className="rounded-lg h-8 text-sm" />
+              <Button
+                size="sm"
+                onClick={addPayment}
+                disabled={addPaymentMutation.isPending || updatePaymentMutation.isPending}
+                className="h-8 rounded-lg px-3"
+              >
+                {editingPaymentId ? 'Save' : 'Add'}
+              </Button>
             </div>
+            <Input
+              value={paymentForm.notes}
+              onChange={e => setPaymentForm({...paymentForm, notes: e.target.value})}
+              placeholder="Payment note, reference, or correction reason"
+              className="mt-2 rounded-lg h-8 text-sm"
+            />
+            {editingPaymentId && (
+              <button onClick={resetPaymentForm} className="mt-2 text-xs font-medium text-muted-foreground hover:text-foreground">
+                Cancel edit and add a new payment instead
+              </button>
+            )}
           </div>
         )}
 
@@ -550,18 +660,45 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <div className="text-center py-8">
                   <CreditCard className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">No payments recorded</p>
-                  <button onClick={() => setShowPayment(true)} className="mt-2 text-xs text-primary font-medium">Add first payment</button>
+                  <button
+                    onClick={() => {
+                      resetPaymentForm();
+                      setPaymentForm(pf => ({ ...pf, amount: balance > 0 ? String(balance) : '' }));
+                      setShowPayment(true);
+                    }}
+                    className="mt-2 text-xs text-primary font-medium"
+                  >
+                    Add first payment
+                  </button>
                 </div>
               ) : (
                 payments.map(p => (
-                  <div key={p.id} className="flex items-center justify-between p-3 bg-secondary/30 rounded-xl">
+                  <div key={p.id} className="flex items-center justify-between gap-3 p-3 bg-secondary/30 rounded-xl">
                     <div>
                       <p className="text-sm font-semibold text-foreground">R{p.amount?.toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground capitalize">{p.method?.replace('_', ' ')} · {p.payment_date ? format(new Date(p.payment_date), 'MMM d, yyyy') : ''}</p>
+                      {p.notes && <p className="mt-1 text-xs text-muted-foreground">{p.notes}</p>}
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded-full ${p.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {p.status}
-                    </span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className={`text-xs px-2 py-1 rounded-full ${p.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {p.status}
+                      </span>
+                      <button
+                        onClick={() => startPaymentEdit(p)}
+                        className="rounded-full p-1.5 text-muted-foreground hover:bg-background hover:text-primary"
+                        title="Edit payment"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => removePayment(p)}
+                        disabled={deletePaymentMutation.isPending}
+                        className="rounded-full p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                        title="Remove payment"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
