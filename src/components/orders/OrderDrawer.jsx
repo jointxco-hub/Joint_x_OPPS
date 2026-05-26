@@ -4,7 +4,7 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, ShoppingCart, AlertTriangle, Copy, Check,
-  User, FileText, Plus, Trash2, Pencil, FolderOpen, FolderPlus, MoveRight
+  User, FileText, Plus, Minus, Trash2, Pencil, FolderOpen, FolderPlus, MoveRight
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -1261,18 +1261,21 @@ function ProductsEditor({ order, onUpdate }) {
   });
 
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
-  const [editRow, setEditRow] = useState({ name: "", quantity: 1, price: "", size: "", color: "", notes: "" });
+  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "" };
+  const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
-  const [newRow, setNewRow] = useState({ name: "", quantity: 1, price: "", size: "", color: "", notes: "" });
+  const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
   const [showPicker, setShowPicker] = useState(false);
 
   const products = order.products || [];
+  const thumbFor = (item) => item?.image_url || item?.primary_image || item?.thumbnail_url || item?.cover_image_url || (Array.isArray(item?.images) ? (item.images[0]?.src || item.images[0]) : "");
+  const listFrom = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
 
   const saveRow = () => {
     if (!editRow.name.trim()) return;
     const updated = products.map((p, i) =>
-      i === editingIdx ? { ...p, name: editRow.name, quantity: Number(editRow.quantity) || 1, price: editRow.price, size: editRow.size, color: editRow.color, notes: editRow.notes } : p
+      i === editingIdx ? { ...p, ...editRow, quantity: Number(editRow.quantity) || 1 } : p
     );
     onUpdate(order.id, { products: updated });
     setEditingIdx(null);
@@ -1285,9 +1288,9 @@ function ProductsEditor({ order, onUpdate }) {
 
   const addRow = () => {
     if (!newRow.name.trim()) return;
-    const updated = [...products, { name: newRow.name, quantity: Number(newRow.quantity) || 1, price: newRow.price, size: newRow.size, color: newRow.color, notes: newRow.notes }];
+    const updated = [...products, { ...newRow, quantity: Number(newRow.quantity) || 1 }];
     onUpdate(order.id, { products: updated });
-    setNewRow({ name: "", quantity: 1, price: "", size: "", color: "", notes: "" });
+    setNewRow(emptyRow);
     setAddMode(false);
     setPickerSearch("");
     setShowPicker(false);
@@ -1295,17 +1298,46 @@ function ProductsEditor({ order, onUpdate }) {
 
   const allPickerItems = [
     ...(/** @type {any[]} */ (catalogItems))
-      .filter((/** @type {any} */ c) => c.is_archived !== true && c.status !== "draft")
-      .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true && c.status !== "hidden")
-      .map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? c.base_price ?? "", source: "catalog" })),
+      .filter((/** @type {any} */ c) => c.is_archived !== true)
+      .filter((/** @type {any} */ c) => c.store_visible !== false)
+      .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true)
+      .filter((/** @type {any} */ c) => !["draft", "hidden", "inactive", "archived"].includes(String(c.status || "active").toLowerCase()))
+      .map((/** @type {any} */ c) => ({
+        id: c.id,
+        name: c.name,
+        price: c.price ?? c.base_price ?? c.selling_price ?? "",
+        source: "catalog",
+        category: c.category || "",
+        image_url: thumbFor(c),
+        sizes: listFrom(c.sizes || c.size_options || c.sizes_available || c.variants?.sizes),
+        colors: listFrom(c.colors || c.colours || c.color_options || c.colour_options || c.colors_available || c.variants?.colors),
+      })),
     ...(/** @type {any[]} */ (inventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
-      .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "", source: "stock" })),
+      .map((/** @type {any} */ i) => ({
+        id: i.id,
+        name: i.name,
+        price: i.selling_price ?? "",
+        source: "stock",
+        category: i.category || "",
+        image_url: thumbFor(i),
+        sizes: listFrom(i.sizes_available),
+        colors: listFrom(i.colors_available),
+      })),
   ];
 
   const filtered = pickerSearch
     ? allPickerItems.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
     : allPickerItems.slice(0, 8);
+  const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
+
+  const updateQuantity = (idx, delta) => {
+    const updated = products.map((item, i) => i === idx
+      ? { ...item, quantity: Math.max(1, Number(item.quantity || 1) + delta) }
+      : item
+    );
+    onUpdate(order.id, { products: updated });
+  };
 
   return (
     <div className="bg-secondary/30 rounded-xl p-4">
@@ -1344,15 +1376,27 @@ function ProductsEditor({ order, onUpdate }) {
               </div>
             </div>
           ) : (
-            <div key={i} className="flex items-center justify-between group px-1 py-1 rounded-lg hover:bg-card/60 transition-all">
+            <div key={i} className="flex items-center gap-3 group px-2 py-2 rounded-xl hover:bg-card/70 transition-all">
+              <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 flex-shrink-0">
+                {p.image_url ? <img src={p.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
+              </div>
+              <div className="min-w-0 flex-1">
               <span className="text-sm text-foreground flex-1 truncate">
                 {p.name}
                 {(p.size || p.color) && <span className="ml-2 text-xs text-muted-foreground">{[p.size, p.color].filter(Boolean).join(" / ")}</span>}
               </span>
+              {(p.category || p.source) && <p className="mt-0.5 truncate text-xs text-muted-foreground">{[p.category, p.source].filter(Boolean).join(" / ")}</p>}
+              </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-xs text-muted-foreground">×{p.quantity || 1}</span>
+                <button type="button" onClick={() => updateQuantity(i, -1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
+                  <Minus className="h-3 w-3" />
+                </button>
+                <span className="min-w-5 text-center text-xs font-semibold">{p.quantity || 1}</span>
+                <button type="button" onClick={() => updateQuantity(i, 1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
+                  <Plus className="h-3 w-3" />
+                </button>
                 {p.price && <span className="text-sm font-semibold text-foreground">R{Number(p.price).toLocaleString()}</span>}
-                <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "" }); }}
+                <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "", catalog_item_id: p.catalog_item_id || "", inventory_item_id: p.inventory_item_id || "", image_url: p.image_url || "", category: p.category || "", source: p.source || "" }); }}
                   className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all">
                   <Pencil className="w-3 h-3" />
                 </button>
@@ -1385,15 +1429,31 @@ function ProductsEditor({ order, onUpdate }) {
                 {filtered.map((item, idx) => (
                   <button key={idx} type="button"
                     onMouseDown={() => {
-                      setNewRow(r => ({ ...r, name: item.name, price: item.price ? String(item.price) : r.price }));
+                      setNewRow(r => ({
+                        ...r,
+                        name: item.name,
+                        price: item.price ? String(item.price) : r.price,
+                        catalog_item_id: item.source === "catalog" ? item.id : "",
+                        inventory_item_id: item.source === "stock" ? item.id : "",
+                        image_url: item.image_url || "",
+                        category: item.category || "",
+                        source: item.source,
+                        size: "",
+                        color: "",
+                      }));
                       setPickerSearch("");
                       setShowPicker(false);
                     }}
-                    className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between">
-                    <span className="text-sm text-foreground">{item.name}</span>
+                    className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center gap-3">
+                    <div className="h-10 w-10 overflow-hidden rounded-lg border border-border bg-secondary/60 flex-shrink-0">
+                      {item.image_url ? <img src={item.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-2.5 h-5 w-5 text-muted-foreground/50" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-foreground">{item.name}</p>
+                      <p className="truncate text-[10px] text-muted-foreground">{[item.category, item.source].filter(Boolean).join(" / ")}</p>
+                    </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {item.price ? <span className="text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
-                      <span className="text-[10px] text-muted-foreground capitalize">{item.source}</span>
                     </div>
                   </button>
                 ))}
@@ -1423,10 +1483,26 @@ function ProductsEditor({ order, onUpdate }) {
               type="number" placeholder="Price (R)" className="h-8 text-sm rounded-xl flex-1" />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Input value={newRow.size} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, size: e.target.value }))}
-              placeholder="Size" className="h-8 text-sm rounded-xl" />
-            <Input value={newRow.color} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, color: e.target.value }))}
-              placeholder="Colour" className="h-8 text-sm rounded-xl" />
+            {selectedPickerItem?.sizes?.length ? (
+              <select value={newRow.size} onChange={(e) => setNewRow(r => ({ ...r, size: e.target.value }))}
+                className="h-8 rounded-xl border border-input bg-background px-3 text-sm">
+                <option value="">Size</option>
+                {selectedPickerItem.sizes.map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            ) : (
+              <Input value={newRow.size} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, size: e.target.value }))}
+                placeholder="Size" className="h-8 text-sm rounded-xl" />
+            )}
+            {selectedPickerItem?.colors?.length ? (
+              <select value={newRow.color} onChange={(e) => setNewRow(r => ({ ...r, color: e.target.value }))}
+                className="h-8 rounded-xl border border-input bg-background px-3 text-sm">
+                <option value="">Colour</option>
+                {selectedPickerItem.colors.map((color) => <option key={color} value={color}>{color}</option>)}
+              </select>
+            ) : (
+              <Input value={newRow.color} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, color: e.target.value }))}
+                placeholder="Colour" className="h-8 text-sm rounded-xl" />
+            )}
           </div>
           <Input value={newRow.notes} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, notes: e.target.value }))}
             placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
