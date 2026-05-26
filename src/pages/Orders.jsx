@@ -2,7 +2,7 @@ import { Component, useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Package, LayoutGrid, List, AlertTriangle } from "lucide-react";
+import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
@@ -74,6 +74,7 @@ export default function Orders() {
   const [viewMode, setViewMode] = useState("list");
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showNew, setShowNew] = useState(false);
+  const [printSummary, setPrintSummary] = useState(null);
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -188,6 +189,22 @@ export default function Orders() {
             </div>
             <Button onClick={() => setShowNew(true)} className="gap-2 shadow-apple-sm rounded-xl">
               <Plus className="w-4 h-4" /> New Order
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPrintSummary("active")}
+              className="hidden gap-2 rounded-xl md:inline-flex"
+            >
+              <Printer className="w-4 h-4" /> Active summary
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPrintSummary("due")}
+              className="hidden gap-2 rounded-xl md:inline-flex"
+            >
+              <Printer className="w-4 h-4" /> Due
             </Button>
           </div>
         </div>
@@ -420,8 +437,232 @@ export default function Orders() {
           }}
         />
       )}
+
+      {printSummary && (
+        <OrdersProductionSummary
+          type={printSummary}
+          orders={orders}
+          stages={stages}
+          onClose={() => setPrintSummary(null)}
+        />
+      )}
     </div>
   );
+}
+
+function OrdersProductionSummary({ type, orders, stages, onClose }) {
+  const activeOrders = orders
+    .filter(order => !order.is_archived && !["delivered", "cancelled"].includes(order.status))
+    .sort((a, b) => {
+      const aDue = Date.parse(a.due_date || "") || Number.MAX_SAFE_INTEGER;
+      const bDue = Date.parse(b.due_date || "") || Number.MAX_SAFE_INTEGER;
+      return aDue - bDue || String(a.client_name || "").localeCompare(String(b.client_name || ""));
+    });
+
+  const summaryOrders = type === "due"
+    ? activeOrders.filter(order => order.due_date)
+    : activeOrders;
+  const stageLabelByKey = new Map((stages || []).map(stage => [stage.key, stage.display_name || stage.name || stage.key]));
+  const groups = groupProductionSummaryOrders(summaryOrders, stageLabelByKey, type);
+  const printedAt = format(new Date(), "d MMM yyyy HH:mm");
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-background/95 p-4 print:static print:bg-white print:p-0">
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          .orders-production-print, .orders-production-print * { visibility: visible; }
+          .orders-production-print { position: absolute; inset: 0; width: 100%; padding: 18mm; background: #fff; color: #111; }
+          .no-print { display: none !important; }
+          .print-order-card { break-inside: avoid; page-break-inside: avoid; }
+        }
+      `}</style>
+
+      <div className="no-print mx-auto mb-4 flex max-w-6xl items-center justify-between gap-3 rounded-2xl border border-border bg-card p-3 shadow-apple-sm">
+        <div>
+          <p className="text-sm font-semibold text-foreground">
+            {type === "due" ? "Due order production summary" : "Active order production summary"}
+          </p>
+          <p className="text-xs text-muted-foreground">Categorised with mockups, contact aliases, due dates, and execution notes.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" onClick={onClose} className="rounded-xl">Close</Button>
+          <Button type="button" onClick={() => window.print()} className="rounded-xl gap-2">
+            <Printer className="h-4 w-4" /> Print
+          </Button>
+        </div>
+      </div>
+
+      <div className="orders-production-print mx-auto max-h-[calc(100vh-96px)] max-w-6xl overflow-y-auto rounded-2xl border border-border bg-white p-6 shadow-apple-sm print:max-h-none print:overflow-visible print:rounded-none print:border-0 print:p-0 print:shadow-none">
+        <header className="mb-6 flex items-start justify-between gap-6 border-b border-zinc-200 pb-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-700">Joint X OPPS</p>
+            <h1 className="mt-2 text-2xl font-bold text-zinc-950">
+              {type === "due" ? "Due Order Summary" : "Active Production Summary"}
+            </h1>
+            <p className="mt-1 text-sm text-zinc-600">Team handover sheet for production, packing, and follow-up.</p>
+          </div>
+          <div className="text-right text-xs text-zinc-600">
+            <p>Printed {printedAt}</p>
+            <p className="mt-1 font-semibold text-zinc-950">{summaryOrders.length} orders</p>
+          </div>
+        </header>
+
+        {summaryOrders.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-zinc-300 p-10 text-center text-sm text-zinc-500">
+            No matching active orders.
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {groups.map(group => (
+              <section key={group.title} className="space-y-3">
+                <div className="flex items-center justify-between border-b border-zinc-200 pb-2">
+                  <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-zinc-800">{group.title}</h2>
+                  <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">{group.orders.length}</span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 print:grid-cols-2">
+                  {group.orders.map(order => (
+                    <ProductionSummaryOrderCard key={order.id} order={order} stageLabel={stageLabelByKey.get(order.pipeline_stage)} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProductionSummaryOrderCard({ order, stageLabel }) {
+  const thumb = getOrderThumbnail(order);
+  const products = getOrderProducts(order);
+  const statusLabel = statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
+  const dueLabel = order.due_date ? format(new Date(order.due_date), "d MMM yyyy") : "No due date";
+  const notes = [order.notes, order.special_instructions, order.delivery_note].filter(Boolean).join(" / ");
+
+  return (
+    <article className="print-order-card rounded-2xl border border-zinc-200 bg-white p-3">
+      <div className="flex gap-3">
+        <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+          {thumb ? (
+            <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 className="truncate text-sm font-bold text-zinc-950">{order.client_name || "Client"}</h3>
+              <p className="font-mono text-xs text-zinc-500">{order.order_number || order.id}</p>
+            </div>
+            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700">{statusLabel}</span>
+          </div>
+
+          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+            <PrintDatum label="Due" value={dueLabel} />
+            <PrintDatum label="Stage" value={stageLabel || order.pipeline_stage || "Order received"} />
+            <PrintDatum label="WhatsApp" value={order.whatsapp_name || "Not saved"} />
+            <PrintDatum label="Saved as" value={order.saved_contact_name || "Not saved"} />
+            <PrintDatum label="PEP/Courier" value={order.pep_code || order.tracking_number || "Not added"} />
+            <PrintDatum label="Total" value={order.total_amount ? `R${Number(order.total_amount).toLocaleString()}` : "Not set"} />
+          </dl>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-xl bg-zinc-50 p-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">Products / Work</p>
+        {products.length > 0 ? (
+          <ul className="mt-1 space-y-1 text-xs text-zinc-800">
+            {products.slice(0, 5).map((product, index) => (
+              <li key={`${product.name}-${index}`} className="flex justify-between gap-2">
+                <span>{product.quantity ? `${product.quantity} x ` : ""}{product.name || "Item"}</span>
+                <span className="text-zinc-500">{[product.size, product.color].filter(Boolean).join(" / ")}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-xs text-zinc-500">No product lines added.</p>
+        )}
+      </div>
+
+      {notes ? (
+        <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+          {notes}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
+function PrintDatum({ label, value }) {
+  return (
+    <div>
+      <dt className="text-[9px] font-bold uppercase tracking-wide text-zinc-400">{label}</dt>
+      <dd className="truncate font-medium text-zinc-800">{value || "—"}</dd>
+    </div>
+  );
+}
+
+function groupProductionSummaryOrders(orders, stageLabelByKey, type) {
+  if (type === "due") {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+    return [
+      { title: "Overdue", orders: orders.filter(order => order.due_date && new Date(order.due_date) < today) },
+      { title: "Due today", orders: orders.filter(order => order.due_date && sameDay(new Date(order.due_date), today)) },
+      { title: "Due tomorrow", orders: orders.filter(order => order.due_date && sameDay(new Date(order.due_date), tomorrow)) },
+      { title: "Due this week", orders: orders.filter(order => {
+        if (!order.due_date) return false;
+        const due = new Date(order.due_date);
+        return due > tomorrow && due <= nextWeek;
+      }) },
+      { title: "Later", orders: orders.filter(order => order.due_date && new Date(order.due_date) > nextWeek) },
+    ].filter(group => group.orders.length > 0);
+  }
+
+  const groups = new Map();
+  orders.forEach(order => {
+    const title = stageLabelByKey.get(order.pipeline_stage) || statusConfig[order.status]?.label || "Active orders";
+    groups.set(title, [...(groups.get(title) || []), order]);
+  });
+  return [...groups.entries()].map(([title, groupOrders]) => ({ title, orders: groupOrders }));
+}
+
+function sameDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function getOrderProducts(order) {
+  if (Array.isArray(order.products)) return order.products;
+  if (Array.isArray(order.items)) return order.items;
+  return [];
+}
+
+function getOrderThumbnail(order) {
+  const candidates = [
+    ...extractUrls(order.portal_visible_file_urls),
+    ...extractUrls(order.file_urls),
+    ...extractUrls(order.mockup_urls),
+    ...getOrderProducts(order).flatMap(product => extractUrls([product.image_url, product.image, product.thumbnail_url, product.thumbnail])),
+  ];
+  return candidates.find(isImageUrl) || "";
+}
+
+function extractUrls(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean).map(String);
+  if (typeof value === "string") return [value];
+  return [];
+}
+
+function isImageUrl(url) {
+  return /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
 }
 
 function KanbanCard({ order, onClick, isDragging, isException }) {

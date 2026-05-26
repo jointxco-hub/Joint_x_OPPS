@@ -180,6 +180,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
   const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
   const displayClientEmail = order.client_email || linkedClient?.email || linkedClient?.client_email || '';
+  const displayWhatsappName = order.whatsapp_name || linkedClient?.whatsapp_name || '';
+  const displaySavedContactName = order.saved_contact_name || linkedClient?.saved_contact_name || '';
 
   const updatePOMutation = useMutation({
     mutationFn: ({ id, data }) => dataClient.entities.PurchaseOrder.update(id, data),
@@ -425,7 +427,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 {statusConfig[order.status]?.label || order.status}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground mb-1.5">#{order.order_number || order.id?.slice(0,8)}</p>
+            <p className="text-xs text-muted-foreground mb-1.5">
+              #{order.order_number || order.id?.slice(0,8)}
+              {displayWhatsappName ? <span> · WhatsApp: {displayWhatsappName}</span> : null}
+            </p>
             <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all ml-3 flex-shrink-0">
@@ -614,6 +619,14 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <EditField label="Client Email" field="client_email" value={displayClientEmail}
                   editing={editingField === 'client_email'} editValue={fieldValue}
                   onEdit={() => startEdit('client_email', displayClientEmail)}
+                  onChange={setFieldValue} onSave={saveEdit} />
+                <EditField label="WhatsApp Name" field="whatsapp_name" value={displayWhatsappName}
+                  editing={editingField === 'whatsapp_name'} editValue={fieldValue}
+                  onEdit={() => startEdit('whatsapp_name', displayWhatsappName)}
+                  onChange={setFieldValue} onSave={saveEdit} />
+                <EditField label="Saved Contact Name" field="saved_contact_name" value={displaySavedContactName}
+                  editing={editingField === 'saved_contact_name'} editValue={fieldValue}
+                  onEdit={() => startEdit('saved_contact_name', displaySavedContactName)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Order Number" field="order_number" value={order.order_number}
                   editing={editingField === 'order_number'} editValue={fieldValue}
@@ -1100,7 +1113,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
       {printView && (
         <OrderQuickPrintSheet
           type={printView}
-          order={{ ...order, client_email: displayClientEmail }}
+          order={{
+            ...order,
+            client_email: displayClientEmail,
+            whatsapp_name: displayWhatsappName,
+            saved_contact_name: displaySavedContactName,
+          }}
           payments={payments}
           totalPaid={totalPaid}
           balance={balance}
@@ -2130,6 +2148,8 @@ function OrderQuickPrintSheet({ type, order, payments, totalPaid, balance, onClo
 
           <OrderPrintSection title="Client & Delivery">
             <OrderPrintRow label="Client" value={order.client_name} />
+            <OrderPrintRow label="WhatsApp Name" value={order.whatsapp_name} />
+            <OrderPrintRow label="Saved Contact" value={order.saved_contact_name} />
             <OrderPrintRow label="Email" value={order.client_email} />
             <OrderPrintRow label="Order" value={order.order_number} />
             <OrderPrintRow label="Status" value={statusConfig[order.status]?.label || order.status} />

@@ -35,6 +35,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     client_name: '',
     client_email: '',
     client_phone: '',
+    whatsapp_name: '',
+    saved_contact_name: '',
     pep_code: '',
     delivery_note: '',
     order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
@@ -118,6 +120,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       client_name: client.name,
       client_email: client.email || f.client_email,
       client_phone: client.phone || f.client_phone,
+      whatsapp_name: client.whatsapp_name || f.whatsapp_name,
+      saved_contact_name: client.saved_contact_name || f.saved_contact_name,
       total_amount: '',
     }));
     setClientSearch(client.name);
@@ -183,6 +187,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             name: form.client_name.trim(),
             email: form.client_email || undefined,
             phone: form.client_phone || undefined,
+            whatsapp_name: form.whatsapp_name || undefined,
+            saved_contact_name: form.saved_contact_name || undefined,
             status: 'active',
             total_orders: 0,
             total_revenue: 0,
@@ -201,6 +207,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             total_revenue: (client?.total_revenue || 0) + total,
             last_activity_date: new Date().toISOString().split('T')[0],
             status: 'active',
+            whatsapp_name: form.whatsapp_name || client?.whatsapp_name || undefined,
+            saved_contact_name: form.saved_contact_name || client?.saved_contact_name || undefined,
           });
         } catch {
           // stats update is non-critical — order creation continues
@@ -323,6 +331,19 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Phone</label>
               <Input value={form.client_phone} onChange={e => setForm({ ...form, client_phone: e.target.value })}
                 placeholder="Phone number" className="rounded-xl h-9 text-sm" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">WhatsApp Name</label>
+              <Input value={form.whatsapp_name} onChange={e => setForm({ ...form, whatsapp_name: e.target.value })}
+                placeholder="Name shown in WhatsApp" className="rounded-xl h-9 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Saved Contact Name</label>
+              <Input value={form.saved_contact_name} onChange={e => setForm({ ...form, saved_contact_name: e.target.value })}
+                placeholder="How you saved them" className="rounded-xl h-9 text-sm" />
             </div>
           </div>
 

@@ -259,7 +259,9 @@ export default function Clients() {
     const matchesSearch = !search || 
       client.name?.toLowerCase().includes(search.toLowerCase()) ||
       client.email?.toLowerCase().includes(search.toLowerCase()) ||
-      client.phone?.toLowerCase().includes(search.toLowerCase());
+      client.phone?.toLowerCase().includes(search.toLowerCase()) ||
+      client.whatsapp_name?.toLowerCase().includes(search.toLowerCase()) ||
+      client.saved_contact_name?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || client.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -371,6 +373,18 @@ export default function Clients() {
                       <div className="flex items-center gap-2 text-sm text-slate-600">
                         <Phone className="w-4 h-4" />
                         {client.phone}
+                      </div>
+                    )}
+                    {client.whatsapp_name && (
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <Phone className="w-4 h-4" />
+                        WhatsApp: {client.whatsapp_name}
+                      </div>
+                    )}
+                    {client.saved_contact_name && (
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <Users className="w-4 h-4" />
+                        Saved as: {client.saved_contact_name}
                       </div>
                     )}
                     {client.delivery_address && (
@@ -487,6 +501,13 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
           <p className="text-sm text-slate-500">
             {client.is_order_only ? 'Auto-linked from orders' : client.company_name || client.brand_name || 'Client account'}
           </p>
+          {(client.whatsapp_name || client.saved_contact_name) && (
+            <p className="mt-1 text-xs text-slate-500">
+              {client.whatsapp_name ? `WhatsApp: ${client.whatsapp_name}` : ''}
+              {client.whatsapp_name && client.saved_contact_name ? ' · ' : ''}
+              {client.saved_contact_name ? `Saved as: ${client.saved_contact_name}` : ''}
+            </p>
+          )}
         </DialogHeader>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -587,6 +608,8 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
     email: "",
     phone: "",
     whatsapp: "",
+    whatsapp_name: "",
+    saved_contact_name: "",
     delivery_address: "",
     company_name: "",
     status: "lead",
@@ -603,6 +626,8 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
         email: "",
         phone: "",
         whatsapp: "",
+        whatsapp_name: "",
+        saved_contact_name: "",
         delivery_address: "",
         company_name: "",
         status: "lead",
@@ -669,6 +694,25 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
                 inputMode="tel"
                 value={formData.whatsapp}
                 onChange={(e) => setFormData({...formData, whatsapp: e.target.value})}
+              />
+            </div>
+            <div>
+              <Label>WhatsApp Name</Label>
+              <Input
+                value={formData.whatsapp_name || ""}
+                onChange={(e) => setFormData({...formData, whatsapp_name: e.target.value})}
+                placeholder="Name shown in WhatsApp"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Saved Contact Name</Label>
+              <Input
+                value={formData.saved_contact_name || ""}
+                onChange={(e) => setFormData({...formData, saved_contact_name: e.target.value})}
+                placeholder="How the client is saved"
               />
             </div>
             <div>
