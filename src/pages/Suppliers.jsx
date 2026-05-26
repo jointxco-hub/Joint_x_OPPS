@@ -132,10 +132,22 @@ export default function Suppliers() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const cleanedProducts = (Array.isArray(formData.products) ? formData.products : [])
+      .map((item) => ({
+        name: String(item.name || "").trim(),
+        sku: String(item.sku || "").trim(),
+        category: String(item.category || "").trim(),
+        cost_price: item.cost_price === "" || item.cost_price == null ? null : Number(item.cost_price),
+        selling_price: item.selling_price === "" || item.selling_price == null ? null : Number(item.selling_price),
+        unit: String(item.unit || "unit").trim(),
+        notes: String(item.notes || "").trim(),
+      }))
+      .filter((item) => item.name);
+    const payload = { ...formData, products: cleanedProducts };
     if (editingSupplier) {
-      updateMutation.mutate({ id: editingSupplier.id, data: formData });
+      updateMutation.mutate({ id: editingSupplier.id, data: payload });
     } else {
-      createMutation.mutate(formData);
+      createMutation.mutate(payload);
     }
   };
 
@@ -160,6 +172,27 @@ export default function Suppliers() {
     setFormData({ ...formData, contacts: formData.contacts.filter((_, i) => i !== index) });
   };
 
+  const addProduct = () => {
+    setFormData({
+      ...formData,
+      products: [
+        ...(Array.isArray(formData.products) ? formData.products : []),
+        { name: "", sku: "", category: "", cost_price: "", selling_price: "", unit: "unit", notes: "" },
+      ],
+    });
+  };
+
+  const updateProduct = (index, field, value) => {
+    const products = Array.isArray(formData.products) ? [...formData.products] : [];
+    products[index] = { ...(products[index] || {}), [field]: value };
+    setFormData({ ...formData, products });
+  };
+
+  const removeProduct = (index) => {
+    const products = Array.isArray(formData.products) ? formData.products : [];
+    setFormData({ ...formData, products: products.filter((_, i) => i !== index) });
+  };
+
   // Get unique locations for filter
   const uniqueLocations = [...new Set(suppliers.map(s => s.location).filter(Boolean))];
 
@@ -168,7 +201,8 @@ export default function Suppliers() {
     if (supplier.is_archived) return false;
     const matchesSearch = !searchTerm || 
       supplier.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      supplier.location?.toLowerCase().includes(searchTerm.toLowerCase());
+      supplier.location?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (Array.isArray(supplier.products) && supplier.products.some((item) => item?.name?.toLowerCase().includes(searchTerm.toLowerCase())));
     const matchesLocation = locationFilter === "all" || supplier.location === locationFilter;
     const matchesType = typeFilter === "all" || supplier.type === typeFilter;
     return matchesSearch && matchesLocation && matchesType;
@@ -404,6 +438,98 @@ export default function Suppliers() {
                     />
                   </div>
 
+                  {/* Supplier products */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold text-foreground text-sm">Supplier Items</h3>
+                        <p className="text-xs text-muted-foreground">Save blanks, print services, packaging, courier items, or price references.</p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={addProduct}>
+                        <Plus className="w-4 h-4 mr-1" /> Add Item
+                      </Button>
+                    </div>
+
+                    {(Array.isArray(formData.products) ? formData.products : []).length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-border bg-secondary/20 p-4 text-sm text-muted-foreground">
+                        No supplier items yet. You can still save the supplier and add items later.
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {(Array.isArray(formData.products) ? formData.products : []).map((product, index) => (
+                          <div key={index} className="rounded-xl border border-border bg-secondary/30 p-3">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Item {index + 1}</p>
+                              <Button type="button" variant="ghost" size="sm" onClick={() => removeProduct(index)} className="h-7 text-red-600">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="col-span-2 space-y-1.5">
+                                <Label>Item name</Label>
+                                <Input
+                                  value={product.name || ""}
+                                  onChange={(e) => updateProduct(index, "name", e.target.value)}
+                                  placeholder="e.g. 180g Loose Fit Tee / DTF meter / Swing tag"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>SKU / Code</Label>
+                                <Input
+                                  value={product.sku || ""}
+                                  onChange={(e) => updateProduct(index, "sku", e.target.value)}
+                                  placeholder="Optional"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Category</Label>
+                                <Input
+                                  value={product.category || ""}
+                                  onChange={(e) => updateProduct(index, "category", e.target.value)}
+                                  placeholder="Blanks, DTF, packaging..."
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Cost price</Label>
+                                <Input
+                                  type="number"
+                                  value={product.cost_price ?? ""}
+                                  onChange={(e) => updateProduct(index, "cost_price", e.target.value)}
+                                  placeholder="R"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Selling / estimate</Label>
+                                <Input
+                                  type="number"
+                                  value={product.selling_price ?? ""}
+                                  onChange={(e) => updateProduct(index, "selling_price", e.target.value)}
+                                  placeholder="R"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Unit</Label>
+                                <Input
+                                  value={product.unit || ""}
+                                  onChange={(e) => updateProduct(index, "unit", e.target.value)}
+                                  placeholder="unit, meter, piece, box"
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Notes</Label>
+                                <Input
+                                  value={product.notes || ""}
+                                  onChange={(e) => updateProduct(index, "notes", e.target.value)}
+                                  placeholder="Sizes, colours, MOQ..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex gap-3 pt-4">
                     <Button type="button" variant="outline" onClick={resetForm} className="flex-1 rounded-xl">
                       Cancel
@@ -496,6 +622,26 @@ export default function Suppliers() {
                           <p className="text-sm text-muted-foreground bg-secondary/40 p-3 rounded-xl mb-4 line-clamp-2">
                             {supplier.notes}
                           </p>
+                        )}
+                        {Array.isArray(supplier.products) && supplier.products.length > 0 && (
+                          <div className="mb-4 rounded-xl border border-border bg-secondary/30 p-3">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Supplier items ({supplier.products.length})
+                            </p>
+                            <div className="space-y-1.5">
+                              {supplier.products.slice(0, 4).map((product, index) => (
+                                <div key={`${product.name}-${index}`} className="flex items-center justify-between gap-3 text-sm">
+                                  <span className="min-w-0 truncate text-foreground">{product.name}</span>
+                                  <span className="shrink-0 text-xs text-muted-foreground">
+                                    {product.cost_price ? `R${Number(product.cost_price).toLocaleString()}` : product.category || product.unit || ""}
+                                  </span>
+                                </div>
+                              ))}
+                              {supplier.products.length > 4 && (
+                                <p className="text-xs text-muted-foreground">+{supplier.products.length - 4} more</p>
+                              )}
+                            </div>
+                          </div>
                         )}
                         <div className="flex gap-2 pt-3 border-t border-border">
                           <Button variant="outline" size="sm" onClick={() => handleEdit(supplier)} className="flex-1 rounded-xl">

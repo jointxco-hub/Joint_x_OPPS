@@ -456,6 +456,7 @@ const ENTITY_CONFIG = {
         avg_uber_fee: numberOrUndefined(payload.avg_uber_fee),
         avg_errand_time: numberOrUndefined(payload.avg_errand_time),
         is_preferred: payload.is_preferred,
+        products: Array.isArray(payload.products) ? payload.products : undefined,
         category: payload.category,
         notes: payload.notes,
         is_archived: payload.is_archived,
