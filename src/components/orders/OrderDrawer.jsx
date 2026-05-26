@@ -100,6 +100,40 @@ function normalizeOrderFileFolders(value) {
   };
 }
 
+class DrawerSectionBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error(`[OrderDrawer] ${this.props.label || "section"} failed`, error);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-semibold">{this.props.label || "This section"} could not load</p>
+          <p className="mt-1 text-xs leading-5">You can still use the rest of this order. Close and reopen after saving any changes.</p>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArchive }) {
   const [tab, setTab] = useState("details");
   const [editingField, setEditingField] = useState(null);
@@ -143,7 +177,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     queryFn: () => dataClient.entities.OpsTask.filter({ order_id: order.id })
   });
 
-  const allLinkedTasks = [...legacyTasks, ...linkedOpsTasks];
+  const safePayments = Array.isArray(payments) ? payments : [];
+  const safeLegacyTasks = Array.isArray(legacyTasks) ? legacyTasks : [];
+  const safeLinkedOpsTasks = Array.isArray(linkedOpsTasks) ? linkedOpsTasks : [];
+  const allLinkedTasks = [...safeLegacyTasks, ...safeLinkedOpsTasks];
 
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
@@ -177,8 +214,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     enabled: editingLinkedPO,
   });
 
-  const linkedPO = purchaseOrders.find(po => po.id === order.linked_po_id);
-  const activePOs = purchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
+  const safePurchaseOrders = Array.isArray(purchaseOrders) ? purchaseOrders : [];
+  const safeUsers = Array.isArray(users) ? users : [];
+  const linkedPO = safePurchaseOrders.find(po => po.id === order.linked_po_id);
+  const activePOs = safePurchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
   const displayClientEmail = order.client_email || linkedClient?.email || linkedClient?.client_email || '';
   const displayWhatsappName = order.whatsapp_name || linkedClient?.whatsapp_name || '';
   const displaySavedContactName = order.saved_contact_name || linkedClient?.saved_contact_name || '';
@@ -378,7 +417,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   };
 
   const currentStageIndex = progressStages.indexOf(order.status);
-  const totalPaid = payments
+  const totalPaid = safePayments
     .filter(p => p.status === 'completed')
     .reduce((s, p) => s + Number(p.amount || 0), 0);
   const invoiceFiles = Array.isArray(order.invoice_files) ? order.invoice_files : [];
@@ -394,7 +433,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     if (Math.abs(storedPaid - totalPaid) > 0.009) {
       onUpdate(order.id, { deposit_paid: totalPaid });
     }
-  }, [order.id, order.deposit_paid, onUpdate, payments.length, totalPaid]);
+  }, [order.id, order.deposit_paid, onUpdate, safePayments.length, totalPaid]);
 
   const resolvedCouriers = couriers?.length ? couriers : DEFAULT_COURIERS;
   const courier = resolvedCouriers.find(c => c.value === order.courier);
@@ -431,7 +470,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               #{order.order_number || order.id?.slice(0,8)}
               {displayWhatsappName ? <span> · WhatsApp: {displayWhatsappName}</span> : null}
             </p>
-            <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
+            <DrawerSectionBoundary label="Order tags" resetKey={`${order.id}-tags`}>
+              <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
+            </DrawerSectionBoundary>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all ml-3 flex-shrink-0">
             <X className="w-4 h-4 text-muted-foreground" />
@@ -465,10 +506,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         </div>
 
         {/* 13-stage detailed pipeline strip */}
-        <PipelineStrip
-          order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
-          onStageChange={setLocalPipelineStage}
-        />
+        <DrawerSectionBoundary label="Pipeline" resetKey={`${order.id}-pipeline`}>
+          <PipelineStrip
+            order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
+            onStageChange={setLocalPipelineStage}
+          />
+        </DrawerSectionBoundary>
 
         {/* Quick Actions */}
         <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
@@ -574,8 +617,8 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
             >
               {t === 'portal' ? 'Client Portal' : t === 'readiness' ? 'Readiness' : t}
-              {t === 'payments' && payments.length > 0 && (
-                <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">{payments.length}</span>
+              {t === 'payments' && safePayments.length > 0 && (
+                <span className="ml-1 text-xs bg-primary/10 text-primary px-1 rounded-full">{safePayments.length}</span>
               )}
               {t === 'tasks' && allLinkedTasks.length > 0 && (
                 <span className="ml-1 text-xs bg-secondary text-muted-foreground px-1 rounded-full">{allLinkedTasks.length}</span>
@@ -595,6 +638,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
         {/* Tab Content */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
+          <DrawerSectionBoundary label={`${tab === "po" ? "PO" : tab} tab`} resetKey={`${order.id}-${tab}`}>
           {tab === 'details' && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-secondary/20 p-3">
@@ -661,7 +705,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">Unassigned</SelectItem>
-                    {users.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
+                    {safeUsers.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -694,7 +738,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Timeline</h3>
                 <div className="space-y-3">
                   <TimelineEntry icon={<Package className="w-3 h-3" />} label="Order Created" time={order.created_date} />
-                  {payments.length > 0 && <TimelineEntry icon={<CreditCard className="w-3 h-3" />} label={`Payment received — R${totalPaid.toLocaleString()}`} time={payments[0]?.payment_date} />}
+                  {safePayments.length > 0 && <TimelineEntry icon={<CreditCard className="w-3 h-3" />} label={`Payment received — R${totalPaid.toLocaleString()}`} time={safePayments[0]?.payment_date} />}
                   {['in_production', 'ready', 'shipped', 'delivered'].filter(s => progressStages.indexOf(s) <= currentStageIndex).map(s => (
                     <TimelineEntry key={s} icon={<CheckCircle2 className="w-3 h-3" />} label={statusConfig[s]?.label} />
                   ))}
@@ -719,7 +763,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   <p className={`text-lg font-bold ${balance > 0 ? 'text-red-800' : 'text-green-800'}`}>R{Math.abs(balance).toLocaleString()}</p>
                 </div>
               </div>
-              {payments.length === 0 ? (
+              {safePayments.length === 0 ? (
                 <div className="text-center py-8">
                   <CreditCard className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
                   <p className="text-sm text-muted-foreground">No payments recorded</p>
@@ -735,7 +779,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   </button>
                 </div>
               ) : (
-                payments.map(p => (
+                safePayments.map(p => (
                   <div key={p.id} className="flex items-center justify-between gap-3 p-3 bg-secondary/30 rounded-xl">
                     <div>
                       <p className="text-sm font-semibold text-foreground">R{p.amount?.toLocaleString()}</p>
@@ -808,7 +852,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                     <SelectTrigger className="h-8 rounded-xl text-xs"><SelectValue placeholder="Assign to…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="_none">Unassigned</SelectItem>
-                      {users.filter(u => u.is_active !== false).map(u => (
+                      {safeUsers.filter(u => u.is_active !== false).map(u => (
                         <SelectItem key={u.id || u.email} value={u.email || u.user_email} className="text-xs">
                           {u.full_name || u.name || u.email}
                         </SelectItem>
@@ -1092,6 +1136,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           {tab === 'portal' && (
             <PortalTab order={order} onUpdate={onUpdate} balance={balance} />
           )}
+          </DrawerSectionBoundary>
         </div>
 
         {/* Archive */}
@@ -1119,7 +1164,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
             whatsapp_name: displayWhatsappName,
             saved_contact_name: displaySavedContactName,
           }}
-          payments={payments}
+          payments={safePayments}
           totalPaid={totalPaid}
           balance={balance}
           onClose={() => setPrintView(null)}
