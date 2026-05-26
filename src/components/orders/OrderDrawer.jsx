@@ -4,7 +4,7 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, ShoppingCart, AlertTriangle, Copy, Check,
-  User, FileText, Plus, Trash2, Pencil
+  User, FileText, Plus, Trash2, Pencil, FolderOpen, FolderPlus, MoveRight
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -68,6 +68,37 @@ const statusConfig = {
 const ORDER_STATUSES = ["confirmed", "in_production", "ready", "shipped", "delivered", "cancelled"];
 
 const progressStages = ["confirmed", "in_production", "ready", "shipped", "delivered"];
+
+const DEFAULT_ORDER_FILE_FOLDERS = [
+  { id: "mockups", name: "Mockups" },
+  { id: "artwork", name: "Artwork / Graphic Files" },
+  { id: "references", name: "References" },
+  { id: "production", name: "Production Documents" },
+];
+
+function normalizeOrderFileFolders(value) {
+  const fallback = { folders: DEFAULT_ORDER_FILE_FOLDERS, fileFolders: {} };
+  if (!value) return fallback;
+  if (Array.isArray(value)) {
+    return {
+      folders: value.length ? value.map((folder, index) => ({
+        id: folder.id || `folder-${index}`,
+        name: folder.name || `Folder ${index + 1}`,
+      })) : DEFAULT_ORDER_FILE_FOLDERS,
+      fileFolders: {},
+    };
+  }
+  const folders = Array.isArray(value.folders) && value.folders.length
+    ? value.folders.map((folder, index) => ({
+      id: folder.id || `folder-${index}`,
+      name: folder.name || `Folder ${index + 1}`,
+    }))
+    : DEFAULT_ORDER_FILE_FOLDERS;
+  return {
+    folders,
+    fileFolders: value.fileFolders && typeof value.fileFolders === "object" ? value.fileFolders : {},
+  };
+}
 
 export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArchive }) {
   const [tab, setTab] = useState("details");
@@ -1023,41 +1054,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           )}
 
           {tab === 'files' && (
-            <div className="space-y-3">
-              <label className="cursor-pointer block">
-                <div className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-2xl hover:border-primary/40 transition-all">
-                  <Paperclip className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">{uploading ? 'Uploading...' : 'Upload a file'}</span>
-                </div>
-                <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
-              </label>
-              {order.file_urls?.length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {order.file_urls.map((/** @type {string} */ url, /** @type {number} */ i) => (
-                    <div key={url} className="rounded-2xl border border-border bg-card p-2">
-                      <MediaPreview url={url} title={`Order file ${i + 1}`} />
-                      <label className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
-                        <span className="font-medium text-foreground">Client can see</span>
-                        <input
-                          type="checkbox"
-                          checked={(Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : []).includes(url)}
-                          onChange={(e) => {
-                            const current = Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [];
-                            onUpdate(order.id, {
-                              portal_visible_file_urls: e.target.checked
-                                ? Array.from(new Set([...current, url]))
-                                : current.filter((item) => item !== url),
-                            });
-                          }}
-                        />
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">No files attached</p>
-              )}
-            </div>
+            <OrderFilesTab order={order} onUpdate={onUpdate} uploadFile={uploadFile} uploading={uploading} />
           )}
 
           {tab === 'invoices' && (
@@ -1095,6 +1092,159 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         }}
       />
     </>
+  );
+}
+
+function OrderFilesTab({ order, onUpdate, uploadFile, uploading }) {
+  const metadata = normalizeOrderFileFolders(order.order_file_folders);
+  const [openFolderId, setOpenFolderId] = useState("");
+  const fileUrls = Array.isArray(order.file_urls) ? order.file_urls.filter(Boolean) : [];
+  const visibleUrls = Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [];
+  const folders = metadata.folders;
+  const currentFolder = folders.find((folder) => folder.id === openFolderId);
+  const uncategorizedFiles = fileUrls.filter((url) => !metadata.fileFolders?.[url]);
+  const currentFiles = openFolderId
+    ? fileUrls.filter((url) => metadata.fileFolders?.[url] === openFolderId)
+    : [];
+
+  const saveMetadata = (next) => onUpdate(order.id, { order_file_folders: next });
+
+  const createFolder = () => {
+    const name = window.prompt("Folder name");
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    const id = `folder-${Date.now().toString(36)}`;
+    saveMetadata({ ...metadata, folders: [...folders, { id, name: clean }] });
+    setOpenFolderId(id);
+  };
+
+  const moveFile = (url, folderId) => {
+    const nextFolders = { ...(metadata.fileFolders || {}) };
+    if (folderId) nextFolders[url] = folderId;
+    else delete nextFolders[url];
+    saveMetadata({ ...metadata, fileFolders: nextFolders });
+    setOpenFolderId(folderId || "");
+  };
+
+  const toggleClientVisible = (url, checked) => {
+    onUpdate(order.id, {
+      portal_visible_file_urls: checked
+        ? Array.from(new Set([...visibleUrls, url]))
+        : visibleUrls.filter((item) => item !== url),
+    });
+  };
+
+  const FileCard = ({ url, index }) => (
+    <div className="rounded-2xl border border-border bg-card p-2">
+      <MediaPreview url={url} title={`Order file ${index + 1}`} />
+      <div className="mt-2 space-y-2">
+        <label className="flex items-center justify-between gap-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
+          <span className="font-medium text-foreground">Client can see</span>
+          <input
+            type="checkbox"
+            checked={visibleUrls.includes(url)}
+            onChange={(e) => toggleClientVisible(url, e.target.checked)}
+          />
+        </label>
+        <label className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs">
+          <MoveRight className="h-3.5 w-3.5 text-muted-foreground" />
+          <select
+            value={metadata.fileFolders?.[url] || ""}
+            onChange={(e) => moveFile(url, e.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-foreground outline-none"
+          >
+            <option value="">All Files</option>
+            {folders.map((folder) => (
+              <option key={folder.id} value={folder.id}>{folder.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <label className="cursor-pointer block">
+        <div className="flex items-center justify-center gap-2 p-4 border-2 border-dashed border-border rounded-2xl hover:border-primary/40 transition-all">
+          <Paperclip className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">{uploading ? "Uploading..." : "Upload files"}</span>
+        </div>
+        <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
+      </label>
+
+      {!openFolderId ? (
+        <>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Folders</p>
+              <p className="text-xs text-muted-foreground">Move file links without duplicating the stored file.</p>
+            </div>
+            <button
+              type="button"
+              onClick={createFolder}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium hover:border-primary/40"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              New
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            {folders.map((folder) => {
+              const count = fileUrls.filter((url) => metadata.fileFolders?.[url] === folder.id).length;
+              return (
+                <button
+                  key={folder.id}
+                  type="button"
+                  onClick={() => setOpenFolderId(folder.id)}
+                  className="rounded-2xl border border-border bg-secondary/30 p-3 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <FolderOpen className="mb-3 h-5 w-5 text-primary" />
+                  <p className="truncate text-sm font-semibold text-foreground">{folder.name}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{count} item{count === 1 ? "" : "s"}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {uncategorizedFiles.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">All Files</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {uncategorizedFiles.map((url, index) => <FileCard key={url} url={url} index={index} />)}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => setOpenFolderId("")}
+            className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-medium hover:border-primary/40"
+          >
+            <ChevronRight className="h-3.5 w-3.5 rotate-180" />
+            Back to folders
+          </button>
+          <div>
+            <p className="text-sm font-semibold text-foreground">{currentFolder?.name || "Folder"}</p>
+            <p className="text-xs text-muted-foreground">{currentFiles.length} item{currentFiles.length === 1 ? "" : "s"}</p>
+          </div>
+          {currentFiles.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {currentFiles.map((url, index) => <FileCard key={url} url={url} index={index} />)}
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">This folder is empty.</p>
+          )}
+        </div>
+      )}
+
+      {fileUrls.length === 0 && (
+        <p className="text-sm text-muted-foreground text-center py-4">No files attached</p>
+      )}
+    </div>
   );
 }
 
