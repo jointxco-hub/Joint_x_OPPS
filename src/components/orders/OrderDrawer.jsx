@@ -1526,7 +1526,7 @@ function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
 
 function ProductsEditor({ order, onUpdate }) {
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
-  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "" };
+  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
   const [newRow, setNewRow] = useState(emptyRow);
@@ -1556,9 +1556,37 @@ function ProductsEditor({ order, onUpdate }) {
     return typeof image === "string" ? image : "";
   };
   const listFrom = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string" || typeof item === "number").map(String) : [];
+  const optionListFrom = (value, prefix) => Array.isArray(value)
+    ? value
+      .filter(Boolean)
+      .map((option, index) => {
+        if (typeof option === "string" || typeof option === "number") {
+          return { id: `${prefix}-${index}-${option}`, name: String(option), price: "" };
+        }
+        return {
+          id: option.id || option.key || `${prefix}-${index}-${option.name || option.label || option.title || "option"}`,
+          name: option.name || option.label || option.title || option.type || "Option",
+          type: option.type || option.method || "",
+          locations: listFrom(option.locations || option.placements || option.placement),
+          price: option.price ?? option.cost ?? "",
+          image_url: thumbFor(option),
+        };
+      })
+    : [];
   const cleanProduct = (item) => {
     if (item && typeof item === "object") return item;
     return { name: String(item || "Item"), quantity: 1 };
+  };
+  const optionKey = (option) => String(option?.id || option?.name || option);
+  const optionLabel = (option) => typeof option === "string" ? option : [option?.name, option?.locations?.length ? option.locations.join("/") : ""].filter(Boolean).join(" - ");
+  const toggleProductOption = (kind, option) => {
+    const key = kind === "print" ? "selected_print_options" : "selected_addons";
+    const selected = Array.isArray(newRow[key]) ? newRow[key] : [];
+    const exists = selected.some((item) => optionKey(item) === optionKey(option));
+    setNewRow((row) => ({
+      ...row,
+      [key]: exists ? selected.filter((item) => optionKey(item) !== optionKey(option)) : [...selected, option],
+    }));
   };
   const formatMoney = (value) => {
     const amount = Number(value || 0);
@@ -1615,6 +1643,8 @@ function ProductsEditor({ order, onUpdate }) {
         image_url: thumbFor(c),
         sizes: listFrom(c.sizes || c.size_options || c.sizes_available || c.variants?.sizes),
         colors: listFrom(c.colors || c.colours || c.color_options || c.colour_options || c.colors_available || c.variants?.colors),
+        print_options: optionListFrom(c.print_options || c.printOptions, "print"),
+        addons: optionListFrom(c.addons || c.add_ons || c.addOns, "addon"),
       })),
     ...(/** @type {any[]} */ (safeInventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (safeCatalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
@@ -1627,6 +1657,8 @@ function ProductsEditor({ order, onUpdate }) {
         image_url: thumbFor(i),
         sizes: listFrom(i.sizes_available),
         colors: listFrom(i.colors_available),
+        print_options: optionListFrom(i.print_options || i.printOptions, "print"),
+        addons: optionListFrom(i.addons || i.add_ons || i.addOns, "addon"),
       })),
   ];
 
@@ -1699,6 +1731,12 @@ function ProductsEditor({ order, onUpdate }) {
                 {(p.size || p.color) && <span className="ml-2 text-xs text-muted-foreground">{[p.size, p.color].filter(Boolean).join(" / ")}</span>}
               </span>
               {(p.category || p.source) && <p className="mt-0.5 truncate text-xs text-muted-foreground">{[p.category, p.source].filter(Boolean).join(" / ")}</p>}
+              {(Array.isArray(p.selected_print_options) && p.selected_print_options.length > 0) && (
+                <p className="mt-1 truncate text-xs text-primary">Print: {p.selected_print_options.map(optionLabel).join(", ")}</p>
+              )}
+              {(Array.isArray(p.selected_addons) && p.selected_addons.length > 0) && (
+                <p className="mt-0.5 truncate text-xs text-amber-700">Add-ons: {p.selected_addons.map(optionLabel).join(", ")}</p>
+              )}
               {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
               </div>
               <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
@@ -1719,7 +1757,7 @@ function ProductsEditor({ order, onUpdate }) {
                   title="Copy product">
                   <Copy className="w-3 h-3" />
                 </button>
-                <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "", catalog_item_id: p.catalog_item_id || "", inventory_item_id: p.inventory_item_id || "", image_url: p.image_url || "", category: p.category || "", source: p.source || "" }); }}
+                <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "", catalog_item_id: p.catalog_item_id || "", inventory_item_id: p.inventory_item_id || "", image_url: p.image_url || "", category: p.category || "", source: p.source || "", selected_print_options: p.selected_print_options || [], selected_addons: p.selected_addons || [] }); }}
                   className="opacity-100 text-muted-foreground hover:text-foreground transition-all sm:opacity-0 sm:group-hover:opacity-100">
                   <Pencil className="w-3 h-3" />
                 </button>
@@ -1814,6 +1852,8 @@ function ProductsEditor({ order, onUpdate }) {
                         source: item.source,
                         size: "",
                         color: "",
+                        selected_print_options: [],
+                        selected_addons: [],
                       }));
                       setPickerSearch("");
                       setShowPicker(false);
@@ -1867,6 +1907,8 @@ function ProductsEditor({ order, onUpdate }) {
                   {newRow.size && <span className="rounded-full bg-background px-2 py-1">{newRow.size}</span>}
                   {newRow.color && <span className="rounded-full bg-background px-2 py-1">{newRow.color}</span>}
                   {newRow.price && <span className="rounded-full bg-primary/10 px-2 py-1 font-semibold text-primary">{formatMoney(Number(newRow.price) * Number(newRow.quantity || 1))}</span>}
+                  {(newRow.selected_print_options || []).length > 0 && <span className="rounded-full bg-primary/10 px-2 py-1 font-semibold text-primary">{newRow.selected_print_options.length} print</span>}
+                  {(newRow.selected_addons || []).length > 0 && <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-800">{newRow.selected_addons.length} add-on</span>}
                 </div>
               </div>
             </div>
@@ -1899,6 +1941,54 @@ function ProductsEditor({ order, onUpdate }) {
                 placeholder="Colour" className="h-8 text-sm rounded-xl" />
             )}
           </div>
+          {selectedPickerItem?.print_options?.length > 0 && (
+            <div className="rounded-2xl border border-border bg-background p-3">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Print options</p>
+              <div className="flex flex-wrap gap-2">
+                {selectedPickerItem.print_options.map((option) => {
+                  const selected = (newRow.selected_print_options || []).some((item) => optionKey(item) === optionKey(option));
+                  return (
+                    <button
+                      key={optionKey(option)}
+                      type="button"
+                      onClick={() => toggleProductOption("print", option)}
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                        selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40"
+                      }`}
+                    >
+                      {option.image_url && <img src={option.image_url} alt="" className="h-4 w-4 rounded-full object-cover" />}
+                      {optionLabel(option)}
+                      {option.price ? ` · ${formatMoney(option.price)}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {selectedPickerItem?.addons?.length > 0 && (
+            <div className="rounded-2xl border border-border bg-background p-3">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Add-ons</p>
+              <div className="flex flex-wrap gap-2">
+                {selectedPickerItem.addons.map((option) => {
+                  const selected = (newRow.selected_addons || []).some((item) => optionKey(item) === optionKey(option));
+                  return (
+                    <button
+                      key={optionKey(option)}
+                      type="button"
+                      onClick={() => toggleProductOption("addon", option)}
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                        selected ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-secondary/40 text-muted-foreground hover:border-amber-400"
+                      }`}
+                    >
+                      {option.image_url && <img src={option.image_url} alt="" className="h-4 w-4 rounded-full object-cover" />}
+                      {optionLabel(option)}
+                      {option.price ? ` · ${formatMoney(option.price)}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <Input value={newRow.notes} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, notes: e.target.value }))}
             placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
           <div className="flex gap-2">
@@ -2495,6 +2585,16 @@ function OrderQuickPrintSheet({ type, order, payments, totalPaid, balance, onClo
                     {(product.print_method || product.print || product.notes) && (
                       <p className="mt-2 text-sm text-zinc-700">{product.print_method || product.print || product.notes}</p>
                     )}
+                    {formatProductOptions(product.selected_print_options || product.print_options || product.printOptions) && (
+                      <p className="mt-2 text-sm text-emerald-800">
+                        <strong>Print:</strong> {formatProductOptions(product.selected_print_options || product.print_options || product.printOptions)}
+                      </p>
+                    )}
+                    {formatProductOptions(product.selected_addons || product.addons || product.add_ons) && (
+                      <p className="mt-1 text-sm text-amber-800">
+                        <strong>Add-ons:</strong> {formatProductOptions(product.selected_addons || product.addons || product.add_ons)}
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2623,4 +2723,19 @@ function formatInlineValue(value) {
   if (Array.isArray(value)) return value.join(", ");
   if (value && typeof value === "object") return Object.values(value).join(", ");
   return value || "-";
+}
+
+function formatProductOptions(value) {
+  if (!Array.isArray(value) || value.length === 0) return "";
+  return value
+    .map((option) => {
+      if (!option) return "";
+      if (typeof option === "string" || typeof option === "number") return String(option);
+      const name = option.name || option.label || option.title || option.type || "Option";
+      const locations = Array.isArray(option.locations) ? option.locations.join("/") : option.location || option.placement || "";
+      const price = option.price || option.cost ? `R${Number(option.price || option.cost).toLocaleString()}` : "";
+      return [name, locations, price].filter(Boolean).join(" - ");
+    })
+    .filter(Boolean)
+    .join(", ");
 }

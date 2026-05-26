@@ -47,7 +47,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     total_amount: '',
     due_date: '',
     linked_po_id: '',
-    products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '' }]
+    products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '', selected_print_options: [], selected_addons: [] }]
   });
 
   const [clientSearch, setClientSearch] = useState('');
@@ -146,6 +146,25 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     return typeof image === "string" ? image : "";
   };
   const listFrom = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string" || typeof item === "number").map(String) : [];
+  const optionListFrom = (value, prefix) => Array.isArray(value)
+    ? value
+      .filter(Boolean)
+      .map((option, index) => {
+        if (typeof option === "string" || typeof option === "number") {
+          return { id: `${prefix}-${index}-${option}`, name: String(option), price: "" };
+        }
+        return {
+          id: option.id || option.key || `${prefix}-${index}-${option.name || option.label || option.title || "option"}`,
+          name: option.name || option.label || option.title || option.type || "Option",
+          type: option.type || option.method || "",
+          locations: listFrom(option.locations || option.placements || option.placement),
+          price: option.price ?? option.cost ?? "",
+          image_url: thumbFor(option),
+        };
+      })
+    : [];
+  const optionKey = (option) => String(option?.id || option?.name || option);
+  const optionLabel = (option) => typeof option === "string" ? option : [option?.name, option?.locations?.length ? option.locations.join("/") : ""].filter(Boolean).join(" - ");
 
   const allPickerItems = [
     ...(/** @type {any[]} */ (catalogItems))
@@ -162,6 +181,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         image_url: thumbFor(c),
         sizes: listFrom(c.sizes || c.size_options || c.sizes_available || c.variants?.sizes),
         colors: listFrom(c.colors || c.colours || c.color_options || c.colour_options || c.colors_available || c.variants?.colors),
+        print_options: optionListFrom(c.print_options || c.printOptions, "print"),
+        addons: optionListFrom(c.addons || c.add_ons || c.addOns, "addon"),
       })),
     ...(/** @type {any[]} */ (inventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
@@ -174,6 +195,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         image_url: thumbFor(i),
         sizes: listFrom(i.sizes_available),
         colors: listFrom(i.colors_available),
+        print_options: optionListFrom(i.print_options || i.printOptions, "print"),
+        addons: optionListFrom(i.addons || i.add_ons || i.addOns, "addon"),
       })),
   ];
 
@@ -182,7 +205,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       : allPickerItems.slice(0, 8);
   const selectedProductItem = (product) => allPickerItems.find((item) => item.id && item.id === (product.catalog_item_id || product.inventory_item_id));
 
-  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '' }] }));
+  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '', selected_print_options: [], selected_addons: [] }] }));
   const removeProduct = (i) => setForm(f => ({ ...f, products: f.products.filter((_, idx) => idx !== i) }));
   const updateProduct = (i, field, val) => setForm(f => ({
     ...f,
@@ -192,6 +215,18 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     ...f,
     products: f.products.map((p, idx) => idx === i ? { ...p, ...patch } : p)
   }));
+  const toggleProductOption = (i, kind, option) => {
+    const key = kind === "print" ? "selected_print_options" : "selected_addons";
+    setForm(f => ({
+      ...f,
+      products: f.products.map((product, idx) => {
+        if (idx !== i) return product;
+        const selected = Array.isArray(product[key]) ? product[key] : [];
+        const exists = selected.some((item) => optionKey(item) === optionKey(option));
+        return { ...product, [key]: exists ? selected.filter((item) => optionKey(item) !== optionKey(option)) : [...selected, option] };
+      })
+    }));
+  };
 
   const calcTotal = () => form.products.reduce((s, p) => s + (parseFloat(p.price || 0) * (parseInt(p.quantity) || 1)), 0);
 
@@ -515,6 +550,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                                   source: item.source,
                                   size: '',
                                   color: '',
+                                  selected_print_options: [],
+                                  selected_addons: [],
                                 });
                                 setPickerOpenIdx(null);
                               }}
@@ -588,6 +625,44 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                     <Input value={p.notes || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'notes', e.target.value)}
                       placeholder="Item notes" className="rounded-xl h-8 text-xs" />
                   </div>
+                  {selectedProductItem(p)?.print_options?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedProductItem(p).print_options.map((option) => {
+                        const selected = (p.selected_print_options || []).some((item) => optionKey(item) === optionKey(option));
+                        return (
+                          <button
+                            key={optionKey(option)}
+                            type="button"
+                            onClick={() => toggleProductOption(i, "print", option)}
+                            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                              selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/40 text-muted-foreground"
+                            }`}
+                          >
+                            {optionLabel(option)}{option.price ? ` · R${Number(option.price).toLocaleString()}` : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {selectedProductItem(p)?.addons?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedProductItem(p).addons.map((option) => {
+                        const selected = (p.selected_addons || []).some((item) => optionKey(item) === optionKey(option));
+                        return (
+                          <button
+                            key={optionKey(option)}
+                            type="button"
+                            onClick={() => toggleProductOption(i, "addon", option)}
+                            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                              selected ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-secondary/40 text-muted-foreground"
+                            }`}
+                          >
+                            {optionLabel(option)}{option.price ? ` · R${Number(option.price).toLocaleString()}` : ""}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

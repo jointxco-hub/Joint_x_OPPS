@@ -679,9 +679,17 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
         {products.length > 0 ? (
           <ul className="mt-1 space-y-1 text-xs text-zinc-800">
             {products.slice(0, 5).map((product, index) => (
-              <li key={`${product.name}-${index}`} className="flex justify-between gap-2">
-                <span>{product.quantity ? `${product.quantity} x ` : ""}{product.name || "Item"}</span>
-                <span className="text-zinc-500">{[product.size, product.color].filter(Boolean).join(" / ")}</span>
+              <li key={`${product.name}-${index}`} className="space-y-0.5">
+                <div className="flex justify-between gap-2">
+                  <span>{product.quantity ? `${product.quantity} x ` : ""}{product.name || "Item"}</span>
+                  <span className="text-zinc-500">{[product.size, product.color].filter(Boolean).join(" / ")}</span>
+                </div>
+                {formatProductionOptions(product.selected_print_options || product.print_options || product.printOptions) && (
+                  <p className="text-[11px] text-emerald-700">Print: {formatProductionOptions(product.selected_print_options || product.print_options || product.printOptions)}</p>
+                )}
+                {formatProductionOptions(product.selected_addons || product.addons || product.add_ons) && (
+                  <p className="text-[11px] text-amber-700">Add-ons: {formatProductionOptions(product.selected_addons || product.addons || product.add_ons)}</p>
+                )}
               </li>
             ))}
           </ul>
@@ -706,6 +714,21 @@ function PrintDatum({ label, value }) {
       <dd className="truncate font-medium text-zinc-800">{value || "—"}</dd>
     </div>
   );
+}
+
+function formatProductionOptions(value) {
+  if (!Array.isArray(value) || value.length === 0) return "";
+  return value
+    .map((option) => {
+      if (!option) return "";
+      if (typeof option === "string" || typeof option === "number") return String(option);
+      const name = option.name || option.label || option.title || option.type || "Option";
+      const locations = Array.isArray(option.locations) ? option.locations.join("/") : option.location || option.placement || "";
+      const price = option.price || option.cost ? `R${Number(option.price || option.cost).toLocaleString()}` : "";
+      return [name, locations, price].filter(Boolean).join(" - ");
+    })
+    .filter(Boolean)
+    .join(", ");
 }
 
 function groupProductionSummaryOrders(orders, stageLabelByKey, type) {
