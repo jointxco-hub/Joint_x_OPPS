@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import {
   FolderPlus, FileText, File, Trash2, Pencil, Archive,
   Search, FolderOpen, ChevronRight, Download, FileSpreadsheet,
-  Upload, MoreVertical,
+  Upload, MoreVertical, Copy, MoveRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
@@ -72,6 +72,9 @@ export default function FileManager() {
   const [lightboxFile, setLightboxFile] = useState(null);
   const [search, setSearch] = useState("");
   const [folderForm, setFolderForm] = useState(null);
+  const [fileForm, setFileForm] = useState(null);
+  const [fileMove, setFileMove] = useState(null);
+  const [fileCopy, setFileCopy] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [longPressFolder, setLongPressFolder] = useState(null);
@@ -142,6 +145,39 @@ export default function FileManager() {
     },
   });
 
+  const updateFile = useMutation({
+    mutationFn: ({ id, data }) => dataClient.entities.ClientAsset.update(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["clientAssets"] });
+      setFileForm(null);
+      setFileMove(null);
+      toast.success("File updated");
+    },
+  });
+
+  const copyFile = useMutation({
+    mutationFn: ({ file, folderId }) =>
+      dataClient.entities.ClientAsset.create({
+        title: file.title,
+        file_url: file.file_url,
+        file_type: file.file_type,
+        file_size: file.file_size,
+        folder_id: folderId || null,
+        client_id: file.client_id,
+        order_id: file.order_id,
+        project_id: file.project_id,
+        uploaded_by: file.uploaded_by,
+        approval_status: file.approval_status,
+        tags: file.tags,
+        notes: file.notes,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["clientAssets"] });
+      setFileCopy(null);
+      toast.success("File link copied");
+    },
+  });
+
   const uploadFiles = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -197,6 +233,20 @@ export default function FileManager() {
     } else {
       createFolder.mutate({ name, color, parent_id: currentFolder?.id ?? null });
     }
+  };
+
+  const allTargetFolders = folders
+    .filter((f) => !f.is_archived)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  const handleMoveFile = (folderId) => {
+    if (!fileMove?.id) return;
+    updateFile.mutate({ id: fileMove.id, data: { folder_id: folderId || null } });
+  };
+
+  const handleCopyFile = (folderId) => {
+    if (!fileCopy?.id) return;
+    copyFile.mutate({ file: fileCopy, folderId });
   };
 
   return (
@@ -340,7 +390,7 @@ export default function FileManager() {
                     <p className="text-sm font-medium text-foreground truncate mb-0.5">{file.title}</p>
                     <p className="text-xs text-muted-foreground capitalize">{file.file_type || "file"}</p>
                     <div
-                      className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="flex items-center gap-1 mt-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <a
@@ -351,6 +401,27 @@ export default function FileManager() {
                       >
                         <Download className="w-3.5 h-3.5" />
                       </a>
+                      <button
+                        onClick={() => setFileForm(file)}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        title="Rename"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setFileMove(file)}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        title="Move"
+                      >
+                        <MoveRight className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setFileCopy(file)}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+                        title="Copy link"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={() => archiveFile.mutate(file.id)}
                         className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
@@ -381,6 +452,43 @@ export default function FileManager() {
           onClose={() => setFolderForm(null)}
           onSubmit={handleFolderSubmit}
           isPending={createFolder.isPending || updateFolder.isPending}
+        />
+      )}
+
+      {fileForm && (
+        <FileRenameModal
+          file={fileForm}
+          onClose={() => setFileForm(null)}
+          onSubmit={(title) => updateFile.mutate({ id: fileForm.id, data: { title } })}
+          isPending={updateFile.isPending}
+        />
+      )}
+
+      {fileMove && (
+        <FileFolderModal
+          title="Move file"
+          description="Move this file link to another folder. The source file stays the same."
+          file={fileMove}
+          folders={allTargetFolders}
+          currentFolderId={fileMove.folder_id || null}
+          isPending={updateFile.isPending}
+          actionLabel="Move"
+          onClose={() => setFileMove(null)}
+          onSubmit={handleMoveFile}
+        />
+      )}
+
+      {fileCopy && (
+        <FileFolderModal
+          title="Copy file link"
+          description="Create another folder link to this same stored file. This does not duplicate the file binary."
+          file={fileCopy}
+          folders={allTargetFolders}
+          currentFolderId={fileCopy.folder_id || null}
+          isPending={copyFile.isPending}
+          actionLabel="Copy"
+          onClose={() => setFileCopy(null)}
+          onSubmit={handleCopyFile}
         />
       )}
 
@@ -450,6 +558,78 @@ export default function FileManager() {
       )}
 
       {lightboxFile && <FileLightbox file={lightboxFile} onClose={() => setLightboxFile(null)} />}
+    </div>
+  );
+}
+
+function FileRenameModal({ file, onClose, onSubmit, isPending }) {
+  const [title, setTitle] = useState(file?.title || "");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-2xl border border-border shadow-apple w-full max-w-sm">
+        <div className="px-5 py-4 border-b border-border">
+          <h2 className="font-semibold text-foreground">Rename File</h2>
+          <p className="mt-1 text-xs text-muted-foreground">This changes the visible label, not the stored file.</p>
+        </div>
+        <div className="p-5">
+          <label className="text-xs font-medium text-foreground block mb-1.5">File name *</label>
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="File name"
+            className="rounded-xl"
+            autoFocus
+            onKeyDown={(e) => e.key === "Enter" && title.trim() && onSubmit(title.trim())}
+          />
+        </div>
+        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} className="rounded-xl">Cancel</Button>
+          <Button onClick={() => title.trim() && onSubmit(title.trim())} disabled={!title.trim() || isPending} className="rounded-xl">
+            {isPending ? "Saving..." : "Save"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileFolderModal({ title, description, file, folders, currentFolderId, isPending, actionLabel, onClose, onSubmit }) {
+  const [folderId, setFolderId] = useState(currentFolderId || "");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-card rounded-2xl border border-border shadow-apple w-full max-w-sm">
+        <div className="px-5 py-4 border-b border-border">
+          <h2 className="font-semibold text-foreground">{title}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="rounded-xl border border-border bg-secondary/40 p-3">
+            <p className="truncate text-sm font-medium text-foreground">{file?.title || "File"}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{file?.file_type || "file"}</p>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1.5">Destination</label>
+            <select
+              value={folderId}
+              onChange={(e) => setFolderId(e.target.value)}
+              className="h-10 w-full rounded-xl border border-input bg-background px-3 text-sm"
+            >
+              <option value="">All Files</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>{folder.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-border flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} className="rounded-xl">Cancel</Button>
+          <Button onClick={() => onSubmit(folderId || null)} disabled={isPending} className="rounded-xl">
+            {isPending ? "Saving..." : actionLabel}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
