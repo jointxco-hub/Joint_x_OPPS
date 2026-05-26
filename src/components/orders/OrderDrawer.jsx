@@ -170,12 +170,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const { data: legacyTasks = [] } = useQuery({
     queryKey: ['orderTasks', order.id],
-    queryFn: () => dataClient.entities.Task.filter({ linked_order_id: order.id })
+    queryFn: () => dataClient.entities.Task.filter({ linked_order_id: order.id }),
+    enabled: tab === 'tasks',
+    staleTime: 30_000,
   });
 
   const { data: linkedOpsTasks = [] } = useQuery({
     queryKey: ['orderOpsTasks', order.id],
-    queryFn: () => dataClient.entities.OpsTask.filter({ order_id: order.id })
+    queryFn: () => dataClient.entities.OpsTask.filter({ order_id: order.id }),
+    enabled: tab === 'tasks',
+    staleTime: 30_000,
   });
 
   const safePayments = Array.isArray(payments) ? payments : [];
@@ -185,12 +189,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
 
   const { data: purchaseOrders = [] } = useQuery({
     queryKey: ['purchaseOrders'],
-    queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100)
+    queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100),
+    enabled: tab === 'po' || Boolean(order.linked_po_id),
+    staleTime: 30_000,
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => dataClient.entities.User.list('-created_date', 100)
+    queryFn: () => dataClient.entities.User.list('-created_date', 100),
+    enabled: tab === 'details' || tab === 'tasks',
+    staleTime: 300_000,
   });
 
   const { data: linkedClient = null } = useQuery({
@@ -706,7 +714,10 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">Unassigned</SelectItem>
-                    {safeUsers.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
+                    {safeUsers
+                      .map((u) => ({ ...u, value: u.email || u.user_email || u.id }))
+                      .filter((u) => u.value)
+                      .map(u => <SelectItem key={u.id || u.value} value={u.value}>{u.full_name || u.name || u.value}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -853,9 +864,13 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                     <SelectTrigger className="h-8 rounded-xl text-xs"><SelectValue placeholder="Assign to…" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="_none">Unassigned</SelectItem>
-                      {safeUsers.filter(u => u.is_active !== false).map(u => (
-                        <SelectItem key={u.id || u.email} value={u.email || u.user_email} className="text-xs">
-                          {u.full_name || u.name || u.email}
+                      {safeUsers
+                        .filter(u => u.is_active !== false)
+                        .map((u) => ({ ...u, value: u.email || u.user_email || u.id }))
+                        .filter((u) => u.value)
+                        .map(u => (
+                        <SelectItem key={u.id || u.value} value={u.value} className="text-xs">
+                          {u.full_name || u.name || u.value}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1510,17 +1525,6 @@ function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
 }
 
 function ProductsEditor({ order, onUpdate }) {
-  const { data: catalogItems = [] } = useQuery({
-    queryKey: ["catalogItems"],
-    queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
-    staleTime: 0,
-  });
-  const { data: inventoryItems = [] } = useQuery({
-    queryKey: ["inventory"],
-    queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
-    staleTime: 0,
-  });
-
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "" };
   const [editRow, setEditRow] = useState(emptyRow);
@@ -1528,6 +1532,19 @@ function ProductsEditor({ order, onUpdate }) {
   const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
   const [showPicker, setShowPicker] = useState(false);
+
+  const { data: catalogItems = [] } = useQuery({
+    queryKey: ["catalogItems"],
+    queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
+    enabled: addMode,
+    staleTime: 300_000,
+  });
+  const { data: inventoryItems = [] } = useQuery({
+    queryKey: ["inventory"],
+    queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
+    enabled: addMode,
+    staleTime: 300_000,
+  });
 
   const products = Array.isArray(order.products) ? order.products : [];
   const safeCatalogItems = Array.isArray(catalogItems) ? catalogItems : [];

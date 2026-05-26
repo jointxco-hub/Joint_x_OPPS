@@ -12,8 +12,83 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
 
-const OrderDrawer = lazy(() => import("@/components/orders/OrderDrawer"));
-const NewOrderDrawer = lazy(() => import("@/components/orders/NewOrderDrawer"));
+const loadOrderDrawer = () => import("@/components/orders/OrderDrawer");
+const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
+
+function lazyWithRefresh(loader, key) {
+  return lazy(() =>
+    loader().catch((error) => {
+      const retryKey = `opps-lazy-retry:${key}`;
+      if (typeof window !== "undefined" && !window.sessionStorage.getItem(retryKey)) {
+        window.sessionStorage.setItem(retryKey, "1");
+        window.location.reload();
+        return new Promise(() => {});
+      }
+      throw error;
+    })
+  );
+}
+
+const OrderDrawer = lazyWithRefresh(loadOrderDrawer, "OrderDrawer");
+const NewOrderDrawer = lazyWithRefresh(loadNewOrderDrawer, "NewOrderDrawer");
+
+function BasicOrderDrawer({ order, onClose }) {
+  const sc = statusConfig[order?.status] || { label: order?.status || "Order", color: "bg-secondary text-muted-foreground" };
+  return (
+    <>
+      <div className="fixed inset-0 z-[55] bg-black/20 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-[60] flex h-full w-full max-w-xl flex-col bg-card shadow-apple-xl">
+        <div className="flex items-start justify-between gap-3 border-b border-border p-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-base font-bold text-foreground">{order?.client_name || "Order"}</h2>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${sc.color}`}>{sc.label}</span>
+            </div>
+            <p className="mt-1 font-mono text-xs text-muted-foreground">#{order?.order_number || order?.id || "draft"}</p>
+          </div>
+          <button onClick={onClose} className="rounded-xl bg-secondary px-3 py-2 text-xs font-medium text-muted-foreground">
+            Close
+          </button>
+        </div>
+        <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Client</p>
+            <p className="mt-1 text-sm font-medium text-foreground">{order?.client_name || "Not added"}</p>
+            {order?.client_email && <p className="mt-1 text-xs text-muted-foreground">{order.client_email}</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
+              <p className="mt-1 text-sm font-bold text-foreground">
+                {order?.total_amount ? `R${Number(order.total_amount).toLocaleString()}` : "Not set"}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Due</p>
+              <p className="mt-1 text-sm font-bold text-foreground">{order?.due_date || "No due date"}</p>
+            </div>
+          </div>
+          {Array.isArray(order?.products) && order.products.length > 0 && (
+            <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Products</p>
+              <div className="space-y-2">
+                {order.products.slice(0, 8).map((product, index) => (
+                  <div key={`${product?.name || "item"}-${index}`} className="flex justify-between gap-3 text-sm">
+                    <span className="min-w-0 truncate text-foreground">{product?.name || "Item"}</span>
+                    <span className="shrink-0 text-muted-foreground">{product?.quantity ? `x${product.quantity}` : ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+            Basic view is active for this order. You can close and reopen to load the full workspace.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
 
 class OrderDrawerErrorBoundary extends Component {
   constructor(props) {
@@ -37,15 +112,7 @@ class OrderDrawerErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
-      return (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 shadow-xl">
-            <p className="text-sm font-semibold text-foreground">Order drawer could not open</p>
-            <p className="mt-2 text-sm text-muted-foreground">Close this and reopen the order. The rest of OPPS is still running.</p>
-            <Button className="mt-4 w-full rounded-xl" onClick={this.props.onClose}>Close drawer</Button>
-          </div>
-        </div>
-      );
+      return <BasicOrderDrawer order={this.props.order} onClose={this.props.onClose} />;
     }
 
     return this.props.children;
@@ -83,6 +150,14 @@ export default function Orders() {
     queryKey: ["orders"],
     queryFn: () => dataClient.entities.Order.list("-created_date", 200),
   });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadOrderDrawer();
+      loadNewOrderDrawer();
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
@@ -413,7 +488,7 @@ export default function Orders() {
       </div>
 
       {selectedOrder && (
-        <OrderDrawerErrorBoundary resetKey={selectedOrder.id} onClose={() => setSelectedOrder(null)}>
+        <OrderDrawerErrorBoundary resetKey={selectedOrder.id} order={selectedOrder} onClose={() => setSelectedOrder(null)}>
           <Suspense fallback={<DrawerLoadingFallback onClose={() => setSelectedOrder(null)} />}>
             <OrderDrawer
               key={selectedOrder.id}
