@@ -1531,6 +1531,8 @@ function ProductsEditor({ order, onUpdate }) {
   const [addMode, setAddMode] = useState(false);
   const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
+  const [pickerSource, setPickerSource] = useState("all");
+  const [pickerCategory, setPickerCategory] = useState("all");
   const [showPicker, setShowPicker] = useState(false);
 
   const { data: catalogItems = [] } = useQuery({
@@ -1558,6 +1560,10 @@ function ProductsEditor({ order, onUpdate }) {
     if (item && typeof item === "object") return item;
     return { name: String(item || "Item"), quantity: 1 };
   };
+  const formatMoney = (value) => {
+    const amount = Number(value || 0);
+    return amount > 0 ? `R${amount.toLocaleString()}` : "";
+  };
 
   const saveRow = () => {
     if (!editRow.name.trim()) return;
@@ -1583,7 +1589,15 @@ function ProductsEditor({ order, onUpdate }) {
     setNewRow(emptyRow);
     setAddMode(false);
     setPickerSearch("");
+    setPickerSource("all");
+    setPickerCategory("all");
     setShowPicker(false);
+  };
+
+  const duplicateRow = (/** @type {any} */ rawProduct) => {
+    const p = cleanProduct(rawProduct);
+    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1 }] });
+    toast.success("Product copied on this order");
   };
 
   const allPickerItems = [
@@ -1616,9 +1630,15 @@ function ProductsEditor({ order, onUpdate }) {
       })),
   ];
 
+  const pickerCategories = [...new Set(allPickerItems.map((item) => item.category).filter(Boolean))].slice(0, 14);
+  const sourceFiltered = allPickerItems.filter((item) => {
+    const sourceMatch = pickerSource === "all" || item.source === pickerSource;
+    const categoryMatch = pickerCategory === "all" || item.category === pickerCategory;
+    return sourceMatch && categoryMatch;
+  });
   const filtered = pickerSearch
-    ? allPickerItems.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
-    : allPickerItems.slice(0, 8);
+    ? sourceFiltered.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
+    : sourceFiltered.slice(0, 10);
   const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
 
   const updateQuantity = (idx, delta) => {
@@ -1669,7 +1689,7 @@ function ProductsEditor({ order, onUpdate }) {
               </div>
             </div>
           ) : (
-            <div key={i} className="flex items-center gap-3 group px-2 py-2 rounded-xl hover:bg-card/70 transition-all">
+            <div key={i} className="flex flex-col gap-3 group px-2 py-2 rounded-xl hover:bg-card/70 transition-all sm:flex-row sm:items-center">
               <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 flex-shrink-0">
                 {p.image_url ? <img src={p.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
               </div>
@@ -1679,8 +1699,9 @@ function ProductsEditor({ order, onUpdate }) {
                 {(p.size || p.color) && <span className="ml-2 text-xs text-muted-foreground">{[p.size, p.color].filter(Boolean).join(" / ")}</span>}
               </span>
               {(p.category || p.source) && <p className="mt-0.5 truncate text-xs text-muted-foreground">{[p.category, p.source].filter(Boolean).join(" / ")}</p>}
+              {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
                 <button type="button" onClick={() => updateQuantity(i, -1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
                   <Minus className="h-3 w-3" />
                 </button>
@@ -1688,13 +1709,22 @@ function ProductsEditor({ order, onUpdate }) {
                 <button type="button" onClick={() => updateQuantity(i, 1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
                   <Plus className="h-3 w-3" />
                 </button>
-                {p.price && <span className="text-sm font-semibold text-foreground">R{Number(p.price).toLocaleString()}</span>}
+                {p.price && (
+                  <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
+                    {formatMoney(Number(p.price) * Number(p.quantity || 1))}
+                  </span>
+                )}
+                <button type="button" onClick={() => duplicateRow(p)}
+                  className="opacity-100 text-muted-foreground hover:text-primary transition-all sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Copy product">
+                  <Copy className="w-3 h-3" />
+                </button>
                 <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "", catalog_item_id: p.catalog_item_id || "", inventory_item_id: p.inventory_item_id || "", image_url: p.image_url || "", category: p.category || "", source: p.source || "" }); }}
-                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-all">
+                  className="opacity-100 text-muted-foreground hover:text-foreground transition-all sm:opacity-0 sm:group-hover:opacity-100">
                   <Pencil className="w-3 h-3" />
                 </button>
                 <button type="button" onClick={() => removeRow(i)}
-                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all">
+                  className="opacity-100 text-muted-foreground hover:text-destructive transition-all sm:opacity-0 sm:group-hover:opacity-100">
                   <Trash2 className="w-3 h-3" />
                 </button>
               </div>
@@ -1706,11 +1736,62 @@ function ProductsEditor({ order, onUpdate }) {
       {/* Add new row */}
       {addMode && (
         <div className="bg-card rounded-xl border border-border p-3 space-y-2">
-          <p className="text-xs font-medium text-muted-foreground">Add product</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-foreground">Add product</p>
+              <p className="text-[11px] text-muted-foreground">Choose from catalog, stock, or save a custom item with only the details you have.</p>
+            </div>
+            {allPickerItems.length > 0 && (
+              <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary">
+                {allPickerItems.length} options
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              ["all", "All"],
+              ["catalog", "Catalog"],
+              ["stock", "Stock"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setPickerSource(value)}
+                className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                  pickerSource === value ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "custom" }));
+                setPickerSearch("");
+                setShowPicker(false);
+              }}
+              className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                newRow.source === "custom" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+              }`}
+            >
+              Custom
+            </button>
+          </div>
+          {pickerCategories.length > 0 && (
+            <select
+              value={pickerCategory}
+              onChange={(e) => setPickerCategory(e.target.value)}
+              className="h-8 w-full rounded-xl border border-input bg-background px-3 text-xs text-foreground"
+            >
+              <option value="all">All categories</option>
+              {pickerCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+            </select>
+          )}
           <div className="relative">
             <Input
               value={newRow.name}
-              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value })); setPickerSearch(e.target.value); setShowPicker(true); }}
+              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value, source: "custom", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "" })); setPickerSearch(e.target.value); setShowPicker(true); }}
               onFocus={() => setShowPicker(true)}
               onBlur={() => setTimeout(() => setShowPicker(false), 150)}
               placeholder="Search inventory or type name…"
@@ -1754,7 +1835,11 @@ function ProductsEditor({ order, onUpdate }) {
                 {newRow.name.trim() && (
                   <button
                     type="button"
-                    onMouseDown={() => { setPickerSearch(""); setShowPicker(false); }}
+                    onMouseDown={() => {
+                      setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "custom" }));
+                      setPickerSearch("");
+                      setShowPicker(false);
+                    }}
                     className="w-full text-left px-3 py-2.5 border-t border-border hover:bg-primary/5 transition-all rounded-b-xl flex items-center gap-2"
                   >
                     <Plus className="w-3.5 h-3.5 text-primary flex-shrink-0" />
@@ -1764,11 +1849,28 @@ function ProductsEditor({ order, onUpdate }) {
                   </button>
                 )}
                 {!newRow.name.trim() && filtered.length === 0 && (
-                  <p className="text-xs text-muted-foreground px-3 py-2">Type a product name above</p>
+                  <p className="text-xs text-muted-foreground px-3 py-2">No matching active products. Type a product name to add a custom item.</p>
                 )}
               </div>
             )}
           </div>
+          {(newRow.name || newRow.image_url) && (
+            <div className="flex gap-3 rounded-2xl border border-border bg-secondary/30 p-3">
+              <div className="h-16 w-16 overflow-hidden rounded-2xl border border-border bg-background flex-shrink-0">
+                {newRow.image_url ? <img src={newRow.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-5 h-6 w-6 text-muted-foreground/50" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-foreground">{newRow.name || "Custom product"}</p>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">{[newRow.category, newRow.source || "custom"].filter(Boolean).join(" / ")}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="rounded-full bg-background px-2 py-1">Qty {Number(newRow.quantity) || 1}</span>
+                  {newRow.size && <span className="rounded-full bg-background px-2 py-1">{newRow.size}</span>}
+                  {newRow.color && <span className="rounded-full bg-background px-2 py-1">{newRow.color}</span>}
+                  {newRow.price && <span className="rounded-full bg-primary/10 px-2 py-1 font-semibold text-primary">{formatMoney(Number(newRow.price) * Number(newRow.quantity || 1))}</span>}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex gap-2">
             <Input value={newRow.quantity} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, quantity: e.target.value }))}
               type="number" placeholder="Qty" className="h-8 text-sm rounded-xl w-16" />
@@ -1801,7 +1903,7 @@ function ProductsEditor({ order, onUpdate }) {
             placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
           <div className="flex gap-2">
             <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={addRow} disabled={!newRow.name.trim()}>Add</Button>
-            <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setShowPicker(false); }}>Cancel</Button>
+            <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
           </div>
         </div>
       )}

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { X, Plus, Trash2, Search, ShoppingCart, AlertCircle } from "lucide-react";
+import { X, Plus, Trash2, Search, ShoppingCart, AlertCircle, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,7 +47,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     total_amount: '',
     due_date: '',
     linked_po_id: '',
-    products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '' }]
+    products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '' }]
   });
 
   const [clientSearch, setClientSearch] = useState('');
@@ -133,33 +133,64 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
     queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
-    staleTime: 0,
+    staleTime: 300_000,
   });
   const { data: inventoryItems = [] } = useQuery({
     queryKey: ["inventory"],
     queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
-    staleTime: 0,
+    staleTime: 300_000,
   });
+
+  const thumbFor = (item) => {
+    const image = item?.image_url || item?.primary_image || item?.thumbnail_url || item?.cover_image_url || (Array.isArray(item?.images) ? (item.images[0]?.src || item.images[0]) : "");
+    return typeof image === "string" ? image : "";
+  };
+  const listFrom = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string" || typeof item === "number").map(String) : [];
 
   const allPickerItems = [
     ...(/** @type {any[]} */ (catalogItems))
-      .filter((/** @type {any} */ c) => c.is_archived !== true && c.status !== "draft")
-      .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true && c.status !== "hidden")
-      .map((/** @type {any} */ c) => ({ name: c.name, price: c.price ?? c.base_price ?? "", source: "catalog" })),
+      .filter((/** @type {any} */ c) => c.is_archived !== true)
+      .filter((/** @type {any} */ c) => c.store_visible !== false)
+      .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true)
+      .filter((/** @type {any} */ c) => !["draft", "hidden", "inactive", "archived"].includes(String(c.status || "active").toLowerCase()))
+      .map((/** @type {any} */ c) => ({
+        id: c.id,
+        name: c.name,
+        price: c.price ?? c.base_price ?? c.selling_price ?? "",
+        source: "catalog",
+        category: c.category || "",
+        image_url: thumbFor(c),
+        sizes: listFrom(c.sizes || c.size_options || c.sizes_available || c.variants?.sizes),
+        colors: listFrom(c.colors || c.colours || c.color_options || c.colour_options || c.colors_available || c.variants?.colors),
+      })),
     ...(/** @type {any[]} */ (inventoryItems))
       .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
-      .map((/** @type {any} */ i) => ({ name: i.name, price: i.selling_price ?? "", source: "stock" })),
+      .map((/** @type {any} */ i) => ({
+        id: i.id,
+        name: i.name,
+        price: i.selling_price ?? "",
+        source: "stock",
+        category: i.category || "",
+        image_url: thumbFor(i),
+        sizes: listFrom(i.sizes_available),
+        colors: listFrom(i.colors_available),
+      })),
   ];
 
   const pickerFiltered = (/** @type {string} */ q) =>
     q ? allPickerItems.filter(p => p.name?.toLowerCase().includes(q.toLowerCase())).slice(0, 8)
       : allPickerItems.slice(0, 8);
+  const selectedProductItem = (product) => allPickerItems.find((item) => item.id && item.id === (product.catalog_item_id || product.inventory_item_id));
 
-  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '', size: '', color: '', notes: '' }] }));
+  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '' }] }));
   const removeProduct = (i) => setForm(f => ({ ...f, products: f.products.filter((_, idx) => idx !== i) }));
   const updateProduct = (i, field, val) => setForm(f => ({
     ...f,
     products: f.products.map((p, idx) => idx === i ? { ...p, [field]: val } : p)
+  }));
+  const updateProductFields = (i, patch) => setForm(f => ({
+    ...f,
+    products: f.products.map((p, idx) => idx === i ? { ...p, ...patch } : p)
   }));
 
   const calcTotal = () => form.products.reduce((s, p) => s + (parseFloat(p.price || 0) * (parseInt(p.quantity) || 1)), 0);
@@ -444,12 +475,22 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
               {form.products.map((p, i) => (
                 <div key={i} className="space-y-1">
                   <div className="flex items-center gap-2">
+                    <div className="h-9 w-9 overflow-hidden rounded-xl border border-border bg-secondary/60 flex-shrink-0">
+                      {p.image_url ? <img src={p.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-2.5 h-4 w-4 text-muted-foreground/50" />}
+                    </div>
                     {/* Name with catalog/inventory picker */}
                     <div className="relative flex-1">
                       <Input
                         value={p.name}
                         onChange={(/** @type {any} */ e) => {
-                          updateProduct(i, 'name', e.target.value);
+                          updateProductFields(i, {
+                            name: e.target.value,
+                            catalog_item_id: '',
+                            inventory_item_id: '',
+                            image_url: '',
+                            category: '',
+                            source: 'custom',
+                          });
                           setPickerOpenIdx(i);
                         }}
                         onFocus={() => setPickerOpenIdx(i)}
@@ -464,16 +505,30 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                               key={idx}
                               type="button"
                               onMouseDown={() => {
-                                updateProduct(i, 'name', item.name);
-                                if (item.price) updateProduct(i, 'price', String(item.price));
+                                updateProductFields(i, {
+                                  name: item.name,
+                                  price: item.price ? String(item.price) : p.price,
+                                  catalog_item_id: item.source === 'catalog' ? item.id : '',
+                                  inventory_item_id: item.source === 'stock' ? item.id : '',
+                                  image_url: item.image_url || '',
+                                  category: item.category || '',
+                                  source: item.source,
+                                  size: '',
+                                  color: '',
+                                });
                                 setPickerOpenIdx(null);
                               }}
-                              className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center justify-between"
+                              className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center gap-3"
                             >
-                              <span className="text-sm text-foreground">{item.name}</span>
-                              <span className="flex items-center gap-2">
+                              <div className="h-10 w-10 overflow-hidden rounded-lg border border-border bg-secondary/60 flex-shrink-0">
+                                {item.image_url ? <img src={item.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-2.5 h-5 w-5 text-muted-foreground/50" />}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm text-foreground">{item.name}</p>
+                                <p className="truncate text-[10px] text-muted-foreground">{[item.category, item.source].filter(Boolean).join(" / ")}</p>
+                              </div>
+                              <span className="flex items-center gap-2 flex-shrink-0">
                                 {item.price ? <span className="text-xs font-semibold text-primary ml-2 flex-shrink-0">R{Number(item.price).toLocaleString()}</span> : null}
-                                <span className="text-[10px] text-muted-foreground capitalize">{item.source}</span>
                               </span>
                             </button>
                           ))}
@@ -481,7 +536,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                           {p.name.trim() && (
                             <button
                               type="button"
-                              onMouseDown={() => setPickerOpenIdx(null)}
+                              onMouseDown={() => {
+                                updateProductFields(i, { catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: 'custom' });
+                                setPickerOpenIdx(null);
+                              }}
                               className="w-full text-left px-3 py-2.5 border-t border-border hover:bg-primary/5 transition-all rounded-b-xl flex items-center gap-2"
                             >
                               <Plus className="w-3.5 h-3.5 text-primary flex-shrink-0" />
@@ -507,10 +565,26 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                     )}
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    <Input value={p.size || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'size', e.target.value)}
-                      placeholder="Size" className="rounded-xl h-8 text-xs" />
-                    <Input value={p.color || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'color', e.target.value)}
-                      placeholder="Colour" className="rounded-xl h-8 text-xs" />
+                    {selectedProductItem(p)?.sizes?.length ? (
+                      <select value={p.size || ''} onChange={(e) => updateProduct(i, 'size', e.target.value)}
+                        className="h-8 rounded-xl border border-input bg-background px-2 text-xs">
+                        <option value="">Size</option>
+                        {selectedProductItem(p).sizes.map((size) => <option key={size} value={size}>{size}</option>)}
+                      </select>
+                    ) : (
+                      <Input value={p.size || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'size', e.target.value)}
+                        placeholder="Size" className="rounded-xl h-8 text-xs" />
+                    )}
+                    {selectedProductItem(p)?.colors?.length ? (
+                      <select value={p.color || ''} onChange={(e) => updateProduct(i, 'color', e.target.value)}
+                        className="h-8 rounded-xl border border-input bg-background px-2 text-xs">
+                        <option value="">Colour</option>
+                        {selectedProductItem(p).colors.map((color) => <option key={color} value={color}>{color}</option>)}
+                      </select>
+                    ) : (
+                      <Input value={p.color || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'color', e.target.value)}
+                        placeholder="Colour" className="rounded-xl h-8 text-xs" />
+                    )}
                     <Input value={p.notes || ''} onChange={(/** @type {any} */ e) => updateProduct(i, 'notes', e.target.value)}
                       placeholder="Item notes" className="rounded-xl h-8 text-xs" />
                   </div>
