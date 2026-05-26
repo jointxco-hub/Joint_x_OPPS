@@ -47,46 +47,48 @@
  *
  * The mainPage value must match a key in the PAGES object exactly.
  */
-import AletheaBrandOS from './pages/AletheaBrandOS';
-import AletheaClientPortal from './pages/AletheaClientPortal';
-import AletheaPhaseDetail from './pages/AletheaPhaseDetail';
-import AletheaProjectBuilder from './pages/AletheaProjectBuilder';
-import AletheaProjectView from './pages/AletheaProjectView';
-import Calculator from './pages/Calculator';
-import CatalogManagement from './pages/CatalogManagement';
-import ClientCatalog from './pages/ClientCatalog';
-import ClientRequests from './pages/ClientRequests';
-import Clients from './pages/Clients';
-import Dashboard from './pages/Dashboard';
-import Executive from './pages/Executive';
-import FileManager from './pages/FileManager';
-import Home from './pages/Home';
-import Inventory from './pages/Inventory';
-import NotesHub from './pages/NotesHub';
-import OnboardingManagement from './pages/OnboardingManagement';
-import Operations from './pages/Operations';
-import Orders from './pages/Orders';
-import ProjectHub from './pages/ProjectHub';
-import Projects from './pages/Projects';
-import PurchaseOrders from './pages/PurchaseOrders';
-import RolesManagement from './pages/RolesManagement';
-import SOPEditor from './pages/SOPEditor';
-import SOPLibrary from './pages/SOPLibrary';
-import SOPView from './pages/SOPView';
-import Suppliers from './pages/Suppliers';
-import Tasks from './pages/Tasks';
-import TrackOrder from './pages/TrackOrder';
-import WeeklyCalendar from './pages/WeeklyCalendar';
-import OpsCalendar from './pages/OpsCalendar';
-import UserDashboard from './pages/UserDashboard';
-import TeamProfiles from './pages/TeamProfiles';
-import TeamExpenses from './pages/TeamExpenses';
-import ArchivePage from './pages/Archive';
-import SignIn from './pages/SignIn';
-import OffersDashboard from './pages/OffersDashboard';
-import MoneyModel from './pages/MoneyModel';
-import Goals from './pages/Goals';
+import { lazy } from 'react';
 import __Layout from './Layout.jsx';
+
+const AletheaBrandOS = lazy(() => import('./pages/AletheaBrandOS'));
+const AletheaClientPortal = lazy(() => import('./pages/AletheaClientPortal'));
+const AletheaPhaseDetail = lazy(() => import('./pages/AletheaPhaseDetail'));
+const AletheaProjectBuilder = lazy(() => import('./pages/AletheaProjectBuilder'));
+const AletheaProjectView = lazy(() => import('./pages/AletheaProjectView'));
+const Calculator = lazy(() => import('./pages/Calculator'));
+const CatalogManagement = lazy(() => import('./pages/CatalogManagement'));
+const ClientCatalog = lazy(() => import('./pages/ClientCatalog'));
+const ClientRequests = lazy(() => import('./pages/ClientRequests'));
+const Clients = lazy(() => import('./pages/Clients'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Executive = lazy(() => import('./pages/Executive'));
+const FileManager = lazy(() => import('./pages/FileManager'));
+const Home = lazy(() => import('./pages/Home'));
+const Inventory = lazy(() => import('./pages/Inventory'));
+const NotesHub = lazy(() => import('./pages/NotesHub'));
+const OnboardingManagement = lazy(() => import('./pages/OnboardingManagement'));
+const Operations = lazy(() => import('./pages/Operations'));
+const Orders = lazy(() => import('./pages/Orders'));
+const ProjectHub = lazy(() => import('./pages/ProjectHub'));
+const Projects = lazy(() => import('./pages/Projects'));
+const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'));
+const RolesManagement = lazy(() => import('./pages/RolesManagement'));
+const SOPEditor = lazy(() => import('./pages/SOPEditor'));
+const SOPLibrary = lazy(() => import('./pages/SOPLibrary'));
+const SOPView = lazy(() => import('./pages/SOPView'));
+const Suppliers = lazy(() => import('./pages/Suppliers'));
+const Tasks = lazy(() => import('./pages/Tasks'));
+const TrackOrder = lazy(() => import('./pages/TrackOrder'));
+const WeeklyCalendar = lazy(() => import('./pages/WeeklyCalendar'));
+const OpsCalendar = lazy(() => import('./pages/OpsCalendar'));
+const UserDashboard = lazy(() => import('./pages/UserDashboard'));
+const TeamProfiles = lazy(() => import('./pages/TeamProfiles'));
+const TeamExpenses = lazy(() => import('./pages/TeamExpenses'));
+const ArchivePage = lazy(() => import('./pages/Archive'));
+const SignIn = lazy(() => import('./pages/SignIn'));
+const OffersDashboard = lazy(() => import('./pages/OffersDashboard'));
+const MoneyModel = lazy(() => import('./pages/MoneyModel'));
+const Goals = lazy(() => import('./pages/Goals'));
 
 
 export const PAGES = {

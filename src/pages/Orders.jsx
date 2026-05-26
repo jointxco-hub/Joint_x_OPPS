@@ -1,4 +1,4 @@
-import { Component, useState, useEffect } from "react";
+import { Component, Suspense, lazy, useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -6,13 +6,14 @@ import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer } from 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
-import OrderDrawer from "@/components/orders/OrderDrawer";
-import NewOrderDrawer from "@/components/orders/NewOrderDrawer";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
+
+const OrderDrawer = lazy(() => import("@/components/orders/OrderDrawer"));
+const NewOrderDrawer = lazy(() => import("@/components/orders/NewOrderDrawer"));
 
 class OrderDrawerErrorBoundary extends Component {
   constructor(props) {
@@ -413,29 +414,33 @@ export default function Orders() {
 
       {selectedOrder && (
         <OrderDrawerErrorBoundary resetKey={selectedOrder.id} onClose={() => setSelectedOrder(null)}>
-          <OrderDrawer
-            key={selectedOrder.id}
-            order={selectedOrder}
-            onClose={() => setSelectedOrder(null)}
-            onUpdate={(id, data) => {
-              updateMutation.mutate({ id, data });
-              setSelectedOrder(prev => ({ ...(prev || selectedOrder), ...data }));
-            }}
-            onArchive={() => archiveOrder(selectedOrder.id)}
-            isArchiving={isArchiving}
-          />
+          <Suspense fallback={<DrawerLoadingFallback onClose={() => setSelectedOrder(null)} />}>
+            <OrderDrawer
+              key={selectedOrder.id}
+              order={selectedOrder}
+              onClose={() => setSelectedOrder(null)}
+              onUpdate={(id, data) => {
+                updateMutation.mutate({ id, data });
+                setSelectedOrder(prev => ({ ...(prev || selectedOrder), ...data }));
+              }}
+              onArchive={() => archiveOrder(selectedOrder.id)}
+              isArchiving={isArchiving}
+            />
+          </Suspense>
         </OrderDrawerErrorBoundary>
       )}
 
       {showNew && (
-        <NewOrderDrawer
-          onClose={() => setShowNew(false)}
-          onCreate={async (orderData) => {
-            await dataClient.entities.Order.create(orderData);
-            queryClient.invalidateQueries({ queryKey: ["orders"] });
-            setShowNew(false);
-          }}
-        />
+        <Suspense fallback={<DrawerLoadingFallback onClose={() => setShowNew(false)} label="Loading new order..." />}>
+          <NewOrderDrawer
+            onClose={() => setShowNew(false)}
+            onCreate={async (orderData) => {
+              await dataClient.entities.Order.create(orderData);
+              queryClient.invalidateQueries({ queryKey: ["orders"] });
+              setShowNew(false);
+            }}
+          />
+        </Suspense>
       )}
 
       {printSummary && (
@@ -447,6 +452,29 @@ export default function Orders() {
         />
       )}
     </div>
+  );
+}
+
+function DrawerLoadingFallback({ onClose, label = "Loading order..." }) {
+  return (
+    <>
+      <div className="fixed inset-0 z-[55] bg-black/20 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed right-0 top-0 z-[60] flex h-full w-full max-w-xl flex-col bg-card p-5 shadow-apple-xl">
+        <div className="flex items-center justify-between border-b border-border pb-4">
+          <div>
+            <div className="h-5 w-40 animate-pulse rounded bg-secondary" />
+            <div className="mt-2 h-3 w-24 animate-pulse rounded bg-secondary/70" />
+          </div>
+          <button onClick={onClose} className="rounded-xl bg-secondary px-3 py-2 text-xs text-muted-foreground">Close</button>
+        </div>
+        <div className="mt-5 space-y-3">
+          <p className="text-sm font-medium text-muted-foreground">{label}</p>
+          {[1, 2, 3, 4].map((item) => (
+            <div key={item} className="h-16 animate-pulse rounded-2xl bg-secondary/60" />
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

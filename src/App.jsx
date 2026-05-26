@@ -8,16 +8,17 @@ import PWAInstallPrompt from '@/components/common/PWAInstallPrompt'
 import AppLoader from '@/components/common/AppLoader'
 import GlobalRefreshControl from '@/components/common/GlobalRefreshControl'
 import { pagesConfig } from './pages.config'
+import { Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
-import TrackOrder from '@/pages/TrackOrder';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : () => <></>;
 const SignInPage = Pages['SignIn'];
+const TrackOrderPage = Pages['TrackOrder'];
 
 // Paths that are public — rendered without the internal layout and no auth check
 const PUBLIC_PATHS = ['/TrackOrder', '/track', '/SignIn'];
@@ -33,11 +34,13 @@ const AuthenticatedApp = () => {
   // Public pages — bypass auth and layout entirely
   if (PUBLIC_PATHS.includes(location.pathname)) {
     return (
-      <Routes>
-        <Route path="/TrackOrder" element={<TrackOrder />} />
-        <Route path="/track" element={<TrackOrder />} />
-        <Route path="/SignIn" element={SignInPage ? <SignInPage /> : <PageNotFound />} />
-      </Routes>
+      <Suspense fallback={<AppLoader />}>
+        <Routes>
+          <Route path="/TrackOrder" element={TrackOrderPage ? <TrackOrderPage /> : <PageNotFound />} />
+          <Route path="/track" element={TrackOrderPage ? <TrackOrderPage /> : <PageNotFound />} />
+          <Route path="/SignIn" element={SignInPage ? <SignInPage /> : <PageNotFound />} />
+        </Routes>
+      </Suspense>
     );
   }
 
@@ -63,25 +66,27 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
-    <Routes>
-      <Route path="/" element={
-        <LayoutWrapper currentPageName={mainPageKey}>
-          <MainPage />
-        </LayoutWrapper>
-      } />
-      {Object.entries(Pages).map(([path, Page]) => (
-        <Route
-          key={path}
-          path={`/${path}`}
-          element={
-            <LayoutWrapper currentPageName={path}>
-              <Page />
-            </LayoutWrapper>
-          }
-        />
-      ))}
-      <Route path="*" element={<PageNotFound />} />
-    </Routes>
+    <Suspense fallback={<AppLoader />}>
+      <Routes>
+        <Route path="/" element={
+          <LayoutWrapper currentPageName={mainPageKey}>
+            <MainPage />
+          </LayoutWrapper>
+        } />
+        {Object.entries(Pages).map(([path, Page]) => (
+          <Route
+            key={path}
+            path={`/${path}`}
+            element={
+              <LayoutWrapper currentPageName={path}>
+                <Page />
+              </LayoutWrapper>
+            }
+          />
+        ))}
+        <Route path="*" element={<PageNotFound />} />
+      </Routes>
+    </Suspense>
   );
 };
 
