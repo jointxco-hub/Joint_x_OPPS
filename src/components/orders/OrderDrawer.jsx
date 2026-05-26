@@ -1268,15 +1268,27 @@ function ProductsEditor({ order, onUpdate }) {
   const [pickerSearch, setPickerSearch] = useState("");
   const [showPicker, setShowPicker] = useState(false);
 
-  const products = order.products || [];
-  const thumbFor = (item) => item?.image_url || item?.primary_image || item?.thumbnail_url || item?.cover_image_url || (Array.isArray(item?.images) ? (item.images[0]?.src || item.images[0]) : "");
-  const listFrom = (value) => Array.isArray(value) ? value.filter(Boolean) : [];
+  const products = Array.isArray(order.products) ? order.products : [];
+  const safeCatalogItems = Array.isArray(catalogItems) ? catalogItems : [];
+  const safeInventoryItems = Array.isArray(inventoryItems) ? inventoryItems : [];
+  const thumbFor = (item) => {
+    const image = item?.image_url || item?.primary_image || item?.thumbnail_url || item?.cover_image_url || (Array.isArray(item?.images) ? (item.images[0]?.src || item.images[0]) : "");
+    return typeof image === "string" ? image : "";
+  };
+  const listFrom = (value) => Array.isArray(value) ? value.filter((item) => typeof item === "string" || typeof item === "number").map(String) : [];
+  const cleanProduct = (item) => {
+    if (item && typeof item === "object") return item;
+    return { name: String(item || "Item"), quantity: 1 };
+  };
 
   const saveRow = () => {
     if (!editRow.name.trim()) return;
-    const updated = products.map((p, i) =>
+    const updated = products.map((raw, i) => {
+      const p = cleanProduct(raw);
+      return (
       i === editingIdx ? { ...p, ...editRow, quantity: Number(editRow.quantity) || 1 } : p
-    );
+      );
+    });
     onUpdate(order.id, { products: updated });
     setEditingIdx(null);
   };
@@ -1297,7 +1309,7 @@ function ProductsEditor({ order, onUpdate }) {
   };
 
   const allPickerItems = [
-    ...(/** @type {any[]} */ (catalogItems))
+    ...(/** @type {any[]} */ (safeCatalogItems))
       .filter((/** @type {any} */ c) => c.is_archived !== true)
       .filter((/** @type {any} */ c) => c.store_visible !== false)
       .filter((/** @type {any} */ c) => c.is_active !== false && c.hidden !== true && c.is_hidden !== true)
@@ -1312,8 +1324,8 @@ function ProductsEditor({ order, onUpdate }) {
         sizes: listFrom(c.sizes || c.size_options || c.sizes_available || c.variants?.sizes),
         colors: listFrom(c.colors || c.colours || c.color_options || c.colour_options || c.colors_available || c.variants?.colors),
       })),
-    ...(/** @type {any[]} */ (inventoryItems))
-      .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (catalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
+    ...(/** @type {any[]} */ (safeInventoryItems))
+      .filter((/** @type {any} */ i) => !i.is_archived && !(/** @type {any[]} */ (safeCatalogItems)).some((/** @type {any} */ c) => c.name?.toLowerCase() === i.name?.toLowerCase()))
       .map((/** @type {any} */ i) => ({
         id: i.id,
         name: i.name,
@@ -1332,10 +1344,12 @@ function ProductsEditor({ order, onUpdate }) {
   const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
 
   const updateQuantity = (idx, delta) => {
-    const updated = products.map((item, i) => i === idx
-      ? { ...item, quantity: Math.max(1, Number(item.quantity || 1) + delta) }
-      : item
-    );
+    const updated = products.map((item, i) => {
+      const clean = cleanProduct(item);
+      return i === idx
+        ? { ...clean, quantity: Math.max(1, Number(clean.quantity || 1) + delta) }
+        : clean;
+    });
     onUpdate(order.id, { products: updated });
   };
 
@@ -1355,8 +1369,9 @@ function ProductsEditor({ order, onUpdate }) {
         {products.length === 0 && !addMode && (
           <p className="text-xs text-muted-foreground italic">No products — click Add to start</p>
         )}
-        {products.map((/** @type {any} */ p, /** @type {number} */ i) =>
-          editingIdx === i ? (
+        {products.map((/** @type {any} */ rawProduct, /** @type {number} */ i) => {
+          const p = cleanProduct(rawProduct);
+          return editingIdx === i ? (
             <div key={i} className="grid gap-2 bg-card rounded-lg px-2 py-2 border border-border sm:grid-cols-[1fr_56px_84px]">
               <Input value={editRow.name} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, name: e.target.value }))}
                 className="h-7 text-xs flex-1 rounded-lg" placeholder="Name" autoFocus />
@@ -1406,8 +1421,8 @@ function ProductsEditor({ order, onUpdate }) {
                 </button>
               </div>
             </div>
-          )
-        )}
+          );
+        })}
       </div>
 
       {/* Add new row */}
