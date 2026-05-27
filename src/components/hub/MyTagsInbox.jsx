@@ -20,7 +20,7 @@ export default function MyTagsInbox({ tags = [], userEmail }) {
     onError: () => toast.error('Could not resolve tag'),
   });
 
-  const urgentCount = tags.filter((tag) => tag.orders?.priority === 'urgent' || tag.tag_type === 'urgent').length;
+  const urgentCount = tags.filter((tag) => tag.orders?.priority === 'urgent' || tag.action === 'urgent').length;
 
   return (
     <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
@@ -44,17 +44,17 @@ export default function MyTagsInbox({ tags = [], userEmail }) {
         <div className="space-y-2">
           {tags.slice(0, 8).map(tag => {
             const order = tag.orders || {};
-            const urgent = order.priority === 'urgent' || tag.tag_type === 'urgent';
+            const urgent = order.priority === 'urgent' || tag.action === 'urgent';
             return (
               <div key={tag.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${urgent ? 'border-red-100 bg-red-50' : 'border-border bg-secondary/30'}`}>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <p className="truncate text-sm font-semibold text-foreground">{order.customer_name || 'Order'}</p>
+                    <p className="truncate text-sm font-semibold text-foreground">{order.client_name || 'Order'}</p>
                     <SourceBadge source={order.source} />
                     {urgent && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">Urgent</span>}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {order.order_number || 'No ref'} - {tag.role_key || tag.tag_type || 'tag'} - {order.pipeline_stage || order.status || 'active'}
+                    {order.order_number || 'No ref'} - {tag.role_key || tag.action || 'tag'} - {order.pipeline_stage || order.status || 'active'}
                   </p>
                 </div>
                 <button

@@ -47,14 +47,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { dataClient } from "@/api/dataClient";
+import { useOrderDrawerData } from "@/hooks/useOrderDrawerData";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import MediaPreview from "@/components/common/MediaPreview";
-import TypeformPOForm from "@/components/purchaseorders/TypeformPOForm";
-import ProductionReadinessCard from "@/components/orders/ProductionReadinessCard";
+
+const TypeformPOForm = React.lazy(() => import("@/components/purchaseorders/TypeformPOForm"));
+const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
@@ -68,6 +70,33 @@ const statusConfig = {
 const ORDER_STATUSES = ["confirmed", "in_production", "ready", "shipped", "delivered", "cancelled"];
 
 const progressStages = ["confirmed", "in_production", "ready", "shipped", "delivered"];
+
+function selectValue(value, fallback = "__none") {
+  if (Array.isArray(value)) {
+    const first = value.find((item) => item !== null && item !== undefined && String(item).trim() !== "");
+    return first === undefined ? fallback : String(first);
+  }
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+
+function markDrawerPerf(name) {
+  if (!import.meta.env.DEV || typeof performance === "undefined") return;
+  try {
+    performance.mark(name);
+  } catch {
+    // Performance marks are best-effort diagnostics only.
+  }
+}
+
+function measureDrawerPerf(name, start, end) {
+  if (!import.meta.env.DEV || typeof performance === "undefined") return;
+  try {
+    performance.measure(name, start, end);
+  } catch {
+    // Missing marks should never affect app behavior.
+  }
+}
 
 const DEFAULT_ORDER_FILE_FOLDERS = [
   { id: "mockups", name: "Mockups" },
@@ -104,15 +133,35 @@ function normalizeOrderFileFolders(value) {
 class DrawerSectionBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: "" };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMessage: error?.message || "Unknown render error" };
   }
 
-  componentDidCatch(error) {
-    console.error(`[OrderDrawer] ${this.props.label || "section"} failed`, error);
+  componentDidCatch(error, info) {
+    if (import.meta.env.DEV) {
+      console.groupCollapsed(`[OrderDrawer] ${this.props.label || "section"} failed`);
+      console.error("message:", error?.message);
+      console.error("error:", error);
+      console.error("stack:", error?.stack);
+      console.error("componentStack:", info?.componentStack);
+      console.error("resetKey:", this.props.resetKey);
+      console.groupEnd();
+      return;
+    }
+
+    console.error(`[OrderDrawer] ${this.props.label || "section"} failed`, error?.message || error);
+    try {
+      window.localStorage?.setItem("opps:last-order-drawer-section-error", JSON.stringify({
+        label: this.props.label || "section",
+        message: error?.message || String(error || "Unknown error"),
+        at: new Date().toISOString(),
+      }));
+    } catch {
+      // Diagnostics only.
+    }
   }
 
   componentDidUpdate(prevProps) {
@@ -127,6 +176,9 @@ class DrawerSectionBoundary extends React.Component {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-semibold">{this.props.label || "This section"} could not load</p>
           <p className="mt-1 text-xs leading-5">You can still use the rest of this order. Close and reopen after saving any changes.</p>
+          {this.props.label === "Order workspace" && this.state.errorMessage && (
+            <p className="mt-2 break-words font-mono text-[11px] text-amber-800">{this.state.errorMessage}</p>
+          )}
         </div>
       );
     }
@@ -163,53 +215,19 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   const [editingLinkedPO, setEditingLinkedPO] = useState(false);
   const queryClient = useQueryClient();
 
-  const { data: payments = [] } = useQuery({
-    queryKey: ['payments', order.id],
-    queryFn: () => dataClient.entities.Payment.filter({ order_id: order.id })
-  });
-
-  const { data: legacyTasks = [] } = useQuery({
-    queryKey: ['orderTasks', order.id],
-    queryFn: () => dataClient.entities.Task.filter({ linked_order_id: order.id }),
-    enabled: tab === 'tasks',
-    staleTime: 30_000,
-  });
-
-  const { data: linkedOpsTasks = [] } = useQuery({
-    queryKey: ['orderOpsTasks', order.id],
-    queryFn: () => dataClient.entities.OpsTask.filter({ order_id: order.id }),
-    enabled: tab === 'tasks',
-    staleTime: 30_000,
-  });
-
-  const safePayments = Array.isArray(payments) ? payments : [];
-  const safeLegacyTasks = Array.isArray(legacyTasks) ? legacyTasks : [];
-  const safeLinkedOpsTasks = Array.isArray(linkedOpsTasks) ? linkedOpsTasks : [];
-  const allLinkedTasks = [...safeLegacyTasks, ...safeLinkedOpsTasks];
-
-  const { data: purchaseOrders = [] } = useQuery({
-    queryKey: ['purchaseOrders'],
-    queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100),
-    enabled: tab === 'po' || Boolean(order.linked_po_id),
-    staleTime: 30_000,
-  });
-
-  const { data: users = [] } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => dataClient.entities.User.list('-created_date', 100),
-    enabled: tab === 'details' || tab === 'tasks',
-    staleTime: 300_000,
-  });
-
-  const { data: linkedClient = null } = useQuery({
-    queryKey: ['orderClient', order.client_id],
-    queryFn: async () => {
-      if (!order.client_id) return null;
-      const rows = await dataClient.entities.Client.filter({ id: order.client_id }, '-updated_date', 1);
-      return rows?.[0] || null;
-    },
-    enabled: Boolean(order.client_id),
-  });
+  const drawerData = useOrderDrawerData(order, tab);
+  const {
+    payments: safePayments,
+    linkedTasks: allLinkedTasks,
+    users: safeUsers,
+    linkedPO,
+    activePOs,
+    displayClientEmail,
+    displayWhatsappName,
+    displaySavedContactName,
+    totalPaid,
+    balance,
+  } = drawerData;
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ['suppliers'],
@@ -222,14 +240,6 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     queryFn: () => dataClient.entities.InventoryItem.list('name', 100),
     enabled: editingLinkedPO,
   });
-
-  const safePurchaseOrders = Array.isArray(purchaseOrders) ? purchaseOrders : [];
-  const safeUsers = Array.isArray(users) ? users : [];
-  const linkedPO = safePurchaseOrders.find(po => po.id === order.linked_po_id);
-  const activePOs = safePurchaseOrders.filter(po => ['draft','pending','approved','ordered','partial'].includes(po.status));
-  const displayClientEmail = order.client_email || linkedClient?.email || linkedClient?.client_email || '';
-  const displayWhatsappName = order.whatsapp_name || linkedClient?.whatsapp_name || '';
-  const displaySavedContactName = order.saved_contact_name || linkedClient?.saved_contact_name || '';
 
   const updatePOMutation = useMutation({
     mutationFn: ({ id, data }) => dataClient.entities.PurchaseOrder.update(id, data),
@@ -412,6 +422,16 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
     },
   });
 
+  useEffect(() => {
+    markDrawerPerf("opps:drawer-shell-visible");
+    measureDrawerPerf("opps:order-click-to-drawer-shell", "opps:order-row-click", "opps:drawer-shell-visible");
+  }, [order.id]);
+
+  useEffect(() => {
+    markDrawerPerf("opps:drawer-core-visible");
+    measureDrawerPerf("opps:order-click-to-drawer-core", "opps:order-row-click", "opps:drawer-core-visible");
+  }, [order.id]);
+
   const handleCreateTask = () => {
     if (!newTaskTitle.trim()) return;
     createTaskMutation.mutate({
@@ -426,24 +446,12 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
   };
 
   const currentStageIndex = progressStages.indexOf(order.status);
-  const totalPaid = safePayments
-    .filter(p => p.status === 'completed')
-    .reduce((s, p) => s + Number(p.amount || 0), 0);
-  const invoiceFiles = Array.isArray(order.invoice_files) ? order.invoice_files : [];
-  const latestInvoiceTotal = [...invoiceFiles]
-    .reverse()
-    .map((inv) => Number(inv?.invoice_total || 0))
-    .find((amount) => amount > 0) || 0;
-  const payableTotal = Number(latestInvoiceTotal || order.total_amount || 0);
-  const balance = Math.max(payableTotal - totalPaid, 0);
-
-  useEffect(() => {
-    const storedPaid = Number(order.deposit_paid || 0);
-    if (Math.abs(storedPaid - totalPaid) > 0.009) {
-      onUpdate(order.id, { deposit_paid: totalPaid });
-    }
-  }, [order.id, order.deposit_paid, onUpdate, safePayments.length, totalPaid]);
-
+  const statusValue = ORDER_STATUSES.includes(String(order.status || ""))
+    ? String(order.status)
+    : "confirmed";
+  const assignedToValue = selectValue(order.assigned_to);
+  const linkedPoValue = selectValue(order.linked_po_id);
+  const courierValue = selectValue(order.courier);
   const resolvedCouriers = couriers?.length ? couriers : DEFAULT_COURIERS;
   const courier = resolvedCouriers.find(c => c.value === order.courier);
   const trackingUrl = buildCourierTrackingUrl(courier, order.tracking_number);
@@ -466,6 +474,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
         <div className="absolute inset-0 bg-black/20 backdrop-blur-sm pointer-events-none" />
       </div>
       <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-[60] flex flex-col animate-slide-in-right" onClick={e => e.stopPropagation()}>
+        <DrawerSectionBoundary label="Order workspace" resetKey={`${order.id}-workspace-${tab}`}>
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div className="flex-1 min-w-0">
@@ -691,7 +700,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   onChange={setFieldValue} onSave={saveEdit} inputType="number" />
                 <div className="bg-secondary/30 rounded-xl p-3">
                   <p className="text-xs text-muted-foreground mb-1">Status</p>
-                  <Select value={order.status} onValueChange={v => onUpdate(order.id, { status: v })}>
+                  <Select value={statusValue} onValueChange={v => onUpdate(order.id, { status: v })}>
                     <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
                       <SelectValue />
                     </SelectTrigger>
@@ -708,7 +717,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                   <User className="w-3 h-3 text-muted-foreground" />
                   <p className="text-xs text-muted-foreground">Assigned To</p>
                 </div>
-                <Select value={order.assigned_to || '__none'} onValueChange={v => onUpdate(order.id, { assigned_to: v === '__none' ? null : v })}>
+                <Select value={assignedToValue} onValueChange={v => onUpdate(order.id, { assigned_to: v === '__none' ? null : v })}>
                   <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
                     <SelectValue placeholder="Unassigned" />
                   </SelectTrigger>
@@ -723,7 +732,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               </div>
 
               {/* Products — fully editable */}
-              <ProductsEditor order={order} onUpdate={onUpdate} />
+              <DrawerSectionBoundary label="Products" resetKey={`${order.id}-products`}>
+                <ProductsEditor order={order} onUpdate={onUpdate} />
+              </DrawerSectionBoundary>
 
               {/* Notes */}
               <div className="bg-secondary/30 rounded-xl p-4">
@@ -760,7 +771,9 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
           )}
 
           {tab === 'readiness' && (
-            <ProductionReadinessCard order={order} />
+            <React.Suspense fallback={<TabSectionFallback label="Production readiness" />}>
+              <ProductionReadinessCard order={order} readinessQuery={drawerData.readinessQuery} />
+            </React.Suspense>
           )}
 
           {tab === 'payments' && (
@@ -943,7 +956,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
                     New PO
                   </button>
                 </div>
-                <Select value={order.linked_po_id || '__none'} onValueChange={v => onUpdate(order.id, { linked_po_id: v === '__none' ? '' : v })}>
+                <Select value={linkedPoValue} onValueChange={v => onUpdate(order.id, { linked_po_id: v === '__none' ? '' : v })}>
                   <SelectTrigger className="rounded-xl">
                     <SelectValue placeholder="Link existing PO..." />
                   </SelectTrigger>
@@ -1024,13 +1037,15 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               )}
 
               {editingLinkedPO && linkedPO && (
-                <TypeformPOForm
-                  purchaseOrder={linkedPO}
-                  suppliers={suppliers}
-                  inventoryItems={inventoryItems}
-                  onSubmit={(data) => updatePOMutation.mutateAsync({ id: linkedPO.id, data })}
-                  onCancel={() => setEditingLinkedPO(false)}
-                />
+                <React.Suspense fallback={<TabSectionFallback label="Purchase order editor" />}>
+                  <TypeformPOForm
+                    purchaseOrder={linkedPO}
+                    suppliers={suppliers}
+                    inventoryItems={inventoryItems}
+                    onSubmit={(data) => updatePOMutation.mutateAsync({ id: linkedPO.id, data })}
+                    onCancel={() => setEditingLinkedPO(false)}
+                  />
+                </React.Suspense>
               )}
 
               {linkedPO ? (
@@ -1088,7 +1103,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
               <div className="bg-secondary/30 rounded-xl p-3">
                 <p className="text-xs text-muted-foreground mb-1.5">Courier</p>
                 <Select
-                  value={order.courier || '__none'}
+                  value={courierValue}
                   onValueChange={v => onUpdate(order.id, { courier: v === '__none' ? null : v })}
                 >
                   <SelectTrigger className="h-8 border-0 bg-transparent p-0 text-sm font-medium">
@@ -1169,6 +1184,7 @@ export default function OrderDrawer({ order, couriers, onClose, onUpdate, onArch
             <Archive className="w-4 h-4" /> Archive order
           </button>
         </div>
+        </DrawerSectionBoundary>
       </div>
 
       {printView && (
@@ -1578,7 +1594,15 @@ function ProductsEditor({ order, onUpdate }) {
     return { name: String(item || "Item"), quantity: 1 };
   };
   const optionKey = (option) => String(option?.id || option?.name || option);
-  const optionLabel = (option) => typeof option === "string" ? option : [option?.name, option?.locations?.length ? option.locations.join("/") : ""].filter(Boolean).join(" - ");
+  const optionLabel = (option) => {
+    if (typeof option === "string" || typeof option === "number") return String(option);
+    const locations = Array.isArray(option?.locations)
+      ? option.locations.join("/")
+      : option?.locations
+        ? String(option.locations)
+        : "";
+    return [option?.name || option?.label || option?.title || "Option", locations].filter(Boolean).join(" - ");
+  };
   const toggleProductOption = (kind, option) => {
     const key = kind === "print" ? "selected_print_options" : "selected_addons";
     const selected = Array.isArray(newRow[key]) ? newRow[key] : [];
@@ -1723,7 +1747,7 @@ function ProductsEditor({ order, onUpdate }) {
           ) : (
             <div key={i} className="flex flex-col gap-3 group px-2 py-2 rounded-xl hover:bg-card/70 transition-all sm:flex-row sm:items-center">
               <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 flex-shrink-0">
-                {p.image_url ? <img src={p.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
+                {p.image_url ? <img src={p.image_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
               </div>
               <div className="min-w-0 flex-1">
               <span className="text-sm text-foreground flex-1 truncate">
@@ -1860,7 +1884,7 @@ function ProductsEditor({ order, onUpdate }) {
                     }}
                     className="w-full text-left px-3 py-2 hover:bg-secondary transition-all flex items-center gap-3">
                     <div className="h-10 w-10 overflow-hidden rounded-lg border border-border bg-secondary/60 flex-shrink-0">
-                      {item.image_url ? <img src={item.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-2.5 h-5 w-5 text-muted-foreground/50" />}
+                      {item.image_url ? <img src={item.image_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-2.5 h-5 w-5 text-muted-foreground/50" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-foreground">{item.name}</p>
@@ -1897,7 +1921,7 @@ function ProductsEditor({ order, onUpdate }) {
           {(newRow.name || newRow.image_url) && (
             <div className="flex gap-3 rounded-2xl border border-border bg-secondary/30 p-3">
               <div className="h-16 w-16 overflow-hidden rounded-2xl border border-border bg-background flex-shrink-0">
-                {newRow.image_url ? <img src={newRow.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="m-5 h-6 w-6 text-muted-foreground/50" />}
+                {newRow.image_url ? <img src={newRow.image_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-5 h-6 w-6 text-muted-foreground/50" />}
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-foreground">{newRow.name || "Custom product"}</p>
@@ -1956,7 +1980,7 @@ function ProductsEditor({ order, onUpdate }) {
                         selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40"
                       }`}
                     >
-                      {option.image_url && <img src={option.image_url} alt="" className="h-4 w-4 rounded-full object-cover" />}
+                      {option.image_url && <img src={option.image_url} alt="" loading="lazy" className="h-4 w-4 rounded-full object-cover" />}
                       {optionLabel(option)}
                       {option.price ? ` · ${formatMoney(option.price)}` : ""}
                     </button>
@@ -1980,7 +2004,7 @@ function ProductsEditor({ order, onUpdate }) {
                         selected ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-secondary/40 text-muted-foreground hover:border-amber-400"
                       }`}
                     >
-                      {option.image_url && <img src={option.image_url} alt="" className="h-4 w-4 rounded-full object-cover" />}
+                      {option.image_url && <img src={option.image_url} alt="" loading="lazy" className="h-4 w-4 rounded-full object-cover" />}
                       {optionLabel(option)}
                       {option.price ? ` · ${formatMoney(option.price)}` : ""}
                     </button>
@@ -2024,6 +2048,20 @@ function EditField({ label, value, editing, editValue, onEdit, onChange, onSave,
       ) : (
         <p className="text-sm font-medium text-foreground">{value || '—'}</p>
       )}
+    </div>
+  );
+}
+
+function TabSectionFallback({ label = "Section" }) {
+  return (
+    <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+      <div className="h-4 w-36 animate-pulse rounded bg-secondary" />
+      <div className="mt-4 space-y-2">
+        {[1, 2, 3].map((item) => (
+          <div key={item} className="h-12 animate-pulse rounded-xl bg-background/70" />
+        ))}
+      </div>
+      <p className="sr-only">Loading {label}</p>
     </div>
   );
 }

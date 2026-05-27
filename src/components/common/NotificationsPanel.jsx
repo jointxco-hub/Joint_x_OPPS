@@ -34,7 +34,7 @@ function buildNotifications(inventory, tags, tasks, opsTasks, fileComments, emai
       color: "text-amber-500",
       bg: "bg-amber-50",
       title: "You're tagged on an order",
-      body: tag.orders?.order_number ? `${tag.orders.customer_name || "Order"} - ${tag.orders.order_number}` : `Role: ${tag.role_key}`,
+      body: tag.orders?.order_number ? `${tag.orders.client_name || "Order"} - ${tag.orders.order_number}` : `Role: ${tag.role_key}`,
     });
   }
 
@@ -111,15 +111,18 @@ export default function NotificationsPanel({ placement = "topbar" }) {
     queryKey: ["myTags", "panel", me?.email],
     enabled: !!me?.email,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("order_tags")
-        .select("id, role_key, tag_type, orders(order_number, customer_name, pipeline_stage, source)")
+        .select("id, role_key, action, orders(order_number, client_name, pipeline_stage, source)")
         .eq("user_email", me.email)
         .is("resolved_at", null)
         .limit(10);
+      if (error) throw error;
       return data ?? [];
     },
     staleTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
   });
 
   const { data: tasks = [] } = useQuery({

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getOrderProductionReadiness,
+  isValidReadinessOrderId,
   updateOrderProductionReadinessCheck,
 } from "@/api/productionReadiness";
 import { Badge } from "@/components/ui/badge";
@@ -44,22 +44,22 @@ function stateCopy(state) {
   return { label: "Pending review", className: "bg-amber-100 text-amber-800" };
 }
 
-export default function ProductionReadinessCard({ order }) {
+function isReadinessAuthError(message = "") {
+  const lower = String(message || "").toLowerCase();
+  return lower.includes("not authorised")
+    || lower.includes("not authorized")
+    || lower.includes("permission denied")
+    || lower.includes("row-level security");
+}
+
+export default function ProductionReadinessCard({ order, readinessQuery }) {
   const [notes, setNotes] = useState({});
   const [showPrintSheet, setShowPrintSheet] = useState(false);
   const queryClient = useQueryClient();
   const queryKey = ["productionReadiness", order?.id];
-
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey,
-    queryFn: async () => {
-      const result = await getOrderProductionReadiness(order.id);
-      if (result.error) throw new Error(result.error);
-      return result.data;
-    },
-    enabled: !!order?.id,
-    staleTime: 30_000,
-  });
+  const canLoadReadiness = isValidReadinessOrderId(order?.id);
+  const { data, isLoading, error, refetch, isAuthorizationBlocked } = readinessQuery || {};
+  const authError = isAuthorizationBlocked || isReadinessAuthError(error?.message);
 
   const updateMutation = useMutation({
     mutationFn: updateOrderProductionReadinessCheck,
@@ -69,6 +69,22 @@ export default function ProductionReadinessCard({ order }) {
     },
     onError: (err) => toast.error(err?.message || "Could not update readiness"),
   });
+
+  if (!canLoadReadiness) {
+    return (
+      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
+          <div>
+            <p className="font-semibold text-amber-900">Production Readiness is unavailable</p>
+            <p className="mt-1 text-sm leading-6 text-amber-800">
+              This order needs a saved Supabase order id before readiness checks can load.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -87,8 +103,12 @@ export default function ProductionReadinessCard({ order }) {
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
           <div>
-            <p className="font-semibold text-amber-900">Production Readiness is not ready yet</p>
-            <p className="mt-1 text-sm leading-6 text-amber-800">{error.message}</p>
+            <p className="font-semibold text-amber-900">
+              {authError ? "Production Readiness is restricted" : "Production Readiness is not ready yet"}
+            </p>
+            <p className="mt-1 text-sm leading-6 text-amber-800">
+              {authError ? "Not authorised to view production readiness." : error.message}
+            </p>
           </div>
         </div>
       </section>
@@ -142,6 +162,7 @@ export default function ProductionReadinessCard({ order }) {
           <button
             type="button"
             onClick={() => refetch()}
+            disabled={authError || !refetch}
             className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
             title="Refresh readiness"
           >

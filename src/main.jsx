@@ -13,7 +13,15 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
-      await navigator.serviceWorker.register('/sw.js');
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      registration.update?.();
       
       // Attempt to subscribe to push notifications after a short delay
       // to ensure user is authenticated

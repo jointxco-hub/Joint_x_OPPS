@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useState, useEffect } from "react";
+import { Component, Suspense, lazy, useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +14,15 @@ import { toast } from "sonner";
 
 const loadOrderDrawer = () => import("@/components/orders/OrderDrawer");
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
+
+function markOrderPerf(name) {
+  if (!import.meta.env.DEV || typeof performance === "undefined") return;
+  try {
+    performance.mark(name);
+  } catch {
+    // Performance marks are best-effort diagnostics only.
+  }
+}
 
 function lazyWithRefresh(loader, key) {
   return lazy(() =>
@@ -32,7 +41,7 @@ function lazyWithRefresh(loader, key) {
 const OrderDrawer = lazyWithRefresh(loadOrderDrawer, "OrderDrawer");
 const NewOrderDrawer = lazyWithRefresh(loadNewOrderDrawer, "NewOrderDrawer");
 
-function BasicOrderDrawer({ order, onClose }) {
+function BasicOrderDrawer({ order, onClose, errorMessage }) {
   const sc = statusConfig[order?.status] || { label: order?.status || "Order", color: "bg-secondary text-muted-foreground" };
   return (
     <>
@@ -83,6 +92,9 @@ function BasicOrderDrawer({ order, onClose }) {
           )}
           <p className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
             Basic view is active for this order. You can close and reopen to load the full workspace.
+            {errorMessage ? (
+              <span className="mt-2 block break-words font-mono text-[11px]">{errorMessage}</span>
+            ) : null}
           </p>
         </div>
       </div>
@@ -93,15 +105,51 @@ function BasicOrderDrawer({ order, onClose }) {
 class OrderDrawerErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: "" };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMessage: error?.message || "Unknown render error" };
   }
 
-  componentDidCatch(error) {
-    console.error("[Orders] Order drawer failed to render", error);
+  componentDidCatch(error, info) {
+    const order = this.props.order || {};
+    const orderSummary = {
+      id: order.id,
+      order_number: order.order_number,
+      client_name: order.client_name,
+      status: order.status,
+      source: order.source,
+      hasProductsArray: Array.isArray(order.products),
+      productsType: Array.isArray(order.products) ? "array" : typeof order.products,
+      productsCount: Array.isArray(order.products) ? order.products.length : undefined,
+      hasFileUrlsArray: Array.isArray(order.file_urls),
+      hasInvoiceFilesArray: Array.isArray(order.invoice_files),
+      hasPortalFilesArray: Array.isArray(order.portal_visible_file_urls),
+      keys: Object.keys(order).slice(0, 40),
+    };
+
+    if (import.meta.env.DEV) {
+      console.groupCollapsed("[Orders] Order drawer failed to render");
+      console.error("message:", error?.message);
+      console.error("error:", error);
+      console.error("stack:", error?.stack);
+      console.error("componentStack:", info?.componentStack);
+      console.error("orderSummary:", orderSummary);
+      console.groupEnd();
+      return;
+    }
+
+    console.error("[Orders] Order drawer failed to render", error?.message || error);
+    try {
+      window.localStorage?.setItem("opps:last-order-drawer-error", JSON.stringify({
+        message: error?.message || String(error || "Unknown error"),
+        orderSummary,
+        at: new Date().toISOString(),
+      }));
+    } catch {
+      // Diagnostics only.
+    }
   }
 
   componentDidUpdate(prevProps) {
@@ -112,7 +160,7 @@ class OrderDrawerErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
-      return <BasicOrderDrawer order={this.props.order} onClose={this.props.onClose} />;
+      return <BasicOrderDrawer order={this.props.order} onClose={this.props.onClose} errorMessage={this.state.errorMessage} />;
     }
 
     return this.props.children;
@@ -152,15 +200,18 @@ export default function Orders() {
   });
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      loadOrderDrawer();
-      loadNewOrderDrawer();
-    }, 1200);
+    loadOrderDrawer();
+    const preloadNewOrder = () => loadNewOrderDrawer();
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(preloadNewOrder, { timeout: 2000 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const timer = window.setTimeout(preloadNewOrder, 800);
     return () => window.clearTimeout(timer);
   }, []);
 
   const { data: users = [] } = useQuery({
-    queryKey: ["users"],
+    queryKey: ["users", "directory"],
     queryFn: () => dataClient.entities.User.list("name", 100),
     staleTime: 300_000,
   });
@@ -199,7 +250,29 @@ export default function Orders() {
     onSuccess: () => setSelectedOrder(null),
   });
 
-  const filtered = orders.filter(o => {
+  const closeOrderDrawer = useCallback(() => {
+    setSelectedOrder(null);
+  }, []);
+
+  const openOrderDrawer = useCallback((order) => {
+    markOrderPerf("opps:order-row-click");
+    setSelectedOrder(order);
+  }, []);
+
+  const preloadDrawer = useCallback(() => {
+    loadOrderDrawer();
+  }, []);
+
+  const handleDrawerUpdate = useCallback((id, data) => {
+    updateMutation.mutate({ id, data });
+    setSelectedOrder(prev => ({ ...(prev || selectedOrder), ...data }));
+  }, [selectedOrder, updateMutation]);
+
+  const handleArchiveSelectedOrder = useCallback(() => {
+    if (selectedOrder?.id) archiveOrder(selectedOrder.id);
+  }, [archiveOrder, selectedOrder?.id]);
+
+  const filtered = useMemo(() => orders.filter(o => {
     if (o.is_archived) return false;
     if (statusFilter === "active" && ["delivered", "cancelled"].includes(o.status)) return false;
     if (statusFilter === "delivered" && o.status !== "delivered") return false;
@@ -210,23 +283,37 @@ export default function Orders() {
       return o.client_name?.toLowerCase().includes(q) || o.order_number?.toLowerCase().includes(q);
     }
     return true;
-  });
+  }), [orders, statusFilter, assigneeFilter, search]);
 
-  const counts = {
+  const counts = useMemo(() => ({
     active:    orders.filter(o => !o.is_archived && !["delivered","cancelled"].includes(o.status)).length,
     delivered: orders.filter(o => !o.is_archived && o.status === "delivered").length,
     cancelled: orders.filter(o => !o.is_archived && o.status === "cancelled").length,
-  };
+  }), [orders]);
 
   // Kanban helpers
-  const normalStages = stages.filter(s => !s.is_exception).sort((a, b) => a.sequence - b.sequence);
-  const exceptionStages = stages.filter(s => s.is_exception);
-  const exceptionKeys = new Set(exceptionStages.map(s => s.key));
+  const normalStages = useMemo(
+    () => stages.filter(s => !s.is_exception).sort((a, b) => a.sequence - b.sequence),
+    [stages]
+  );
+  const exceptionStages = useMemo(() => stages.filter(s => s.is_exception), [stages]);
+  const exceptionKeys = useMemo(() => new Set(exceptionStages.map(s => s.key)), [exceptionStages]);
 
-  const activeOrders = orders.filter(o => !o.is_archived);
-  const exceptionOrders = activeOrders.filter(o => exceptionKeys.has(o.pipeline_stage));
-  const getColumnOrders = (stageKey) =>
-    activeOrders.filter(o => (o.pipeline_stage ?? 'received') === stageKey && !exceptionKeys.has(o.pipeline_stage));
+  const activeOrders = useMemo(() => orders.filter(o => !o.is_archived), [orders]);
+  const exceptionOrders = useMemo(
+    () => activeOrders.filter(o => exceptionKeys.has(o.pipeline_stage)),
+    [activeOrders, exceptionKeys]
+  );
+  const columnOrdersByStage = useMemo(() => {
+    const groups = new Map(normalStages.map(stage => [stage.key, []]));
+    activeOrders.forEach(order => {
+      if (exceptionKeys.has(order.pipeline_stage)) return;
+      const stageKey = order.pipeline_stage ?? "received";
+      if (!groups.has(stageKey)) groups.set(stageKey, []);
+      groups.get(stageKey).push(order);
+    });
+    return groups;
+  }, [activeOrders, exceptionKeys, normalStages]);
 
   const onDragEnd = (result) => {
     if (!result.destination) return;
@@ -357,7 +444,9 @@ export default function Orders() {
                 return (
                   <button
                     key={order.id}
-                    onClick={() => setSelectedOrder(order)}
+                    onPointerEnter={preloadDrawer}
+                    onFocus={preloadDrawer}
+                    onClick={() => openOrderDrawer(order)}
                     className="w-full text-left border-b border-border last:border-0 hover:bg-secondary/40 transition-all"
                   >
                     {/* Mobile */}
@@ -424,7 +513,9 @@ export default function Orders() {
                       key={order.id}
                       order={order}
                       index={0}
-                      onClick={() => setSelectedOrder(order)}
+                      onPointerEnter={preloadDrawer}
+                      onFocus={preloadDrawer}
+                      onClick={() => openOrderDrawer(order)}
                       isException
                     />
                   ))}
@@ -436,7 +527,7 @@ export default function Orders() {
             <div className="overflow-x-auto pb-4">
               <div className="flex gap-3 min-w-max">
                 {normalStages.map(stage => {
-                  const colOrders = getColumnOrders(stage.key);
+                  const colOrders = columnOrdersByStage.get(stage.key) || [];
                   return (
                     <div key={stage.key} className="w-52 flex-shrink-0">
                       <div className="flex items-center justify-between mb-2 px-1">
@@ -464,7 +555,9 @@ export default function Orders() {
                                     <KanbanCard
                                       order={order}
                                       index={index}
-                                      onClick={() => setSelectedOrder(order)}
+                                      onPointerEnter={preloadDrawer}
+                                      onFocus={preloadDrawer}
+                                      onClick={() => openOrderDrawer(order)}
                                       isDragging={snapshot.isDragging}
                                     />
                                   </div>
@@ -488,17 +581,14 @@ export default function Orders() {
       </div>
 
       {selectedOrder && (
-        <OrderDrawerErrorBoundary resetKey={selectedOrder.id} order={selectedOrder} onClose={() => setSelectedOrder(null)}>
-          <Suspense fallback={<DrawerLoadingFallback onClose={() => setSelectedOrder(null)} />}>
+        <OrderDrawerErrorBoundary resetKey={selectedOrder.id} order={selectedOrder} onClose={closeOrderDrawer}>
+          <Suspense fallback={<DrawerLoadingFallback onClose={closeOrderDrawer} />}>
             <OrderDrawer
               key={selectedOrder.id}
               order={selectedOrder}
-              onClose={() => setSelectedOrder(null)}
-              onUpdate={(id, data) => {
-                updateMutation.mutate({ id, data });
-                setSelectedOrder(prev => ({ ...(prev || selectedOrder), ...data }));
-              }}
-              onArchive={() => archiveOrder(selectedOrder.id)}
+              onClose={closeOrderDrawer}
+              onUpdate={handleDrawerUpdate}
+              onArchive={handleArchiveSelectedOrder}
               isArchiving={isArchiving}
             />
           </Suspense>
@@ -791,11 +881,13 @@ function isImageUrl(url) {
   return /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
 }
 
-function KanbanCard({ order, onClick, isDragging, isException }) {
+function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isException }) {
   const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
   return (
     <button
       onClick={onClick}
+      onPointerEnter={onPointerEnter}
+      onFocus={onFocus}
       className={`w-full text-left bg-card rounded-xl border p-2.5 mb-1.5 last:mb-0 transition-all ${
         isDragging
           ? "shadow-lg border-primary/30 rotate-1"
