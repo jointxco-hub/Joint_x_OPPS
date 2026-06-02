@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   ChevronRight,
   Copy,
-  FileText,
   FolderOpen,
   FolderPlus,
   MoveRight,
@@ -13,6 +12,8 @@ import {
 import { toast } from "sonner";
 import MediaPreview from "@/components/common/MediaPreview";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
+
+const UNSORTED_FOLDER_ID = "__unsorted";
 
 export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
   const metadata = normalizeOrderFileFolders(order.order_file_folders);
@@ -40,10 +41,14 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       })),
   ];
   const uncategorizedFiles = fileEntries.filter((entry) => !entry.folderId);
-  const currentFiles = openFolderId
-    ? fileEntries.filter((entry) => entry.folderId === openFolderId)
-    : [];
+  const isUnsortedFolder = openFolderId === UNSORTED_FOLDER_ID;
   const isInvoiceFolder = openFolderId === INVOICE_FOLDER_ID;
+  const currentFiles = openFolderId
+    ? isUnsortedFolder
+      ? uncategorizedFiles
+      : fileEntries.filter((entry) => entry.folderId === openFolderId)
+    : [];
+  const uploadTargetFolderId = openFolderId && !isInvoiceFolder && !isUnsortedFolder ? openFolderId : "";
 
   const saveMetadata = (next) => onUpdate(order.id, { order_file_folders: next });
 
@@ -223,6 +228,57 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     }
   };
 
+  const isImageUrl = (url) => /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
+
+  const FolderPreview = ({ urls = [], tone = "primary" }) => {
+    const previewUrls = urls.filter(isImageUrl).slice(0, 4);
+    const bgClass = tone === "amber" ? "bg-amber-100 text-amber-700" : "bg-primary/10 text-primary";
+    if (!previewUrls.length) {
+      return (
+        <div className={`grid h-20 place-items-center rounded-2xl ${bgClass}`}>
+          <FolderOpen className="h-7 w-7" />
+        </div>
+      );
+    }
+    return (
+      <div className="grid h-20 grid-cols-2 gap-1 overflow-hidden rounded-2xl border border-border bg-secondary/30 p-1">
+        {previewUrls.map((url, index) => (
+          <img key={`${url}-${index}`} src={url} alt="" loading="lazy" className="h-full w-full rounded-xl object-cover" />
+        ))}
+        {previewUrls.length === 1 && <div className={`rounded-xl ${bgClass}`} />}
+      </div>
+    );
+  };
+
+  const FolderCard = ({ id, name, entries = [], tone = "primary", canManage = true }) => {
+    const urls = entries.map((entry) => entry.url || entry).filter(Boolean);
+    const count = entries.length;
+    const isActive = openFolderId === id;
+    const textClass = tone === "amber" ? "text-amber-800" : "text-primary";
+    return (
+      <div className={`rounded-3xl border bg-card p-2.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${
+        tone === "amber" ? "border-amber-200 hover:border-amber-300" : "border-border hover:border-primary/40"
+      } ${isActive ? "ring-2 ring-primary/20" : ""}`}>
+        <button type="button" onClick={() => setOpenFolderId(id)} className="block w-full text-left">
+          <FolderPreview urls={urls} tone={tone} />
+          <div className="mt-3 flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">{name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{count} item{count === 1 ? "" : "s"}</p>
+            </div>
+            <FolderOpen className={`mt-0.5 h-4 w-4 flex-shrink-0 ${textClass}`} />
+          </div>
+        </button>
+        {canManage && (
+          <div className="mt-3 grid grid-cols-2 gap-1.5">
+            <button type="button" onClick={() => renameFolder(id)} className="rounded-xl bg-secondary/60 px-2 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground">Rename</button>
+            <button type="button" onClick={() => deleteFolder(id)} className="rounded-xl bg-secondary/60 px-2 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-red-600">Delete</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const FileCard = ({ entry, index }) => (
     <div className="rounded-2xl border border-border bg-card p-2">
       <MediaPreview url={entry.url} title={displayFileName(entry) || `Order file ${index + 1}`} />
@@ -336,7 +392,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
             <Paperclip className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm text-muted-foreground">{uploading ? "Uploading..." : "Upload files"}</span>
           </div>
-          <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
+          <input type="file" className="hidden" multiple onChange={(e) => uploadFile(e, uploadTargetFolderId)} disabled={uploading} />
         </label>
         <button
           type="button"
@@ -365,47 +421,27 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+            <FolderCard id={UNSORTED_FOLDER_ID} name="Unsorted files" entries={uncategorizedFiles} canManage={false} />
             {folders.map((folder) => {
-              const count = fileEntries.filter((entry) => entry.folderId === folder.id).length;
+              const folderEntries = fileEntries.filter((entry) => entry.folderId === folder.id);
               return (
-                <div
+                <FolderCard
                   key={folder.id}
-                  className="rounded-2xl border border-border bg-secondary/30 p-3 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
-                >
-                  <button type="button" onClick={() => setOpenFolderId(folder.id)} className="block w-full text-left">
-                    <FolderOpen className="mb-3 h-5 w-5 text-primary" />
-                    <p className="truncate text-sm font-semibold text-foreground">{folder.name}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{count} item{count === 1 ? "" : "s"}</p>
-                  </button>
-                  <div className="mt-3 grid grid-cols-2 gap-1">
-                    <button type="button" onClick={() => renameFolder(folder.id)} className="rounded-lg bg-background px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground">Rename</button>
-                    <button type="button" onClick={() => deleteFolder(folder.id)} className="rounded-lg bg-background px-2 py-1.5 text-[11px] text-muted-foreground hover:text-red-600">Delete</button>
-                  </div>
-                </div>
+                  id={folder.id}
+                  name={folder.name}
+                  entries={folderEntries}
+                />
               );
             })}
-            {invoices.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setOpenFolderId(INVOICE_FOLDER_ID)}
-                className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left transition-all hover:border-amber-300"
-              >
-                <FileText className="mb-3 h-5 w-5 text-amber-700" />
-                <p className="truncate text-sm font-semibold text-amber-950">Invoices & Quotes</p>
-                <p className="mt-1 text-xs text-amber-800">{invoices.length} item{invoices.length === 1 ? "" : "s"}</p>
-              </button>
-            )}
+            <FolderCard
+              id={INVOICE_FOLDER_ID}
+              name="Invoices & Quotes"
+              entries={invoices.map((invoice, index) => invoiceUrl(invoice) || invoiceTitle(invoice, index))}
+              tone="amber"
+              canManage={false}
+            />
           </div>
-
-          {uncategorizedFiles.length > 0 && (
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">All Files</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {uncategorizedFiles.map((entry, index) => <FileCard key={entry.id} entry={entry} index={index} />)}
-              </div>
-            </div>
-          )}
         </>
       ) : (
         <div className="space-y-3">
@@ -419,12 +455,14 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           </button>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold text-foreground">{isInvoiceFolder ? "Invoices & Quotes" : currentFolder?.name || "Folder"}</p>
+              <p className="text-sm font-semibold text-foreground">
+                {isInvoiceFolder ? "Invoices & Quotes" : isUnsortedFolder ? "Unsorted files" : currentFolder?.name || "Folder"}
+              </p>
               <p className="text-xs text-muted-foreground">
                 {isInvoiceFolder ? invoices.length : currentFiles.length} item{(isInvoiceFolder ? invoices.length : currentFiles.length) === 1 ? "" : "s"}
               </p>
             </div>
-            {!isInvoiceFolder && currentFolder && (
+            {!isInvoiceFolder && !isUnsortedFolder && currentFolder && (
               <div className="flex gap-2">
                 <button type="button" onClick={() => renameFolder(currentFolder.id)} className="rounded-full border border-border px-3 py-1.5 text-xs font-medium hover:border-primary/40">Rename</button>
                 <button type="button" onClick={() => deleteFolder(currentFolder.id)} className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-600">Delete</button>

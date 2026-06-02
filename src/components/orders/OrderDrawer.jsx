@@ -53,6 +53,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
+import { normalizeOrderFileFolders } from "@/components/orders/drawer/OrderDrawerShared";
 
 const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
 const OrderFilesTab = React.lazy(() => import("@/components/orders/drawer/OrderFilesTab"));
@@ -299,7 +300,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
     }
   };
 
-  const uploadFile = async (e) => {
+  const uploadFile = async (e, folderId = "") => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setUploading(true);
@@ -309,9 +310,20 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
         const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
         if (file_url) uploaded.push(file_url);
       }
+      const folderMetadata = normalizeOrderFileFolders(order.order_file_folders);
+      const nextFileFolders = { ...(folderMetadata.fileFolders || {}) };
+      if (folderId) {
+        uploaded.forEach((url) => {
+          nextFileFolders[url] = folderId;
+        });
+      }
       const updated = {
-        file_urls: [...(order.file_urls || []), ...uploaded],
+        file_urls: Array.from(new Set([...(order.file_urls || []), ...uploaded])),
         portal_visible_file_urls: Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [],
+        order_file_folders: {
+          ...folderMetadata,
+          fileFolders: nextFileFolders,
+        },
       };
       onUpdate(order.id, updated);
       toast.success(uploaded.length === 1 ? "File uploaded" : `${uploaded.length} files uploaded`);
