@@ -7,6 +7,7 @@ import {
   FolderPlus,
   MoveRight,
   Paperclip,
+  Pencil,
   Printer,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -21,9 +22,26 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   const invoices = Array.isArray(order.invoice_files) ? order.invoice_files : [];
   const folders = metadata.folders;
   const currentFolder = folders.find((folder) => folder.id === openFolderId);
-  const uncategorizedFiles = fileUrls.filter((url) => !metadata.fileFolders?.[url]);
+  const fileEntries = [
+    ...fileUrls.map((url) => ({
+      id: `file:${url}`,
+      url,
+      folderId: metadata.fileFolders?.[url] || "",
+      isCopy: false,
+    })),
+    ...(metadata.fileCopies || [])
+      .filter((copy) => fileUrls.includes(copy.url))
+      .map((copy) => ({
+        id: copy.id,
+        url: copy.url,
+        folderId: copy.folderId || "",
+        label: copy.label || "",
+        isCopy: true,
+      })),
+  ];
+  const uncategorizedFiles = fileEntries.filter((entry) => !entry.folderId);
   const currentFiles = openFolderId
-    ? fileUrls.filter((url) => metadata.fileFolders?.[url] === openFolderId)
+    ? fileEntries.filter((entry) => entry.folderId === openFolderId)
     : [];
   const isInvoiceFolder = openFolderId === INVOICE_FOLDER_ID;
 
@@ -66,12 +84,63 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     if (openFolderId === folderId) setOpenFolderId("");
   };
 
-  const moveFile = (url, folderId) => {
+  const moveFile = (entry, folderId) => {
+    if (entry.isCopy) {
+      saveMetadata({
+        ...metadata,
+        fileCopies: (metadata.fileCopies || []).map((copy) => (
+          copy.id === entry.id ? { ...copy, folderId } : copy
+        )),
+      });
+      setOpenFolderId(folderId || "");
+      return;
+    }
+
     const nextFolders = { ...(metadata.fileFolders || {}) };
-    if (folderId) nextFolders[url] = folderId;
-    else delete nextFolders[url];
+    if (folderId) nextFolders[entry.url] = folderId;
+    else delete nextFolders[entry.url];
     saveMetadata({ ...metadata, fileFolders: nextFolders });
     setOpenFolderId(folderId || "");
+  };
+
+  const renameFile = (entry) => {
+    const name = window.prompt("Rename file label", displayFileName(entry));
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    saveMetadata({
+      ...metadata,
+      fileLabels: { ...(metadata.fileLabels || {}), [entry.id]: clean },
+      fileCopies: (metadata.fileCopies || []).map((copy) => (
+        copy.id === entry.id ? { ...copy, label: clean } : copy
+      )),
+    });
+  };
+
+  const copyFileToFolder = (entry) => {
+    const targetFolders = folders.filter((folder) => folder.id !== entry.folderId);
+    if (!targetFolders.length) {
+      toast.info("Create another folder first");
+      return;
+    }
+    const folderName = window.prompt(
+      `Copy link to folder:\n${targetFolders.map((folder) => folder.name).join(", ")}`,
+      targetFolders[0]?.name || ""
+    );
+    const target = targetFolders.find((folder) => folder.name.toLowerCase() === String(folderName || "").trim().toLowerCase());
+    if (!target) return;
+    saveMetadata({
+      ...metadata,
+      fileCopies: [
+        ...(metadata.fileCopies || []),
+        {
+          id: `copy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+          url: entry.url,
+          folderId: target.id,
+          label: displayFileName(entry),
+        },
+      ],
+    });
+    setOpenFolderId(target.id);
   };
 
   const toggleClientVisible = (url, checked) => {
@@ -87,10 +156,21 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     if (!url) return;
     const nextUrls = Array.from(new Set([...fileUrls, url]));
     const nextFolders = { ...(metadata.fileFolders || {}) };
-    if (folderId && folderId !== INVOICE_FOLDER_ID) nextFolders[url] = folderId;
+    const existing = fileUrls.includes(url);
+    const nextCopies = [...(metadata.fileCopies || [])];
+    if (existing && folderId && folderId !== INVOICE_FOLDER_ID) {
+      nextCopies.push({
+        id: `copy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        url,
+        folderId,
+        label: displayFileName({ id: `file:${url}`, url }),
+      });
+    } else if (folderId && folderId !== INVOICE_FOLDER_ID) {
+      nextFolders[url] = folderId;
+    }
     onUpdate(order.id, {
       file_urls: nextUrls,
-      order_file_folders: { ...metadata, fileFolders: nextFolders },
+      order_file_folders: { ...metadata, fileFolders: nextFolders, fileCopies: nextCopies },
     });
   };
 
@@ -103,48 +183,80 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     }
   };
 
-  const removeFileLink = (url) => {
+  const removeFileLink = (entry) => {
+    if (entry.isCopy) {
+      saveMetadata({
+        ...metadata,
+        fileCopies: (metadata.fileCopies || []).filter((copy) => copy.id !== entry.id),
+        fileLabels: Object.fromEntries(Object.entries(metadata.fileLabels || {}).filter(([key]) => key !== entry.id)),
+      });
+      return;
+    }
+
     if (!window.confirm("Remove this file link from the order? The original storage file will not be deleted.")) return;
     const nextFolders = { ...(metadata.fileFolders || {}) };
-    delete nextFolders[url];
+    delete nextFolders[entry.url];
+    const nextLabels = Object.fromEntries(Object.entries(metadata.fileLabels || {}).filter(([key]) => key !== entry.id));
     onUpdate(order.id, {
-      file_urls: fileUrls.filter((item) => item !== url),
-      portal_visible_file_urls: visibleUrls.filter((item) => item !== url),
-      order_file_folders: { ...metadata, fileFolders: nextFolders },
+      file_urls: fileUrls.filter((item) => item !== entry.url),
+      portal_visible_file_urls: visibleUrls.filter((item) => item !== entry.url),
+      order_file_folders: {
+        ...metadata,
+        fileFolders: nextFolders,
+        fileLabels: nextLabels,
+        fileCopies: (metadata.fileCopies || []).filter((copy) => copy.url !== entry.url),
+      },
     });
   };
 
   const invoiceUrl = (invoice) => invoice?.file_url || invoice?.url || invoice?.invoice_url || "";
   const invoiceTitle = (invoice, index) => invoice?.invoice_number || invoice?.file_name || invoice?.name || `Invoice ${index + 1}`;
-  const displayFileName = (url) => {
+  const displayFileName = (entryOrUrl) => {
+    const entry = typeof entryOrUrl === "string" ? { id: `file:${entryOrUrl}`, url: entryOrUrl } : entryOrUrl;
+    const override = metadata.fileLabels?.[entry.id] || entry.label;
+    if (override) return override;
     try {
-      const pathname = new URL(url).pathname;
+      const pathname = new URL(entry.url).pathname;
       return decodeURIComponent(pathname.split("/").filter(Boolean).pop() || "File");
     } catch {
-      return String(url || "File").split("/").filter(Boolean).pop() || "File";
+      return String(entry.url || "File").split("/").filter(Boolean).pop() || "File";
     }
   };
 
-  const FileCard = ({ url, index }) => (
+  const FileCard = ({ entry, index }) => (
     <div className="rounded-2xl border border-border bg-card p-2">
-      <MediaPreview url={url} title={`Order file ${index + 1}`} />
+      <MediaPreview url={entry.url} title={displayFileName(entry) || `Order file ${index + 1}`} />
       <div className="mt-2 space-y-2">
-        <p className="truncate px-1 text-xs font-semibold text-foreground" title={displayFileName(url)}>
-          {displayFileName(url)}
-        </p>
+        <div className="flex items-start justify-between gap-2 px-1">
+          <p className="truncate text-xs font-semibold text-foreground" title={displayFileName(entry)}>
+            {displayFileName(entry)}
+          </p>
+          {entry.isCopy && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">linked</span>}
+        </div>
+        {entry.isCopy && (
+          <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder.</p>
+        )}
+        <button
+          type="button"
+          onClick={() => renameFile(entry)}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Rename label
+        </button>
         <label className="flex items-center justify-between gap-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
           <span className="font-medium text-foreground">Client can see</span>
           <input
             type="checkbox"
-            checked={visibleUrls.includes(url)}
-            onChange={(e) => toggleClientVisible(url, e.target.checked)}
+            checked={visibleUrls.includes(entry.url)}
+            onChange={(e) => toggleClientVisible(entry.url, e.target.checked)}
           />
         </label>
         <label className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs">
           <MoveRight className="h-3.5 w-3.5 text-muted-foreground" />
           <select
-            value={metadata.fileFolders?.[url] || ""}
-            onChange={(e) => moveFile(url, e.target.value)}
+            value={entry.folderId || ""}
+            onChange={(e) => moveFile(entry, e.target.value)}
             className="min-w-0 flex-1 bg-transparent text-foreground outline-none"
           >
             <option value="">All Files</option>
@@ -156,19 +268,26 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={() => copyFileLink(url)}
+            onClick={() => copyFileLink(entry.url)}
             className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
           >
             Copy link
           </button>
           <button
             type="button"
-            onClick={() => removeFileLink(url)}
+            onClick={() => copyFileToFolder(entry)}
             className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-600"
           >
-            Remove link
+            Copy to...
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => removeFileLink(entry)}
+          className="w-full rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-600"
+        >
+          {entry.isCopy ? "Remove folder link" : "Remove file link"}
+        </button>
       </div>
     </div>
   );
@@ -248,7 +367,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
 
           <div className="grid grid-cols-2 gap-2">
             {folders.map((folder) => {
-              const count = fileUrls.filter((url) => metadata.fileFolders?.[url] === folder.id).length;
+              const count = fileEntries.filter((entry) => entry.folderId === folder.id).length;
               return (
                 <div
                   key={folder.id}
@@ -283,7 +402,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">All Files</p>
               <div className="grid gap-3 sm:grid-cols-2">
-                {uncategorizedFiles.map((url, index) => <FileCard key={url} url={url} index={index} />)}
+                {uncategorizedFiles.map((entry, index) => <FileCard key={entry.id} entry={entry} index={index} />)}
               </div>
             </div>
           )}
@@ -322,7 +441,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
             )
           ) : currentFiles.length > 0 ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              {currentFiles.map((url, index) => <FileCard key={url} url={url} index={index} />)}
+              {currentFiles.map((entry, index) => <FileCard key={entry.id} entry={entry} index={index} />)}
             </div>
           ) : (
             <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">This folder is empty.</p>

@@ -8,7 +8,7 @@ const DEFAULT_ORDER_FILE_FOLDERS = [
 export const INVOICE_FOLDER_ID = "__invoices";
 
 export function normalizeOrderFileFolders(value) {
-  const fallback = { folders: DEFAULT_ORDER_FILE_FOLDERS, fileFolders: {} };
+  const fallback = { folders: DEFAULT_ORDER_FILE_FOLDERS, fileFolders: {}, fileLabels: {}, fileCopies: [] };
   if (!value) return fallback;
   if (Array.isArray(value)) {
     return {
@@ -17,6 +17,8 @@ export function normalizeOrderFileFolders(value) {
         name: folder.name || `Folder ${index + 1}`,
       })) : DEFAULT_ORDER_FILE_FOLDERS,
       fileFolders: {},
+      fileLabels: {},
+      fileCopies: [],
     };
   }
   const folders = Array.isArray(value.folders) && value.folders.length
@@ -28,5 +30,16 @@ export function normalizeOrderFileFolders(value) {
   return {
     folders,
     fileFolders: value.fileFolders && typeof value.fileFolders === "object" ? value.fileFolders : {},
+    fileLabels: value.fileLabels && typeof value.fileLabels === "object" ? value.fileLabels : {},
+    fileCopies: Array.isArray(value.fileCopies)
+      ? value.fileCopies
+        .filter((copy) => copy?.url)
+        .map((copy, index) => ({
+          id: copy.id || `copy-${index}`,
+          url: copy.url,
+          folderId: copy.folderId || "",
+          label: copy.label || "",
+        }))
+      : [],
   };
 }
