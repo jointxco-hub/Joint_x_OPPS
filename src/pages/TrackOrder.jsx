@@ -58,6 +58,40 @@ const statusSteps = [
   { key: "delivered", label: "Delivered", icon: CheckCircle2 },
 ];
 
+const PRODUCTION_DETAIL_LABELS = {
+  waiting_design_assets: "Waiting for design assets",
+  artwork_check: "Artwork check",
+  artwork_setup: "Artwork setup",
+  awaiting_client_approval: "Awaiting client approval",
+  print_setup: "Print setup",
+  queued_pressing: "Queued for pressing",
+  pressing: "Pressing",
+  queued_embroidery: "Queued for embroidery",
+  embroidering: "Embroidering",
+  queued_tailor: "Queued for tailor",
+  at_tailor: "At tailor",
+  cropping_alterations: "Cropping / alterations",
+  finishing: "Finishing",
+  quality_check: "Quality check",
+  rework: "Rework / correction",
+  waiting_stock: "Waiting on stock / blanks",
+  packing: "Packing",
+  custom: "Custom production update",
+};
+
+const PRODUCTION_METHOD_LABELS = {
+  dtf: "DTF printing",
+  vinyl: "Vinyl cutting",
+  screen: "Screen printing",
+  embroidery: "Embroidery",
+  pressing: "Heat pressing",
+  tailoring: "Tailoring",
+  cropping: "Cropping / alterations",
+  labeling: "Labeling / tagging",
+  mixed: "Mixed production",
+  custom: "Custom work",
+};
+
 const getStepIndex = (status) => {
   const i = statusSteps.findIndex(s => s.key === status);
   return i === -1 ? 0 : i;
@@ -72,6 +106,24 @@ const getLatestInvoiceTotal = (invoiceFiles) => {
 };
 
 const formatMoney = (value) => `R${Number(value || 0).toLocaleString()}`;
+
+const readableProductionValue = (value, labels) => {
+  if (!value) return "";
+  return labels[value] || String(value).replace(/_/g, " ");
+};
+
+const productionDetailCopy = (order) => {
+  const detail = readableProductionValue(order?.production_detail_stage || order?.pipeline_stage, PRODUCTION_DETAIL_LABELS);
+  const method = readableProductionValue(order?.production_method, PRODUCTION_METHOD_LABELS);
+  const update = order?.production_client_update || "";
+  if (!detail && !method && !update) return null;
+
+  return {
+    title: detail || method || "Production update",
+    method,
+    body: update || (detail ? `Your order is currently at ${detail.toLowerCase()}.` : "Your order is moving through production."),
+  };
+};
 
 function MediaViewer({ url, onClose }) {
   const isImage = /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
@@ -199,6 +251,7 @@ export default function TrackOrder() {
   const amountPaid = Number(order?.amount_paid ?? order?.deposit_paid ?? 0);
   const balanceDue = Math.max(orderTotal - amountPaid, 0);
   const isPaidInFull = orderTotal > 0 && amountPaid >= orderTotal;
+  const productionDetail = order ? productionDetailCopy(order) : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0d1117] via-[#111827] to-[#0d1117]">
@@ -339,6 +392,17 @@ export default function TrackOrder() {
                 <ExternalLink className="w-4 h-4" />
                 Track with {courierLabel || "courier"}
               </a>
+            )}
+
+            {productionDetail && (
+              <div className="bg-[#1a7a5e]/10 border border-[#1a7a5e]/25 rounded-xl p-4 mb-4">
+                <p className="text-[#4ade80] text-xs font-semibold uppercase tracking-wide mb-1">Production detail</p>
+                <p className="text-white font-semibold text-sm">{productionDetail.title}</p>
+                {productionDetail.method && (
+                  <p className="text-white/50 text-xs mt-0.5">{productionDetail.method}</p>
+                )}
+                <p className="text-white/80 text-sm leading-relaxed mt-2">{productionDetail.body}</p>
+              </div>
             )}
 
             {/* Portal: message from team */}

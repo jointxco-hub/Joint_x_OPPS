@@ -184,6 +184,9 @@ export function useOrderDrawerData(order, activeTab = "details") {
   const purchaseOrders = Array.isArray(purchaseOrdersQuery.data) ? purchaseOrdersQuery.data : [];
   const users = Array.isArray(usersQuery.data) ? usersQuery.data : [];
   const linkedClient = linkedClientQuery.data || null;
+  const invoiceFiles = Array.isArray(order?.invoice_files) ? order.invoice_files : [];
+  const fileUrls = Array.isArray(order?.file_urls) ? order.file_urls.filter(Boolean) : [];
+  const portalVisibleFileUrls = Array.isArray(order?.portal_visible_file_urls) ? order.portal_visible_file_urls.filter(Boolean) : [];
 
   const linkedPO = useMemo(
     () => purchaseOrders.find((po) => po.id === order?.linked_po_id),
@@ -198,6 +201,13 @@ export function useOrderDrawerData(order, activeTab = "details") {
   const displayClientEmail = order?.client_email || linkedClient?.email || linkedClient?.client_email || "";
   const displayWhatsappName = order?.whatsapp_name || linkedClient?.whatsapp_name || "";
   const displaySavedContactName = order?.saved_contact_name || linkedClient?.saved_contact_name || "";
+  const clientDisplay = {
+    name: order?.client_name || linkedClient?.name || linkedClient?.client_name || "Client",
+    email: displayClientEmail,
+    whatsappName: displayWhatsappName,
+    savedContactName: displaySavedContactName,
+    source: linkedClient ? "client" : "order",
+  };
 
   const fetchedTotalPaid = useMemo(
     () => payments
@@ -209,13 +219,30 @@ export function useOrderDrawerData(order, activeTab = "details") {
   const totalPaid = paymentsQuery.isLoading && payments.length === 0
     ? Number(order?.deposit_paid || 0)
     : fetchedTotalPaid;
-  const invoiceFiles = Array.isArray(order?.invoice_files) ? order.invoice_files : [];
   const latestInvoiceTotal = [...invoiceFiles]
     .reverse()
     .map((invoice) => Number(invoice?.invoice_total || 0))
     .find((amount) => amount > 0) || 0;
   const payableTotal = Number(latestInvoiceTotal || order?.total_amount || 0);
   const balance = Math.max(payableTotal - totalPaid, 0);
+  const paymentCount = payments.length;
+  const legacyTaskCount = legacyTasks.length;
+  const opsTaskCount = opsTasks.length;
+  const linkedTaskCount = linkedTasks.length;
+  const linkedPOCount = linkedPO ? 1 : 0;
+  const invoiceCount = invoiceFiles.length;
+  const fileCount = fileUrls.length;
+  const portalVisibleFileCount = portalVisibleFileUrls.length;
+  const hasLinkedPO = Boolean(linkedPO);
+  const hasPayments = paymentCount > 0;
+  const hasTasks = linkedTaskCount > 0;
+  const hasInvoices = invoiceCount > 0;
+  const hasFiles = fileCount > 0;
+  const paymentsLoading = paymentsQuery.isLoading && paymentCount === 0;
+  const tasksLoading = (legacyTasksQuery.isLoading || opsTasksQuery.isLoading) && linkedTaskCount === 0;
+  const paymentsError = paymentsQuery.error || null;
+  const tasksError = legacyTasksQuery.error || opsTasksQuery.error || null;
+  const purchaseOrdersError = purchaseOrdersQuery.error || null;
 
   const readinessSummary = readinessQuery.data?.summary || null;
 
@@ -250,6 +277,7 @@ export function useOrderDrawerData(order, activeTab = "details") {
     linkedClientQuery,
     linkedPO,
     activePOs,
+    hasLinkedPO,
     readiness: readinessQuery.data,
     readinessSummary,
     readinessQuery: {
@@ -261,9 +289,27 @@ export function useOrderDrawerData(order, activeTab = "details") {
     displayClientEmail,
     displayWhatsappName,
     displaySavedContactName,
+    clientDisplay,
     totalPaid,
     balance,
     payableTotal,
+    paymentCount,
+    legacyTaskCount,
+    opsTaskCount,
+    linkedTaskCount,
+    linkedPOCount,
+    invoiceCount,
+    fileCount,
+    portalVisibleFileCount,
+    hasPayments,
+    hasTasks,
+    hasInvoices,
+    hasFiles,
+    paymentsLoading,
+    tasksLoading,
+    paymentsError,
+    tasksError,
+    purchaseOrdersError,
     isCriticalDataReady: criticalReady,
     errors: {
       payments: paymentsQuery.error,

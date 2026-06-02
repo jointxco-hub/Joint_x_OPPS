@@ -1,17 +1,19 @@
 import { dataClient } from '@/api/dataClient';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ChevronRight } from 'lucide-react';
 
-export default function PipelineStrip({ order, onStageChange }) {
+export default function PipelineStrip({ order, stages: providedStages, onStageChange }) {
   const qc = useQueryClient();
+  const hasProvidedStages = Array.isArray(providedStages) && providedStages.length > 0;
 
-  const { data: stages = [] } = useQuery({
+  const { data: fetchedStages = [] } = useQuery({
     queryKey: ['orderStages'],
     queryFn: () => dataClient.entities.OrderStage.list('sequence', 50),
+    enabled: !hasProvidedStages,
     staleTime: 300_000,
   });
 
+  const stages = hasProvidedStages ? providedStages : fetchedStages;
   const normalStages = stages.filter(s => !s.is_exception).sort((a, b) => a.sequence - b.sequence);
   const exceptionStages = stages.filter(s => s.is_exception);
 
@@ -41,7 +43,6 @@ export default function PipelineStrip({ order, onStageChange }) {
           {normalStages.map((stage, idx) => {
             const isPast = idx < currentIdx;
             const isCurrent = stage.key === currentKey;
-            const isFuture = idx > currentIdx;
             return (
               <button
                 key={stage.key}

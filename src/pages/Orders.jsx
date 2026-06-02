@@ -183,6 +183,33 @@ const priorityDot = {
   low:    "bg-slate-200",
 };
 
+const productionDetailLabels = {
+  waiting_design_assets: "Waiting for design assets",
+  artwork_check: "Artwork check",
+  artwork_setup: "Artwork setup",
+  awaiting_client_approval: "Awaiting client approval",
+  print_setup: "Print setup",
+  queued_pressing: "Queued for pressing",
+  pressing: "Pressing",
+  queued_embroidery: "Queued for embroidery",
+  embroidering: "Embroidering",
+  queued_tailor: "Queued for tailor",
+  at_tailor: "At tailor",
+  cropping_alterations: "Cropping / alterations",
+  finishing: "Finishing",
+  quality_check: "Quality check",
+  rework: "Rework / correction",
+  waiting_stock: "Waiting on stock / blanks",
+  packing: "Packing",
+  custom: "Custom update",
+};
+
+function productionDetailLabel(order) {
+  const value = order?.production_detail_stage;
+  if (!value) return "";
+  return productionDetailLabels[value] || String(value).replace(/_/g, " ");
+}
+
 export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
@@ -441,6 +468,7 @@ export default function Orders() {
               </div>
               {filtered.map(order => {
                 const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
+                const detailLabel = productionDetailLabel(order);
                 return (
                   <button
                     key={order.id}
@@ -464,6 +492,9 @@ export default function Orders() {
                       <div className="mt-2">
                         <OrderTagBadges order={order} />
                       </div>
+                      {detailLabel && (
+                        <p className="mt-2 text-xs font-medium text-emerald-700">{detailLabel}</p>
+                      )}
                     </div>
                     {/* Desktop */}
                     <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
@@ -474,6 +505,9 @@ export default function Orders() {
                           <div className="mt-0.5">
                             <OrderTagBadges order={order} />
                           </div>
+                          {detailLabel && (
+                            <p className="mt-1 text-xs font-medium text-emerald-700">{detailLabel}</p>
+                          )}
                         </div>
                       </div>
                       <div className="col-span-2">
@@ -586,6 +620,7 @@ export default function Orders() {
             <OrderDrawer
               key={selectedOrder.id}
               order={selectedOrder}
+              stages={stages}
               onClose={closeOrderDrawer}
               onUpdate={handleDrawerUpdate}
               onArchive={handleArchiveSelectedOrder}
@@ -733,6 +768,7 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
   const statusLabel = statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
   const dueLabel = order.due_date ? format(new Date(order.due_date), "d MMM yyyy") : "No due date";
   const notes = [order.notes, order.special_instructions, order.delivery_note].filter(Boolean).join(" / ");
+  const detailLabel = productionDetailLabel(order);
 
   return (
     <article className="print-order-card rounded-2xl border border-zinc-200 bg-white p-3">
@@ -755,7 +791,7 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
 
           <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <PrintDatum label="Due" value={dueLabel} />
-            <PrintDatum label="Stage" value={stageLabel || order.pipeline_stage || "Order received"} />
+            <PrintDatum label="Stage" value={detailLabel || stageLabel || order.pipeline_stage || "Order received"} />
             <PrintDatum label="WhatsApp" value={order.whatsapp_name || "Not saved"} />
             <PrintDatum label="Saved as" value={order.saved_contact_name || "Not saved"} />
             <PrintDatum label="PEP/Courier" value={order.pep_code || order.tracking_number || "Not added"} />
@@ -883,6 +919,7 @@ function isImageUrl(url) {
 
 function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isException }) {
   const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
+  const detailLabel = productionDetailLabel(order);
   return (
     <button
       onClick={onClick}
@@ -912,6 +949,9 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
       <div className="mt-1.5">
         <OrderTagBadges order={order} />
       </div>
+      {detailLabel && (
+        <p className="mt-1.5 truncate text-[10px] font-medium text-emerald-700">{detailLabel}</p>
+      )}
     </button>
   );
 }
