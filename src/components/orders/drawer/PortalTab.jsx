@@ -53,7 +53,7 @@ export default function PortalTab({ order, onUpdate, balance = 0 }) {
             <div>
               <p className="text-sm font-medium text-foreground">Outstanding Balance</p>
               <p className="text-xs text-muted-foreground">
-                Shows R{Math.abs(balance).toLocaleString()} {balance > 0 ? "owed" : "â€” fully paid"}
+                Shows R{Math.abs(balance).toLocaleString()} {balance > 0 ? "owed" : "- fully paid"}
               </p>
             </div>
             <div
@@ -86,7 +86,7 @@ export default function PortalTab({ order, onUpdate, balance = 0 }) {
         <div className="space-y-1.5">
           {attentionItems.map((item, i) => (
             <div key={i} className="flex items-center gap-2 p-2.5 bg-amber-50 border border-amber-100 rounded-xl">
-              <span className="text-xs font-medium text-amber-900 flex-1">âš  {item}</span>
+              <span className="text-xs font-medium text-amber-900 flex-1">! {item}</span>
               <button onClick={() => removeAttention(i)} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0">
                 <X className="w-3.5 h-3.5" />
               </button>

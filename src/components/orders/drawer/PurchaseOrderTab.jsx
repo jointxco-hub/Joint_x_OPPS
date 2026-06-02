@@ -63,14 +63,14 @@ export default function PurchaseOrderTab({ order, onUpdate, linkedPO, activePOs 
       setEditingLinkedPO(false);
       toast.success("Purchase order updated");
     },
-    onError: (err) => toast.error("PO update failed ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â " + ((/** @type {any} */ err)?.message || "unknown error")),
+    onError: (err) => toast.error("PO update failed - " + ((/** @type {any} */ err)?.message || "unknown error")),
   });
 
   const createPOMutation = useMutation({
     mutationFn: (data) => dataClient.entities.PurchaseOrder.create(data),
     onSuccess: (po) => {
       if (!po?.id) {
-        setPoCreateError("PO created but no ID returned ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â check Supabase RLS on purchase_orders");
+        setPoCreateError("PO created but no ID returned - check Supabase RLS on purchase_orders");
         return;
       }
       setPoCreateError("");
@@ -83,7 +83,7 @@ export default function PurchaseOrderTab({ order, onUpdate, linkedPO, activePOs 
       toast.success("Purchase order created and linked");
     },
     onError: (err) => {
-      const msg = (/** @type {any} */ (err))?.message || "Unknown error ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â check Supabase purchase_orders table";
+      const msg = (/** @type {any} */ (err))?.message || "Unknown error - check Supabase purchase_orders table";
       setPoCreateError(msg);
     },
   });
@@ -111,11 +111,11 @@ export default function PurchaseOrderTab({ order, onUpdate, linkedPO, activePOs 
             <SelectItem value="__none">No PO linked</SelectItem>
             {activePOs.map(po => (
               <SelectItem key={po.id} value={po.id}>
-                {po.po_number} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â {po.supplier_name}
+                {po.po_number} - {po.supplier_name}
               </SelectItem>
             ))}
             {linkedPO && !activePOs.find(p => p.id === linkedPO.id) && (
-              <SelectItem value={linkedPO.id}>{linkedPO.po_number} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â {linkedPO.supplier_name}</SelectItem>
+              <SelectItem value={linkedPO.id}>{linkedPO.po_number} - {linkedPO.supplier_name}</SelectItem>
             )}
           </SelectContent>
         </Select>
@@ -162,7 +162,7 @@ export default function PurchaseOrderTab({ order, onUpdate, linkedPO, activePOs 
                 });
               }}
             >
-              {createPOMutation.isPending ? 'CreatingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦' : 'Create & Link PO'}
+              {createPOMutation.isPending ? 'Creating...' : 'Create & Link PO'}
             </Button>
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setShowNewPO(false); setPoCreateError(""); }}>
               Cancel
@@ -176,7 +176,7 @@ export default function PurchaseOrderTab({ order, onUpdate, linkedPO, activePOs 
                 <p className="mt-1 text-red-700">Run <code>supabase/migrations/202605180002_create_purchase_orders_table.sql</code> in Supabase SQL Editor.</p>
               )}
               {poCreateError.includes('RLS') && (
-                <p className="mt-1 text-red-700">Go to Supabase ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Authentication ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Policies and add an ALL policy for the <code>purchase_orders</code> table.</p>
+                <p className="mt-1 text-red-700">Go to Supabase - Authentication - Policies and add an ALL policy for the <code>purchase_orders</code> table.</p>
               )}
             </div>
           )}
@@ -225,7 +225,7 @@ export default function PurchaseOrderTab({ order, onUpdate, linkedPO, activePOs 
                 {linkedPO.items.map((item, i) => (
                   <div key={i} className="flex items-center justify-between text-sm">
                     <span className="text-foreground">{item.name}</span>
-                    <span className="text-muted-foreground">ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â{item.quantity} {item.unit || ''}</span>
+                    <span className="text-muted-foreground">x{item.quantity} {item.unit || ''}</span>
                   </div>
                 ))}
               </div>

@@ -147,7 +147,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
       <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2">
         <p className="text-xs font-semibold text-amber-800 mb-0.5">Invoices &amp; Tracking References</p>
         <p className="text-xs text-amber-700">
-          Upload invoices Ã¢â‚¬â€ reference numbers are extracted from filenames automatically. You can also add a reference manually so any name (e.g. &ldquo;xlab labels&rdquo;) works in the tracker.
+          Upload invoices - reference numbers are extracted from filenames automatically. You can also add a reference manually so any name (e.g. "xlab labels") works in the tracker.
         </p>
         {(order.invoice_numbers || []).length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-1">
@@ -161,7 +161,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
                   }}
                   className="text-amber-600 hover:text-red-600 transition-colors leading-none"
                   title="Remove reference"
-                >Ãƒâ€”</button>
+                >x</button>
               </span>
             ))}
           </div>
@@ -253,7 +253,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
         }`}>
           <Paperclip className="w-4 h-4 text-amber-600" />
           <span className="text-sm text-amber-700 font-medium">
-            {uploading ? 'Uploading invoiceÃ¢â‚¬Â¦' : 'Upload Zoho Books invoice'}
+            {uploading ? 'Uploading invoice...' : 'Upload Zoho Books invoice'}
           </span>
         </div>
         <input type="file" className="hidden" accept=".pdf,.jpg,.jpeg,.png" multiple onChange={uploadInvoice} disabled={uploading} />
@@ -276,7 +276,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
                   {inv.invoice_number && (
                     <span className="font-mono bg-amber-200 text-amber-900 px-1.5 py-0.5 rounded mr-1.5">{inv.invoice_number}</span>
                   )}
-                  Zoho Books Ã‚Â· {inv.uploaded_at ? format(new Date(inv.uploaded_at), 'd MMM yyyy') : 'Uploaded'}
+                  Zoho Books / {inv.uploaded_at ? format(new Date(inv.uploaded_at), 'd MMM yyyy') : 'Uploaded'}
                 </p>
                 {amountIdx === i ? (
                   <div className="mt-2 flex items-center gap-1.5">
@@ -290,7 +290,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
                       onKeyDown={(/** @type {any} */ e) => e.key === 'Enter' && saveInvoiceAmount(i)}
                     />
                     <Button size="sm" onClick={() => saveInvoiceAmount(i)} className="h-7 text-xs px-2 rounded-lg">Save</Button>
-                    <button onClick={() => { setAmountIdx(null); setAmountInput(""); }} className="text-xs text-muted-foreground px-1">Ã¢Å“â€¢</button>
+                    <button onClick={() => { setAmountIdx(null); setAmountInput(""); }} className="text-xs text-muted-foreground px-1">x</button>
                   </div>
                 ) : inv.invoice_total ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">

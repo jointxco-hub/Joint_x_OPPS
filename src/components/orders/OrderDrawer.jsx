@@ -258,7 +258,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       resetPaymentForm();
       toast.success("Payment added");
     },
-    onError: (err) => toast.error("Payment failed ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
+    onError: (err) => toast.error("Payment failed - " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
   });
 
   const updatePaymentMutation = useMutation({
@@ -407,7 +407,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       deadline: newTaskDeadline || undefined,
       assigned_to: newTaskAssignee && newTaskAssignee !== "_none" ? [newTaskAssignee] : [],
       order_id: order.id,
-      notes: `Order #${order.order_number || ''} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ${order.client_name || ''}`.trim(),
+      notes: `Order #${order.order_number || ''} - ${order.client_name || ''}`.trim(),
     });
   };
 
@@ -451,7 +451,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
             </div>
             <p className="text-xs text-muted-foreground mb-1.5">
               #{order.order_number || order.id?.slice(0,8)}
-              {displayWhatsappName ? <span> ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· WhatsApp: {displayWhatsappName}</span> : null}
+              {displayWhatsappName ? <span> / WhatsApp: {displayWhatsappName}</span> : null}
             </p>
             <DrawerSectionBoundary label="Order tags" resetKey={`${order.id}-tags`}>
               <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
@@ -505,7 +505,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
               onClick={() => onUpdate(order.id, { status: s })}
               className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full bg-secondary hover:bg-border transition-all capitalize"
             >
-              ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ {statusConfig[s]?.label || s}
+              Next: {statusConfig[s]?.label || s}
             </button>
           ))}
           <button
@@ -663,7 +663,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   editing={editingField === 'order_number'} editValue={fieldValue}
                   onEdit={() => startEdit('order_number', order.order_number)}
                   onChange={setFieldValue} onSave={saveEdit} />
-                <EditField label="Total Amount" field="total_amount" value={order.total_amount ? `R${order.total_amount.toLocaleString()}` : 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â'}
+                <EditField label="Total Amount" field="total_amount" value={order.total_amount ? `R${order.total_amount.toLocaleString()}` : '-'}
                   editing={editingField === 'total_amount'} editValue={fieldValue}
                   onEdit={() => startEdit('total_amount', order.total_amount)}
                   onChange={setFieldValue} onSave={saveEdit} inputType="number" />
@@ -757,7 +757,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                 </Select>
               </div>
 
-              {/* Products ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â fully editable */}
+              {/* Products - fully editable */}
               <DrawerSectionBoundary label="Products" resetKey={`${order.id}-products`}>
                 <React.Suspense fallback={<TabSectionFallback label="Products" />}>
                   <ProductsEditor order={order} onUpdate={onUpdate} />
@@ -789,7 +789,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Timeline</h3>
                 <div className="space-y-3">
                   <TimelineEntry icon={<Package className="w-3 h-3" />} label="Order Created" time={order.created_date} />
-                  {paymentCount > 0 && <TimelineEntry icon={<CreditCard className="w-3 h-3" />} label={`Payment received ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â R${totalPaid.toLocaleString()}`} time={safePayments[0]?.payment_date} />}
+                  {paymentCount > 0 && <TimelineEntry icon={<CreditCard className="w-3 h-3" />} label={`Payment received - R${totalPaid.toLocaleString()}`} time={safePayments[0]?.payment_date} />}
                   {['in_production', 'ready', 'shipped', 'delivered'].filter(s => progressStages.indexOf(s) <= currentStageIndex).map(s => (
                     <TimelineEntry key={s} icon={<CheckCircle2 className="w-3 h-3" />} label={statusConfig[s]?.label} />
                   ))}
@@ -846,7 +846,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   <div key={p.id} className="flex items-center justify-between gap-3 p-3 bg-secondary/30 rounded-xl">
                     <div>
                       <p className="text-sm font-semibold text-foreground">R{p.amount?.toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground capitalize">{p.method?.replace('_', ' ')} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {p.payment_date ? format(new Date(p.payment_date), 'MMM d, yyyy') : ''}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{p.method?.replace('_', ' ')} / {p.payment_date ? format(new Date(p.payment_date), 'MMM d, yyyy') : ''}</p>
                       {p.notes && <p className="mt-1 text-xs text-muted-foreground">{p.notes}</p>}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -895,7 +895,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   <Input
                     value={newTaskTitle}
                     onChange={e => setNewTaskTitle(e.target.value)}
-                    placeholder={`Task for ${order.client_name || 'this order'}ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦`}
+                    placeholder={`Task for ${order.client_name || 'this order'}...`}
                     className="rounded-xl h-9 text-sm"
                     autoFocus
                     onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleCreateTask()}
@@ -912,7 +912,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                     <Input type="date" value={newTaskDeadline} onChange={e => setNewTaskDeadline(e.target.value)} className="h-8 rounded-xl text-xs" />
                   </div>
                   <Select value={newTaskAssignee} onValueChange={setNewTaskAssignee}>
-                    <SelectTrigger className="h-8 rounded-xl text-xs"><SelectValue placeholder="Assign toÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" /></SelectTrigger>
+                    <SelectTrigger className="h-8 rounded-xl text-xs"><SelectValue placeholder="Assign to..." /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="_none">Unassigned</SelectItem>
                       {safeUsers
@@ -933,7 +933,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                       onClick={handleCreateTask}
                       disabled={!newTaskTitle.trim() || createTaskMutation.isPending}
                     >
-                      {createTaskMutation.isPending ? 'CreatingÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦' : 'Create Task'}
+                      {createTaskMutation.isPending ? 'Creating...' : 'Create Task'}
                     </Button>
                     <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => setShowNewTask(false)}>
                       Cancel
@@ -1001,7 +1001,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
           )}
           {tab === 'tracking' && (
             <div className="space-y-4">
-              {/* Courier ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â saves immediately on selection */}
+              {/* Courier saves immediately on selection */}
               <div className="bg-secondary/30 rounded-xl p-3">
                 <p className="text-xs text-muted-foreground mb-1.5">Courier</p>
                 <Select
@@ -1009,7 +1009,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   onValueChange={v => onUpdate(order.id, { courier: v === '__none' ? null : v })}
                 >
                   <SelectTrigger className="h-8 border-0 bg-transparent p-0 text-sm font-medium">
-                    <SelectValue placeholder="Select courierÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" />
+                    <SelectValue placeholder="Select courier..." />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">No courier selected</SelectItem>
@@ -1147,7 +1147,7 @@ function EditField({ label, value, editing, editValue, onEdit, onChange, onSave,
           <button onClick={onSave} className="text-xs text-primary font-medium whitespace-nowrap">Save</button>
         </div>
       ) : (
-        <p className="text-sm font-medium text-foreground">{value || 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â'}</p>
+        <p className="text-sm font-medium text-foreground">{value || '-'}</p>
       )}
     </div>
   );

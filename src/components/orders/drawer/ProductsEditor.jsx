@@ -187,7 +187,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
       {/* Existing rows */}
       <div className="space-y-2 mb-3">
         {products.length === 0 && !addMode && (
-          <p className="text-xs text-muted-foreground italic">No products ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â click Add to start</p>
+          <p className="text-xs text-muted-foreground italic">No products - click Add to start</p>
         )}
         {products.map((/** @type {any} */ rawProduct, /** @type {number} */ i) => {
           const p = cleanProduct(rawProduct);
@@ -322,7 +322,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
               onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value, source: "custom", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "" })); setPickerSearch(e.target.value); setShowPicker(true); }}
               onFocus={() => setShowPicker(true)}
               onBlur={() => setTimeout(() => setShowPicker(false), 150)}
-              placeholder="Search inventory or type nameÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦"
+              placeholder="Search inventory or type name..."
               className="h-8 text-sm rounded-xl"
               autoFocus
             />
@@ -448,7 +448,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
                     >
                       {option.image_url && <img src={option.image_url} alt="" loading="lazy" className="h-4 w-4 rounded-full object-cover" />}
                       {optionLabel(option)}
-                      {option.price ? ` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ${formatMoney(option.price)}` : ""}
+                      {option.price ? ` / ${formatMoney(option.price)}` : ""}
                     </button>
                   );
                 })}
@@ -472,7 +472,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
                     >
                       {option.image_url && <img src={option.image_url} alt="" loading="lazy" className="h-4 w-4 rounded-full object-cover" />}
                       {optionLabel(option)}
-                      {option.price ? ` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ${formatMoney(option.price)}` : ""}
+                      {option.price ? ` / ${formatMoney(option.price)}` : ""}
                     </button>
                   );
                 })}
