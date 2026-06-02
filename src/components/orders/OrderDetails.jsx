@@ -124,6 +124,18 @@ export default function OrderDetails({ order, onClose, onEdit, onUpdateStatus, o
                   <span>{order.client_phone}</span>
                 </div>
               )}
+              {order.whatsapp_name && (
+                <div className="flex items-center gap-3 text-sm">
+                  <MessageCircle className="w-4 h-4 text-slate-400" />
+                  <span>WhatsApp: {order.whatsapp_name}</span>
+                </div>
+              )}
+              {order.saved_contact_name && (
+                <div className="flex items-center gap-3 text-sm">
+                  <User className="w-4 h-4 text-slate-400" />
+                  <span>Saved as: {order.saved_contact_name}</span>
+                </div>
+              )}
             </div>
           </div>
 

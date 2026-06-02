@@ -45,6 +45,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     client_name: "",
     client_email: "",
     client_phone: "",
+    whatsapp_name: "",
+    saved_contact_name: "",
     client_id: "",
     project_id: "",
     order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
@@ -75,6 +77,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       handleChange('client_name', newClient.name);
       handleChange('client_email', newClient.email);
       handleChange('client_phone', newClient.phone);
+      handleChange('whatsapp_name', newClient.whatsapp_name || '');
+      handleChange('saved_contact_name', newClient.saved_contact_name || '');
       setShowNewClient(false);
       toast.success("Client added!");
     }
@@ -88,6 +92,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
         name: formData.client_name,
         email: formData.client_email,
         phone: formData.client_phone,
+        whatsapp_name: formData.whatsapp_name,
+        saved_contact_name: formData.saved_contact_name,
         status: 'active',
         total_orders: 1,
         total_revenue: formData.quoted_price || 0,
@@ -98,12 +104,15 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       // Update existing client stats
       const client = clients.find(c => c.id === formData.client_id);
       if (client) {
-        await dataClient.entities.Client.update(formData.client_id, {
+        const clientUpdates = {
           total_orders: (client.total_orders || 0) + 1,
           total_revenue: (client.total_revenue || 0) + (formData.quoted_price || 0),
           last_activity_date: new Date().toISOString().split('T')[0],
           status: 'active'
-        });
+        };
+        if (formData.whatsapp_name) clientUpdates.whatsapp_name = formData.whatsapp_name;
+        if (formData.saved_contact_name) clientUpdates.saved_contact_name = formData.saved_contact_name;
+        await dataClient.entities.Client.update(formData.client_id, clientUpdates);
       }
     }
     await onSubmit(formData);
@@ -117,6 +126,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       handleChange('client_name', client.name);
       handleChange('client_email', client.email || '');
       handleChange('client_phone', client.phone || '');
+      handleChange('whatsapp_name', client.whatsapp_name || '');
+      handleChange('saved_contact_name', client.saved_contact_name || '');
     } else if (clientId === 'new') {
       setShowNewClient(true);
     }
@@ -131,6 +142,8 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
     { value: '', label: 'No Project' },
     ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.client_name})` }))
   ];
+
+  const setupStepBase = showNewClient ? 6 : 1;
 
   const steps = [
     <TypeformInput
@@ -177,6 +190,28 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
         onChange={(v) => handleChange("client_email", v)}
         isActive={currentStep === 3}
         questionNumber="1d"
+      />,
+      <TypeformInput
+        key="new_client_whatsapp_name"
+        type="text"
+        label="WhatsApp name (optional)"
+        subtitle="Use this when the invoice name and WhatsApp name are different"
+        value={formData.whatsapp_name}
+        onChange={(v) => handleChange("whatsapp_name", v)}
+        placeholder="Name shown in WhatsApp..."
+        isActive={currentStep === 4}
+        questionNumber="1e"
+      />,
+      <TypeformInput
+        key="new_client_saved_contact_name"
+        type="text"
+        label="Saved contact name (optional)"
+        subtitle="How this client is saved on your phone or team devices"
+        value={formData.saved_contact_name}
+        onChange={(v) => handleChange("saved_contact_name", v)}
+        placeholder="Saved as..."
+        isActive={currentStep === 5}
+        questionNumber="1f"
       />
     ] : []),
     <TypeformInput
@@ -187,7 +222,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.project_id}
       onChange={(v) => handleChange("project_id", v)}
       options={projectOptions}
-      isActive={currentStep === (showNewClient ? 4 : 1)}
+      isActive={currentStep === setupStepBase}
       questionNumber="2"
     />,
     <TypeformInput
@@ -199,7 +234,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       onChange={(v) => handleChange("print_type", v)}
       options={printTypes}
       required
-      isActive={currentStep === (showNewClient ? 5 : 2)}
+      isActive={currentStep === setupStepBase + 1}
       questionNumber="3"
     />,
     <TypeformInput
@@ -212,7 +247,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       placeholder="1"
       unit="pieces"
       required
-      isActive={currentStep === (showNewClient ? 6 : 3)}
+      isActive={currentStep === setupStepBase + 2}
       questionNumber="4"
     />,
     <TypeformInput
@@ -223,7 +258,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.blank_type}
       onChange={(v) => handleChange("blank_type", v)}
       placeholder="Type of garment..."
-      isActive={currentStep === (showNewClient ? 7 : 4)}
+      isActive={currentStep === setupStepBase + 3}
       questionNumber="5"
     />,
     <TypeformInput
@@ -233,7 +268,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.priority}
       onChange={(v) => handleChange("priority", v)}
       options={priorities}
-      isActive={currentStep === (showNewClient ? 8 : 5)}
+      isActive={currentStep === setupStepBase + 4}
       questionNumber="6"
     />,
     <TypeformInput
@@ -243,7 +278,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       subtitle="Expected delivery date to client"
       value={formData.due_date}
       onChange={(v) => handleChange("due_date", v)}
-      isActive={currentStep === (showNewClient ? 9 : 6)}
+      isActive={currentStep === setupStepBase + 5}
       questionNumber="7"
     />,
     <TypeformInput
@@ -255,7 +290,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       onChange={(v) => handleChange("quoted_price", v)}
       placeholder="0"
       unit="R"
-      isActive={currentStep === (showNewClient ? 10 : 7)}
+      isActive={currentStep === setupStepBase + 6}
       questionNumber="8"
     />,
     <TypeformInput
@@ -267,7 +302,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       onChange={(v) => handleChange("deposit_paid", v)}
       placeholder="0"
       unit="R"
-      isActive={currentStep === (showNewClient ? 11 : 8)}
+      isActive={currentStep === setupStepBase + 7}
       questionNumber="9"
     />,
     <TypeformInput
@@ -278,7 +313,7 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.description}
       onChange={(v) => handleChange("description", v)}
       placeholder="Describe the order..."
-      isActive={currentStep === (showNewClient ? 12 : 9)}
+      isActive={currentStep === setupStepBase + 8}
       questionNumber="10"
     />,
     <TypeformInput
@@ -289,10 +324,10 @@ export default function TypeformOrderForm({ order, onSubmit, onCancel }) {
       value={formData.notes}
       onChange={(v) => handleChange("notes", v)}
       placeholder="Internal notes..."
-      isActive={currentStep === (showNewClient ? 13 : 10)}
+      isActive={currentStep === setupStepBase + 9}
       questionNumber="11"
     />,
-    <div key="invoice" className={currentStep === (showNewClient ? 14 : 11) ? '' : 'hidden'}>
+    <div key="invoice" className={currentStep === setupStepBase + 10 ? '' : 'hidden'}>
       <div className="mb-6">
         <span className="text-sm text-slate-400 mb-1 block">12 →</span>
         <h2 className="text-2xl md:text-3xl font-medium text-slate-900">

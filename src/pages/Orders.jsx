@@ -64,6 +64,9 @@ function BasicOrderDrawer({ order, onClose, errorMessage }) {
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Client</p>
             <p className="mt-1 text-sm font-medium text-foreground">{order?.client_name || "Not added"}</p>
             {order?.client_email && <p className="mt-1 text-xs text-muted-foreground">{order.client_email}</p>}
+            {order?.client_phone && <p className="mt-1 text-xs text-muted-foreground">{order.client_phone}</p>}
+            {order?.whatsapp_name && <p className="mt-2 text-xs font-medium text-primary">WhatsApp: {order.whatsapp_name}</p>}
+            {order?.saved_contact_name && <p className="mt-1 text-xs font-medium text-muted-foreground">Saved as: {order.saved_contact_name}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-2xl border border-border bg-secondary/30 p-4">
@@ -210,6 +213,24 @@ function productionDetailLabel(order) {
   return productionDetailLabels[value] || String(value).replace(/_/g, " ");
 }
 
+function contactAliasText(order) {
+  return [
+    order?.whatsapp_name ? `WhatsApp: ${order.whatsapp_name}` : "",
+    order?.saved_contact_name ? `Saved: ${order.saved_contact_name}` : "",
+  ].filter(Boolean).join(" / ");
+}
+
+function orderSearchText(order) {
+  return [
+    order?.client_name,
+    order?.order_number,
+    order?.client_email,
+    order?.client_phone,
+    order?.whatsapp_name,
+    order?.saved_contact_name,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
 export default function Orders() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
@@ -307,7 +328,7 @@ export default function Orders() {
     if (assigneeFilter !== "all" && o.assigned_to !== assigneeFilter) return false;
     if (search) {
       const q = search.toLowerCase();
-      return o.client_name?.toLowerCase().includes(q) || o.order_number?.toLowerCase().includes(q);
+      return orderSearchText(o).includes(q);
     }
     return true;
   }), [orders, statusFilter, assigneeFilter, search]);
@@ -403,7 +424,7 @@ export default function Orders() {
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search orders..."
+              placeholder="Search orders, clients, WhatsApp names..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="pl-9 bg-card rounded-xl h-9"
@@ -469,6 +490,7 @@ export default function Orders() {
               {filtered.map(order => {
                 const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
                 const detailLabel = productionDetailLabel(order);
+                const aliasText = contactAliasText(order);
                 return (
                   <button
                     key={order.id}
@@ -484,6 +506,9 @@ export default function Orders() {
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{sc.label}</span>
                       </div>
                       <p className="truncate text-base font-semibold text-foreground">{order.client_name || "Customer"}</p>
+                      {aliasText && (
+                        <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
+                      )}
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         <span className="font-mono">{order.order_number}</span>
                         <span>{order.due_date ? format(new Date(order.due_date), "d MMM") : "No due date"}</span>
@@ -502,6 +527,9 @@ export default function Orders() {
                         <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${priorityDot[order.priority] || priorityDot.normal}`} />
                         <div>
                           <p className="font-medium text-foreground text-sm">{order.client_name}</p>
+                          {aliasText && (
+                            <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
+                          )}
                           <div className="mt-0.5">
                             <OrderTagBadges order={order} />
                           </div>
@@ -920,6 +948,7 @@ function isImageUrl(url) {
 function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isException }) {
   const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
   const detailLabel = productionDetailLabel(order);
+  const aliasText = contactAliasText(order);
   return (
     <button
       onClick={onClick}
@@ -937,6 +966,9 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
         <SourceBadge source={order.source} />
       </div>
       <p className="text-xs font-semibold text-foreground truncate mb-0.5">{order.client_name}</p>
+      {aliasText && (
+        <p className="mb-0.5 truncate text-[10px] font-medium text-primary">{aliasText}</p>
+      )}
       {order.order_number && (
         <p className="text-[10px] text-muted-foreground font-mono mb-1">{order.order_number}</p>
       )}

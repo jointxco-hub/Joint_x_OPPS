@@ -20,6 +20,8 @@ export default function OrderForm({ order, onSubmit, onCancel }) {
     client_name: "",
     client_email: "",
     client_phone: "",
+    whatsapp_name: "",
+    saved_contact_name: "",
     order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
     description: "",
     quantity: 1,
@@ -84,6 +86,22 @@ export default function OrderForm({ order, onSubmit, onCancel }) {
                 <Input
                   value={formData.client_phone}
                   onChange={(e) => handleChange("client_phone", e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>WhatsApp Name</Label>
+                <Input
+                  value={formData.whatsapp_name || ""}
+                  onChange={(e) => handleChange("whatsapp_name", e.target.value)}
+                  placeholder="Name shown in WhatsApp"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Saved Contact Name</Label>
+                <Input
+                  value={formData.saved_contact_name || ""}
+                  onChange={(e) => handleChange("saved_contact_name", e.target.value)}
+                  placeholder="How the contact is saved"
                 />
               </div>
             </div>
