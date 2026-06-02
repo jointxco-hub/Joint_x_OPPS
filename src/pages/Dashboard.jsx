@@ -6,6 +6,7 @@ import { CheckCircle2, Circle, Clock, Package, Target, TrendingUp, AlertTriangle
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format, isToday, isPast, startOfWeek, endOfWeek } from "date-fns";
+import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
 
 const greetings = ["Good morning", "Good afternoon", "Good evening"];
 const getGreeting = () => {
@@ -17,6 +18,7 @@ const statusColors = {
   confirmed: "bg-primary/10 text-primary",
   in_production: "bg-orange-100 text-orange-700",
   ready: "bg-green-100 text-green-700",
+  pending_payment: "bg-amber-100 text-amber-700",
   shipped: "bg-purple-100 text-purple-700",
   delivered: "bg-slate-100 text-slate-600",
   cancelled: "bg-red-100 text-red-700",
@@ -38,7 +40,7 @@ export default function Dashboard() {
 
   const { data: orders = [] } = useQuery({
     queryKey: ["orders-dash"],
-    queryFn: () => ents.Order.filter({ is_archived: false }, "-created_date", 10),
+    queryFn: () => ents.Order.filter({ is_archived: false }, "-created_date", 100),
   });
 
   const { data: goals = [] } = useQuery({
@@ -57,6 +59,7 @@ export default function Dashboard() {
 
   const activeOrders = orders.filter(o => !["delivered", "cancelled"].includes(o.status));
   const urgentOrders = orders.filter(o => o.priority === "urgent" && o.status !== "delivered");
+  const paymentHealth = getOrderHealthSummary(activeOrders);
 
   return (
     <div className="min-h-screen bg-background">
@@ -76,6 +79,28 @@ export default function Dashboard() {
           <StatCard label="Active Orders" value={activeOrders.length} color="orange" icon={Package} to="/Orders" />
           <StatCard label="Goals" value={goals.length} color="purple" icon={Target} to="/Goals" />
         </div>
+
+        {paymentHealth.flagged.length > 0 && (
+          <Link
+            to="/Orders"
+            className="mb-6 block rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950 shadow-apple-sm transition-all hover:border-amber-300"
+          >
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold">
+                  {paymentHealth.critical.length > 0
+                    ? `${paymentHealth.critical.length} payment issue${paymentHealth.critical.length === 1 ? "" : "s"} need review`
+                    : `${paymentHealth.flagged.length} X LAB payment check${paymentHealth.flagged.length === 1 ? "" : "s"}`}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-amber-800">
+                  OPPS found orders where the payment/status does not agree. Open Orders and check PayFast before production waits or a client follows up.
+                </p>
+              </div>
+              <ChevronRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-700" />
+            </div>
+          </Link>
+        )}
 
         <div className="grid md:grid-cols-2 gap-5">
           {/* Tasks Column */}
@@ -210,6 +235,9 @@ function OrderRow({ order }) {
     delivered: "bg-slate-100 text-slate-600",
     cancelled: "bg-red-100 text-red-700",
   };
+  const healthFlags = getOrderHealthFlags(order);
+  const paid = getOrderAmountPaid(order);
+  const total = getOrderTotal(order);
 
   return (
     <Link
@@ -219,6 +247,11 @@ function OrderRow({ order }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-foreground truncate">{order.client_name}</p>
         <p className="text-xs text-muted-foreground mt-0.5">{order.order_number}</p>
+        {healthFlags.length > 0 && (
+          <p className="mt-1 truncate text-xs font-semibold text-amber-700">
+            {healthFlags[0].label}{paid > 0 && total > 0 ? ` - R${paid.toLocaleString()} / R${total.toLocaleString()}` : ""}
+          </p>
+        )}
       </div>
       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusColors[order.status] || "bg-secondary text-muted-foreground"}`}>
         {order.status?.replace("_", " ")}

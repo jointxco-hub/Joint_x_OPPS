@@ -11,6 +11,7 @@ import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
+import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
 
 const loadOrderDrawer = () => import("@/components/orders/OrderDrawer");
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
@@ -172,6 +173,7 @@ class OrderDrawerErrorBoundary extends Component {
 
 const statusConfig = {
   confirmed:     { label: "Confirmed",     color: "bg-primary/10 text-primary" },
+  pending_payment: { label: "Pending Payment", color: "bg-amber-100 text-amber-700" },
   in_production: { label: "In Production", color: "bg-orange-100 text-orange-700" },
   ready:         { label: "Ready",         color: "bg-green-100 text-green-700" },
   shipped:       { label: "Shipped",       color: "bg-purple-100 text-purple-700" },
@@ -338,6 +340,7 @@ export default function Orders() {
     delivered: orders.filter(o => !o.is_archived && o.status === "delivered").length,
     cancelled: orders.filter(o => !o.is_archived && o.status === "cancelled").length,
   }), [orders]);
+  const healthSummary = useMemo(() => getOrderHealthSummary(filtered), [filtered]);
 
   // Kanban helpers
   const normalStages = useMemo(
@@ -467,6 +470,23 @@ export default function Orders() {
           </div>
         </div>
 
+        {healthSummary.flagged.length > 0 && (
+          <div className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-apple-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-700" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-amber-950">Payment and sync health checks</p>
+                <p className="mt-1 text-xs leading-5 text-amber-800">
+                  {healthSummary.critical.length > 0
+                    ? `${healthSummary.critical.length} order${healthSummary.critical.length === 1 ? "" : "s"} have recorded payments but still look pending.`
+                    : `${healthSummary.flagged.length} X LAB order${healthSummary.flagged.length === 1 ? "" : "s"} need PayFast review.`}
+                  {" "}These alerts do not change payment data; they point you to orders that need checking.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-3">
             {[1,2,3].map(i => <div key={i} className="h-20 bg-card rounded-2xl animate-pulse" />)}
@@ -491,6 +511,9 @@ export default function Orders() {
                 const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
                 const detailLabel = productionDetailLabel(order);
                 const aliasText = contactAliasText(order);
+                const healthFlags = getOrderHealthFlags(order);
+                const paid = getOrderAmountPaid(order);
+                const total = getOrderTotal(order);
                 return (
                   <button
                     key={order.id}
@@ -517,6 +540,11 @@ export default function Orders() {
                       <div className="mt-2">
                         <OrderTagBadges order={order} />
                       </div>
+                      {healthFlags.length > 0 && (
+                        <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                          {healthFlags[0].label}{paid > 0 && total > 0 ? ` - R${paid.toLocaleString()} / R${total.toLocaleString()}` : ""}
+                        </p>
+                      )}
                       {detailLabel && (
                         <p className="mt-2 text-xs font-medium text-emerald-700">{detailLabel}</p>
                       )}
@@ -533,6 +561,11 @@ export default function Orders() {
                           <div className="mt-0.5">
                             <OrderTagBadges order={order} />
                           </div>
+                          {healthFlags.length > 0 && (
+                            <p className="mt-1 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                              {healthFlags[0].label}
+                            </p>
+                          )}
                           {detailLabel && (
                             <p className="mt-1 text-xs font-medium text-emerald-700">{detailLabel}</p>
                           )}
@@ -949,6 +982,7 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
   const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
   const detailLabel = productionDetailLabel(order);
   const aliasText = contactAliasText(order);
+  const healthFlags = getOrderHealthFlags(order);
   return (
     <button
       onClick={onClick}
@@ -981,6 +1015,9 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
       <div className="mt-1.5">
         <OrderTagBadges order={order} />
       </div>
+      {healthFlags.length > 0 && (
+        <p className="mt-1.5 truncate text-[10px] font-semibold text-amber-700">{healthFlags[0].label}</p>
+      )}
       {detailLabel && (
         <p className="mt-1.5 truncate text-[10px] font-medium text-emerald-700">{detailLabel}</p>
       )}
