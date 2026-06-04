@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,79 @@ const criticalityColors = {
   optional: "bg-slate-100 text-slate-700"
 };
 
+async function listAuthUsersForAdmin() {
+  if (!supabase) return [];
+  const { data, error } = await supabase.functions.invoke("list-auth-users");
+  if (error || data?.error) {
+    throw new Error(error?.message || data?.error || "Could not load auth users");
+  }
+  return Array.isArray(data?.users) ? data.users : [];
+}
+
+function mergeDirectoryAndAuthUsers(directoryUsers = [], authUsers = []) {
+  const byEmail = new Map();
+
+  directoryUsers.forEach((user) => {
+    const email = String(user.email || user.user_email || "").trim().toLowerCase();
+    if (!email) return;
+    byEmail.set(email, {
+      ...user,
+      email: user.email || user.user_email,
+      name: user.name || user.full_name || user.email || user.user_email,
+      source: "directory",
+    });
+  });
+
+  authUsers.forEach((authUser) => {
+    const email = String(authUser.email || "").trim().toLowerCase();
+    if (!email) return;
+    const existing = byEmail.get(email);
+    const authName = authUser.full_name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email;
+
+    if (existing) {
+      byEmail.set(email, {
+        ...existing,
+        auth_user_id: existing.auth_user_id || authUser.id,
+        last_sign_in_at: authUser.last_sign_in_at,
+        confirmed_at: authUser.confirmed_at,
+      });
+      return;
+    }
+
+    byEmail.set(email, {
+      id: `auth:${authUser.id}`,
+      auth_user_id: authUser.id,
+      email: authUser.email,
+      user_email: authUser.email,
+      full_name: authName,
+      name: authName,
+      role: authUser.user_metadata?.role || "user",
+      is_active: true,
+      is_auth_only: true,
+      source: "auth",
+      created_at: authUser.created_at,
+      created_date: authUser.created_at,
+      last_sign_in_at: authUser.last_sign_in_at,
+      confirmed_at: authUser.confirmed_at,
+    });
+  });
+
+  return Array.from(byEmail.values()).sort((a, b) =>
+    String(a.name || a.email).localeCompare(String(b.name || b.email))
+  );
+}
+
+function directoryPayloadForUser(user, overrides = {}) {
+  return {
+    auth_user_id: user.auth_user_id,
+    email: user.email || user.user_email,
+    full_name: user.full_name || user.name || user.email || user.user_email,
+    role: user.role || "user",
+    is_active: user.is_active !== false,
+    ...overrides,
+  };
+}
+
 export default function RolesManagement() {
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [editingRole, setEditingRole] = useState(null);
@@ -43,6 +117,18 @@ export default function RolesManagement() {
     queryKey: ['users'],
     queryFn: () => dataClient.entities.User.list('name', 200)
   });
+
+  const { data: authUsers = [], isError: authUsersError } = useQuery({
+    queryKey: ['authUsers'],
+    queryFn: listAuthUsersForAdmin,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const visibleUsers = useMemo(
+    () => mergeDirectoryAndAuthUsers(users, authUsers),
+    [users, authUsers]
+  );
 
   const { data: userRoles = [] } = useQuery({
     queryKey: ['userRoles'],
@@ -76,7 +162,11 @@ export default function RolesManagement() {
   });
   const createUserMutation = useMutation({
     mutationFn: (data) => dataClient.entities.User.create(data),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['users'] }); toast.success("Person added"); }
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['authUsers'] });
+      toast.success("Person added");
+    }
   });
 
   // UserRole mutations
@@ -153,11 +243,24 @@ export default function RolesManagement() {
         {/* Team Access tab */}
         {settingsTab === "team" && (
           <UserRoleAssignments
-            users={users}
+            users={visibleUsers}
             roles={activeRoles}
             userRoles={userRoles}
-            onSystemRoleChange={(user, role) => updateUserMutation.mutate({ id: user.id, data: { role } })}
-            onDeactivate={(user) => updateUserMutation.mutate({ id: user.id, data: { is_active: false } })}
+            authUsersError={authUsersError}
+            onSystemRoleChange={(user, role) => {
+              if (user.is_auth_only) {
+                createUserMutation.mutate(directoryPayloadForUser(user, { role }));
+                return;
+              }
+              updateUserMutation.mutate({ id: user.id, data: { role } });
+            }}
+            onDeactivate={(user) => {
+              if (user.is_auth_only) {
+                createUserMutation.mutate(directoryPayloadForUser(user, { is_active: false }));
+                return;
+              }
+              updateUserMutation.mutate({ id: user.id, data: { is_active: false } });
+            }}
             onInvite={(data) => createUserMutation.mutate(data)}
             onAssign={(userEmail, roleKey) => assignRoleMutation.mutate({ user_email: userEmail, role_key: roleKey, is_primary: !userRoles.some(r => r.user_email === userEmail) })}
             onRemove={(assignment) => removeRoleMutation.mutate(assignment.id)}
@@ -655,7 +758,7 @@ Never leave a client waiting more than 4 hours without an update.
 
 // ── Team Access tab ───────────────────────────────────────────────────────────
 
-function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, roles, userRoles, authUsersError, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
   const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
 
@@ -679,6 +782,11 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
               {users.length} team member{users.length !== 1 ? "s" : ""}
             </span>
           </div>
+          {authUsersError && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Auth users could not be loaded. Directory users are still shown.
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1fr_1fr_140px_auto]">
             <Input placeholder="Full name" value={invite.name} onChange={e => setInvite({ ...invite, name: e.target.value })} />
             <Input placeholder="email@example.com" value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} />
@@ -716,8 +824,16 @@ function UserRoleAssignments({ users, roles, userRoles, onSystemRoleChange, onDe
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-semibold text-slate-900 truncate">{user.full_name || user.name || email}</p>
+                    {user.is_auth_only && (
+                      <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                        Auth login
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-xs text-slate-500 truncate">{email}</p>
+                  {user.is_auth_only && (
+                    <p className="mt-1 text-xs text-slate-400">Not added to OPPS directory yet. Changing role or archiving will add them.</p>
+                  )}
                 </div>
                 <Select value={user.role || "user"} onValueChange={value => onSystemRoleChange(user, value)}>
                   <SelectTrigger className="w-full lg:w-36"><SelectValue /></SelectTrigger>

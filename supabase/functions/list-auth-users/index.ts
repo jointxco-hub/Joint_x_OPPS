@@ -30,8 +30,8 @@ Deno.serve(async (req) => {
   const adminClient = createClient(supabaseUrl, serviceKey);
   const { data: profile } = await adminClient
     .from('users')
-    .select('role, email')
-    .eq('email', requesterEmail)
+    .select('role, user_email')
+    .eq('user_email', requesterEmail)
     .maybeSingle();
 
   if (profile?.role !== 'admin') {
