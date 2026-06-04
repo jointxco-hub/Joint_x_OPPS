@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ChevronRight,
   Copy,
@@ -10,6 +11,7 @@ import {
   Printer,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getInternalClientFileLibrary } from "@/api/clientRequests";
 import MediaPreview from "@/components/common/MediaPreview";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
 
@@ -18,6 +20,20 @@ const UNSORTED_FOLDER_ID = "__unsorted";
 export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
   const metadata = normalizeOrderFileFolders(order.order_file_folders);
   const [openFolderId, setOpenFolderId] = useState("");
+  const [textDialog, setTextDialog] = useState(null);
+  const [linkDialog, setLinkDialog] = useState(null);
+  const [copyDialog, setCopyDialog] = useState(null);
+  const clientEmail = order.client_email || order.email || "";
+  const { data: clientFileLibrary = { folders: [], files: [] }, isLoading: clientFilesLoading } = useQuery({
+    queryKey: ["orderClientFileLibrary", clientEmail],
+    queryFn: async () => {
+      const result = await getInternalClientFileLibrary({ clientEmail, limit: 80 });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: Boolean(clientEmail),
+    staleTime: 30_000,
+  });
   const fileUrls = Array.isArray(order.file_urls) ? order.file_urls.filter(Boolean) : [];
   const visibleUrls = Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [];
   const invoices = Array.isArray(order.invoice_files) ? order.invoice_files : [];
@@ -53,7 +69,17 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   const saveMetadata = (next) => onUpdate(order.id, { order_file_folders: next });
 
   const createFolder = () => {
-    const name = window.prompt("Folder name");
+    setTextDialog({
+      type: "create-folder",
+      title: "New folder",
+      description: "Create a folder for this order. Files stay as one source link and can be moved later.",
+      label: "Folder name",
+      value: "",
+      action: "Create folder",
+    });
+  };
+
+  const createFolderWithName = (name) => {
     const clean = String(name || "").trim();
     if (!clean) return;
     const id = `folder-${Date.now().toString(36)}`;
@@ -64,7 +90,18 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   const renameFolder = (folderId) => {
     const folder = folders.find((item) => item.id === folderId);
     if (!folder) return;
-    const name = window.prompt("Rename folder", folder.name);
+    setTextDialog({
+      type: "rename-folder",
+      title: "Rename folder",
+      description: "This changes the folder label only. Stored files are not moved or duplicated.",
+      label: "Folder name",
+      value: folder.name,
+      action: "Save name",
+      folderId,
+    });
+  };
+
+  const renameFolderWithName = (folderId, name) => {
     const clean = String(name || "").trim();
     if (!clean) return;
     saveMetadata({
@@ -85,6 +122,11 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       ...metadata,
       folders: folders.filter((item) => item.id !== folderId),
       fileFolders: nextFolders,
+      fileCopies: (metadata.fileCopies || []).filter((copy) => copy.folderId !== folderId),
+      fileLabels: Object.fromEntries(Object.entries(metadata.fileLabels || {}).filter(([key]) => {
+        const copy = (metadata.fileCopies || []).find((item) => item.id === key);
+        return !copy || copy.folderId !== folderId;
+      })),
     });
     if (openFolderId === folderId) setOpenFolderId("");
   };
@@ -109,7 +151,18 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   };
 
   const renameFile = (entry) => {
-    const name = window.prompt("Rename file label", displayFileName(entry));
+    setTextDialog({
+      type: "rename-file",
+      title: "Rename file label",
+      description: "This changes the visible label in OPPS. The original storage file stays the same.",
+      label: "File label",
+      value: displayFileName(entry),
+      action: "Save label",
+      entry,
+    });
+  };
+
+  const renameFileWithName = (entry, name) => {
     const clean = String(name || "").trim();
     if (!clean) return;
     saveMetadata({
@@ -127,11 +180,11 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       toast.info("Create another folder first");
       return;
     }
-    const folderName = window.prompt(
-      `Copy link to folder:\n${targetFolders.map((folder) => folder.name).join(", ")}`,
-      targetFolders[0]?.name || ""
-    );
-    const target = targetFolders.find((folder) => folder.name.toLowerCase() === String(folderName || "").trim().toLowerCase());
+    setCopyDialog({ entry, folderId: targetFolders[0]?.id || "" });
+  };
+
+  const copyFileToFolderId = (entry, folderId) => {
+    const target = folders.find((folder) => folder.id === folderId);
     if (!target) return;
     saveMetadata({
       ...metadata,
@@ -157,7 +210,11 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   };
 
   const pasteFileLink = (folderId = openFolderId) => {
-    const url = String(window.prompt("Paste file URL") || "").trim();
+    setLinkDialog({ folderId, url: "" });
+  };
+
+  const pasteFileLinkUrl = (folderId = openFolderId, inputUrl = "") => {
+    const url = String(inputUrl || "").trim();
     if (!url) return;
     const nextUrls = Array.from(new Set([...fileUrls, url]));
     const nextFolders = { ...(metadata.fileFolders || {}) };
@@ -177,6 +234,62 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       file_urls: nextUrls,
       order_file_folders: { ...metadata, fileFolders: nextFolders, fileCopies: nextCopies },
     });
+  };
+
+  const linkClientFileToOrder = (file) => {
+    const url = file.file_url;
+    if (!url) return;
+    const targetFolderId = uploadTargetFolderId;
+    const nextUrls = Array.from(new Set([...fileUrls, url]));
+    const nextFolders = { ...(metadata.fileFolders || {}) };
+    const nextLabels = { ...(metadata.fileLabels || {}) };
+    const nextCopies = [...(metadata.fileCopies || [])];
+    const label = file.file_name || "Client account file";
+    const exists = fileUrls.includes(url);
+
+    if (targetFolderId && exists) {
+      nextCopies.push({
+        id: `copy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        url,
+        folderId: targetFolderId,
+        label,
+      });
+    } else if (targetFolderId) {
+      nextFolders[url] = targetFolderId;
+    }
+
+    nextLabels[`file:${url}`] = label;
+
+    onUpdate(order.id, {
+      file_urls: nextUrls,
+      order_file_folders: {
+        ...metadata,
+        fileFolders: nextFolders,
+        fileLabels: nextLabels,
+        fileCopies: nextCopies,
+      },
+    });
+    toast.success(targetFolderId ? "Client file linked to this folder" : "Client file linked to this order");
+  };
+
+  const submitTextDialog = (value) => {
+    if (!textDialog) return;
+    if (textDialog.type === "create-folder") createFolderWithName(value);
+    if (textDialog.type === "rename-folder") renameFolderWithName(textDialog.folderId, value);
+    if (textDialog.type === "rename-file") renameFileWithName(textDialog.entry, value);
+    setTextDialog(null);
+  };
+
+  const submitLinkDialog = (url) => {
+    if (!linkDialog) return;
+    pasteFileLinkUrl(linkDialog.folderId, url);
+    setLinkDialog(null);
+  };
+
+  const submitCopyDialog = (folderId) => {
+    if (!copyDialog) return;
+    copyFileToFolderId(copyDialog.entry, folderId);
+    setCopyDialog(null);
   };
 
   const copyFileLink = async (url) => {
@@ -253,6 +366,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   const FolderCard = ({ id, name, entries = [], tone = "primary", canManage = true }) => {
     const urls = entries.map((entry) => entry.url || entry).filter(Boolean);
     const count = entries.length;
+    const clientVisibleCount = entries.filter((entry) => entry?.url && visibleUrls.includes(entry.url)).length;
     const isActive = openFolderId === id;
     const textClass = tone === "amber" ? "text-amber-800" : "text-primary";
     return (
@@ -264,10 +378,28 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           <div className="mt-3 flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{name}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{count} item{count === 1 ? "" : "s"}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone === "amber" ? "bg-amber-50 text-amber-800" : "bg-primary/10 text-primary"}`}>
+                  {count} item{count === 1 ? "" : "s"}
+                </span>
+                {clientVisibleCount > 0 && (
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                    {clientVisibleCount} client-visible
+                  </span>
+                )}
+              </div>
             </div>
             <FolderOpen className={`mt-0.5 h-4 w-4 flex-shrink-0 ${textClass}`} />
           </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpenFolderId(id)}
+          className={`mt-3 w-full rounded-2xl px-3 py-2 text-xs font-semibold ${
+            tone === "amber" ? "bg-amber-50 text-amber-800 hover:bg-amber-100" : "bg-primary text-primary-foreground hover:bg-primary/90"
+          }`}
+        >
+          Open folder
         </button>
         {canManage && (
           <div className="mt-3 grid grid-cols-2 gap-1.5">
@@ -280,17 +412,24 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   };
 
   const FileCard = ({ entry, index }) => (
-    <div className="rounded-2xl border border-border bg-card p-2">
+    <div className={`rounded-2xl border bg-card p-2 shadow-sm transition-all hover:shadow-md ${
+      visibleUrls.includes(entry.url) ? "border-primary/30" : "border-border"
+    }`}>
       <MediaPreview url={entry.url} title={displayFileName(entry) || `Order file ${index + 1}`} />
       <div className="mt-2 space-y-2">
         <div className="flex items-start justify-between gap-2 px-1">
           <p className="truncate text-xs font-semibold text-foreground" title={displayFileName(entry)}>
             {displayFileName(entry)}
           </p>
-          {entry.isCopy && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">linked</span>}
+          <div className="flex shrink-0 items-center gap-1">
+            {visibleUrls.includes(entry.url) && (
+              <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">client</span>
+            )}
+            {entry.isCopy && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">linked</span>}
+          </div>
         </div>
         {entry.isCopy && (
-          <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder.</p>
+          <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder. No duplicate binary was created.</p>
         )}
         <button
           type="button"
@@ -301,7 +440,10 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           Rename label
         </button>
         <label className="flex items-center justify-between gap-3 rounded-xl bg-secondary/40 px-3 py-2 text-xs">
-          <span className="font-medium text-foreground">Client can see</span>
+          <span>
+            <span className="block font-medium text-foreground">Show in client tracker</span>
+            <span className="text-[11px] text-muted-foreground">Only selected files appear on X LAB</span>
+          </span>
           <input
             type="checkbox"
             checked={visibleUrls.includes(entry.url)}
@@ -332,9 +474,9 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           <button
             type="button"
             onClick={() => copyFileToFolder(entry)}
-            className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-600"
+            className="rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-primary"
           >
-            Copy to...
+            Link to...
           </button>
         </div>
         <button
@@ -374,7 +516,20 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-secondary/20 p-3">
         <div>
           <p className="text-sm font-semibold text-foreground">Order files</p>
-          <p className="text-xs text-muted-foreground">Print mockups/reference sheets for production.</p>
+          <p className="text-xs text-muted-foreground">
+            One source file can be linked into multiple folders. Only files marked client-visible show in X LAB.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="rounded-full bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+              {fileUrls.length} file{fileUrls.length === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">
+              {visibleUrls.length} client-visible
+            </span>
+            <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
+              {invoices.length} invoice{invoices.length === 1 ? "" : "s"}
+            </span>
+          </div>
         </div>
         <button
           type="button"
@@ -403,6 +558,14 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           Paste file link
         </button>
       </div>
+
+      <ClientAccountFilesPanel
+        library={clientFileLibrary}
+        loading={clientFilesLoading}
+        currentOrderUrls={fileUrls}
+        folders={folders}
+        onLink={linkClientFileToOrder}
+      />
 
       {!openFolderId ? (
         <>
@@ -490,6 +653,210 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       {fileUrls.length === 0 && (
         <p className="text-sm text-muted-foreground text-center py-4">No files attached</p>
       )}
+
+      {textDialog && (
+        <TextActionModal
+          title={textDialog.title}
+          description={textDialog.description}
+          label={textDialog.label}
+          value={textDialog.value}
+          action={textDialog.action}
+          onClose={() => setTextDialog(null)}
+          onSubmit={submitTextDialog}
+        />
+      )}
+
+      {linkDialog && (
+        <TextActionModal
+          title="Paste file link"
+          description="Add a Supabase Storage URL or external reference link. This links the file to the order without uploading a duplicate."
+          label="File URL"
+          value={linkDialog.url}
+          action="Add link"
+          inputMode="url"
+          onClose={() => setLinkDialog(null)}
+          onSubmit={submitLinkDialog}
+        />
+      )}
+
+      {copyDialog && (
+        <FolderPickerModal
+          title="Link file to folder"
+          description="Create another folder link to the same source file. This does not duplicate the file binary."
+          folders={folders.filter((folder) => folder.id !== copyDialog.entry?.folderId)}
+          value={copyDialog.folderId}
+          onChange={(folderId) => setCopyDialog((current) => ({ ...current, folderId }))}
+          onClose={() => setCopyDialog(null)}
+          onSubmit={submitCopyDialog}
+        />
+      )}
+    </div>
+  );
+}
+
+function TextActionModal({ title, description, label, value = "", action = "Save", inputMode = "text", onClose, onSubmit }) {
+  const [draft, setDraft] = useState(value || "");
+  const clean = String(draft || "").trim();
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-3 backdrop-blur-sm sm:items-center" onClick={onClose}>
+      <form
+        className="w-full max-w-sm rounded-3xl border border-border bg-card shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!clean) return;
+          onSubmit(clean);
+        }}
+      >
+        <div className="border-b border-border px-5 py-4">
+          <p className="text-sm font-semibold text-foreground">{title}</p>
+          {description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>}
+        </div>
+        <div className="space-y-2 p-5">
+          <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</label>
+          <input
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            inputMode={inputMode}
+            autoFocus
+            className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/50"
+          />
+        </div>
+        <div className="flex gap-2 border-t border-border p-3">
+          <button type="button" onClick={onClose} className="h-10 flex-1 rounded-2xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground">
+            Cancel
+          </button>
+          <button type="submit" disabled={!clean} className="h-10 flex-1 rounded-2xl bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-40">
+            {action}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function FolderPickerModal({ title, description, folders, value, onChange, onClose, onSubmit }) {
+  const [selected, setSelected] = useState(value || folders[0]?.id || "");
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-3 backdrop-blur-sm sm:items-center" onClick={onClose}>
+      <form
+        className="w-full max-w-sm rounded-3xl border border-border bg-card shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!selected) return;
+          onSubmit(selected);
+        }}
+      >
+        <div className="border-b border-border px-5 py-4">
+          <p className="text-sm font-semibold text-foreground">{title}</p>
+          {description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>}
+        </div>
+        <div className="space-y-2 p-5">
+          <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Folder</label>
+          <select
+            value={selected}
+            onChange={(event) => {
+              setSelected(event.target.value);
+              onChange?.(event.target.value);
+            }}
+            className="h-11 w-full rounded-2xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/50"
+          >
+            {folders.map((folder) => (
+              <option key={folder.id} value={folder.id}>{folder.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex gap-2 border-t border-border p-3">
+          <button type="button" onClick={onClose} className="h-10 flex-1 rounded-2xl border border-border text-sm font-medium text-muted-foreground hover:text-foreground">
+            Cancel
+          </button>
+          <button type="submit" disabled={!selected} className="h-10 flex-1 rounded-2xl bg-primary text-sm font-semibold text-primary-foreground disabled:opacity-40">
+            Link file
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink }) {
+  const files = Array.isArray(library?.files) ? library.files : [];
+  const folders = Array.isArray(library?.folders) ? library.folders : [];
+  const folderName = (folderId) => folders.find((folder) => folder.id === folderId)?.name || "References";
+  const grouped = files.reduce((acc, file) => {
+    const name = folderName(file.folder_id);
+    if (!acc[name]) acc[name] = [];
+    acc[name].push(file);
+    return acc;
+  }, {});
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-border bg-card p-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Client account files</p>
+        <p className="mt-2 text-sm text-muted-foreground">Loading client uploads...</p>
+      </div>
+    );
+  }
+
+  if (!files.length) return null;
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Client account files</p>
+          <p className="mt-1 text-xs text-muted-foreground">Files uploaded from X LAB account. Link them to this order without re-uploading.</p>
+        </div>
+        <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+          {files.length} available
+        </span>
+      </div>
+      <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
+        {Object.entries(grouped).map(([folder, folderFiles]) => (
+          <div key={folder} className="rounded-2xl bg-secondary/30 p-2">
+            <div className="mb-2 flex items-center justify-between gap-2 px-1">
+              <p className="text-xs font-semibold text-foreground">{folder}</p>
+              <span className="text-[11px] text-muted-foreground">{folderFiles.length} item{folderFiles.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {folderFiles.map((file) => {
+                const alreadyLinked = currentOrderUrls.includes(file.file_url);
+                return (
+                  <div key={file.id} className="rounded-xl border border-border bg-background p-2">
+                    <div className="flex gap-2">
+                      <MediaPreview
+                        url={file.file_url}
+                        title={file.file_name || "Client file"}
+                        className="h-16 w-16 shrink-0 rounded-xl"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-foreground" title={file.file_name}>{file.file_name || "Client file"}</p>
+                        <p className="mt-1 truncate text-[11px] text-muted-foreground">{file.file_type || "file"}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">Tap thumbnail to preview</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onLink(file)}
+                      className={`mt-2 w-full rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        alreadyLinked
+                          ? "bg-secondary text-muted-foreground hover:text-foreground"
+                          : "bg-primary text-primary-foreground hover:bg-primary/90"
+                      }`}
+                    >
+                      {alreadyLinked ? "Link again to folder" : "Link to order"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

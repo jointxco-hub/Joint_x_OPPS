@@ -5,9 +5,12 @@ import {
   CheckCircle2,
   ChevronDown,
   ClipboardCheck,
+  ExternalLink,
   FileSignature,
+  FileText,
   Inbox,
   MessageSquare,
+  Paperclip,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -15,7 +18,7 @@ import {
   UserRoundPen,
 } from "lucide-react";
 import { toast } from "sonner";
-import { listClientRequests, updateClientRequestStatus } from "@/api/clientRequests";
+import { addInternalClientMessageReply, getInternalClientFileLibrary, listClientRequests, updateClientRequestStatus } from "@/api/clientRequests";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -267,8 +270,16 @@ function statusClass(status = "") {
 
 function riskBadges(request) {
   const payload = request.payload || {};
+  const details = parseDetailLines(payload.details);
+  const specs = payload.specs || {};
+  const merged = { ...payload, ...details, ...specs };
   const badges = [];
   const instructionType = payload.instruction_type;
+  const priority = String(pickFirst(merged, ["priority", "rush_request"]) || "").toLowerCase();
+  const deadline = pickFirst(merged, ["deadline", "preferred_date", "required_date"]);
+  const priceReview = pickFirst(merged, ["price_review_requested"]);
+  const customItem = pickFirst(merged, ["custom_item", "custom_item_name", "item_name"]);
+  const references = collectPayloadReferences(request);
 
   if (request.request_type === "special_instruction") {
     badges.push({ label: "Production note", className: "bg-red-50 text-red-700 border-red-100" });
@@ -289,7 +300,27 @@ function riskBadges(request) {
     badges.push({ label: "Repeat job", className: "bg-violet-50 text-violet-700 border-violet-100" });
   }
 
-  return badges;
+  if (priority.includes("rush")) {
+    badges.push({ label: "Rush request", className: "bg-red-50 text-red-700 border-red-100" });
+  }
+
+  if (deadline && String(deadline).toLowerCase() !== "no deadline") {
+    badges.push({ label: "Deadline set", className: "bg-amber-50 text-amber-800 border-amber-100" });
+  }
+
+  if (priceReview === true || String(priceReview).toLowerCase() === "true" || String(priceReview).toLowerCase() === "yes") {
+    badges.push({ label: "Price review", className: "bg-blue-50 text-blue-700 border-blue-100" });
+  }
+
+  if (customItem) {
+    badges.push({ label: "Custom item", className: "bg-slate-50 text-slate-700 border-slate-200" });
+  }
+
+  if (references.length > 0) {
+    badges.push({ label: `${references.length} reference${references.length === 1 ? "" : "s"}`, className: "bg-emerald-50 text-emerald-700 border-emerald-100" });
+  }
+
+  return badges.slice(0, 6);
 }
 
 function statusOptionsFor(type) {
@@ -425,6 +456,7 @@ export default function ClientRequests() {
         request={selected}
         open={!!selected}
         onOpenChange={(open) => !open && setSelected(null)}
+        onReplySent={() => setSelected((prev) => prev ? { ...prev, status: "actioned" } : prev)}
         onStatusChange={(nextStatus) => {
           if (!selected) return;
           updateMutation.mutate(
@@ -497,15 +529,41 @@ function RequestCard({ request, onOpen }) {
   );
 }
 
-function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, isUpdating }) {
+function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onReplySent, isUpdating }) {
   const [note, setNote] = useState("");
+  const [reply, setReply] = useState("");
+  const [previewFile, setPreviewFile] = useState(null);
+  const queryClient = useQueryClient();
   const statusOptions = request ? statusOptionsFor(request.request_type) : [];
   const meta = request ? (TYPE_META[request.request_type] || TYPE_META.message) : TYPE_META.message;
   const Icon = meta.icon;
+  const { data: fileLibrary = { folders: [], files: [] }, isLoading: filesLoading } = useQuery({
+    queryKey: ["clientFileLibrary", request?.client_email],
+    queryFn: async () => {
+      const result = await getInternalClientFileLibrary({ clientEmail: request?.client_email, limit: 80 });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: Boolean(open && request?.client_email),
+    staleTime: 30_000,
+  });
 
   React.useEffect(() => {
     if (open) setNote("");
+    if (open) setReply("");
+    if (open) setPreviewFile(null);
   }, [open, request?.id]);
+
+  const replyMutation = useMutation({
+    mutationFn: addInternalClientMessageReply,
+    onSuccess: () => {
+      setReply("");
+      onReplySent?.();
+      queryClient.invalidateQueries({ queryKey: ["clientRequests"] });
+      toast.success("Reply sent to client account");
+    },
+    onError: (err) => toast.error(err?.message || "Could not send reply"),
+  });
 
   if (!request) return null;
 
@@ -533,7 +591,37 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, isUp
           <p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{request.preview || "No preview"}</p>
         </section>
 
-        <PayloadView request={request} />
+        <PayloadView request={request} onPreview={setPreviewFile} />
+
+        {request.request_type === "message" && (
+          <section className="rounded-xl border border-border p-4">
+            <Label>Reply to client</Label>
+            <Textarea
+              value={reply}
+              onChange={(event) => setReply(event.target.value)}
+              placeholder="Write a client-visible reply. It will appear in the X LAB account messages."
+              className="mt-2"
+            />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">Client-visible. Internal notes stay separate.</p>
+              <Button
+                type="button"
+                disabled={replyMutation.isPending || reply.trim().length < 2}
+                onClick={() => replyMutation.mutate({
+                  clientEmail: request.client_email,
+                  subject: request.payload?.subject ? `Re: ${request.payload.subject}` : "Joint X reply",
+                  message: reply,
+                  parentMessageId: request.id,
+                })}
+              >
+                {replyMutation.isPending ? "Sending..." : "Send reply"}
+              </Button>
+            </div>
+          </section>
+        )}
+
+        <ClientFilesSection library={fileLibrary} loading={filesLoading} onPreview={setPreviewFile} />
+        {previewFile && <FilePreviewPanel file={previewFile} onClose={() => setPreviewFile(null)} />}
 
         {statusOptions.length > 0 && (
           <section className="rounded-xl border border-border p-4">
@@ -567,11 +655,12 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, isUp
   );
 }
 
-function PayloadView({ request }) {
+function PayloadView({ request, onPreview }) {
   const payload = request.payload || {};
   const sections = requestSections(request).filter((section) =>
     section.rows.some(([, value]) => valueText(value))
   );
+  const references = collectPayloadReferences(request);
 
   return (
     <div className="space-y-3">
@@ -594,6 +683,8 @@ function PayloadView({ request }) {
         ))
       )}
 
+      {references.length > 0 && <PayloadReferencesSection references={references} onPreview={onPreview} />}
+
       <details className="rounded-xl border border-border p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Technical payload
@@ -604,6 +695,228 @@ function PayloadView({ request }) {
         </div>
       </details>
     </div>
+  );
+}
+
+function collectPayloadReferences(request) {
+  const payload = request.payload || {};
+  const details = parseDetailLines(payload.details);
+  const specs = payload.specs || {};
+  const merged = { ...payload, ...details, ...specs };
+  const keys = [
+    "reference_url",
+    "reference_link",
+    "url",
+    "mockups",
+    "mockup",
+    "artwork_files",
+    "artwork_file",
+    "artwork",
+    "graphic_files",
+    "brand_assets",
+    "references",
+    "reference_files",
+    "uploaded_files",
+    "files",
+    "production_documents",
+  ];
+  const seen = new Set();
+  const refs = [];
+  const urlRegex = /https?:\/\/[^\s,]+/gi;
+
+  const addRef = (url, meta = {}) => {
+    const cleanUrl = String(url || "").trim();
+    if (!cleanUrl || seen.has(cleanUrl)) return;
+    seen.add(cleanUrl);
+    refs.push({
+      url: cleanUrl,
+      name: meta.name || meta.file_name || meta.title || fileNameFromUrl(cleanUrl),
+      type: meta.type || meta.file_type || meta.bucket || "Reference",
+    });
+  };
+
+  const scan = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach(scan);
+      return;
+    }
+    if (typeof value === "object") {
+      const url = value.url || value.file_url || value.fileUrl || value.href || value.link || value.reference_url;
+      if (url) addRef(url, value);
+      Object.entries(value).forEach(([key, nested]) => {
+        if (["url", "file_url", "fileUrl", "href", "link", "reference_url"].includes(key)) return;
+        if (Array.isArray(nested) || typeof nested === "object") scan(nested);
+      });
+      return;
+    }
+    String(value).match(urlRegex)?.forEach((url) => addRef(url));
+  };
+
+  keys.forEach((key) => scan(merged[key]));
+  return refs.slice(0, 20);
+}
+
+function PayloadReferencesSection({ references, onPreview }) {
+  const canShowImage = (url = "", type = "") => (
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || String(type || "").toLowerCase().startsWith("image/")
+  );
+
+  return (
+    <section className="rounded-xl border border-border p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Request references</p>
+        <Badge variant="outline" className="rounded-full">{references.length} link{references.length === 1 ? "" : "s"}</Badge>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {references.map((ref) => (
+          <button
+            key={ref.url}
+            type="button"
+            onClick={() => onPreview?.({ file_url: ref.url, file_name: ref.name, file_type: ref.type })}
+            className="flex items-center gap-3 rounded-xl border border-border bg-background p-2 text-left text-sm hover:border-primary/30"
+          >
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary">
+              {canShowImage(ref.url, ref.type) ? (
+                <img src={ref.url} alt="" loading="lazy" className="h-full w-full object-cover" />
+              ) : (
+                <FileText className="h-4 w-4 text-muted-foreground" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-foreground">{ref.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">{ref.type}</span>
+            </span>
+            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ClientFilesSection({ library, loading, onPreview }) {
+  const folders = Array.isArray(library?.folders) ? library.folders : [];
+  const files = Array.isArray(library?.files) ? library.files : [];
+  const folderName = (folderId) => folders.find((folder) => folder.id === folderId)?.name || "References";
+  const canShowImage = (url = "", type = "") => (
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || String(type || "").toLowerCase().startsWith("image/")
+  );
+  const grouped = files.reduce((acc, file) => {
+    const name = folderName(file.folder_id);
+    if (!acc[name]) acc[name] = [];
+    acc[name].push(file);
+    return acc;
+  }, {});
+
+  if (loading) {
+    return (
+      <section className="rounded-xl border border-border p-4">
+        <p className="text-sm text-muted-foreground">Loading client files...</p>
+      </section>
+    );
+  }
+
+  if (!files.length) {
+    return (
+      <section className="rounded-xl border border-border p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <Paperclip className="h-4 w-4 text-primary" />
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Client files</p>
+        </div>
+        <p className="text-sm text-muted-foreground">No persistent account files uploaded by this client yet.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-border p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Paperclip className="h-4 w-4 text-primary" />
+          <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Client files</p>
+        </div>
+        <Badge variant="outline" className="rounded-full">{files.length} file{files.length === 1 ? "" : "s"}</Badge>
+      </div>
+      <div className="space-y-3">
+        {Object.entries(grouped).map(([folder, folderFiles]) => (
+          <div key={folder} className="rounded-xl bg-secondary/30 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground">{folder}</p>
+              <span className="text-xs text-muted-foreground">{folderFiles.length} item{folderFiles.length === 1 ? "" : "s"}</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {folderFiles.map((file) => (
+                <button
+                  type="button"
+                  key={file.id}
+                  onClick={() => onPreview?.(file)}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-background p-2 text-left text-sm hover:border-primary/30"
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary">
+                    {canShowImage(file.file_url, file.file_type) ? (
+                      <img src={file.file_url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                    ) : (
+                      <FileText className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-foreground">{file.file_name || "File"}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {file.file_type || "file"} {file.created_at ? `- ${new Date(file.created_at).toLocaleDateString()}` : ""}
+                    </span>
+                  </span>
+                  <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function FilePreviewPanel({ file, onClose }) {
+  const url = file?.file_url || "";
+  const name = file?.file_name || "Client file";
+  const type = String(file?.file_type || name || url).toLowerCase();
+  const canShowImage = /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || type.startsWith("image/");
+  const canShowPdf = /\.pdf(\?|#|$)/i.test(url) || type.includes("pdf");
+
+  return (
+    <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-widest text-primary">Preview</p>
+          <p className="truncate text-sm font-semibold text-foreground">{name}</p>
+        </div>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
+          {url && (
+            <Button type="button" variant="outline" size="sm" asChild>
+              <a href={url} target="_blank" rel="noreferrer">Open</a>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-border bg-background">
+        {canShowImage ? (
+          <img src={url} alt={name} className="max-h-[60vh] w-full object-contain" loading="lazy" />
+        ) : canShowPdf ? (
+          <iframe title={name} src={url} className="h-[60vh] w-full bg-white" />
+        ) : (
+          <div className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center">
+            <FileText className="h-8 w-8 text-muted-foreground" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">Preview is not available for this file type.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Use Open to view or download it.</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

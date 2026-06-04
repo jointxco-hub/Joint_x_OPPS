@@ -16,6 +16,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
   const [pickerSource, setPickerSource] = useState("all");
   const [pickerCategory, setPickerCategory] = useState("all");
   const [showPicker, setShowPicker] = useState(false);
+  const [sizeRun, setSizeRun] = useState({});
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
@@ -78,6 +79,15 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
       [key]: exists ? selected.filter((item) => optionKey(item) !== optionKey(option)) : [...selected, option],
     }));
   };
+  const toggleEditOption = (kind, option) => {
+    const key = kind === "print" ? "selected_print_options" : "selected_addons";
+    const selected = Array.isArray(editRow[key]) ? editRow[key] : [];
+    const exists = selected.some((item) => optionKey(item) === optionKey(option));
+    setEditRow((row) => ({
+      ...row,
+      [key]: exists ? selected.filter((item) => optionKey(item) !== optionKey(option)) : [...selected, option],
+    }));
+  };
   const formatMoney = (value) => {
     const amount = Number(value || 0);
     return amount > 0 ? `R${amount.toLocaleString()}` : "";
@@ -105,11 +115,42 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
     const updated = [...products, { ...newRow, quantity: Number(newRow.quantity) || 1 }];
     onUpdate(order.id, { products: updated });
     setNewRow(emptyRow);
+    setSizeRun({});
     setAddMode(false);
     setPickerSearch("");
     setPickerSource("all");
     setPickerCategory("all");
     setShowPicker(false);
+  };
+
+  const addSizeRun = () => {
+    if (!newRow.name.trim()) return;
+    const selectedSizes = Object.entries(sizeRun)
+      .map(([size, quantity]) => ({ size, quantity: Number(quantity || 0) }))
+      .filter((item) => item.quantity > 0);
+
+    if (!selectedSizes.length) {
+      toast.info("Add quantity for at least one size");
+      return;
+    }
+
+    const updated = [
+      ...products,
+      ...selectedSizes.map(({ size, quantity }) => ({
+        ...newRow,
+        size,
+        quantity,
+      })),
+    ];
+    onUpdate(order.id, { products: updated });
+    setNewRow(emptyRow);
+    setSizeRun({});
+    setAddMode(false);
+    setPickerSearch("");
+    setPickerSource("all");
+    setPickerCategory("all");
+    setShowPicker(false);
+    toast.success(`${selectedSizes.length} size lines added`);
   };
 
   const duplicateRow = (/** @type {any} */ rawProduct) => {
@@ -162,6 +203,17 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
     ? sourceFiltered.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
     : sourceFiltered.slice(0, 10);
   const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
+  const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.catalog_item_id || editRow.inventory_item_id));
+  const productLineTotal = products.reduce((sum, raw) => {
+    const product = cleanProduct(raw);
+    return sum + (Number(product.price || 0) * Number(product.quantity || 1));
+  }, 0);
+  const productQuantityTotal = products.reduce((sum, raw) => {
+    const product = cleanProduct(raw);
+    return sum + Number(product.quantity || 0);
+  }, 0);
+  const orderTotal = Number(order.total_amount || 0);
+  const canApplyProductTotal = productLineTotal > 0 && Math.abs(productLineTotal - orderTotal) > 0.009;
 
   const updateQuantity = (idx, delta) => {
     const updated = products.map((item, i) => {
@@ -175,13 +227,39 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
 
   return (
     <div className="bg-secondary/30 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Products</h3>
-        {!addMode && (
-          <button type="button" onClick={() => setAddMode(true)} className="flex items-center gap-1 text-xs text-primary font-medium">
-            <Plus className="w-3 h-3" /> Add
-          </button>
-        )}
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Products</h3>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="rounded-full bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+              {products.length} line{products.length === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+              {productQuantityTotal || 0} unit{productQuantityTotal === 1 ? "" : "s"}
+            </span>
+            {productLineTotal > 0 && (
+              <span className="rounded-full bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary">
+                Product total {formatMoney(productLineTotal)}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {canApplyProductTotal && (
+            <button
+              type="button"
+              onClick={() => onUpdate(order.id, { total_amount: Number(productLineTotal.toFixed(2)) })}
+              className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/15"
+            >
+              Apply total
+            </button>
+          )}
+          {!addMode && (
+            <button type="button" onClick={() => setAddMode(true)} className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">
+              <Plus className="w-3 h-3" /> Add
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Existing rows */}
@@ -199,12 +277,52 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
                 type="number" className="h-7 text-xs w-12 rounded-lg" placeholder="Qty" />
               <Input value={editRow.price} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, price: e.target.value }))}
                 type="number" className="h-7 text-xs w-16 rounded-lg" placeholder="R" />
-              <Input value={editRow.size} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, size: e.target.value }))}
-                className="h-7 text-xs rounded-lg" placeholder="Size" />
-              <Input value={editRow.color} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, color: e.target.value }))}
-                className="h-7 text-xs rounded-lg" placeholder="Colour" />
+              {selectedEditItem?.sizes?.length ? (
+                <select value={editRow.size} onChange={(e) => setEditRow(r => ({ ...r, size: e.target.value }))}
+                  className="h-7 rounded-lg border border-input bg-background px-2 text-xs">
+                  <option value="">Size</option>
+                  {selectedEditItem.sizes.map((size) => <option key={size} value={size}>{size}</option>)}
+                </select>
+              ) : (
+                <Input value={editRow.size} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, size: e.target.value }))}
+                  className="h-7 text-xs rounded-lg" placeholder="Size" />
+              )}
+              {selectedEditItem?.colors?.length ? (
+                <select value={editRow.color} onChange={(e) => setEditRow(r => ({ ...r, color: e.target.value }))}
+                  className="h-7 rounded-lg border border-input bg-background px-2 text-xs">
+                  <option value="">Colour</option>
+                  {selectedEditItem.colors.map((color) => <option key={color} value={color}>{color}</option>)}
+                </select>
+              ) : (
+                <Input value={editRow.color} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, color: e.target.value }))}
+                  className="h-7 text-xs rounded-lg" placeholder="Colour" />
+              )}
               <Input value={editRow.notes} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, notes: e.target.value }))}
                 className="h-7 text-xs rounded-lg sm:col-span-3" placeholder="Item notes / print placement" />
+              {selectedEditItem?.print_options?.length > 0 && (
+                <OptionChipGroup
+                  title="Print options"
+                  options={selectedEditItem.print_options}
+                  selected={editRow.selected_print_options || []}
+                  onToggle={(option) => toggleEditOption("print", option)}
+                  tone="primary"
+                  optionKey={optionKey}
+                  optionLabel={optionLabel}
+                  formatMoney={formatMoney}
+                />
+              )}
+              {selectedEditItem?.addons?.length > 0 && (
+                <OptionChipGroup
+                  title="Add-ons"
+                  options={selectedEditItem.addons}
+                  selected={editRow.selected_addons || []}
+                  onToggle={(option) => toggleEditOption("addon", option)}
+                  tone="amber"
+                  optionKey={optionKey}
+                  optionLabel={optionLabel}
+                  formatMoney={formatMoney}
+                />
+              )}
               <div className="flex gap-2 sm:col-span-3">
                 <button type="button" onClick={saveRow} className="text-xs text-primary font-medium whitespace-nowrap">Save</button>
                 <button type="button" onClick={() => setEditingIdx(null)} className="text-xs text-muted-foreground">Cancel</button>
@@ -345,6 +463,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
                         selected_print_options: [],
                         selected_addons: [],
                       }));
+                      setSizeRun({});
                       setPickerSearch("");
                       setShowPicker(false);
                     }}
@@ -409,6 +528,36 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
             <Input value={newRow.price} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, price: e.target.value }))}
               type="number" placeholder="Price (R)" className="h-8 text-sm rounded-xl flex-1" />
           </div>
+          {selectedPickerItem?.sizes?.length > 0 && (
+            <div className="rounded-2xl border border-border bg-background p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Size run</p>
+                  <p className="text-[11px] text-muted-foreground">Add quantities per size when the order has multiple sizes.</p>
+                </div>
+                {Object.values(sizeRun).some((qty) => Number(qty || 0) > 0) && (
+                  <button type="button" onClick={addSizeRun} className="rounded-full bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground">
+                    Add size run
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {selectedPickerItem.sizes.map((size) => (
+                  <label key={size} className="rounded-xl border border-border bg-secondary/30 px-2 py-2">
+                    <span className="block text-center text-[11px] font-semibold text-foreground">{size}</span>
+                    <Input
+                      value={sizeRun[size] || ""}
+                      onChange={(e) => setSizeRun((current) => ({ ...current, [size]: e.target.value }))}
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      className="mt-1 h-7 rounded-lg text-center text-xs"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             {selectedPickerItem?.sizes?.length ? (
               <select value={newRow.size} onChange={(e) => setNewRow(r => ({ ...r, size: e.target.value }))}
@@ -487,6 +636,39 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function OptionChipGroup({ title, options, selected, onToggle, tone, optionKey, optionLabel, formatMoney }) {
+  return (
+    <div className="rounded-2xl border border-border bg-background p-3 sm:col-span-3">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => {
+          const isSelected = (selected || []).some((item) => optionKey(item) === optionKey(option));
+          const selectedClass = tone === "amber"
+            ? "border-amber-500 bg-amber-500 text-white"
+            : "border-primary bg-primary text-primary-foreground";
+          const idleClass = tone === "amber"
+            ? "border-border bg-secondary/40 text-muted-foreground hover:border-amber-400"
+            : "border-border bg-secondary/40 text-muted-foreground hover:border-primary/40";
+          return (
+            <button
+              key={optionKey(option)}
+              type="button"
+              onClick={() => onToggle(option)}
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+                isSelected ? selectedClass : idleClass
+              }`}
+            >
+              {option.image_url && <img src={option.image_url} alt="" loading="lazy" className="h-4 w-4 rounded-full object-cover" />}
+              {optionLabel(option)}
+              {option.price ? ` / ${formatMoney(option.price)}` : ""}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

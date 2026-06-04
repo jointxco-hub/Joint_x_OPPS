@@ -32,7 +32,9 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   return (
     <div className="fixed inset-0 z-[95] bg-black/30 p-4 print:static print:bg-white print:p-0">
       <style>{`
+        @page { size: A4; margin: 12mm; }
         @media print {
+          html, body { background: #fff !important; }
           body * { visibility: hidden !important; }
           .order-quick-print, .order-quick-print * { visibility: visible !important; }
           .order-quick-print {
@@ -44,9 +46,20 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
             border: 0 !important;
             background: #fff !important;
             color: #111 !important;
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
           }
           .order-quick-print-actions { display: none !important; }
-          .order-print-section, .order-print-card { break-inside: avoid; page-break-inside: avoid; }
+          .order-print-header,
+          .order-print-section,
+          .order-print-card,
+          .order-print-metric {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          .order-print-card img {
+            max-height: 180mm;
+          }
           a { color: #111 !important; text-decoration: none !important; }
         }
       `}</style>
@@ -73,7 +86,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
         </div>
 
         <div className="overflow-y-auto p-6 print:overflow-visible print:p-8">
-          <header className="mb-6 border-b border-zinc-300 pb-4">
+          <header className="order-print-header mb-6 border-b border-zinc-300 pb-4 print:mb-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500">Joint X / OPPS</p>
@@ -103,7 +116,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
             <OrderPrintSection title="Order Summary">
               <div className="space-y-2">
                 {productRows.map((product, index) => (
-                  <div key={`${product.name || product.title || "product"}-${index}`} className="order-print-card rounded-lg border border-zinc-200 p-3">
+                  <div key={`${product.name || product.title || "product"}-${index}`} className="order-print-card rounded-lg border border-zinc-200 p-3 print:p-2.5">
                     <p className="font-semibold text-zinc-950">{product.name || product.title || "Product"}</p>
                     <div className="mt-1 grid gap-1 text-sm text-zinc-700 sm:grid-cols-4">
                       <span>Qty: {product.quantity || product.qty || "-"}</span>
@@ -154,9 +167,9 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
               {filesForMockups.length ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   {filesForMockups.map((url, index) => (
-                    <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3">
+                    <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3 print:p-2.5">
                       {isPrintableImage(url) ? (
-                        <img src={url} alt="" className="h-64 w-full rounded-lg object-contain" />
+                        <img src={url} alt="" className="h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm]" />
                       ) : (
                         <p className="break-words text-sm text-zinc-700">{printFileName(url)}</p>
                       )}
@@ -175,7 +188,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
               {invoices.length ? (
                 <div className="space-y-2">
                   {invoices.map((invoice, index) => (
-                    <div key={`${invoice.url || invoice.file_url || invoice.name}-${index}`} className="order-print-card rounded-lg border border-zinc-200 p-3">
+                    <div key={`${invoice.url || invoice.file_url || invoice.name}-${index}`} className="order-print-card rounded-lg border border-zinc-200 p-3 print:p-2.5">
                       <p className="font-semibold text-zinc-950">{invoice.name || invoice.invoice_number || `Invoice ${index + 1}`}</p>
                       <div className="mt-1 grid gap-1 text-sm text-zinc-700 sm:grid-cols-3">
                         <span>Ref: {invoice.invoice_number || "-"}</span>
@@ -209,7 +222,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
 
 function OrderPrintSection({ title, children }) {
   return (
-    <section className="order-print-section mt-4 rounded-xl border border-zinc-200 bg-white p-4">
+    <section className="order-print-section mt-4 rounded-xl border border-zinc-200 bg-white p-4 print:mt-3 print:p-3">
       <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">{title}</h2>
       {children}
     </section>
@@ -228,7 +241,7 @@ function OrderPrintRow({ label, value }) {
 
 function OrderPrintMetric({ label, value, tone }) {
   return (
-    <div className={`rounded-lg border p-3 ${tone === "warn" ? "border-amber-200 bg-amber-50" : tone === "ok" ? "border-emerald-200 bg-emerald-50" : "border-zinc-200 bg-zinc-50"}`}>
+    <div className={`order-print-metric rounded-lg border p-3 ${tone === "warn" ? "border-amber-200 bg-amber-50" : tone === "ok" ? "border-emerald-200 bg-emerald-50" : "border-zinc-200 bg-zinc-50"}`}>
       <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{label}</p>
       <p className="mt-1 text-lg font-bold text-zinc-950">{value}</p>
     </div>

@@ -727,23 +727,45 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                     </Select>
                   </div>
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    ["artwork_check", "Artwork check"],
+                    ["print_setup", "Print setup"],
+                    ["pressing", "Pressing"],
+                    ["quality_check", "QC"],
+                    ["packing", "Packing"],
+                    ["waiting_design_assets", "Waiting assets"],
+                    ["waiting_stock", "Waiting stock"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => onUpdate(order.id, { production_detail_stage: value })}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
+                        order.production_detail_stage === value
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Client-facing production update</label>
-                    <textarea
+                    <DraftTextarea
+                      label="Client-facing production update"
                       value={order.production_client_update || ""}
-                      onChange={e => onUpdate(order.id, { production_client_update: e.target.value })}
+                      onSave={(value) => onUpdate(order.id, { production_client_update: value })}
                       placeholder="e.g. Your order is currently queued for embroidery. We are preparing the logo placement before stitching begins."
-                      className="h-20 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">Internal hold-up note</label>
-                    <textarea
+                    <DraftTextarea
+                      label="Internal hold-up note"
                       value={order.production_internal_note || order.production_hold_reason || ""}
-                      onChange={e => onUpdate(order.id, { production_internal_note: e.target.value, production_hold_reason: e.target.value })}
+                      onSave={(value) => onUpdate(order.id, { production_internal_note: value, production_hold_reason: value })}
                       placeholder="e.g. Missing left chest logo file. WhatsApp sent Tuesday. Hold until client replies."
-                      className="h-20 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20"
                     />
                   </div>
                 </div>
@@ -1135,6 +1157,44 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
         }}
       />
     </>
+  );
+}
+
+function DraftTextarea({ label, value, onSave, placeholder }) {
+  const [draft, setDraft] = useState(value || "");
+  const isDirty = draft !== (value || "");
+
+  useEffect(() => {
+    setDraft(value || "");
+  }, [value]);
+
+  const save = () => {
+    if (!isDirty) return;
+    onSave(draft);
+  };
+
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <label className="block text-xs text-muted-foreground">{label}</label>
+        {isDirty && (
+          <button
+            type="button"
+            onClick={save}
+            className="rounded-full bg-primary/10 px-2 py-1 text-[11px] font-semibold text-primary hover:bg-primary/15"
+          >
+            Save
+          </button>
+        )}
+      </div>
+      <textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={save}
+        placeholder={placeholder}
+        className="h-20 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20"
+      />
+    </div>
   );
 }
 

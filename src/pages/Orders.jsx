@@ -7,13 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
+import OrderDrawer from "@/components/orders/OrderDrawer";
 import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
 
-const loadOrderDrawer = () => import("@/components/orders/OrderDrawer");
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
 function markOrderPerf(name) {
@@ -39,7 +39,6 @@ function lazyWithRefresh(loader, key) {
   );
 }
 
-const OrderDrawer = lazyWithRefresh(loadOrderDrawer, "OrderDrawer");
 const NewOrderDrawer = lazyWithRefresh(loadNewOrderDrawer, "NewOrderDrawer");
 
 function BasicOrderDrawer({ order, onClose, errorMessage }) {
@@ -209,10 +208,28 @@ const productionDetailLabels = {
   custom: "Custom update",
 };
 
+const productionMethodLabels = {
+  dtf: "DTF printing",
+  vinyl: "Vinyl cutting",
+  screen: "Screen printing",
+  embroidery: "Embroidery",
+  pressing: "Heat pressing",
+  tailoring: "Tailoring",
+  cropping: "Cropping / alterations",
+  labeling: "Labeling / tagging",
+  mixed: "Mixed production",
+  custom: "Custom",
+};
+
 function productionDetailLabel(order) {
   const value = order?.production_detail_stage;
   if (!value) return "";
   return productionDetailLabels[value] || String(value).replace(/_/g, " ");
+}
+
+function productionMethodLabel(value) {
+  if (!value) return "";
+  return productionMethodLabels[value] || String(value).replace(/_/g, " ");
 }
 
 function contactAliasText(order) {
@@ -250,7 +267,6 @@ export default function Orders() {
   });
 
   useEffect(() => {
-    loadOrderDrawer();
     const preloadNewOrder = () => loadNewOrderDrawer();
     if ("requestIdleCallback" in window) {
       const id = window.requestIdleCallback(preloadNewOrder, { timeout: 2000 });
@@ -307,10 +323,6 @@ export default function Orders() {
   const openOrderDrawer = useCallback((order) => {
     markOrderPerf("opps:order-row-click");
     setSelectedOrder(order);
-  }, []);
-
-  const preloadDrawer = useCallback(() => {
-    loadOrderDrawer();
   }, []);
 
   const handleDrawerUpdate = useCallback((id, data) => {
@@ -517,8 +529,6 @@ export default function Orders() {
                 return (
                   <button
                     key={order.id}
-                    onPointerEnter={preloadDrawer}
-                    onFocus={preloadDrawer}
                     onClick={() => openOrderDrawer(order)}
                     className="w-full text-left border-b border-border last:border-0 hover:bg-secondary/40 transition-all"
                   >
@@ -608,8 +618,6 @@ export default function Orders() {
                       key={order.id}
                       order={order}
                       index={0}
-                      onPointerEnter={preloadDrawer}
-                      onFocus={preloadDrawer}
                       onClick={() => openOrderDrawer(order)}
                       isException
                     />
@@ -650,8 +658,6 @@ export default function Orders() {
                                     <KanbanCard
                                       order={order}
                                       index={index}
-                                      onPointerEnter={preloadDrawer}
-                                      onFocus={preloadDrawer}
                                       onClick={() => openOrderDrawer(order)}
                                       isDragging={snapshot.isDragging}
                                     />
@@ -758,12 +764,35 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
   return (
     <div className="fixed inset-0 z-[80] bg-background/95 p-4 print:static print:bg-white print:p-0">
       <style>{`
+        @page { size: A4; margin: 12mm; }
         @media print {
+          html, body { background: #fff !important; }
           body * { visibility: hidden; }
           .orders-production-print, .orders-production-print * { visibility: visible; }
-          .orders-production-print { position: absolute; inset: 0; width: 100%; padding: 18mm; background: #fff; color: #111; }
+          .orders-production-print {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            padding: 0;
+            background: #fff;
+            color: #111;
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
+          }
           .no-print { display: none !important; }
-          .print-order-card { break-inside: avoid; page-break-inside: avoid; }
+          .print-summary-header,
+          .print-summary-group-heading,
+          .print-order-card {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+          .print-summary-group {
+            break-inside: auto;
+            page-break-inside: auto;
+          }
+          .print-order-card {
+            box-shadow: none !important;
+          }
         }
       `}</style>
 
@@ -783,7 +812,7 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
       </div>
 
       <div className="orders-production-print mx-auto max-h-[calc(100vh-96px)] max-w-6xl overflow-y-auto rounded-2xl border border-border bg-white p-6 shadow-apple-sm print:max-h-none print:overflow-visible print:rounded-none print:border-0 print:p-0 print:shadow-none">
-        <header className="mb-6 flex items-start justify-between gap-6 border-b border-zinc-200 pb-4">
+        <header className="print-summary-header mb-5 flex items-start justify-between gap-6 border-b border-zinc-200 pb-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.24em] text-emerald-700">Joint X OPPS</p>
             <h1 className="mt-2 text-2xl font-bold text-zinc-950">
@@ -804,8 +833,8 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
         ) : (
           <div className="space-y-6">
             {groups.map(group => (
-              <section key={group.title} className="space-y-3">
-                <div className="flex items-center justify-between border-b border-zinc-200 pb-2">
+              <section key={group.title} className="print-summary-group space-y-3">
+                <div className="print-summary-group-heading flex items-center justify-between border-b border-zinc-200 pb-2">
                   <h2 className="text-sm font-bold uppercase tracking-[0.16em] text-zinc-800">{group.title}</h2>
                   <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">{group.orders.length}</span>
                 </div>
@@ -828,13 +857,16 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
   const products = getOrderProducts(order);
   const statusLabel = statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
   const dueLabel = order.due_date ? format(new Date(order.due_date), "d MMM yyyy") : "No due date";
-  const notes = [order.notes, order.special_instructions, order.delivery_note].filter(Boolean).join(" / ");
+  const customerNotes = [order.notes, order.special_instructions, order.delivery_note].filter(Boolean).join(" / ");
+  const clientUpdate = order.production_client_update || order.portal_message || "";
+  const internalBlocker = order.production_internal_note || order.production_hold_reason || "";
   const detailLabel = productionDetailLabel(order);
+  const methodLabel = productionMethodLabel(order.production_method);
 
   return (
-    <article className="print-order-card rounded-2xl border border-zinc-200 bg-white p-3">
+    <article className="print-order-card rounded-2xl border border-zinc-200 bg-white p-3 print:rounded-lg print:p-2.5">
       <div className="flex gap-3">
-        <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50">
+        <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 print:h-20 print:w-20">
           {thumb ? (
             <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
           ) : (
@@ -853,6 +885,7 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
           <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <PrintDatum label="Due" value={dueLabel} />
             <PrintDatum label="Stage" value={detailLabel || stageLabel || order.pipeline_stage || "Order received"} />
+            <PrintDatum label="Method" value={methodLabel || "Not set"} />
             <PrintDatum label="WhatsApp" value={order.whatsapp_name || "Not saved"} />
             <PrintDatum label="Saved as" value={order.saved_contact_name || "Not saved"} />
             <PrintDatum label="PEP/Courier" value={order.pep_code || order.tracking_number || "Not added"} />
@@ -861,7 +894,7 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
         </div>
       </div>
 
-      <div className="mt-3 rounded-xl bg-zinc-50 p-2">
+      <div className="mt-3 rounded-xl bg-zinc-50 p-2 print:mt-2">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">Products / Work</p>
         {products.length > 0 ? (
           <ul className="mt-1 space-y-1 text-xs text-zinc-800">
@@ -885,11 +918,13 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
         )}
       </div>
 
-      {notes ? (
-        <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
-          {notes}
-        </p>
-      ) : null}
+      <div className="mt-2 grid gap-2 md:grid-cols-2 print:grid-cols-2 print:gap-1.5">
+        <PrintNoteBlock title="Production notes" value={customerNotes || "No production notes added."} tone="amber" />
+        <PrintNoteBlock title="Client update" value={clientUpdate || "No client-facing update."} tone="emerald" />
+        {internalBlocker ? (
+          <PrintNoteBlock title="Internal blocker" value={internalBlocker} tone="red" />
+        ) : null}
+      </div>
     </article>
   );
 }
@@ -899,6 +934,22 @@ function PrintDatum({ label, value }) {
     <div>
       <dt className="text-[9px] font-bold uppercase tracking-wide text-zinc-400">{label}</dt>
       <dd className="truncate font-medium text-zinc-800">{value || "—"}</dd>
+    </div>
+  );
+}
+
+function PrintNoteBlock({ title, value, tone = "zinc" }) {
+  const toneClass = {
+    amber: "border-amber-200 bg-amber-50 text-amber-950",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    red: "border-red-200 bg-red-50 text-red-950",
+    zinc: "border-zinc-200 bg-zinc-50 text-zinc-800",
+  }[tone] || "border-zinc-200 bg-zinc-50 text-zinc-800";
+
+  return (
+    <div className={`rounded-xl border p-2 ${toneClass}`}>
+      <p className="text-[9px] font-bold uppercase tracking-[0.18em] opacity-70">{title}</p>
+      <p className="mt-1 whitespace-pre-wrap text-xs leading-4">{value}</p>
     </div>
   );
 }
