@@ -746,6 +746,8 @@ function DrawerLoadingFallback({ onClose, label = "Loading order..." }) {
 }
 
 function OrdersProductionSummary({ type, orders, stages, onClose }) {
+  const [groupBy, setGroupBy] = useState(type === "due" ? "due" : "stage");
+  const [focus, setFocus] = useState("all");
   const activeOrders = orders
     .filter(order => !order.is_archived && !["delivered", "cancelled"].includes(order.status))
     .sort((a, b) => {
@@ -754,11 +756,12 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
       return aDue - bDue || String(a.client_name || "").localeCompare(String(b.client_name || ""));
     });
 
-  const summaryOrders = type === "due"
+  const baseSummaryOrders = type === "due"
     ? activeOrders.filter(order => order.due_date)
     : activeOrders;
+  const summaryOrders = baseSummaryOrders.filter(order => matchesProductionSummaryFocus(order, focus));
   const stageLabelByKey = new Map((stages || []).map(stage => [stage.key, stage.display_name || stage.name || stage.key]));
-  const groups = groupProductionSummaryOrders(summaryOrders, stageLabelByKey, type);
+  const groups = groupProductionSummaryOrders(summaryOrders, stageLabelByKey, type, groupBy);
   const printedAt = format(new Date(), "d MMM yyyy HH:mm");
 
   return (
@@ -803,7 +806,35 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
           </p>
           <p className="text-xs text-muted-foreground">Categorised with mockups, contact aliases, due dates, and execution notes.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <label className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground">
+            Group
+            <select
+              value={groupBy}
+              onChange={(event) => setGroupBy(event.target.value)}
+              className="bg-transparent text-foreground outline-none"
+            >
+              <option value="stage">Stage</option>
+              <option value="due">Due window</option>
+              <option value="method">Method</option>
+              <option value="status">Status</option>
+              <option value="client">Client</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground">
+            Focus
+            <select
+              value={focus}
+              onChange={(event) => setFocus(event.target.value)}
+              className="bg-transparent text-foreground outline-none"
+            >
+              <option value="all">All</option>
+              <option value="blockers">Blockers</option>
+              <option value="missing_mockup">Missing mockup</option>
+              <option value="missing_due">No due date</option>
+              <option value="delivery_ready">Has PEP/courier</option>
+            </select>
+          </label>
           <Button type="button" variant="outline" onClick={onClose} className="rounded-xl">Close</Button>
           <Button type="button" onClick={() => window.print()} className="rounded-xl gap-2">
             <Printer className="h-4 w-4" /> Print
@@ -819,6 +850,11 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
               {type === "due" ? "Due Order Summary" : "Active Production Summary"}
             </h1>
             <p className="mt-1 text-sm text-zinc-600">Team handover sheet for production, packing, and follow-up.</p>
+            {(groupBy !== (type === "due" ? "due" : "stage") || focus !== "all") && (
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                Grouped by {summaryGroupLabel(groupBy)} · Focus: {summaryFocusLabel(focus)}
+              </p>
+            )}
           </div>
           <div className="text-right text-xs text-zinc-600">
             <p>Printed {printedAt}</p>
@@ -969,33 +1005,70 @@ function formatProductionOptions(value) {
     .join(", ");
 }
 
-function groupProductionSummaryOrders(orders, stageLabelByKey, type) {
-  if (type === "due") {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    const nextWeek = new Date(today);
-    nextWeek.setDate(today.getDate() + 7);
-    return [
-      { title: "Overdue", orders: orders.filter(order => order.due_date && new Date(order.due_date) < today) },
-      { title: "Due today", orders: orders.filter(order => order.due_date && sameDay(new Date(order.due_date), today)) },
-      { title: "Due tomorrow", orders: orders.filter(order => order.due_date && sameDay(new Date(order.due_date), tomorrow)) },
-      { title: "Due this week", orders: orders.filter(order => {
-        if (!order.due_date) return false;
-        const due = new Date(order.due_date);
-        return due > tomorrow && due <= nextWeek;
-      }) },
-      { title: "Later", orders: orders.filter(order => order.due_date && new Date(order.due_date) > nextWeek) },
-    ].filter(group => group.orders.length > 0);
-  }
-
+function groupProductionSummaryOrders(orders, stageLabelByKey, type, groupBy = type === "due" ? "due" : "stage") {
+  if (groupBy === "due") return groupOrdersByDueWindow(orders);
   const groups = new Map();
   orders.forEach(order => {
-    const title = stageLabelByKey.get(order.pipeline_stage) || statusConfig[order.status]?.label || "Active orders";
+    const title = productionSummaryGroupTitle(order, stageLabelByKey, groupBy);
     groups.set(title, [...(groups.get(title) || []), order]);
   });
   return [...groups.entries()].map(([title, groupOrders]) => ({ title, orders: groupOrders }));
+}
+
+function groupOrdersByDueWindow(orders) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const nextWeek = new Date(today);
+  nextWeek.setDate(today.getDate() + 7);
+  return [
+    { title: "Overdue", orders: orders.filter(order => order.due_date && new Date(order.due_date) < today) },
+    { title: "Due today", orders: orders.filter(order => order.due_date && sameDay(new Date(order.due_date), today)) },
+    { title: "Due tomorrow", orders: orders.filter(order => order.due_date && sameDay(new Date(order.due_date), tomorrow)) },
+    { title: "Due this week", orders: orders.filter(order => {
+      if (!order.due_date) return false;
+      const due = new Date(order.due_date);
+      return due > tomorrow && due <= nextWeek;
+    }) },
+    { title: "Later", orders: orders.filter(order => order.due_date && new Date(order.due_date) > nextWeek) },
+    { title: "No due date", orders: orders.filter(order => !order.due_date) },
+  ].filter(group => group.orders.length > 0);
+}
+
+function productionSummaryGroupTitle(order, stageLabelByKey, groupBy) {
+  if (groupBy === "method") return productionMethodLabel(order.production_method) || "Method not set";
+  if (groupBy === "status") return statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
+  if (groupBy === "client") return order.client_name || order.whatsapp_name || order.saved_contact_name || "Client not saved";
+  return stageLabelByKey.get(order.pipeline_stage) || productionDetailLabel(order) || statusConfig[order.status]?.label || "Active orders";
+}
+
+function matchesProductionSummaryFocus(order, focus) {
+  if (focus === "blockers") return Boolean(order.production_internal_note || order.production_hold_reason);
+  if (focus === "missing_mockup") return !getOrderThumbnail(order);
+  if (focus === "missing_due") return !order.due_date;
+  if (focus === "delivery_ready") return Boolean(order.pep_code || order.tracking_number);
+  return true;
+}
+
+function summaryGroupLabel(groupBy) {
+  return {
+    stage: "stage",
+    due: "due window",
+    method: "method",
+    status: "status",
+    client: "client",
+  }[groupBy] || "stage";
+}
+
+function summaryFocusLabel(focus) {
+  return {
+    all: "all orders",
+    blockers: "blockers",
+    missing_mockup: "missing mockups",
+    missing_due: "no due date",
+    delivery_ready: "has PEP/courier",
+  }[focus] || "all orders";
 }
 
 function sameDay(a, b) {
