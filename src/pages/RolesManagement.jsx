@@ -276,6 +276,7 @@ export default function RolesManagement() {
               updateUserMutation.mutate({ id: user.id, data: { is_active: false } });
             }}
             onInvite={(data) => createUserMutation.mutate(data)}
+            onAddToDirectory={(user) => createUserMutation.mutate(directoryPayloadForUser(user))}
             onAssign={async (userEmail, roleKey, user) => {
               if (user?.is_auth_only) {
                 await createUserMutation.mutateAsync(directoryPayloadForUser(user));
@@ -777,7 +778,7 @@ Never leave a client waiting more than 4 hours without an update.
 
 // ── Team Access tab ───────────────────────────────────────────────────────────
 
-function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onInvite, onAddToDirectory, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
   const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
 
@@ -886,6 +887,11 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUser
                   </SelectContent>
                 </Select>
                 <div className="flex gap-2">
+                  {user.is_auth_only && (
+                    <Button type="button" variant="outline" size="sm" onClick={() => onAddToDirectory(user)}>
+                      Add to directory
+                    </Button>
+                  )}
                   <Select value={selected} onValueChange={value => setSelectedRoles(s => ({ ...s, [email]: value }))}>
                     <SelectTrigger className="w-full lg:w-52">
                       <SelectValue placeholder="Assign role..." />
