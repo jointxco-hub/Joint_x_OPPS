@@ -262,7 +262,12 @@ export default function RolesManagement() {
               updateUserMutation.mutate({ id: user.id, data: { is_active: false } });
             }}
             onInvite={(data) => createUserMutation.mutate(data)}
-            onAssign={(userEmail, roleKey) => assignRoleMutation.mutate({ user_email: userEmail, role_key: roleKey, is_primary: !userRoles.some(r => r.user_email === userEmail) })}
+            onAssign={async (userEmail, roleKey, user) => {
+              if (user?.is_auth_only) {
+                await createUserMutation.mutateAsync(directoryPayloadForUser(user));
+              }
+              assignRoleMutation.mutate({ user_email: userEmail, role_key: roleKey, is_primary: !userRoles.some(r => r.user_email === userEmail) });
+            }}
             onRemove={(assignment) => removeRoleMutation.mutate(assignment.id)}
             onPrimary={(userEmail, assignment) => setPrimaryMutation.mutate({ userEmail, assignment })}
           />
@@ -858,7 +863,7 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, onSystem
                     variant="outline"
                     disabled={!selected || assignments.some(r => r.role_key === selected)}
                     onClick={() => {
-                      onAssign(email, selected);
+                      onAssign(email, selected, user);
                       setSelectedRoles(s => ({ ...s, [email]: "" }));
                     }}
                   >
