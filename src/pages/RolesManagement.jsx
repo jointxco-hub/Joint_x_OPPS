@@ -97,6 +97,18 @@ function directoryPayloadForUser(user, overrides = {}) {
   };
 }
 
+function formatTeamAccessDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-ZA", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export default function RolesManagement() {
   const [showRoleForm, setShowRoleForm] = useState(false);
   const [editingRole, setEditingRole] = useState(null);
@@ -823,6 +835,8 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, onSystem
           const email = user.email || user.user_email;
           const assignments = userRoles.filter(r => r.user_email === email);
           const selected = selectedRoles[email] || "";
+          const lastSignIn = formatTeamAccessDate(user.last_sign_in_at);
+          const confirmedAt = formatTeamAccessDate(user.confirmed_at);
           return (
             <div key={user.id} className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -836,6 +850,14 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, onSystem
                     )}
                   </div>
                   <p className="text-xs text-slate-500 truncate">{email}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                    {lastSignIn ? (
+                      <span>Last signed in {lastSignIn}</span>
+                    ) : (
+                      <span>No sign-in recorded</span>
+                    )}
+                    {confirmedAt && <span>Confirmed {confirmedAt}</span>}
+                  </div>
                   {user.is_auth_only && (
                     <p className="mt-1 text-xs text-slate-400">Not added to OPPS directory yet. Changing role or archiving will add them.</p>
                   )}
