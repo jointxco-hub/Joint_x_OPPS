@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Users, Plus, Crown, Shield, UserCheck, Archive, BookOpen,
   Pencil, Trash2, MessageSquare, ArrowUpCircle, Clock, Wrench,
-  CheckCircle2, ChevronDown, ChevronUp, AlertCircle
+  CheckCircle2, ChevronDown, ChevronUp, AlertCircle, RefreshCw
 } from "lucide-react";
 import { createPageUrl } from "../utils";
 import { toast } from "sonner";
@@ -130,7 +130,7 @@ export default function RolesManagement() {
     queryFn: () => dataClient.entities.User.list('name', 200)
   });
 
-  const { data: authUsers = [], isError: authUsersError } = useQuery({
+  const { data: authUsers = [], isError: authUsersError, isFetching: authUsersFetching, refetch: refetchAuthUsers } = useQuery({
     queryKey: ['authUsers'],
     queryFn: listAuthUsersForAdmin,
     staleTime: 60_000,
@@ -259,6 +259,8 @@ export default function RolesManagement() {
             roles={activeRoles}
             userRoles={userRoles}
             authUsersError={authUsersError}
+            authUsersFetching={authUsersFetching}
+            onRefreshAuthUsers={() => refetchAuthUsers()}
             onSystemRoleChange={(user, role) => {
               if (user.is_auth_only) {
                 createUserMutation.mutate(directoryPayloadForUser(user, { role }));
@@ -775,20 +777,34 @@ Never leave a client waiting more than 4 hours without an update.
 
 // ── Team Access tab ───────────────────────────────────────────────────────────
 
-function UserRoleAssignments({ users, roles, userRoles, authUsersError, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onInvite, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
   const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
 
   const activeUsers = users.filter(u => u.is_active !== false);
+  const authOnlyCount = activeUsers.filter(u => u.is_auth_only).length;
+  const directoryCount = activeUsers.length - authOnlyCount;
   const roleByKey = Object.fromEntries(roles.map(r => [r.key, r]));
 
   return (
     <Card className="mb-6">
       <CardHeader>
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Shield className="w-5 h-5 text-[#0F9B8E]" />
-          Team Members
-        </CardTitle>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Shield className="w-5 h-5 text-[#0F9B8E]" />
+              Team Members
+            </CardTitle>
+            <p className="mt-1 text-xs text-slate-500">
+              {directoryCount} in OPPS directory
+              {authOnlyCount ? ` · ${authOnlyCount} auth login${authOnlyCount === 1 ? "" : "s"} not added yet` : ""}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={onRefreshAuthUsers} disabled={authUsersFetching}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${authUsersFetching ? "animate-spin" : ""}`} />
+            Refresh logins
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Add person form */}
