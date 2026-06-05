@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getInternalClientFileLibrary } from "@/api/clientRequests";
+import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
 
@@ -23,6 +24,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   const [textDialog, setTextDialog] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
   const [copyDialog, setCopyDialog] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
   const clientEmail = order.client_email || order.email || "";
   const { data: clientFileLibrary = { folders: [], files: [] }, isLoading: clientFilesLoading } = useQuery({
     queryKey: ["orderClientFileLibrary", clientEmail],
@@ -415,7 +417,17 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     <div className={`rounded-2xl border bg-card p-2 shadow-sm transition-all hover:shadow-md ${
       visibleUrls.includes(entry.url) ? "border-primary/30" : "border-border"
     }`}>
-      <MediaPreview url={entry.url} title={displayFileName(entry) || `Order file ${index + 1}`} />
+      <button
+        type="button"
+        onClick={() => setPreviewFile({
+          title: displayFileName(entry) || `Order file ${index + 1}`,
+          file_url: entry.url,
+          url: entry.url,
+        })}
+        className="block w-full text-left"
+      >
+        <MediaPreview url={entry.url} title={displayFileName(entry) || `Order file ${index + 1}`} />
+      </button>
       <div className="mt-2 space-y-2">
         <div className="flex items-start justify-between gap-2 px-1">
           <p className="truncate text-xs font-semibold text-foreground" title={displayFileName(entry)}>
@@ -495,7 +507,18 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     return (
       <div className="rounded-2xl border border-border bg-card p-2">
         {url ? (
-          <MediaPreview url={url} title={invoiceTitle(invoice, index)} />
+          <button
+            type="button"
+            onClick={() => setPreviewFile({
+              title: invoiceTitle(invoice, index),
+              file_url: url,
+              url,
+              file_type: invoice?.file_type || "application/pdf",
+            })}
+            className="block w-full text-left"
+          >
+            <MediaPreview url={url} title={invoiceTitle(invoice, index)} />
+          </button>
         ) : (
           <div className="grid aspect-square place-items-center rounded-xl border border-border bg-secondary/30 text-xs text-muted-foreground">
             No invoice file
@@ -565,6 +588,12 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         currentOrderUrls={fileUrls}
         folders={folders}
         onLink={linkClientFileToOrder}
+        onPreview={(file) => setPreviewFile({
+          title: file.file_name || "Client file",
+          file_url: file.file_url,
+          url: file.file_url,
+          file_type: file.file_type,
+        })}
       />
 
       {!openFolderId ? (
@@ -690,6 +719,12 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           onSubmit={submitCopyDialog}
         />
       )}
+      {previewFile && (
+        <FileLightbox
+          file={previewFile}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
     </div>
   );
 }
@@ -782,7 +817,7 @@ function FolderPickerModal({ title, description, folders, value, onChange, onClo
   );
 }
 
-function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink }) {
+function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink, onPreview }) {
   const files = Array.isArray(library?.files) ? library.files : [];
   const folders = Array.isArray(library?.folders) ? library.folders : [];
   const folderName = (folderId) => folders.find((folder) => folder.id === folderId)?.name || "References";
@@ -828,11 +863,13 @@ function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink })
                 return (
                   <div key={file.id} className="rounded-xl border border-border bg-background p-2">
                     <div className="flex gap-2">
-                      <MediaPreview
-                        url={file.file_url}
-                        title={file.file_name || "Client file"}
-                        className="h-16 w-16 shrink-0 rounded-xl"
-                      />
+                      <button type="button" onClick={() => onPreview(file)} className="shrink-0 text-left">
+                        <MediaPreview
+                          url={file.file_url}
+                          title={file.file_name || "Client file"}
+                          className="h-16 w-16 rounded-xl"
+                        />
+                      </button>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-semibold text-foreground" title={file.file_name}>{file.file_name || "Client file"}</p>
                         <p className="mt-1 truncate text-[11px] text-muted-foreground">{file.file_type || "file"}</p>
