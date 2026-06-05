@@ -118,10 +118,12 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       ...f,
       client_id: client.id,
       client_name: client.name,
-      client_email: client.email || f.client_email,
-      client_phone: client.phone || f.client_phone,
+      client_email: client.email || client.client_email || f.client_email,
+      client_phone: client.phone || client.client_phone || client.whatsapp || f.client_phone,
       whatsapp_name: client.whatsapp_name || f.whatsapp_name,
       saved_contact_name: client.saved_contact_name || f.saved_contact_name,
+      pep_code: client.pep_code || f.pep_code,
+      delivery_note: client.delivery_note || client.delivery_address || f.delivery_note,
       total_amount: '',
     }));
     setClientSearch(client.name);
@@ -255,6 +257,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             phone: form.client_phone || undefined,
             whatsapp_name: form.whatsapp_name || undefined,
             saved_contact_name: form.saved_contact_name || undefined,
+            pep_code: form.pep_code || undefined,
+            delivery_note: form.delivery_note || undefined,
+            delivery_address: form.delivery_note || undefined,
             status: 'active',
             total_orders: 0,
             total_revenue: 0,
@@ -275,6 +280,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             status: 'active',
             whatsapp_name: form.whatsapp_name || client?.whatsapp_name || undefined,
             saved_contact_name: form.saved_contact_name || client?.saved_contact_name || undefined,
+            pep_code: form.pep_code || client?.pep_code || undefined,
+            delivery_note: form.delivery_note || client?.delivery_note || undefined,
+            delivery_address: form.delivery_note || client?.delivery_address || undefined,
           });
         } catch {
           // stats update is non-critical — order creation continues

@@ -261,7 +261,9 @@ export default function Clients() {
       client.email?.toLowerCase().includes(search.toLowerCase()) ||
       client.phone?.toLowerCase().includes(search.toLowerCase()) ||
       client.whatsapp_name?.toLowerCase().includes(search.toLowerCase()) ||
-      client.saved_contact_name?.toLowerCase().includes(search.toLowerCase());
+      client.saved_contact_name?.toLowerCase().includes(search.toLowerCase()) ||
+      client.pep_code?.toLowerCase().includes(search.toLowerCase()) ||
+      client.delivery_note?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === "all" || client.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -393,6 +395,12 @@ export default function Clients() {
                         {client.delivery_address}
                       </div>
                     )}
+                    {client.pep_code && (
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <MapPin className="w-4 h-4" />
+                        PEP/Courier: {client.pep_code}
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-100">
@@ -508,6 +516,11 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
               {client.saved_contact_name ? `Saved as: ${client.saved_contact_name}` : ''}
             </p>
           )}
+          {(client.pep_code || client.preferred_courier || client.delivery_note) && (
+            <p className="mt-1 text-xs text-slate-500">
+              {[client.preferred_courier, client.pep_code, client.delivery_note].filter(Boolean).join(' · ')}
+            </p>
+          )}
         </DialogHeader>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -611,6 +624,9 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
     whatsapp_name: "",
     saved_contact_name: "",
     delivery_address: "",
+    pep_code: "",
+    delivery_note: "",
+    preferred_courier: "",
     company_name: "",
     status: "lead",
     notes: ""
@@ -629,6 +645,9 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
         whatsapp_name: "",
         saved_contact_name: "",
         delivery_address: "",
+        pep_code: "",
+        delivery_note: "",
+        preferred_courier: "",
         company_name: "",
         status: "lead",
         notes: ""
@@ -745,6 +764,35 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
               value={formData.delivery_address}
               onChange={(e) => setFormData({...formData, delivery_address: e.target.value})}
               rows={2}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>PEP / Courier Code</Label>
+              <Input
+                value={formData.pep_code || ""}
+                onChange={(e) => setFormData({...formData, pep_code: e.target.value})}
+                placeholder="PAXI, locker, waybill, branch code"
+              />
+            </div>
+            <div>
+              <Label>Preferred Courier</Label>
+              <Input
+                value={formData.preferred_courier || ""}
+                onChange={(e) => setFormData({...formData, preferred_courier: e.target.value})}
+                placeholder="PEP, Courier Guy, Uber Collect..."
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label>Delivery Note</Label>
+            <Textarea
+              value={formData.delivery_note || ""}
+              onChange={(e) => setFormData({...formData, delivery_note: e.target.value})}
+              rows={2}
+              placeholder="Store name, pickup instructions, address hint, courier note..."
             />
           </div>
 
