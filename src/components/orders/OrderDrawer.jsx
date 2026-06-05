@@ -1035,9 +1035,37 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
           )}
           {tab === 'tracking' && (
             <div className="space-y-4">
-              {/* Courier saves immediately on selection */}
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs font-semibold text-amber-900">Where each delivery field goes</p>
+                <div className="mt-2 space-y-1 text-xs text-amber-800">
+                  <p><span className="font-semibold">PEP / courier code:</span> client-provided pickup code, PAXI code, locker code, branch/store code, or delivery instruction before you send.</p>
+                  <p><span className="font-semibold">Tracking number or link:</span> courier-provided waybill, tracking number, or full tracking URL after the parcel is booked/dispatched.</p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-border bg-card p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Before dispatch - client delivery info</p>
+                <div className="mt-3 space-y-3">
+                  <EditField label="PEP / Courier Pickup Code" field="pep_code" value={order.pep_code}
+                    help="Use this for codes/details the client gives you: PAXI, PEP branch, locker code, pickup code, delivery reference."
+                    editing={editingField === 'pep_code'} editValue={fieldValue}
+                    onEdit={() => startEdit('pep_code', order.pep_code)}
+                    onChange={setFieldValue} onSave={saveEdit} />
+                  <EditField label="Delivery Note / Pickup Point" field="delivery_note" value={order.delivery_note}
+                    help="Use this for store name, address hint, collection note, special delivery instruction, or package handover note."
+                    editing={editingField === 'delivery_note'} editValue={fieldValue}
+                    onEdit={() => startEdit('delivery_note', order.delivery_note)}
+                    onChange={setFieldValue} onSave={saveEdit} />
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-border bg-card p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">After dispatch - courier tracking</p>
+                <p className="mt-1 text-xs text-muted-foreground">Choose the courier, then paste the waybill/tracking number or full tracking URL supplied by the courier.</p>
+                <div className="mt-3 space-y-3">
+                  {/* Courier saves immediately on selection */}
               <div className="bg-secondary/30 rounded-xl p-3">
-                <p className="text-xs text-muted-foreground mb-1.5">Courier</p>
+                <p className="text-xs text-muted-foreground mb-1.5">Courier Company</p>
                 <Select
                   value={courierValue}
                   onValueChange={v => onUpdate(order.id, { courier: v === '__none' ? null : v })}
@@ -1053,18 +1081,13 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   </SelectContent>
                 </Select>
               </div>
-              <EditField label="Tracking Number" field="tracking_number" value={order.tracking_number}
+              <EditField label="Tracking Number / Tracking Link" field="tracking_number" value={order.tracking_number}
+                help="Use this only after booking the delivery. Paste the waybill number, courier tracking number, or the full tracking URL."
                 editing={editingField === 'tracking_number'} editValue={fieldValue}
                 onEdit={() => startEdit('tracking_number', order.tracking_number)}
                 onChange={setFieldValue} onSave={saveEdit} />
-              <EditField label="PEP / Courier Code" field="pep_code" value={order.pep_code}
-                editing={editingField === 'pep_code'} editValue={fieldValue}
-                onEdit={() => startEdit('pep_code', order.pep_code)}
-                onChange={setFieldValue} onSave={saveEdit} />
-              <EditField label="Delivery Note / Pickup Point" field="delivery_note" value={order.delivery_note}
-                editing={editingField === 'delivery_note'} editValue={fieldValue}
-                onEdit={() => startEdit('delivery_note', order.delivery_note)}
-                onChange={setFieldValue} onSave={saveEdit} />
+                </div>
+              </div>
               {trackingUrl && (
                 <a href={trackingUrl} target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-2 p-4 bg-primary/5 rounded-xl border border-primary/20 text-primary hover:bg-primary/10 transition-all">
@@ -1198,7 +1221,7 @@ function DraftTextarea({ label, value, onSave, placeholder }) {
   );
 }
 
-function EditField({ label, value, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options }) {
+function EditField({ label, value, help, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options }) {
   return (
     <div className="bg-secondary/30 rounded-xl p-3">
       <div className="flex items-center justify-between mb-1">
@@ -1221,6 +1244,7 @@ function EditField({ label, value, editing, editValue, onEdit, onChange, onSave,
       ) : (
         <p className="text-sm font-medium text-foreground">{value || '-'}</p>
       )}
+      {help && <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">{help}</p>}
     </div>
   );
 }

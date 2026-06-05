@@ -398,7 +398,7 @@ export default function Clients() {
                     {client.pep_code && (
                       <div className="flex items-center gap-2 text-sm text-slate-600">
                         <MapPin className="w-4 h-4" />
-                        PEP/Courier: {client.pep_code}
+                        PEP/Pickup Code: {client.pep_code}
                       </div>
                     )}
                   </div>
@@ -769,11 +769,11 @@ function ClientFormDialog({ open, onOpenChange, client, onSubmit }) {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>PEP / Courier Code</Label>
+              <Label>PEP / Courier Pickup Code</Label>
               <Input
                 value={formData.pep_code || ""}
                 onChange={(e) => setFormData({...formData, pep_code: e.target.value})}
-                placeholder="PAXI, locker, waybill, branch code"
+                placeholder="Client code, PAXI, locker, branch code"
               />
             </div>
             <div>

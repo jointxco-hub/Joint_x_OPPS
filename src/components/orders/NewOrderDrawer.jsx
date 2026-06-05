@@ -423,14 +423,16 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">PEP / Courier Code</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">PEP / Courier Pickup Code</label>
               <Input value={form.pep_code} onChange={e => setForm({ ...form, pep_code: e.target.value })}
-                placeholder="PAXI / locker / waybill" className="rounded-xl h-9 text-sm" />
+                placeholder="Client code, PAXI, locker, branch" className="rounded-xl h-9 text-sm" />
+              <p className="mt-1 text-[11px] text-muted-foreground">Client-provided code before dispatch. Not the courier tracking link.</p>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Pickup / Delivery Note</label>
               <Input value={form.delivery_note} onChange={e => setForm({ ...form, delivery_note: e.target.value })}
                 placeholder="Store, courier note, address hint" className="rounded-xl h-9 text-sm" />
+              <p className="mt-1 text-[11px] text-muted-foreground">Store name, delivery instruction, pickup point, or address hint.</p>
             </div>
           </div>
 

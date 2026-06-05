@@ -832,7 +832,7 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
               <option value="blockers">Blockers</option>
               <option value="missing_mockup">Missing mockup</option>
               <option value="missing_due">No due date</option>
-              <option value="delivery_ready">Has PEP/courier</option>
+              <option value="delivery_ready">Has delivery info</option>
             </select>
           </label>
           <Button type="button" variant="outline" onClick={onClose} className="rounded-xl">Close</Button>
@@ -924,7 +924,8 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
             <PrintDatum label="Method" value={methodLabel || "Not set"} />
             <PrintDatum label="WhatsApp" value={order.whatsapp_name || "Not saved"} />
             <PrintDatum label="Saved as" value={order.saved_contact_name || "Not saved"} />
-            <PrintDatum label="PEP/Courier" value={order.pep_code || order.tracking_number || "Not added"} />
+            <PrintDatum label="PEP/Pickup Code" value={order.pep_code || "Not added"} />
+            <PrintDatum label="Tracking" value={order.tracking_number || "Not added"} />
             <PrintDatum label="Total" value={order.total_amount ? `R${Number(order.total_amount).toLocaleString()}` : "Not set"} />
           </dl>
         </div>
@@ -1047,7 +1048,7 @@ function matchesProductionSummaryFocus(order, focus) {
   if (focus === "blockers") return Boolean(order.production_internal_note || order.production_hold_reason);
   if (focus === "missing_mockup") return !getOrderThumbnail(order);
   if (focus === "missing_due") return !order.due_date;
-  if (focus === "delivery_ready") return Boolean(order.pep_code || order.tracking_number);
+  if (focus === "delivery_ready") return Boolean(order.pep_code || order.delivery_note || order.tracking_number);
   return true;
 }
 
@@ -1067,7 +1068,7 @@ function summaryFocusLabel(focus) {
     blockers: "blockers",
     missing_mockup: "missing mockups",
     missing_due: "no due date",
-    delivery_ready: "has PEP/courier",
+    delivery_ready: "has delivery info",
   }[focus] || "all orders";
 }
 
