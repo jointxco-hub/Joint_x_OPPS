@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
 import { getInternalClientFileLibrary } from "@/api/clientRequests";
+import FileLightbox from "@/components/files/FileLightbox";
 import { toast } from "sonner";
 
 /**
@@ -67,6 +68,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   const [clientSearch, setClientSearch] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
   const queryClient = useQueryClient();
 
   const { data: clients = [] } = useQuery({
@@ -584,14 +586,21 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                     <div className="grid grid-cols-3 gap-2">
                       {clientContextFiles.map((file) => {
                         const url = file.file_url || file.url || "";
+                        const name = file.file_name || file.name || fileNameFromUrl(url);
                         return (
-                          <a
+                          <button
                             key={file.id || url}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
+                            type="button"
+                            onClick={() => setPreviewFile({
+                              ...file,
+                              file_url: url,
+                              title: name,
+                              name,
+                              file_name: name,
+                              file_type: file.file_type || file.type || "",
+                            })}
                             className="group overflow-hidden rounded-xl border border-border bg-secondary/30 text-left"
-                            title={file.file_name || file.name || fileNameFromUrl(url)}
+                            title={name}
                           >
                             <span className="flex aspect-square items-center justify-center bg-secondary">
                               {isImageUrl(url) ? (
@@ -601,9 +610,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                               )}
                             </span>
                             <span className="block truncate px-2 py-1 text-[10px] text-muted-foreground">
-                              {file.file_name || file.name || fileNameFromUrl(url)}
+                              {name}
                             </span>
-                          </a>
+                          </button>
                         );
                       })}
                     </div>
@@ -883,6 +892,12 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
           </Button>
         </div>
       </div>
+      {previewFile && (
+        <FileLightbox
+          file={previewFile}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
     </>
   );
 }
