@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from "react";
-import { X, Plus, Trash2, Search, ShoppingCart, AlertCircle, Package } from "lucide-react";
+import { X, Plus, Trash2, Search, ShoppingCart, AlertCircle, Package, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
+import { getInternalClientFileLibrary } from "@/api/clientRequests";
 import { toast } from "sonner";
 
 /**
@@ -27,6 +28,19 @@ function fuzzyScore(query, target) {
     if (t[i] === q[qi]) qi++;
   }
   return (qi / q.length) * 0.5;
+}
+
+function isImageUrl(url = "") {
+  return /\.(png|jpe?g|webp|gif|avif|svg)(\?.*)?$/i.test(String(url));
+}
+
+function fileNameFromUrl(url = "") {
+  try {
+    const path = new URL(url).pathname;
+    return decodeURIComponent(path.split("/").pop() || "File");
+  } catch {
+    return String(url).split("/").pop() || "File";
+  }
 }
 
 export default function NewOrderDrawer({ onClose, onCreate }) {
@@ -78,6 +92,46 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     queryKey: ['purchaseOrders'],
     queryFn: () => dataClient.entities.PurchaseOrder.list('-created_date', 100)
   });
+
+  const selectedClient = useMemo(() => {
+    if (form.client_id) return clients.find((client) => client.id === form.client_id) || null;
+    const email = String(form.client_email || "").trim().toLowerCase();
+    if (email) return clients.find((client) => String(client.email || client.client_email || "").trim().toLowerCase() === email) || null;
+    return null;
+  }, [clients, form.client_email, form.client_id]);
+
+  const clientContextEmail = form.client_email || selectedClient?.email || selectedClient?.client_email || "";
+
+  const { data: clientContextOrders = [] } = useQuery({
+    queryKey: ["newOrderClientContextOrders", selectedClient?.id || clientContextEmail],
+    queryFn: async () => dataClient.entities.Order.list("-created_date", 500),
+    enabled: Boolean(selectedClient?.id || clientContextEmail || form.client_name),
+    staleTime: 60_000,
+    select: (orders) => {
+      const email = String(clientContextEmail || "").trim().toLowerCase();
+      const name = String(form.client_name || selectedClient?.name || "").trim().toLowerCase();
+      return (orders || [])
+        .filter((order) => {
+          if (selectedClient?.id && order.client_id === selectedClient.id) return true;
+          if (email && String(order.client_email || "").trim().toLowerCase() === email) return true;
+          if (name && String(order.client_name || "").trim().toLowerCase() === name) return true;
+          return false;
+        })
+        .slice(0, 4);
+    },
+  });
+
+  const { data: clientFileLibrary = { folders: [], files: [] }, isLoading: clientFilesLoading } = useQuery({
+    queryKey: ["newOrderClientFileLibrary", clientContextEmail],
+    queryFn: async () => {
+      const result = await getInternalClientFileLibrary({ clientEmail: clientContextEmail, limit: 24 });
+      return result.data || { folders: [], files: [] };
+    },
+    enabled: Boolean(clientContextEmail),
+    staleTime: 60_000,
+  });
+
+  const clientContextFiles = Array.isArray(clientFileLibrary?.files) ? clientFileLibrary.files.slice(0, 6) : [];
 
   // Scored client suggestions — includes fuzzy matches from Client entity + order history names
   const { clientSuggestions, didYouMean } = useMemo(() => {
@@ -435,6 +489,129 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
               <p className="mt-1 text-[11px] text-muted-foreground">Store name, delivery instruction, pickup point, or address hint.</p>
             </div>
           </div>
+
+          {(form.client_id || clientContextEmail) && (
+            <div className="rounded-2xl border border-border bg-secondary/25 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Client context</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{selectedClient?.name || form.client_name || "Selected client"}</p>
+                </div>
+                {selectedClient?.status && (
+                  <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[11px] capitalize text-muted-foreground">
+                    {selectedClient.status}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3 grid gap-3">
+                {(selectedClient?.pep_code || selectedClient?.preferred_courier || selectedClient?.delivery_note) && (
+                  <div className="rounded-xl border border-border bg-background p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Saved delivery defaults</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {[selectedClient?.preferred_courier, selectedClient?.pep_code, selectedClient?.delivery_note].filter(Boolean).join(" · ")}
+                    </p>
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent orders</p>
+                    <span className="text-[11px] text-muted-foreground">{clientContextOrders.length}</span>
+                  </div>
+                  {clientContextOrders.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No recent OPPS orders found for this client yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {clientContextOrders.map((order) => (
+                        <button
+                          key={order.id || order.order_number}
+                          type="button"
+                          onClick={() => {
+                            const firstProduct = Array.isArray(order.products) ? order.products.find(Boolean) : null;
+                            if (!firstProduct) return;
+                            setForm((current) => ({
+                              ...current,
+                              products: [{
+                                name: firstProduct.name || firstProduct.product_name || "",
+                                quantity: firstProduct.quantity || 1,
+                                price: firstProduct.price || firstProduct.line_total || "",
+                                size: firstProduct.size || "",
+                                color: firstProduct.color || firstProduct.colour || "",
+                                notes: firstProduct.notes || "",
+                                catalog_item_id: firstProduct.catalog_item_id || "",
+                                inventory_item_id: firstProduct.inventory_item_id || "",
+                                image_url: firstProduct.image_url || "",
+                                category: firstProduct.category || "",
+                                source: firstProduct.source || "repeat",
+                                selected_print_options: firstProduct.selected_print_options || [],
+                                selected_addons: firstProduct.selected_addons || [],
+                              }],
+                              notes: current.notes || `Repeat/reference from ${order.order_number}`,
+                            }));
+                            toast.success(`Loaded first item from ${order.order_number}`);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-xl border border-border bg-secondary/30 p-2 text-left transition-colors hover:border-primary/40"
+                        >
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background">
+                            {Array.isArray(order.products) && order.products[0]?.image_url ? (
+                              <img src={order.products[0].image_url} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <Package className="h-4 w-4 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold text-foreground">{order.order_number}</p>
+                            <p className="truncate text-[11px] text-muted-foreground">
+                              {Array.isArray(order.products) && order.products[0]?.name ? order.products[0].name : order.status || "Order"}
+                            </p>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">Use</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Client files</p>
+                    <span className="text-[11px] text-muted-foreground">{clientFilesLoading ? "Loading" : clientContextFiles.length}</span>
+                  </div>
+                  {clientContextFiles.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">Saved client files will appear here after account uploads are linked.</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {clientContextFiles.map((file) => {
+                        const url = file.file_url || file.url || "";
+                        return (
+                          <a
+                            key={file.id || url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group overflow-hidden rounded-xl border border-border bg-secondary/30 text-left"
+                            title={file.file_name || file.name || fileNameFromUrl(url)}
+                          >
+                            <span className="flex aspect-square items-center justify-center bg-secondary">
+                              {isImageUrl(url) ? (
+                                <img src={url} alt="" className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                              ) : (
+                                <FileText className="h-5 w-5 text-muted-foreground" />
+                              )}
+                            </span>
+                            <span className="block truncate px-2 py-1 text-[10px] text-muted-foreground">
+                              {file.file_name || file.name || fileNameFromUrl(url)}
+                            </span>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Order number + due date */}
           <div className="grid grid-cols-2 gap-3">
