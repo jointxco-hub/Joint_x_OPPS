@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
   Copy,
@@ -11,7 +11,7 @@ import {
   Printer,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getInternalClientFileLibrary } from "@/api/clientRequests";
+import { getInternalClientFileLibrary, saveInternalClientFileLink } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
@@ -20,6 +20,7 @@ const UNSORTED_FOLDER_ID = "__unsorted";
 
 export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
   const metadata = normalizeOrderFileFolders(order.order_file_folders);
+  const queryClient = useQueryClient();
   const [openFolderId, setOpenFolderId] = useState("");
   const [textDialog, setTextDialog] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
@@ -215,7 +216,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     setLinkDialog({ folderId, url: "" });
   };
 
-  const pasteFileLinkUrl = (folderId = openFolderId, inputUrl = "") => {
+  const pasteFileLinkUrl = async (folderId = openFolderId, inputUrl = "") => {
     const url = String(inputUrl || "").trim();
     if (!url) return;
     const nextUrls = Array.from(new Set([...fileUrls, url]));
@@ -236,6 +237,20 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       file_urls: nextUrls,
       order_file_folders: { ...metadata, fileFolders: nextFolders, fileCopies: nextCopies },
     });
+    if (clientEmail) {
+      const result = await saveInternalClientFileLink({
+        clientEmail,
+        fileUrl: url,
+        fileName: displayFileName({ id: `file:${url}`, url }),
+        linkedOrderId: order.id,
+      });
+      if (result.error) {
+        toast.info("File linked to order, but client library link was not saved yet.");
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["orderClientFileLibrary", clientEmail] });
+        queryClient.invalidateQueries({ queryKey: ["newOrderClientFileLibrary", clientEmail] });
+      }
+    }
   };
 
   const linkClientFileToOrder = (file) => {
@@ -282,9 +297,9 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     setTextDialog(null);
   };
 
-  const submitLinkDialog = (url) => {
+  const submitLinkDialog = async (url) => {
     if (!linkDialog) return;
-    pasteFileLinkUrl(linkDialog.folderId, url);
+    await pasteFileLinkUrl(linkDialog.folderId, url);
     setLinkDialog(null);
   };
 

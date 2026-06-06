@@ -47,6 +47,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { dataClient } from "@/api/dataClient";
+import { saveInternalClientFileLink } from "@/api/clientRequests";
 import { useOrderDrawerData } from "@/hooks/useOrderDrawerData";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -308,7 +309,22 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       const uploaded = [];
       for (const file of files) {
         const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
-        if (file_url) uploaded.push(file_url);
+        if (file_url) {
+          uploaded.push(file_url);
+          if (order.client_email) {
+            const libraryResult = await saveInternalClientFileLink({
+              clientEmail: order.client_email,
+              fileUrl: file_url,
+              fileName: file.name,
+              fileType: file.type,
+              fileSize: file.size,
+              linkedOrderId: order.id,
+            });
+            if (libraryResult.error) {
+              toast.info("File uploaded, but client library link was not saved yet.");
+            }
+          }
+        }
       }
       const folderMetadata = normalizeOrderFileFolders(order.order_file_folders);
       const nextFileFolders = { ...(folderMetadata.fileFolders || {}) };
@@ -326,6 +342,10 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
         },
       };
       onUpdate(order.id, updated);
+      if (order.client_email) {
+        queryClient.invalidateQueries({ queryKey: ["orderClientFileLibrary", order.client_email] });
+        queryClient.invalidateQueries({ queryKey: ["newOrderClientFileLibrary", order.client_email] });
+      }
       toast.success(uploaded.length === 1 ? "File uploaded" : `${uploaded.length} files uploaded`);
     } catch (err) {
       toast.error((/** @type {any} */ (err))?.message || "Upload failed");
