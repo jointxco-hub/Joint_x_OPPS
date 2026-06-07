@@ -19,6 +19,10 @@ export function getOfflineQueueCount() {
   return readQueue().length;
 }
 
+export function getOfflineQueueItems() {
+  return readQueue();
+}
+
 export function enqueueOfflineCreate(entityName, payload) {
   const item = {
     id: `queued-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
