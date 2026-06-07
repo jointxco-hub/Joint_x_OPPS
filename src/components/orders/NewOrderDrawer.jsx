@@ -44,6 +44,31 @@ function fileNameFromUrl(url = "") {
   }
 }
 
+function normalizeRepeatProduct(product = {}) {
+  return {
+    name: product.name || product.product_name || product.title || "Repeat item",
+    quantity: product.quantity || 1,
+    price: product.price || product.unit_price || product.line_total || "",
+    size: product.size || product.variant_size || "",
+    color: product.color || product.colour || product.variant_color || "",
+    notes: product.notes || product.production_notes || product.description || "",
+    catalog_item_id: product.catalog_item_id || product.product_id || "",
+    inventory_item_id: product.inventory_item_id || "",
+    image_url: product.image_url || product.thumbnail_url || product.cover_image_url || "",
+    category: product.category || product.product_category || "",
+    source: product.source || "repeat",
+    selected_print_options: Array.isArray(product.selected_print_options) ? product.selected_print_options : [],
+    selected_addons: Array.isArray(product.selected_addons) ? product.selected_addons : [],
+  };
+}
+
+function productSummary(products = []) {
+  const lines = products
+    .filter((product) => product?.name || product?.product_name || product?.title)
+    .map((product) => `${product.quantity || 1} x ${product.name || product.product_name || product.title}`);
+  return lines.join(", ");
+}
+
 export default function NewOrderDrawer({ onClose, onCreate }) {
   const [form, setForm] = useState({
     client_id: '',
@@ -62,6 +87,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     total_amount: '',
     due_date: '',
     linked_po_id: '',
+    file_urls: [],
+    portal_visible_file_urls: [],
     products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '', selected_print_options: [], selected_addons: [] }]
   });
 
@@ -351,10 +378,14 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         total_amount: total,
         source: 'opps',
         products: form.products.filter(p => p.name.trim()),
+        file_urls: Array.isArray(form.file_urls) ? form.file_urls.filter(Boolean) : [],
+        portal_visible_file_urls: Array.isArray(form.portal_visible_file_urls) ? form.portal_visible_file_urls.filter(Boolean) : [],
       };
 
       if (!orderData.linked_po_id) delete orderData.linked_po_id;
       if (!orderData.due_date) delete orderData.due_date;
+      if (!orderData.file_urls.length) delete orderData.file_urls;
+      if (!orderData.portal_visible_file_urls.length) delete orderData.portal_visible_file_urls;
 
       await onCreate(orderData);
 
@@ -530,28 +561,32 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                           key={order.id || order.order_number}
                           type="button"
                           onClick={() => {
-                            const firstProduct = Array.isArray(order.products) ? order.products.find(Boolean) : null;
-                            if (!firstProduct) return;
+                            const repeatProducts = Array.isArray(order.products)
+                              ? order.products.filter(Boolean).map(normalizeRepeatProduct)
+                              : [];
+                            if (!repeatProducts.length) {
+                              toast.info("That order has no structured product lines yet.");
+                              return;
+                            }
+                            const orderFiles = Array.isArray(order.file_urls) ? order.file_urls.filter(Boolean) : [];
                             setForm((current) => ({
                               ...current,
-                              products: [{
-                                name: firstProduct.name || firstProduct.product_name || "",
-                                quantity: firstProduct.quantity || 1,
-                                price: firstProduct.price || firstProduct.line_total || "",
-                                size: firstProduct.size || "",
-                                color: firstProduct.color || firstProduct.colour || "",
-                                notes: firstProduct.notes || "",
-                                catalog_item_id: firstProduct.catalog_item_id || "",
-                                inventory_item_id: firstProduct.inventory_item_id || "",
-                                image_url: firstProduct.image_url || "",
-                                category: firstProduct.category || "",
-                                source: firstProduct.source || "repeat",
-                                selected_print_options: firstProduct.selected_print_options || [],
-                                selected_addons: firstProduct.selected_addons || [],
-                              }],
-                              notes: current.notes || `Repeat/reference from ${order.order_number}`,
+                              products: repeatProducts,
+                              total_amount: order.total_amount || current.total_amount,
+                              print_type: order.print_type || current.print_type,
+                              pep_code: current.pep_code || order.pep_code || "",
+                              delivery_note: current.delivery_note || order.delivery_note || "",
+                              notes: current.notes || [
+                                `Repeat/reference from ${order.order_number}`,
+                                order.special_instructions ? `Previous production notes: ${order.special_instructions}` : null,
+                                order.notes ? `Previous notes: ${order.notes}` : null,
+                                productSummary(repeatProducts) ? `Previous products: ${productSummary(repeatProducts)}` : null,
+                              ].filter(Boolean).join("\n"),
+                              file_urls: Array.isArray(current.file_urls)
+                                ? Array.from(new Set([...current.file_urls, ...orderFiles]))
+                                : orderFiles,
                             }));
-                            toast.success(`Loaded first item from ${order.order_number}`);
+                            toast.success(`Loaded ${repeatProducts.length} item${repeatProducts.length === 1 ? "" : "s"} from ${order.order_number}`);
                           }}
                           className="flex w-full items-center gap-2 rounded-xl border border-border bg-secondary/30 p-2 text-left transition-colors hover:border-primary/40"
                         >
@@ -565,10 +600,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-semibold text-foreground">{order.order_number}</p>
                             <p className="truncate text-[11px] text-muted-foreground">
-                              {Array.isArray(order.products) && order.products[0]?.name ? order.products[0].name : order.status || "Order"}
+                              {Array.isArray(order.products) && order.products.length ? `${order.products.length} item${order.products.length === 1 ? "" : "s"} · ${productSummary(order.products) || order.status || "Order"}` : order.status || "Order"}
                             </p>
                           </div>
-                          <span className="text-[11px] text-muted-foreground">Use</span>
+                          <span className="text-[11px] font-semibold text-primary">Reuse</span>
                         </button>
                       ))}
                     </div>
