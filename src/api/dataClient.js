@@ -1794,11 +1794,15 @@ function createEntityApi(entityName) {
     },
 
     async create(payload = {}) {
+      const { __queueOnFailure, __offlineQueueFlush, ...cleanPayload } = payload;
       if (isSupported) {
-        const row = await runInsert(entityName, payload);
+        const row = await runInsert(entityName, cleanPayload);
         if (row) return row;
+        if (__queueOnFailure || __offlineQueueFlush) {
+          throw new Error(`${entityName} could not be saved remotely`);
+        }
       }
-      return handleLocalEntity(entityName, 'create', payload);
+      return handleLocalEntity(entityName, 'create', cleanPayload);
     },
 
     async update(id, payload = {}) {

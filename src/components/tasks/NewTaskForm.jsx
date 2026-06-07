@@ -3,7 +3,7 @@ import { X, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { dataClient } from "@/api/dataClient";
+import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { toast } from "sonner";
 
 export default function NewTaskForm({ users = [], onClose, onCreate }) {
@@ -29,8 +29,8 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
         production_type: productionType || undefined,
         assigned_to: assignedTo && assignedTo !== "_none" ? [assignedTo] : [],
       };
-      const created = await dataClient.entities.OpsTask.create(payload);
-      toast.success("Task created");
+      const created = await createWithOfflineQueue("OpsTask", payload);
+      toast.success(created?.isQueuedOffline ? "Task saved offline. It will sync when online." : "Task created");
       onCreate(created);
     } catch (err) {
       toast.error(err?.message || "Failed to create task");

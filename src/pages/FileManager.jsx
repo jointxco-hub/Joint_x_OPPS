@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
+import { createWithOfflineQueue } from "@/lib/offlineQueue";
 
 const FOLDER_COLORS = {
   blue:   { bg: "bg-blue-50",   icon: "text-blue-500",   hex: "#dbeafe" },
@@ -92,11 +93,11 @@ export default function FileManager() {
   });
 
   const createFolder = useMutation({
-    mutationFn: (data) => dataClient.entities.Folder.create(data),
-    onSuccess: () => {
+    mutationFn: (data) => createWithOfflineQueue("Folder", data),
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["folders"] });
       setFolderForm(null);
-      toast.success("Folder created");
+      toast.success(created?.isQueuedOffline ? "Folder saved offline. It will sync when online." : "Folder created");
     },
   });
 
@@ -157,7 +158,7 @@ export default function FileManager() {
 
   const copyFile = useMutation({
     mutationFn: ({ file, folderId }) =>
-      dataClient.entities.ClientAsset.create({
+      createWithOfflineQueue("ClientAsset", {
         title: file.title,
         file_url: file.file_url,
         file_type: file.file_type,
@@ -171,10 +172,10 @@ export default function FileManager() {
         tags: file.tags,
         notes: file.notes,
       }),
-    onSuccess: () => {
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["clientAssets"] });
       setFileCopy(null);
-      toast.success("File link copied");
+      toast.success(created?.isQueuedOffline ? "File link saved offline. It will sync when online." : "File link copied");
     },
   });
 

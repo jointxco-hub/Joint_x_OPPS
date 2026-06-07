@@ -47,6 +47,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { dataClient } from "@/api/dataClient";
+import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { saveInternalClientFileLink } from "@/api/clientRequests";
 import { useOrderDrawerData } from "@/hooks/useOrderDrawerData";
 import { toast } from "sonner";
@@ -406,8 +407,8 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
   };
 
   const createTaskMutation = useMutation({
-    mutationFn: (data) => dataClient.entities.OpsTask.create(data),
-    onSuccess: () => {
+    mutationFn: (data) => createWithOfflineQueue("OpsTask", data),
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ['orderOpsTasks', order.id] });
       queryClient.invalidateQueries({ queryKey: ['opsTasks'] });
       queryClient.invalidateQueries({ queryKey: ['legacyTasks'] });
@@ -416,7 +417,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       setNewTaskPriority("medium");
       setNewTaskDeadline("");
       setNewTaskAssignee("_none");
-      toast.success("Task created and linked to this order");
+      toast.success(created?.isQueuedOffline ? "Task saved offline. It will sync when online." : "Task created and linked to this order");
     }
   });
 

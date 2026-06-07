@@ -77,7 +77,7 @@ export default function PWAInstallPrompt() {
             {!online ? "Offline mode" : queueCount > 0 ? `${queueCount} waiting to sync` : canAskNotifications ? "Enable mobile alerts" : "Install Joint X"}
           </p>
           <p className="text-xs text-muted-foreground">
-            {!online ? "New expenses, notes, bugs and ideas will sync when online." : queueCount > 0 ? "Tap sync if it does not run automatically." : canAskNotifications ? "Get notified when you are tagged or assigned." : "Add it to your phone for faster access."}
+            {!online ? "Tasks, notes, folders, file links, bugs, ideas, and expenses will sync when online." : queueCount > 0 ? "Tap sync if it does not run automatically." : canAskNotifications ? "Get notified when you are tagged or assigned." : "Add it to your phone for faster access."}
           </p>
         </div>
         {queueCount > 0 ? (

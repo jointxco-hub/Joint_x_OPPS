@@ -38,7 +38,7 @@ export async function createWithOfflineQueue(entityName, payload) {
   }
 
   try {
-    return await dataClient.entities[entityName].create(payload);
+    return await dataClient.entities[entityName].create({ ...payload, __queueOnFailure: true });
   } catch (error) {
     enqueueOfflineCreate(entityName, payload);
     return { ...payload, id: `offline-${Date.now()}`, isQueuedOffline: true };
@@ -55,7 +55,7 @@ export async function flushOfflineQueue() {
   for (const item of queue.reverse()) {
     try {
       if (item.action === "create") {
-        await dataClient.entities[item.entityName].create(item.payload);
+        await dataClient.entities[item.entityName].create({ ...item.payload, __offlineQueueFlush: true });
         synced += 1;
       }
     } catch {

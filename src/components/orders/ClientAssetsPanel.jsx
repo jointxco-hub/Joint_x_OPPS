@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
+import { createWithOfflineQueue } from "@/lib/offlineQueue";
 
 const ASSET_TYPES = [
   { value: "mockup", label: "Mockup", icon: ImageIcon },
@@ -70,7 +71,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => dataClient.entities.ClientAsset.create(data),
+    mutationFn: (data) => createWithOfflineQueue("ClientAsset", data),
     onSuccess: (newAsset) => {
       queryClient.invalidateQueries({ queryKey: ['clientAssets', orderId, projectId] });
       // Force refetch to ensure new file shows immediately
@@ -84,7 +85,7 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
         file_url: "",
         approval_status: "pending"
       });
-      toast.success("Asset added and visible!");
+      toast.success(newAsset?.isQueuedOffline ? "Asset saved offline. It will sync when online." : "Asset added and visible!");
     }
   });
 
