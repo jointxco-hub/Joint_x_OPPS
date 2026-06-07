@@ -13,6 +13,7 @@ import {
   CheckCircle, XCircle, AlertCircle, Clock
 } from "lucide-react";
 import { toast } from "sonner";
+import FileLightbox from "@/components/files/FileLightbox";
 
 const ASSET_TYPES = [
   { value: "mockup", label: "Mockup", icon: ImageIcon },
@@ -36,6 +37,7 @@ const approvalStatusConfig = {
 export default function ClientAssetsPanel({ orderId, projectId, clientName, filterType }) {
   const [showForm, setShowForm] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [previewAsset, setPreviewAsset] = useState(null);
   
   const getDefaultAssetType = () => {
     if (filterType === 'document') return 'document';
@@ -328,15 +330,18 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
                     <p className="text-xs text-slate-600 mb-2">{asset.description}</p>
                   )}
                   
-                  <a 
-                    href={asset.file_url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => setPreviewAsset({
+                      ...asset,
+                      file_name: asset.title || asset.file_name || "Client asset",
+                      file_type: asset.asset_type,
+                    })}
                     className="flex items-center gap-2 text-sm text-emerald-600 hover:text-emerald-700 mb-3"
                   >
                     <Download className="w-3 h-3" />
-                    View/Download
-                  </a>
+                    Preview in app
+                  </button>
 
                   {/* Approval Actions for Artwork */}
                   {asset.asset_type === 'artwork' && (
@@ -371,6 +376,12 @@ export default function ClientAssetsPanel({ orderId, projectId, clientName, filt
             );
           })}
         </div>
+      )}
+      {previewAsset && (
+        <FileLightbox
+          file={previewAsset}
+          onClose={() => setPreviewAsset(null)}
+        />
       )}
     </div>
   );

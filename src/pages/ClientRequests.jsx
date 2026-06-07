@@ -894,8 +894,16 @@ function FilePreviewPanel({ file, onClose }) {
         <div className="flex gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onClose}>Close</Button>
           {url && (
-            <Button type="button" variant="outline" size="sm" asChild>
-              <a href={url} target="_blank" rel="noreferrer">Open</a>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                navigator.clipboard?.writeText(url);
+                toast.success("File link copied");
+              }}
+            >
+              Copy link
             </Button>
           )}
         </div>
@@ -911,7 +919,7 @@ function FilePreviewPanel({ file, onClose }) {
             <FileText className="h-8 w-8 text-muted-foreground" />
             <div>
               <p className="text-sm font-semibold text-foreground">Preview is not available for this file type.</p>
-              <p className="mt-1 text-sm text-muted-foreground">Use Open to view or download it.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Copy the file link if this file type needs a specialist app.</p>
             </div>
           </div>
         )}

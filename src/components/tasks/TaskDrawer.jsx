@@ -9,6 +9,7 @@ import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import CommentThread from "@/components/common/CommentThread";
 import MediaPreview from "@/components/common/MediaPreview";
+import FileLightbox from "@/components/files/FileLightbox";
 
 const STATUSES = ["not_started", "in_progress", "on_hold", "complete"];
 const PRIORITIES = ["urgent", "high", "medium", "normal", "low"];
@@ -38,6 +39,7 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
   const [archiveInput, setArchiveInput] = useState("");
   const [uploading, setUploading] = useState(false);
   const [newSubtask, setNewSubtask] = useState("");
+  const [previewFile, setPreviewFile] = useState(null);
 
   const saveTitle = () => {
     const trimmed = titleDraft.trim();
@@ -347,11 +349,19 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
             {(task.supporting_files || task.file_urls || []).length > 0 ? (
               <div className="grid grid-cols-3 gap-2">
                 {(task.supporting_files || []).map((f, i) => (
-                  <a key={i} href={f.url} target="_blank" rel="noopener noreferrer"
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setPreviewFile({
+                      ...f,
+                      file_url: f.url || f.file_url,
+                      file_name: f.name || f.file_name || `File ${i + 1}`,
+                      file_type: f.type || f.file_type,
+                    })}
                     className="flex flex-col items-center gap-1 p-2 rounded-xl bg-secondary/40 hover:bg-secondary/70 text-center">
                     <Paperclip className="w-4 h-4 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground truncate w-full text-center">{f.name}</span>
-                  </a>
+                  </button>
                 ))}
                 {(task.file_urls || []).map((url, i) => (
                   <MediaPreview key={url} url={url} title={`File ${i + 1}`} />
@@ -393,6 +403,7 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
           )}
         </div>
       </div>
+      {previewFile && <FileLightbox file={previewFile} onClose={() => setPreviewFile(null)} />}
     </>
   );
 }
