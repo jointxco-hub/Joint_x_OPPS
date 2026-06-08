@@ -1,7 +1,7 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -67,26 +67,28 @@ export default function FileLightbox({ file, onClose }) {
     none: "bg-slate-100 text-slate-700"
   };
 
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
-            <span className="truncate pr-4">{file.title}</span>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="w-4 h-4" />
-            </Button>
-          </DialogTitle>
-        </DialogHeader>
+  const lightbox = (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-3 sm:p-5" role="dialog" aria-modal="true">
+      <button className="absolute inset-0 cursor-default" aria-label="Close preview" onClick={onClose} />
+      <div className="relative flex h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-white shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-slate-950">{fileName || "File preview"}</p>
+            <p className="text-xs text-slate-500">In-app preview</p>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose} className="shrink-0 rounded-full">
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
 
-        <div className="flex-1 overflow-y-auto space-y-4">
+        <div className="flex-1 overflow-y-auto bg-white">
           {/* File Preview */}
-          <div className="bg-slate-50 rounded-lg p-4 flex items-center justify-center min-h-[300px]">
+          <div className="flex min-h-[68vh] items-center justify-center bg-slate-100 p-3 sm:p-5">
             {isImage && !imgError ? (
               <img
                 src={fileUrl}
-                alt={file.title || "File preview"}
-                className="max-w-full max-h-[70vh] object-contain rounded"
+                alt={fileName || "File preview"}
+                className="max-h-[76vh] w-auto max-w-full rounded-lg bg-white object-contain shadow-sm"
                 onError={() => setImgError(true)}
               />
             ) : isImage && imgError ? (
@@ -97,8 +99,8 @@ export default function FileLightbox({ file, onClose }) {
             ) : isPdf ? (
               <iframe 
                 src={fileUrl}
-                className="w-full h-[500px] rounded border"
-                title={file.title}
+                className="h-[76vh] w-full rounded border bg-white"
+                title={fileName || "PDF preview"}
               />
             ) : (
               <div className="text-center">
@@ -112,15 +114,16 @@ export default function FileLightbox({ file, onClose }) {
             )}
           </div>
 
-          {/* Download Button */}
-          <Button asChild variant="outline" className="w-full">
-            <a href={fileUrl} download target="_blank" rel="noopener noreferrer">
-              <Download className="w-4 h-4 mr-2" /> Download File
-            </a>
-          </Button>
+          <div className="space-y-4 p-4">
+            {/* Download Button */}
+            <Button asChild variant="outline" className="w-full rounded-xl">
+              <a href={fileUrl} download target="_blank" rel="noopener noreferrer">
+                <Download className="w-4 h-4 mr-2" /> Download File
+              </a>
+            </Button>
 
-          {/* Comments Section */}
-          <div className="border-t pt-4">
+            {/* Comments Section */}
+            <div className="border-t pt-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-slate-900 flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
@@ -218,9 +221,12 @@ export default function FileLightbox({ file, onClose }) {
                 ))
               )}
             </div>
+            </div>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   );
+
+  return createPortal(lightbox, document.body);
 }
