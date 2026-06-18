@@ -9,6 +9,29 @@ export function roundMoney(value) {
   return Math.round((numberOrZero(value) + Number.EPSILON) * 100) / 100;
 }
 
+function isBlank(value) {
+  return value === null || value === undefined || String(value).trim() === "";
+}
+
+export function isEmptyInvoiceItem(item = {}) {
+  const quantity = numberOrZero(item.quantity);
+  return (
+    isBlank(item.item_name) &&
+    isBlank(item.item_description) &&
+    isBlank(item.unit) &&
+    isBlank(item.tax_name) &&
+    isBlank(item.account_name) &&
+    numberOrZero(item.rate) === 0 &&
+    numberOrZero(item.discount) === 0 &&
+    numberOrZero(item.tax_percentage) === 0 &&
+    (isBlank(item.quantity) || quantity === 1)
+  );
+}
+
+export function normalizeInvoiceItems(items = []) {
+  return (Array.isArray(items) ? items : []).filter((item) => !isEmptyInvoiceItem(item));
+}
+
 export function calculateInvoiceLine(item = {}) {
   const quantity = numberOrZero(item.quantity);
   const rate = numberOrZero(item.rate);
@@ -33,7 +56,7 @@ export function calculateInvoiceLine(item = {}) {
 }
 
 export function calculateInvoiceTotals(invoice = {}, items = []) {
-  const normalizedItems = items.map(calculateInvoiceLine);
+  const normalizedItems = normalizeInvoiceItems(items).map(calculateInvoiceLine);
   const subtotal = roundMoney(
     normalizedItems.reduce((sum, item) => sum + numberOrZero(item.line_subtotal), 0)
   );
@@ -45,8 +68,9 @@ export function calculateInvoiceTotals(invoice = {}, items = []) {
   );
   const shippingCharge = roundMoney(invoice.shipping_charge);
   const adjustment = roundMoney(invoice.adjustment);
-  const amountPaid = roundMoney(invoice.amount_paid);
   const total = roundMoney(subtotal - discountTotal + shippingCharge + adjustment + taxTotal);
+  const rawAmountPaid = roundMoney(invoice.amount_paid);
+  const amountPaid = Math.min(Math.max(rawAmountPaid, 0), Math.max(total, 0));
   const balanceDue = roundMoney(Math.max(total - amountPaid, 0));
 
   return {
@@ -58,6 +82,7 @@ export function calculateInvoiceTotals(invoice = {}, items = []) {
     total,
     amount_paid: amountPaid,
     balance_due: balanceDue,
+    payment_data_warning: rawAmountPaid !== amountPaid,
     currency_code: invoice.currency_code || DEFAULT_CURRENCY,
     items: normalizedItems,
   };

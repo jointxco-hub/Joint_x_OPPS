@@ -61,6 +61,13 @@ export function validateInvoice(invoice = {}, items = [], context = {}) {
     warnings.push({ field: "due_date", message: "Due date is missing." });
   }
 
+  if (invoice.payment_data_warning) {
+    warnings.push({
+      field: "amount_paid",
+      message: "Payment amount was adjusted because the source value was below 0 or above the invoice total.",
+    });
+  }
+
   if (invoice.zoho_exported_at || ["exported", "imported_to_zoho"].includes(invoice.status)) {
     warnings.push({ field: "status", message: "Invoice was already exported." });
   }

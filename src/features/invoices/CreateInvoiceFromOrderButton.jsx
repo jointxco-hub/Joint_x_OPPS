@@ -9,6 +9,23 @@ function numberOrZero(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function positiveMoneyOrNull(value) {
+  const parsed = numberOrZero(value);
+  return parsed > 0 ? parsed : null;
+}
+
+function resolveOrderAmountPaid(order = {}, totalPaid = 0) {
+  const candidates = [
+    totalPaid,
+    order.amount_paid,
+    order.deposit_paid,
+    order.deposit_amount,
+    order.paid_amount,
+  ];
+  const paid = candidates.map(positiveMoneyOrNull).find((value) => value !== null);
+  return paid || 0;
+}
+
 function itemFromProduct(product = {}, index = 0) {
   const name = product.name || product.product_name || product.title || "Custom item";
   const quantity = numberOrZero(product.quantity) > 0 ? numberOrZero(product.quantity) : 1;
@@ -38,6 +55,7 @@ function invoiceFromOrder(order = {}, totalPaid = 0) {
     : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }];
   const items = products.map(itemFromProduct);
   const shippingCharge = numberOrZero(order.shipping_charge ?? order.delivery_fee ?? order.delivery_cost ?? order.courier_fee);
+  const amountPaid = resolveOrderAmountPaid(order, totalPaid);
 
   return {
     customer_id: order.client_id || "",
@@ -54,7 +72,14 @@ function invoiceFromOrder(order = {}, totalPaid = 0) {
     reference_number: order.order_number || order.tracking_number || "",
     shipping_charge: shippingCharge,
     adjustment: 0,
-    amount_paid: numberOrZero(totalPaid || order.amount_paid || order.deposit_paid),
+    amount_paid: amountPaid,
+    payment_data_warning: amountPaid === 0 && [
+      totalPaid,
+      order.amount_paid,
+      order.deposit_paid,
+      order.deposit_amount,
+      order.paid_amount,
+    ].some((value) => numberOrZero(value) < 0),
     notes: order.notes || order.special_instructions || "",
     terms: "",
     internal_notes: `Created from OPPS order ${order.order_number || order.id || ""}`.trim(),

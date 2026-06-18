@@ -4,6 +4,33 @@ Use this guide to verify OPPS Invoicing in the real deployed environment with re
 
 Do not request, paste, commit, or store credentials. Do not add direct Zoho API sync. Keep `/Invoices` as PascalCase. Keep `orders.invoice_files` and `orders.invoice_numbers` separate from OPPS-generated invoices.
 
+## Live Verification Progress
+
+Current confirmed status:
+
+```md
+## Migration
+- Migration applied: yes
+- Tables present: yes
+- RPC present: yes
+- RLS enabled: yes
+```
+
+Confirmed objects:
+
+| Check | Result |
+| --- | --- |
+| `opps_invoice_number_sequences` table | Passed |
+| `opps_invoices` table | Passed |
+| `opps_invoice_items` table | Passed |
+| `opps_invoice_exports` table | Passed |
+| `public.next_opps_invoice_number()` RPC | Passed |
+| RLS on `opps_invoices` | Passed |
+| RLS on `opps_invoice_items` | Passed |
+| RLS on `opps_invoice_exports` | Passed |
+
+Next step: test the deployed OPPS app at `/Invoices` with admin, finance level 1, finance level 2, and unauthorized/non-finance users.
+
 ## 1. Supabase Migration Verification
 
 Verify in the target Supabase project after deployment.

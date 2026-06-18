@@ -182,7 +182,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                       ["Adjustment", calculated.invoice.adjustment],
                       ["Tax", calculated.invoice.tax_total],
                       ["Total", calculated.invoice.total],
-                      ["Paid", -calculated.invoice.amount_paid],
+                      ["Paid", calculated.invoice.amount_paid],
                       ["Balance due", calculated.invoice.balance_due],
                     ].map(([label, value]) => (
                       <div key={label} className="flex items-center justify-between border-b border-border py-2 last:border-0">

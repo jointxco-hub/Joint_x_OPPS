@@ -160,7 +160,7 @@ export default function InvoiceDetailDrawer({
                     ["Adjustment", invoice.adjustment],
                     ["Tax", invoice.tax_total],
                     ["Total", invoice.total],
-                    ["Paid", -Number(invoice.amount_paid || 0)],
+                    ["Paid", invoice.amount_paid],
                     ["Balance due", invoice.balance_due],
                   ].map(([label, value]) => (
                     <div key={label} className="flex items-center justify-between border-b border-border py-2 last:border-0">
