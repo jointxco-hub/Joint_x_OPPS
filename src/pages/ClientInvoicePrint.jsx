@@ -12,6 +12,13 @@ export default function ClientInvoicePrint() {
   const { data, isLoading, error } = useClientInvoiceData(invoiceId);
 
   const printInvoice = () => window.print();
+  const goBack = () => {
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    window.location.assign("/Invoices");
+  };
 
   useEffect(() => {
     if (!shouldPrint || !data?.invoice) return;
@@ -34,7 +41,7 @@ export default function ClientInvoicePrint() {
         <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
-            onClick={() => window.history.back()}
+            onClick={goBack}
             className="inline-flex items-center gap-2 text-sm font-medium text-zinc-500 hover:text-zinc-950"
           >
             <ArrowLeft className="h-4 w-4" /> Back
@@ -44,7 +51,7 @@ export default function ClientInvoicePrint() {
               <Printer className="h-4 w-4" /> Print client invoice
             </Button>
             <Button onClick={printInvoice} className="rounded-xl">
-              <Download className="h-4 w-4" /> Download client invoice PDF
+              <Download className="h-4 w-4" /> Save as PDF
             </Button>
           </div>
         </div>

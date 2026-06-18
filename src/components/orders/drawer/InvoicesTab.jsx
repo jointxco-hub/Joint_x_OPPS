@@ -57,13 +57,7 @@ function openClientInvoice(invoice, print = false) {
   const url = new URL("/ClientInvoicePrint", window.location.origin);
   url.searchParams.set("invoice", invoice.id);
   if (print) url.searchParams.set("print", "1");
-  const opened = window.open(url.toString(), "_blank");
-  if (opened) {
-    opened.opener = null;
-    opened.focus?.();
-  } else {
-    window.location.assign(url.toString());
-  }
+  window.location.assign(url.toString());
 }
 
 function downloadCsv(fileName, csv) {
@@ -525,7 +519,7 @@ function OppsInvoiceCard({
           <ExternalLink className="h-3.5 w-3.5" /> Open invoice
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={onDownload} className="h-8 rounded-xl">
-          <FileDown className="h-3.5 w-3.5" /> Client PDF
+          <FileDown className="h-3.5 w-3.5" /> Client invoice
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={onPrint} className="h-8 rounded-xl">
           <Printer className="h-3.5 w-3.5" /> Print

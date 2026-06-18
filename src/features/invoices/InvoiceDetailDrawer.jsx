@@ -42,13 +42,7 @@ function openClientInvoice(invoice, print = false) {
   const url = new URL("/ClientInvoicePrint", window.location.origin);
   url.searchParams.set("invoice", invoice.id);
   if (print) url.searchParams.set("print", "1");
-  const opened = window.open(url.toString(), "_blank");
-  if (opened) {
-    opened.opener = null;
-    opened.focus?.();
-  } else {
-    window.location.assign(url.toString());
-  }
+  window.location.assign(url.toString());
 }
 
 export default function InvoiceDetailDrawer({
@@ -209,7 +203,7 @@ export default function InvoiceDetailDrawer({
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => openClientInvoice(invoice)} className="rounded-xl">
-                  <Download className="h-4 w-4" /> Download client invoice PDF
+                  <Download className="h-4 w-4" /> Open client invoice
                 </Button>
                 <Button variant="outline" onClick={() => openClientInvoice(invoice, true)} className="rounded-xl">
                   <Printer className="h-4 w-4" /> Print client invoice
