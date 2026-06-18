@@ -8,6 +8,7 @@ const paymentLabels = {
 };
 
 export function getInvoicePaymentDisplay(invoice = {}) {
+  invoice = invoice || {};
   const status = invoice.status || "draft";
   if (paymentLabels[status]) {
     return {
@@ -23,6 +24,7 @@ export function getInvoicePaymentDisplay(invoice = {}) {
 }
 
 export function getInvoiceZohoDisplay(invoice = {}) {
+  invoice = invoice || {};
   if (invoice.zoho_imported_at || invoice.status === "imported_to_zoho") {
     return {
       key: "imported",
@@ -44,6 +46,7 @@ export function getInvoiceZohoDisplay(invoice = {}) {
 }
 
 export function getInvoiceDisplayStates(invoice = {}) {
+  invoice = invoice || {};
   return {
     payment: getInvoicePaymentDisplay(invoice),
     zoho: getInvoiceZohoDisplay(invoice),

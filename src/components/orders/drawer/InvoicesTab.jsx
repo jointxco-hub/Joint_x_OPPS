@@ -75,16 +75,17 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
   const [invoiceTotal, setInvoiceTotal] = useState("");
   const [amountIdx, setAmountIdx] = useState(/** @type {number|null} */ (null));
   const [amountInput, setAmountInput] = useState("");
-  const orderTotal = Number(order.total_amount || 0);
+  const orderId = order?.id;
+  const orderTotal = Number(order?.total_amount || 0);
   const typedInvoiceTotal = parseMoneyInput(invoiceTotal);
   const visibleInvoiceTotal = typedInvoiceTotal ?? orderTotal;
   const visibleBalance = Math.max(visibleInvoiceTotal - totalPaid, 0);
   const hasOrderTotal = orderTotal > 0;
 
   const linkedInvoicesQuery = useQuery({
-    queryKey: ["orderOppsInvoices", order.id],
-    queryFn: () => listInvoices({ sourceOrderId: order.id, pageSize: 10 }),
-    enabled: Boolean(order.id),
+    queryKey: ["orderOppsInvoices", orderId],
+    queryFn: () => listInvoices({ sourceOrderId: orderId, pageSize: 10 }),
+    enabled: Boolean(orderId),
     select: (result) => result.data || [],
   });
 
@@ -102,7 +103,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
           invoice_count: 1,
           row_count: result.rowCount,
           file_name: fileName,
-          export_filters: { invoice_id: fullInvoice.id, source_order_id: order.id },
+          export_filters: { invoice_id: fullInvoice.id, source_order_id: orderId },
           template_version: result.templateVersion,
         });
         await markInvoiceExported([fullInvoice.id]);
@@ -110,7 +111,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
     },
     onSuccess: () => {
       toast.success("OPPS invoice CSV downloaded");
-      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", orderId] });
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoiceExportHistory"] });
     },
@@ -121,13 +122,14 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
     mutationFn: (invoice) => markInvoiceImportedToZoho([invoice.id]),
     onSuccess: () => {
       toast.success("Invoice marked imported to Zoho");
-      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", orderId] });
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
     },
     onError: (error) => toast.error(error?.message || "Could not mark imported"),
   });
 
   const saveInvoiceAmount = (idx) => {
+    if (!orderId) return;
     const amount = parseMoneyInput(amountInput);
     if (!amount) return;
     const files = [...(order.invoice_files || [])];
@@ -136,7 +138,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
       invoice_total: amount,
       balance_after_payments: Math.max(amount - totalPaid, 0),
     };
-    onUpdate(order.id, {
+    onUpdate(orderId, {
       invoice_files: files,
       total_amount: amount,
     });
@@ -145,6 +147,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
   };
 
   const uploadInvoice = async (e) => {
+    if (!orderId) return;
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setUploading(true);
@@ -174,7 +177,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
         });
       }
 
-      onUpdate(order.id, {
+      onUpdate(orderId, {
         ...(shouldSetOrderTotal ? { total_amount: invoiceAmount } : {}),
         invoice_files: [...existing, ...uploadedInvoices],
         // Append extracted number to the searchable invoice_numbers array
@@ -193,6 +196,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
   };
 
   const removeInvoice = (idx) => {
+    if (!orderId) return;
     const files = order.invoice_files || [];
     const updated = files.filter((/** @type {any} */ _, /** @type {number} */ i) => i !== idx);
     // Also remove the invoice number from the tracking array if no other file uses it
@@ -202,10 +206,11 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
     const updatedNumbers = (order.invoice_numbers || []).filter(
       (/** @type {string} */ n) => remainingNumbers.includes(n)
     );
-    onUpdate(order.id, { invoice_files: updated, invoice_numbers: updatedNumbers });
+    onUpdate(orderId, { invoice_files: updated, invoice_numbers: updatedNumbers });
   };
 
-  const invoices = order.invoice_files || [];
+  const invoiceNumbers = order?.invoice_numbers || [];
+  const invoices = order?.invoice_files || [];
 
   return (
     <div className="space-y-4">
@@ -224,7 +229,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
           existingInvoice={firstOppsInvoice}
           onOpenInvoice={openInvoice}
           onCreated={() => {
-            queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", order.id] });
+            queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", orderId] });
             linkedInvoicesQuery.refetch();
           }}
         />
@@ -280,15 +285,16 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
         <p className="text-xs text-amber-700">
           Upload invoices - reference numbers are extracted from filenames automatically. You can also add a reference manually so any name (e.g. "xlab labels") works in the tracker.
         </p>
-        {(order.invoice_numbers || []).length > 0 && (
+        {invoiceNumbers.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-1">
-            {(order.invoice_numbers || []).map((/** @type {string} */ n) => (
+            {invoiceNumbers.map((/** @type {string} */ n) => (
               <span key={n} className="text-xs font-mono bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md flex items-center gap-1">
                 {n}
                 <button
                   onClick={() => {
-                    const updated = (order.invoice_numbers || []).filter((/** @type {string} */ x) => x !== n);
-                    onUpdate(order.id, { invoice_numbers: updated });
+                    if (!orderId) return;
+                    const updated = invoiceNumbers.filter((/** @type {string} */ x) => x !== n);
+                    onUpdate(orderId, { invoice_numbers: updated });
                   }}
                   className="text-amber-600 hover:text-red-600 transition-colors leading-none"
                   title="Remove reference"
@@ -307,10 +313,10 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
             onKeyDown={(/** @type {any} */ e) => {
               if (e.key === "Enter") {
                 const ref = manualRef.trim().replace(/\s+/g, "-");
-                if (!ref) return;
-                const existing = order.invoice_numbers || [];
+                if (!ref || !orderId) return;
+                const existing = invoiceNumbers;
                 if (!existing.includes(ref)) {
-                  onUpdate(order.id, { invoice_numbers: [...existing, ref] });
+                  onUpdate(orderId, { invoice_numbers: [...existing, ref] });
                 }
                 setManualRef("");
               }
@@ -322,10 +328,10 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
             className="h-8 rounded-lg text-xs px-3 border-amber-300 text-amber-800 hover:bg-amber-100"
             onClick={() => {
               const ref = manualRef.trim().replace(/\s+/g, "-");
-              if (!ref) return;
-              const existing = order.invoice_numbers || [];
+              if (!ref || !orderId) return;
+              const existing = invoiceNumbers;
               if (!existing.includes(ref)) {
-                onUpdate(order.id, { invoice_numbers: [...existing, ref] });
+                onUpdate(orderId, { invoice_numbers: [...existing, ref] });
               }
               setManualRef("");
             }}
