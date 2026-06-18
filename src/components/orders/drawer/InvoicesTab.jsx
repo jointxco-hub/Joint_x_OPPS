@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import MediaPreview from "@/components/common/MediaPreview";
+import CreateInvoiceFromOrderButton from "@/features/invoices/CreateInvoiceFromOrderButton";
 
 // Extract an invoice/reference number from a filename.
 // Matches patterns like INV-1234, ZB-5678, INV_001, ZB001, 2024-INV-99, etc.
@@ -130,6 +131,17 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-3">
+        <div>
+          <p className="text-sm font-semibold text-foreground">OPPS invoice</p>
+          <p className="text-xs text-muted-foreground">Create an internal invoice from this order without changing production status.</p>
+        </div>
+        <CreateInvoiceFromOrderButton
+          order={order}
+          totalPaid={totalPaid}
+        />
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
         <div>
           <p className="text-sm font-semibold text-amber-950">Invoice printout</p>

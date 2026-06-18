@@ -11,6 +11,7 @@ import {
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
 import { isAdmin } from "@/lib/admin";
+import { getFinanceLevel } from "@/lib/financeAccess";
 import NotificationsPanel from "@/components/common/NotificationsPanel";
 
 const primaryNav = [
@@ -22,6 +23,7 @@ const primaryNav = [
 
 const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2, adminOnly: true },
+  { name: "Invoices", page: "Invoices", icon: DollarSign, financeOnly: true },
   { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
   { name: "Clients", page: "Clients", icon: Building2 },
@@ -57,7 +59,11 @@ export default function Layout({ children, currentPageName }) {
     window.location.href = '/SignIn';
   };
 
-  const visibleMoreNav = moreNav.filter(item => !item.adminOnly || isAdmin(user));
+  const visibleMoreNav = moreNav.filter(item => {
+    if (item.adminOnly && !isAdmin(user)) return false;
+    if (item.financeOnly && getFinanceLevel(user) <= 0) return false;
+    return true;
+  });
   const initials = (user?.full_name || user?.email || "U").charAt(0).toUpperCase();
 
   const NavIcon = ({ item, isActive, className = "w-4 h-4" }) => {
