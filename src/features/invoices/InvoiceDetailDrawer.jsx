@@ -39,8 +39,16 @@ function downloadTextFile(fileName, contents) {
 
 function openClientInvoice(invoice, print = false) {
   if (!invoice?.id) return;
-  const url = `/ClientInvoicePrint?invoice=${encodeURIComponent(invoice.id)}${print ? "&print=1" : ""}`;
-  window.open(url, "_blank", "noopener,noreferrer");
+  const url = new URL("/ClientInvoicePrint", window.location.origin);
+  url.searchParams.set("invoice", invoice.id);
+  if (print) url.searchParams.set("print", "1");
+  const opened = window.open(url.toString(), "_blank");
+  if (opened) {
+    opened.opener = null;
+    opened.focus?.();
+  } else {
+    window.location.assign(url.toString());
+  }
 }
 
 export default function InvoiceDetailDrawer({

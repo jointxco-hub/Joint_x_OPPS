@@ -14,6 +14,7 @@ function firstImageFrom(value) {
 }
 
 function productImage(product = {}) {
+  product = product || {};
   return firstImageFrom(
     product.image_url ||
     product.thumbnail_url ||
