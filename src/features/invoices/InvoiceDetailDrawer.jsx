@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, Copy, CreditCard, Download, ExternalLink, CheckCircle2, Pencil } from "lucide-react";
+import { Ban, Copy, CreditCard, Download, ExternalLink, CheckCircle2, Pencil, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,6 +21,7 @@ import {
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import InvoiceStatusBadge from "./InvoiceStatusBadge";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
+import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -34,6 +35,12 @@ function downloadTextFile(fileName, contents) {
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function openClientInvoice(invoice, print = false) {
+  if (!invoice?.id) return;
+  const url = `/ClientInvoicePrint?invoice=${encodeURIComponent(invoice.id)}${print ? "&print=1" : ""}`;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export default function InvoiceDetailDrawer({
@@ -55,6 +62,7 @@ export default function InvoiceDetailDrawer({
   const [partialNote, setPartialNote] = useState("");
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  const displayStates = getInvoiceDisplayStates(invoice);
   const isDraft = invoice?.status === "draft";
   const canTakePayment = invoice && !["draft", "paid", "void"].includes(invoice.status);
   const partialAmountNumber = Number(partialAmount);
@@ -112,6 +120,11 @@ export default function InvoiceDetailDrawer({
                   This invoice is locked because it has already moved beyond draft.
                 </div>
               )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Info label="Payment state" value={displayStates.payment.label} />
+                <Info label="Zoho workflow" value={displayStates.zoho.label} />
+              </div>
 
               <div className="grid gap-3 md:grid-cols-3">
                 <Info label="Customer email" value={invoice.customer_email || "Missing"} />
@@ -187,6 +200,12 @@ export default function InvoiceDetailDrawer({
                     <Copy className="h-4 w-4" /> Duplicate as new draft
                   </Button>
                 )}
+                <Button variant="outline" onClick={() => openClientInvoice(invoice)} className="rounded-xl">
+                  <Download className="h-4 w-4" /> Download client invoice PDF
+                </Button>
+                <Button variant="outline" onClick={() => openClientInvoice(invoice, true)} className="rounded-xl">
+                  <Printer className="h-4 w-4" /> Print client invoice
+                </Button>
                 {["approved", "exported", "imported_to_zoho"].includes(invoice.status) && (
                   <Button variant="outline" onClick={exportSingle} className="rounded-xl">
                     <Download className="h-4 w-4" /> {invoice.status === "approved" ? "Export CSV" : "Re-export CSV"}

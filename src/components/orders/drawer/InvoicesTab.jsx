@@ -1,12 +1,22 @@
 import { useState } from "react";
 import { format } from "date-fns";
-import { Paperclip, Printer, X } from "lucide-react";
+import { Download, ExternalLink, FileDown, Paperclip, Printer, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import MediaPreview from "@/components/common/MediaPreview";
 import CreateInvoiceFromOrderButton from "@/features/invoices/CreateInvoiceFromOrderButton";
+import {
+  createInvoiceExportRecord,
+  getInvoice,
+  listInvoices,
+  markInvoiceExported,
+  markInvoiceImportedToZoho,
+} from "@/api/invoices";
+import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "@/features/invoices/zohoInvoiceCsv";
+import { getInvoiceDisplayStates } from "@/features/invoices/invoiceDisplayStatus";
 
 // Extract an invoice/reference number from a filename.
 // Matches patterns like INV-1234, ZB-5678, INV_001, ZB001, 2024-INV-99, etc.
@@ -37,7 +47,29 @@ function formatCurrency(/** @type {number | null | undefined} */ value) {
   return `R${Number(value || 0).toLocaleString()}`;
 }
 
+function openInvoice(invoice) {
+  if (!invoice?.id) return;
+  window.location.href = `/Invoices?invoice=${encodeURIComponent(invoice.id)}`;
+}
+
+function openClientInvoice(invoice, print = false) {
+  if (!invoice?.id) return;
+  const url = `/ClientInvoicePrint?invoice=${encodeURIComponent(invoice.id)}${print ? "&print=1" : ""}`;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function downloadCsv(fileName, csv) {
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint }) {
+  const queryClient = useQueryClient();
   const [uploading, setUploading] = useState(false);
   const [manualRef, setManualRef] = useState("");
   const [invoiceTotal, setInvoiceTotal] = useState("");
@@ -48,6 +80,52 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
   const visibleInvoiceTotal = typedInvoiceTotal ?? orderTotal;
   const visibleBalance = Math.max(visibleInvoiceTotal - totalPaid, 0);
   const hasOrderTotal = orderTotal > 0;
+
+  const linkedInvoicesQuery = useQuery({
+    queryKey: ["orderOppsInvoices", order.id],
+    queryFn: () => listInvoices({ sourceOrderId: order.id, pageSize: 10 }),
+    enabled: Boolean(order.id),
+    select: (result) => result.data || [],
+  });
+
+  const linkedOppsInvoices = linkedInvoicesQuery.data || [];
+  const firstOppsInvoice = linkedOppsInvoices[0];
+
+  const exportOppsInvoiceMutation = useMutation({
+    mutationFn: async (invoice) => {
+      const fullInvoice = await getInvoice(invoice.id, { includeItems: true });
+      const result = buildZohoInvoiceCsv([fullInvoice], { includeAlreadyExported: true });
+      const fileName = getZohoInvoiceExportFileName();
+      downloadCsv(fileName, result.csv);
+      if (!fullInvoice.zoho_exported_at && fullInvoice.status === "approved") {
+        await createInvoiceExportRecord({
+          invoice_count: 1,
+          row_count: result.rowCount,
+          file_name: fileName,
+          export_filters: { invoice_id: fullInvoice.id, source_order_id: order.id },
+          template_version: result.templateVersion,
+        });
+        await markInvoiceExported([fullInvoice.id]);
+      }
+    },
+    onSuccess: () => {
+      toast.success("OPPS invoice CSV downloaded");
+      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceExportHistory"] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not export OPPS invoice"),
+  });
+
+  const markImportedMutation = useMutation({
+    mutationFn: (invoice) => markInvoiceImportedToZoho([invoice.id]),
+    onSuccess: () => {
+      toast.success("Invoice marked imported to Zoho");
+      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not mark imported"),
+  });
 
   const saveInvoiceAmount = (idx) => {
     const amount = parseMoneyInput(amountInput);
@@ -134,12 +212,53 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-3">
         <div>
           <p className="text-sm font-semibold text-foreground">OPPS invoice</p>
-          <p className="text-xs text-muted-foreground">Create an internal invoice from this order without changing production status.</p>
+          <p className="text-xs text-muted-foreground">
+            {firstOppsInvoice
+              ? "This order already has an internal OPPS invoice."
+              : "Create an internal invoice from this order without changing production status."}
+          </p>
         </div>
         <CreateInvoiceFromOrderButton
           order={order}
           totalPaid={totalPaid}
+          existingInvoice={firstOppsInvoice}
+          onOpenInvoice={openInvoice}
+          onCreated={() => {
+            queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", order.id] });
+            linkedInvoicesQuery.refetch();
+          }}
         />
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-3 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Linked OPPS invoices</p>
+            <p className="text-xs text-muted-foreground">Only invoices created inside OPPS for this order appear here.</p>
+          </div>
+          {linkedInvoicesQuery.isLoading && <span className="text-xs text-muted-foreground">Checking...</span>}
+        </div>
+        {linkedOppsInvoices.length === 0 && !linkedInvoicesQuery.isLoading ? (
+          <div className="rounded-xl bg-secondary/30 p-3 text-sm text-muted-foreground">
+            No OPPS invoice created for this order yet.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {linkedOppsInvoices.map((invoice) => (
+              <OppsInvoiceCard
+                key={invoice.id}
+                invoice={invoice}
+                onOpen={() => openInvoice(invoice)}
+                onPrint={() => openClientInvoice(invoice, true)}
+                onDownload={() => openClientInvoice(invoice)}
+                onExport={() => exportOppsInvoiceMutation.mutate(invoice)}
+                onMarkImported={() => markImportedMutation.mutate(invoice)}
+                isExporting={exportOppsInvoiceMutation.isPending}
+                isMarkingImported={markImportedMutation.isPending}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50/70 p-3">
@@ -345,5 +464,77 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
         </div>
       )}
     </div>
+  );
+}
+
+function OppsInvoiceCard({
+  invoice,
+  onOpen,
+  onPrint,
+  onDownload,
+  onExport,
+  onMarkImported,
+  isExporting,
+  isMarkingImported,
+}) {
+  const states = getInvoiceDisplayStates(invoice);
+  const canExport = ["approved", "exported", "imported_to_zoho"].includes(invoice.status);
+  const canMarkImported = Boolean(invoice.zoho_exported_at || invoice.status === "exported") && !invoice.zoho_imported_at;
+
+  return (
+    <div className="rounded-xl border border-border bg-secondary/20 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-foreground">{invoice.invoice_number}</p>
+          <p className="truncate text-xs text-muted-foreground">{invoice.customer_name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Created {invoice.created_at ? format(new Date(invoice.created_at), "d MMM yyyy") : "in OPPS"}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-right sm:min-w-[180px]">
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Total</p>
+            <p className="text-xs font-semibold text-foreground">{formatCurrency(invoice.total)}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase text-muted-foreground">Balance</p>
+            <p className="text-xs font-semibold text-foreground">{formatCurrency(invoice.balance_due)}</p>
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <StatusPill label={`Payment: ${states.payment.label}`} />
+        <StatusPill label={`Zoho: ${states.zoho.label}`} />
+      </div>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <Button type="button" variant="outline" size="sm" onClick={onOpen} className="h-8 rounded-xl">
+          <ExternalLink className="h-3.5 w-3.5" /> Open invoice
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onDownload} className="h-8 rounded-xl">
+          <FileDown className="h-3.5 w-3.5" /> Client PDF
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onPrint} className="h-8 rounded-xl">
+          <Printer className="h-3.5 w-3.5" /> Print
+        </Button>
+        {canExport && (
+          <Button type="button" variant="outline" size="sm" onClick={onExport} disabled={isExporting} className="h-8 rounded-xl">
+            <Download className="h-3.5 w-3.5" /> {invoice.zoho_exported_at ? "Re-export CSV" : "Export CSV"}
+          </Button>
+        )}
+        {canMarkImported && (
+          <Button type="button" size="sm" onClick={onMarkImported} disabled={isMarkingImported} className="h-8 rounded-xl">
+            Mark imported
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ label }) {
+  return (
+    <span className="rounded-full border border-border bg-card px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">
+      {label}
+    </span>
   );
 }

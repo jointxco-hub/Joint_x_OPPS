@@ -24,7 +24,9 @@ const TrackOrderPage = Pages['TrackOrder'];
 const PUBLIC_PATHS = ['/TrackOrder', '/track', '/SignIn'];
 
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
-  <Layout currentPageName={currentPageName}>{children}</Layout>
+  currentPageName === 'ClientInvoicePrint'
+    ? <>{children}</>
+    : <Layout currentPageName={currentPageName}>{children}</Layout>
   : <>{children}</>;
 
 const AuthenticatedApp = () => {

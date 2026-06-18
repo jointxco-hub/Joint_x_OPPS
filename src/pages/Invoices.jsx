@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { FileText, Plus, Shield } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -36,6 +37,7 @@ function emptyFilters() {
 
 export default function Invoices() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState("list");
   const [filters, setFilters] = useState(emptyFilters);
   const [page, setPage] = useState(1);
@@ -50,6 +52,14 @@ export default function Invoices() {
   });
 
   const canAccess = getFinanceLevel(userQuery.data) > 0;
+  const linkedInvoiceId = searchParams.get("invoice");
+
+  useEffect(() => {
+    if (!canAccess || !linkedInvoiceId) return;
+    setSelectedInvoice((current) => (
+      current?.id === linkedInvoiceId ? current : { id: linkedInvoiceId }
+    ));
+  }, [canAccess, linkedInvoiceId]);
 
   const listOptions = useMemo(() => ({
     page,
@@ -246,7 +256,15 @@ export default function Invoices() {
         open={Boolean(selectedInvoice)}
         invoice={detailQuery.data || selectedInvoice}
         isLoading={detailQuery.isLoading}
-        onOpenChange={(open) => !open && setSelectedInvoice(null)}
+        onOpenChange={(open) => {
+          if (open) return;
+          setSelectedInvoice(null);
+          if (linkedInvoiceId) {
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete("invoice");
+            setSearchParams(nextParams, { replace: true });
+          }
+        }}
         onApprove={(invoice) => approveMutation.mutate(invoice)}
         onEditDraft={(invoice) => { setEditingInvoice(detailQuery.data || invoice); setSelectedInvoice(null); setActiveTab("create"); }}
         onMarkExported={(invoice, result) => markExportedMutation.mutate({ invoice, result })}

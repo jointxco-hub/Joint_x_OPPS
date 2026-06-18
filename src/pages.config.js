@@ -60,6 +60,7 @@ const CatalogManagement = lazy(() => import('./pages/CatalogManagement'));
 const ClientCatalog = lazy(() => import('./pages/ClientCatalog'));
 const ClientRequests = lazy(() => import('./pages/ClientRequests'));
 const Clients = lazy(() => import('./pages/Clients'));
+const ClientInvoicePrint = lazy(() => import('./pages/ClientInvoicePrint'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Executive = lazy(() => import('./pages/Executive'));
 const FileManager = lazy(() => import('./pages/FileManager'));
@@ -103,6 +104,7 @@ export const PAGES = {
     "ClientCatalog": ClientCatalog,
     "ClientRequests": ClientRequests,
     "Clients": Clients,
+    "ClientInvoicePrint": ClientInvoicePrint,
     "Dashboard": Dashboard,
     "Executive": Executive,
     "FileManager": FileManager,
