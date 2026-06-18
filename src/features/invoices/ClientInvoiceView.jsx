@@ -4,6 +4,8 @@ const BRAND = {
   name: "JointX",
   email: "jointx.co@gmail.com",
   website: "jointx.co.za",
+  xlab: "xlab.jointx.co.za",
+  x1: "x1.jointx.co.za",
   logo: "/icons/jointx-logo.png",
 };
 
@@ -62,6 +64,8 @@ export default function ClientInvoiceView({ invoice, order }) {
                 <p className="text-2xl font-semibold tracking-tight">{BRAND.name}</p>
                 <p className="text-sm text-slate-500">{BRAND.email}</p>
                 <p className="text-sm text-slate-500">{BRAND.website}</p>
+                <p className="text-sm text-slate-500">{BRAND.xlab}</p>
+                <p className="text-sm text-slate-500">{BRAND.x1}</p>
               </div>
             </div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#00866f]">Client invoice</p>
@@ -108,6 +112,8 @@ export default function ClientInvoiceView({ invoice, order }) {
             {order?.tracking_number && <KeyValue label="Order tracking" value={order.tracking_number} />}
             <KeyValue label="Currency" value={invoice.currency_code || "ZAR"} />
             <KeyValue label="Support" value={BRAND.email} />
+            <KeyValue label="X LAB" value={BRAND.xlab} />
+            <KeyValue label="X1" value={BRAND.x1} />
           </div>
         </Panel>
       </section>
@@ -198,7 +204,8 @@ export default function ClientInvoiceView({ invoice, order }) {
       </section>
 
       <footer className="mx-10 border-t border-slate-200 py-6 text-center text-xs text-slate-500">
-        Thank you for choosing {BRAND.name}. Made for real use, handled with care.
+        <p>Thank you for choosing {BRAND.name}. Made for real use, handled with care.</p>
+        <p className="mt-2">{BRAND.website} / {BRAND.xlab} / {BRAND.x1}</p>
       </footer>
     </article>
   );
