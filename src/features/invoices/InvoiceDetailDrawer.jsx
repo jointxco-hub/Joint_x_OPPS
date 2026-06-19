@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Ban, Copy, CreditCard, Download, ExternalLink, CheckCircle2, Pencil, Printer } from "lucide-react";
+import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, ExternalLink, CheckCircle2, Pencil, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +47,9 @@ function openClientInvoice(invoice, print = false) {
 
 export default function InvoiceDetailDrawer({
   invoice,
+  activity = [],
+  duplicateInvoices = [],
+  isActivityLoading = false,
   open,
   isLoading,
   onOpenChange,
@@ -57,13 +60,16 @@ export default function InvoiceDetailDrawer({
   onMarkPaid,
   onMarkPartiallyPaid,
   onMarkVoid,
+  onVoidDuplicate,
   onDuplicateDraft,
 }) {
   const [partialPaymentOpen, setPartialPaymentOpen] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
   const [partialNote, setPartialNote] = useState("");
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
+  const [duplicateToVoid, setDuplicateToVoid] = useState(null);
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
+  const activeDuplicates = duplicateInvoices.filter((item) => item.status !== "void");
   const displayStates = getInvoiceDisplayStates(invoice);
   const isDraft = invoice?.status === "draft";
   const canTakePayment = invoice && !["draft", "paid", "void"].includes(invoice.status);
@@ -120,6 +126,34 @@ export default function InvoiceDetailDrawer({
               {!isDraft && (
                 <div className="rounded-2xl border border-border bg-secondary/30 p-4 text-sm text-muted-foreground">
                   This invoice is locked because it has already moved beyond draft.
+                </div>
+              )}
+
+              {activeDuplicates.length > 0 && (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+                  <p className="flex items-center gap-2 font-semibold">
+                    <AlertTriangle className="h-4 w-4" /> Possible duplicate invoice for this order
+                  </p>
+                  <p className="mt-1 text-amber-800">Choose which invoice to keep. OPPS will not auto-void duplicates.</p>
+                  <div className="mt-3 space-y-2">
+                    {activeDuplicates.map((duplicate) => (
+                      <div key={duplicate.id} className="flex flex-col gap-2 rounded-xl border border-amber-200 bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="font-semibold text-foreground">{duplicate.invoice_number}</p>
+                          <p className="text-xs text-muted-foreground">{duplicate.status} / {money(duplicate.total)}</p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDuplicateToVoid(duplicate)}
+                          className="h-8 rounded-xl text-destructive hover:text-destructive"
+                        >
+                          <Ban className="h-3.5 w-3.5" /> Void this duplicate
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -185,6 +219,8 @@ export default function InvoiceDetailDrawer({
                   ))}
                 </div>
               </div>
+
+              <ActivitySection activity={activity} isLoading={isActivityLoading} />
 
               <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:flex-wrap">
                 {isDraft && (
@@ -287,6 +323,20 @@ export default function InvoiceDetailDrawer({
         setVoidConfirmOpen(false);
       }}
     />
+    <ConfirmDialog
+      open={Boolean(duplicateToVoid)}
+      onOpenChange={(open) => {
+        if (!open) setDuplicateToVoid(null);
+      }}
+      title="Void duplicate invoice?"
+      description={`This keeps ${duplicateToVoid?.invoice_number || "the invoice"} in history but removes it from normal payment and export work.`}
+      confirmText="Void duplicate"
+      variant="destructive"
+      onConfirm={() => {
+        if (duplicateToVoid) onVoidDuplicate?.(duplicateToVoid);
+        setDuplicateToVoid(null);
+      }}
+    />
     </>
   );
 }
@@ -298,4 +348,51 @@ function Info({ label, value }) {
       <p className="mt-2 break-words text-sm font-medium text-foreground">{value}</p>
     </div>
   );
+}
+
+function ActivitySection({ activity, isLoading }) {
+  return (
+    <div className="rounded-2xl border border-border bg-card">
+      <div className="border-b border-border px-4 py-3">
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Clock3 className="h-4 w-4 text-muted-foreground" /> Activity
+        </p>
+      </div>
+      <div className="divide-y divide-border">
+        {isLoading ? (
+          <p className="px-4 py-3 text-sm text-muted-foreground">Loading activity...</p>
+        ) : activity.length === 0 ? (
+          <p className="px-4 py-3 text-sm text-muted-foreground">No activity recorded yet.</p>
+        ) : (
+          activity.map((entry) => (
+            <div key={entry.id} className="px-4 py-3 text-sm">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <p className="font-semibold text-foreground">{entry.activity_label}</p>
+                <p className="text-xs text-muted-foreground">{formatDateTime(entry.created_at)}</p>
+              </div>
+              {(entry.from_status || entry.to_status) && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {[entry.from_status, entry.to_status].filter(Boolean).join(" -> ")}
+                </p>
+              )}
+              {entry.activity_note && <p className="mt-1 break-words text-xs text-muted-foreground">{entry.activity_note}</p>}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatDateTime(value) {
+  if (!value) return "Unknown time";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

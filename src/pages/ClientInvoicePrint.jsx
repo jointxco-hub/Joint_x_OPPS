@@ -65,7 +65,7 @@ export default function ClientInvoicePrint() {
         ) : error ? (
           <Message title="Could not load invoice" body={error.message || "Please try again."} />
         ) : data?.invoice ? (
-          <ClientInvoiceView invoice={data.invoice} order={data.order} />
+          <ClientInvoiceView invoice={data.invoice} order={data.order} template={data.template} />
         ) : (
           <Message title="Invoice not found" body="The invoice could not be found or you do not have access." />
         )}

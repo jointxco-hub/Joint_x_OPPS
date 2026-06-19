@@ -5,6 +5,12 @@ import {
   ZOHO_INVOICE_EXPORT_TYPE,
   ZOHO_INVOICE_TEMPLATE_VERSION,
 } from "@/features/invoices/zohoInvoiceExportConfig";
+import {
+  INVOICE_SETTING_KEYS,
+  defaultCustomerMappingSetting,
+  defaultInvoiceMappingSetting,
+  normalizeClientTemplateSetting,
+} from "@/features/invoices/invoiceSettings";
 
 const INVOICE_LIST_COLUMNS = [
   "id",
@@ -110,6 +116,41 @@ function invoiceItemRecord(item = {}, invoiceId, index = 0) {
   });
 }
 
+const ACTIVITY_LABELS = {
+  invoice_created: "Invoice created",
+  invoice_approved: "Invoice approved",
+  invoice_exported: "Invoice exported",
+  invoice_imported_to_zoho: "Invoice imported to Zoho",
+  invoice_marked_partially_paid: "Invoice marked partially paid",
+  invoice_marked_paid: "Invoice marked paid",
+  invoice_voided: "Invoice voided",
+  invoice_duplicated: "Invoice duplicated",
+};
+
+async function createInvoiceActivity(invoiceId, input = {}) {
+  if (!invoiceId) return null;
+  ensureSupabase();
+  const userId = await getAuthUserId();
+  const type = input.activity_type || "invoice_updated";
+  const { data, error } = await supabase
+    .from("opps_invoice_activity")
+    .insert({
+      invoice_id: invoiceId,
+      activity_type: type,
+      activity_label: input.activity_label || ACTIVITY_LABELS[type] || "Invoice updated",
+      activity_note: input.activity_note || null,
+      from_status: input.from_status || null,
+      to_status: input.to_status || null,
+      metadata: input.metadata || {},
+      created_by: userId,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function nextInvoiceNumber() {
   ensureSupabase();
   const { data, error } = await supabase.rpc("next_opps_invoice_number");
@@ -149,6 +190,11 @@ export async function createInvoice(input = {}) {
     if (itemError) throw new Error(itemError.message);
   }
 
+  await createInvoiceActivity(createdInvoice.id, {
+    activity_type: "invoice_created",
+    to_status: createdInvoice.status,
+  });
+
   return getInvoice(createdInvoice.id, { includeItems: true });
 }
 
@@ -185,6 +231,15 @@ export async function updateInvoice(id, input = {}) {
     .single();
 
   if (error) throw new Error(error.message);
+
+  if (currentInvoice.status !== data.status) {
+    const activityType = data.status === "approved" ? "invoice_approved" : "invoice_updated";
+    await createInvoiceActivity(id, {
+      activity_type: activityType,
+      from_status: currentInvoice.status,
+      to_status: data.status,
+    });
+  }
 
   if (hasItems) {
     const { error: deleteError } = await supabase
@@ -267,7 +322,7 @@ export async function approveInvoice(id) {
 
 export async function duplicateInvoiceAsDraft(id) {
   const invoice = await getInvoice(id, { includeItems: true });
-  return createInvoice({
+  const duplicated = await createInvoice({
     ...invoice,
     id: undefined,
     invoice_number: undefined,
@@ -283,6 +338,14 @@ export async function duplicateInvoiceAsDraft(id) {
       invoice_id: undefined,
     })),
   });
+  await createInvoiceActivity(duplicated.id, {
+    activity_type: "invoice_duplicated",
+    activity_note: `Created from ${invoice.invoice_number || "invoice"}`,
+    from_status: invoice.status,
+    to_status: duplicated.status,
+    metadata: { source_invoice_id: invoice.id, source_invoice_number: invoice.invoice_number },
+  });
+  return duplicated;
 }
 
 export async function markInvoicePaid(id) {
@@ -308,6 +371,11 @@ export async function markInvoicePaid(id) {
     .single();
 
   if (error) throw new Error(error.message);
+  await createInvoiceActivity(id, {
+    activity_type: "invoice_marked_paid",
+    from_status: invoice.status,
+    to_status: "paid",
+  });
   return data;
 }
 
@@ -348,6 +416,13 @@ export async function markInvoicePartiallyPaid(id, amountPaid, note = "") {
     .single();
 
   if (error) throw new Error(error.message);
+  await createInvoiceActivity(id, {
+    activity_type: "invoice_marked_partially_paid",
+    activity_note: note || null,
+    from_status: invoice.status,
+    to_status: "partially_paid",
+    metadata: { amount_paid: paid, balance_due: Math.max(total - paid, 0) },
+  });
   return data;
 }
 
@@ -369,12 +444,25 @@ export async function markInvoiceVoid(id) {
     .single();
 
   if (error) throw new Error(error.message);
+  await createInvoiceActivity(id, {
+    activity_type: "invoice_voided",
+    from_status: invoice.status,
+    to_status: "void",
+  });
   return data;
 }
 
 export async function markInvoiceExported(invoiceIds = []) {
   ensureSupabase();
   const ids = Array.isArray(invoiceIds) ? invoiceIds : [invoiceIds];
+  const { data: beforeRows, error: beforeError } = await supabase
+    .from("opps_invoices")
+    .select("id,status")
+    .in("id", ids);
+
+  if (beforeError) throw new Error(beforeError.message);
+  const beforeStatusById = new Map((beforeRows || []).map((invoice) => [invoice.id, invoice.status]));
+
   const { data, error } = await supabase
     .from("opps_invoices")
     .update({
@@ -386,12 +474,26 @@ export async function markInvoiceExported(invoiceIds = []) {
     .select(INVOICE_LIST_COLUMNS);
 
   if (error) throw new Error(error.message);
+  await Promise.all((data || []).map((invoice) => createInvoiceActivity(invoice.id, {
+    activity_type: "invoice_exported",
+    from_status: beforeStatusById.get(invoice.id),
+    to_status: "exported",
+    metadata: { exported_at: invoice.zoho_exported_at },
+  })));
   return data || [];
 }
 
 export async function markInvoiceImportedToZoho(invoiceIds = []) {
   ensureSupabase();
   const ids = Array.isArray(invoiceIds) ? invoiceIds : [invoiceIds];
+  const { data: beforeRows, error: beforeError } = await supabase
+    .from("opps_invoices")
+    .select("id,status")
+    .in("id", ids);
+
+  if (beforeError) throw new Error(beforeError.message);
+  const beforeStatusById = new Map((beforeRows || []).map((invoice) => [invoice.id, invoice.status]));
+
   const { data, error } = await supabase
     .from("opps_invoices")
     .update({
@@ -403,6 +505,12 @@ export async function markInvoiceImportedToZoho(invoiceIds = []) {
     .select(INVOICE_LIST_COLUMNS);
 
   if (error) throw new Error(error.message);
+  await Promise.all((data || []).map((invoice) => createInvoiceActivity(invoice.id, {
+    activity_type: "invoice_imported_to_zoho",
+    from_status: beforeStatusById.get(invoice.id),
+    to_status: "imported_to_zoho",
+    metadata: { imported_at: invoice.zoho_imported_at },
+  })));
   return data || [];
 }
 
@@ -486,4 +594,70 @@ export async function getApprovedInvoicesForExport(options = {}) {
     ...invoice,
     items: itemsByInvoice.get(invoice.id) || [],
   }));
+}
+
+export async function listInvoiceActivity(invoiceId, options = {}) {
+  ensureSupabase();
+  const limit = Math.min(Math.max(Number(options.limit || 25), 1), 100);
+  const { data, error } = await supabase
+    .from("opps_invoice_activity")
+    .select("*")
+    .eq("invoice_id", invoiceId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function listSiblingInvoicesForOrder(sourceOrderId, options = {}) {
+  if (!sourceOrderId) return [];
+  const result = await listInvoices({
+    sourceOrderId,
+    pageSize: options.pageSize || 25,
+    sortBy: "created_at",
+    ascending: false,
+  });
+  return result.data || [];
+}
+
+function defaultSettingForKey(settingKey) {
+  if (settingKey === INVOICE_SETTING_KEYS.invoiceMapping) return defaultInvoiceMappingSetting();
+  if (settingKey === INVOICE_SETTING_KEYS.customerMapping) return defaultCustomerMappingSetting();
+  if (settingKey === INVOICE_SETTING_KEYS.clientTemplate) return normalizeClientTemplateSetting();
+  return {};
+}
+
+export async function getInvoiceSetting(settingKey) {
+  ensureSupabase();
+  const { data, error } = await supabase
+    .from("opps_invoice_export_settings")
+    .select("setting_key,setting_value,updated_at")
+    .eq("setting_key", settingKey)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return data?.setting_value || defaultSettingForKey(settingKey);
+}
+
+export async function saveInvoiceSetting(settingKey, settingValue = {}) {
+  ensureSupabase();
+  const userId = await getAuthUserId();
+  const { data, error } = await supabase
+    .from("opps_invoice_export_settings")
+    .upsert({
+      setting_key: settingKey,
+      setting_value: settingValue || {},
+      updated_by: userId,
+      created_by: userId,
+    }, { onConflict: "setting_key" })
+    .select("setting_key,setting_value,updated_at")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data?.setting_value || settingValue;
+}
+
+export async function resetInvoiceSetting(settingKey) {
+  return saveInvoiceSetting(settingKey, defaultSettingForKey(settingKey));
 }

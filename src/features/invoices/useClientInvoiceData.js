@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
-import { getInvoice } from "@/api/invoices";
+import { getInvoice, getInvoiceSetting } from "@/api/invoices";
+import { INVOICE_SETTING_KEYS, normalizeClientTemplateSetting } from "./invoiceSettings";
 
 function firstImageFrom(value) {
   if (!value) return "";
@@ -63,6 +64,12 @@ export function useClientInvoiceData(invoiceId) {
     enabled: Boolean(orderId),
   });
 
+  const templateQuery = useQuery({
+    queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.clientTemplate],
+    queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.clientTemplate),
+    enabled: Boolean(invoiceId),
+  });
+
   const data = useMemo(() => {
     const invoice = invoiceQuery.data;
     const order = orderQuery.data;
@@ -82,12 +89,14 @@ export function useClientInvoiceData(invoiceId) {
         })
       : [];
 
-    return invoice ? { invoice: { ...invoice, items }, order } : null;
-  }, [invoiceQuery.data, orderQuery.data]);
+    return invoice
+      ? { invoice: { ...invoice, items }, order, template: normalizeClientTemplateSetting(templateQuery.data) }
+      : null;
+  }, [invoiceQuery.data, orderQuery.data, templateQuery.data]);
 
   return {
     data,
-    isLoading: invoiceQuery.isLoading || orderQuery.isLoading,
-    error: invoiceQuery.error || orderQuery.error,
+    isLoading: invoiceQuery.isLoading || orderQuery.isLoading || templateQuery.isLoading,
+    error: invoiceQuery.error || orderQuery.error || templateQuery.error,
   };
 }

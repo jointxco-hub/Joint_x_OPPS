@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { CheckCircle2, Download, RefreshCw, RotateCcw, Settings2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Download, RefreshCw, RotateCcw, Save, Settings2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,21 @@ import {
   listInvoices,
   markInvoiceExported,
   markInvoiceImportedToZoho,
+  getInvoiceSetting,
+  resetInvoiceSetting,
+  saveInvoiceSetting,
 } from "@/api/invoices";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
 import { ZOHO_INVOICE_CSV_COLUMNS } from "./zohoInvoiceExportConfig";
 import { buildZohoCustomerCsv, getZohoCustomerExportFileName } from "./zohoCustomerCsv";
 import { ZOHO_CUSTOMER_CSV_COLUMNS } from "./zohoCustomerExportConfig";
+import {
+  INVOICE_SETTING_KEYS,
+  defaultCustomerMappingSetting,
+  defaultInvoiceMappingSetting,
+  normalizeClientTemplateSetting,
+  normalizeColumns,
+} from "./invoiceSettings";
 
 function downloadCsv(fileName, csv) {
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
@@ -34,6 +44,25 @@ export default function InvoiceExportCenter({ active = true }) {
   const [customerPreview, setCustomerPreview] = useState(null);
   const [invoiceColumns, setInvoiceColumns] = useState(ZOHO_INVOICE_CSV_COLUMNS);
   const [customerColumns, setCustomerColumns] = useState(ZOHO_CUSTOMER_CSV_COLUMNS);
+  const [clientTemplate, setClientTemplate] = useState(normalizeClientTemplateSetting());
+
+  const invoiceSettingsQuery = useQuery({
+    queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.invoiceMapping],
+    queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.invoiceMapping),
+    enabled: active,
+  });
+
+  const customerSettingsQuery = useQuery({
+    queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.customerMapping],
+    queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.customerMapping),
+    enabled: active,
+  });
+
+  const clientTemplateQuery = useQuery({
+    queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.clientTemplate],
+    queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.clientTemplate),
+    enabled: active,
+  });
 
   const candidatesQuery = useQuery({
     queryKey: ["invoiceExportCandidates"],
@@ -56,6 +85,24 @@ export default function InvoiceExportCenter({ active = true }) {
 
   const candidates = candidatesQuery.data || [];
   const exportedInvoices = exportedQuery.data || [];
+
+  useEffect(() => {
+    if (invoiceSettingsQuery.data) {
+      setInvoiceColumns(normalizeColumns(invoiceSettingsQuery.data.columns, ZOHO_INVOICE_CSV_COLUMNS));
+    }
+  }, [invoiceSettingsQuery.data]);
+
+  useEffect(() => {
+    if (customerSettingsQuery.data) {
+      setCustomerColumns(normalizeColumns(customerSettingsQuery.data.columns, ZOHO_CUSTOMER_CSV_COLUMNS));
+    }
+  }, [customerSettingsQuery.data]);
+
+  useEffect(() => {
+    if (clientTemplateQuery.data) {
+      setClientTemplate(normalizeClientTemplateSetting(clientTemplateQuery.data));
+    }
+  }, [clientTemplateQuery.data]);
 
   const exportPreview = useMemo(() => {
     if (!preview) return null;
@@ -104,6 +151,24 @@ export default function InvoiceExportCenter({ active = true }) {
     onError: (error) => toast.error(error?.message || "Could not mark imported"),
   });
 
+  const saveSettingMutation = useMutation({
+    mutationFn: ({ key, value }) => saveInvoiceSetting(key, value),
+    onSuccess: (_data, variables) => {
+      toast.success("Settings saved");
+      queryClient.invalidateQueries({ queryKey: ["invoiceSetting", variables.key] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not save settings"),
+  });
+
+  const resetSettingMutation = useMutation({
+    mutationFn: (key) => resetInvoiceSetting(key),
+    onSuccess: (_data, key) => {
+      toast.success("Settings reset to defaults");
+      queryClient.invalidateQueries({ queryKey: ["invoiceSetting", key] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not reset settings"),
+  });
+
   const buildPreview = () => {
     const result = buildZohoInvoiceCsv(candidates, { columns: invoiceColumns });
     setPreview(result);
@@ -128,10 +193,41 @@ export default function InvoiceExportCenter({ active = true }) {
     )));
   };
 
-  const resetHeaders = () => {
-    setInvoiceColumns(ZOHO_INVOICE_CSV_COLUMNS);
-    setCustomerColumns(ZOHO_CUSTOMER_CSV_COLUMNS);
-    toast.success("CSV headers reset");
+  const saveInvoiceHeaders = () => {
+    saveSettingMutation.mutate({
+      key: INVOICE_SETTING_KEYS.invoiceMapping,
+      value: { columns: invoiceColumns },
+    });
+  };
+
+  const saveCustomerHeaders = () => {
+    saveSettingMutation.mutate({
+      key: INVOICE_SETTING_KEYS.customerMapping,
+      value: { columns: customerColumns },
+    });
+  };
+
+  const resetInvoiceHeaders = () => {
+    setInvoiceColumns(defaultInvoiceMappingSetting().columns);
+    resetSettingMutation.mutate(INVOICE_SETTING_KEYS.invoiceMapping);
+  };
+
+  const resetCustomerHeaders = () => {
+    setCustomerColumns(defaultCustomerMappingSetting().columns);
+    resetSettingMutation.mutate(INVOICE_SETTING_KEYS.customerMapping);
+  };
+
+  const saveClientTemplate = () => {
+    saveSettingMutation.mutate({
+      key: INVOICE_SETTING_KEYS.clientTemplate,
+      value: normalizeClientTemplateSetting(clientTemplate),
+    });
+  };
+
+  const resetClientTemplate = () => {
+    const defaults = normalizeClientTemplateSetting();
+    setClientTemplate(defaults);
+    resetSettingMutation.mutate(INVOICE_SETTING_KEYS.clientTemplate);
   };
 
   return (
@@ -159,7 +255,7 @@ export default function InvoiceExportCenter({ active = true }) {
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="font-semibold text-foreground">Step 1: Export customers if Zoho needs them</p>
-              <p className="mt-1 text-sm text-muted-foreground">Use this if Zoho Books needs customers imported before invoice import.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Download your Zoho customer sample file and match these headers before importing.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button variant="outline" onClick={buildCustomerPreview} disabled={candidates.length === 0} className="rounded-xl">
@@ -292,22 +388,47 @@ export default function InvoiceExportCenter({ active = true }) {
               <p className="flex items-center gap-2 font-semibold text-foreground">
                 <Settings2 className="h-4 w-4" /> Zoho CSV settings
               </p>
-              <p className="mt-1 text-sm text-muted-foreground">Adjust headers locally after comparing with your Zoho Books sample file. These settings are not saved yet.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Saved settings only rename exported labels. Internal OPPS keys and invoice calculations stay unchanged.</p>
             </div>
-            <Button variant="outline" onClick={resetHeaders} className="rounded-xl">
-              <RotateCcw className="h-4 w-4" /> Reset headers
-            </Button>
           </div>
           <HeaderEditor
             title="Invoice CSV headers"
             columns={invoiceColumns}
             onRename={(key, header) => renameHeader("invoice", key, header)}
+            onSave={saveInvoiceHeaders}
+            onReset={resetInvoiceHeaders}
+            isSaving={saveSettingMutation.isPending}
           />
           <HeaderEditor
             title="Customer CSV headers"
             columns={customerColumns}
             onRename={(key, header) => renameHeader("customer", key, header)}
+            onSave={saveCustomerHeaders}
+            onReset={resetCustomerHeaders}
+            isSaving={saveSettingMutation.isPending}
           />
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border shadow-apple-sm">
+        <CardContent className="space-y-4 p-4 md:p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="flex items-center gap-2 font-semibold text-foreground">
+                <Settings2 className="h-4 w-4" /> Client invoice template
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">Controls the browser print/PDF view. Payment instructions stay hidden until configured.</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button variant="outline" onClick={resetClientTemplate} className="rounded-xl">
+                <RotateCcw className="h-4 w-4" /> Reset
+              </Button>
+              <Button onClick={saveClientTemplate} disabled={saveSettingMutation.isPending} className="rounded-xl">
+                <Save className="h-4 w-4" /> Save template
+              </Button>
+            </div>
+          </div>
+          <TemplateEditor template={clientTemplate} onChange={setClientTemplate} />
         </CardContent>
       </Card>
 
@@ -350,10 +471,20 @@ function StepCard({ label, text }) {
   );
 }
 
-function HeaderEditor({ title, columns, onRename }) {
+function HeaderEditor({ title, columns, onRename, onSave, onReset, isSaving }) {
   return (
     <div className="space-y-3 rounded-2xl border border-border bg-secondary/20 p-3">
-      <p className="text-sm font-semibold text-foreground">{title}</p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={onReset} className="h-8 rounded-xl">
+            <RotateCcw className="h-3.5 w-3.5" /> Reset
+          </Button>
+          <Button type="button" size="sm" onClick={onSave} disabled={isSaving} className="h-8 rounded-xl">
+            <Save className="h-3.5 w-3.5" /> Save
+          </Button>
+        </div>
+      </div>
       <div className="grid gap-2 md:grid-cols-2">
         {columns.map((column) => (
           <label key={column.key} className="space-y-1">
@@ -367,5 +498,54 @@ function HeaderEditor({ title, columns, onRename }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function TemplateEditor({ template, onChange }) {
+  const setField = (key, value) => onChange((current) => ({ ...current, [key]: value }));
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <TemplateInput label="Business display name" value={template.businessDisplayName} onChange={(value) => setField("businessDisplayName", value)} />
+      <TemplateInput label="Logo URL" value={template.logoUrl} onChange={(value) => setField("logoUrl", value)} />
+      <TemplateInput label="Contact email" value={template.contactEmail} onChange={(value) => setField("contactEmail", value)} />
+      <TemplateInput label="Contact phone" value={template.contactPhone} onChange={(value) => setField("contactPhone", value)} />
+      <TemplateInput label="WhatsApp" value={template.contactWhatsapp} onChange={(value) => setField("contactWhatsapp", value)} />
+      <TemplateInput label="Primary site" value={template.primarySite} onChange={(value) => setField("primarySite", value)} />
+      <TemplateInput label="Sample packs site" value={template.samplePacksSite} onChange={(value) => setField("samplePacksSite", value)} />
+      <TemplateInput label="Thank-you message" value={template.thankYouMessage} onChange={(value) => setField("thankYouMessage", value)} />
+      <label className="space-y-1 md:col-span-2">
+        <span className="block text-xs font-medium text-muted-foreground">Payment/banking instructions</span>
+        <Input
+          value={template.paymentInstructions || ""}
+          onChange={(event) => setField("paymentInstructions", event.target.value)}
+          placeholder="Leave blank until business details are confirmed"
+          className="h-9 rounded-xl bg-card"
+        />
+      </label>
+      <label className="space-y-1 md:col-span-2">
+        <span className="block text-xs font-medium text-muted-foreground">Footer note</span>
+        <Input value={template.footerNote || ""} onChange={(event) => setField("footerNote", event.target.value)} className="h-9 rounded-xl bg-card" />
+      </label>
+      <div className="flex flex-wrap gap-3 md:col-span-2">
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input type="checkbox" checked={template.showProductThumbnails !== false} onChange={(event) => setField("showProductThumbnails", event.target.checked)} />
+          Show product thumbnails
+        </label>
+        <label className="flex items-center gap-2 text-sm text-foreground">
+          <input type="checkbox" checked={template.showPaidBalanceBlock !== false} onChange={(event) => setField("showPaidBalanceBlock", event.target.checked)} />
+          Show paid/balance block
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function TemplateInput({ label, value, onChange }) {
+  return (
+    <label className="space-y-1">
+      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
+      <Input value={value || ""} onChange={(event) => onChange(event.target.value)} className="h-9 rounded-xl bg-card" />
+    </label>
   );
 }

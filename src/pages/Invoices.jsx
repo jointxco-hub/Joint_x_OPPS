@@ -12,6 +12,8 @@ import {
   createInvoiceExportRecord,
   duplicateInvoiceAsDraft,
   getInvoice,
+  listInvoiceActivity,
+  listSiblingInvoicesForOrder,
   listInvoices,
   markInvoiceExported,
   markInvoiceImportedToZoho,
@@ -82,6 +84,18 @@ export default function Invoices() {
     enabled: canAccess && Boolean(selectedInvoice?.id),
   });
 
+  const activityQuery = useQuery({
+    queryKey: ["invoiceActivity", selectedInvoice?.id],
+    queryFn: () => listInvoiceActivity(selectedInvoice.id),
+    enabled: canAccess && Boolean(selectedInvoice?.id),
+  });
+
+  const duplicateQuery = useQuery({
+    queryKey: ["invoiceSiblings", detailQuery.data?.source_order_id],
+    queryFn: () => listSiblingInvoicesForOrder(detailQuery.data.source_order_id),
+    enabled: canAccess && Boolean(detailQuery.data?.source_order_id),
+  });
+
   const saveMutation = useMutation({
     mutationFn: (invoice) => invoice.id
       ? updateInvoice(invoice.id, invoice)
@@ -106,6 +120,7 @@ export default function Invoices() {
       toast.success("Invoice approved");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] });
     },
     onError: (error) => toast.error(error?.message || "Could not approve invoice"),
@@ -126,6 +141,7 @@ export default function Invoices() {
       toast.success("Invoice marked exported");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceExportHistory"] });
     },
     onError: (error) => toast.error(error?.message || "Could not mark exported"),
@@ -137,6 +153,7 @@ export default function Invoices() {
       toast.success("Invoice marked imported to Zoho");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
     },
     onError: (error) => toast.error(error?.message || "Could not mark imported"),
   });
@@ -147,6 +164,7 @@ export default function Invoices() {
       toast.success("Invoice marked paid");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
     },
     onError: (error) => toast.error(error?.message || "Could not mark paid"),
   });
@@ -157,6 +175,7 @@ export default function Invoices() {
       toast.success("Payment status updated");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
     },
     onError: (error) => toast.error(error?.message || "Could not update payment"),
   });
@@ -167,6 +186,8 @@ export default function Invoices() {
       toast.success("Invoice marked void");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceSiblings", detailQuery.data?.source_order_id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] });
     },
     onError: (error) => toast.error(error?.message || "Could not void invoice"),
@@ -255,6 +276,9 @@ export default function Invoices() {
       <InvoiceDetailDrawer
         open={Boolean(selectedInvoice)}
         invoice={detailQuery.data || selectedInvoice}
+        activity={activityQuery.data || []}
+        duplicateInvoices={(duplicateQuery.data || []).filter((invoice) => invoice.id !== selectedInvoice?.id)}
+        isActivityLoading={activityQuery.isLoading}
         isLoading={detailQuery.isLoading}
         onOpenChange={(open) => {
           if (open) return;
@@ -272,6 +296,7 @@ export default function Invoices() {
         onMarkPaid={(invoice) => paidMutation.mutate(invoice)}
         onMarkPartiallyPaid={(invoice, amountPaid, note) => partialPaymentMutation.mutate({ invoice, amountPaid, note })}
         onMarkVoid={(invoice) => voidMutation.mutate(invoice)}
+        onVoidDuplicate={(invoice) => voidMutation.mutate(invoice)}
         onDuplicateDraft={(invoice) => duplicateMutation.mutate(invoice)}
       />
     </div>

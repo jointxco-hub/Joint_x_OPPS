@@ -18,7 +18,7 @@ export const ZOHO_INVOICE_CSV_COLUMNS = [
   { header: "Item Type", key: "item_type" },
   { header: "Quantity", key: "quantity" },
   { header: "Unit", key: "unit" },
-  { header: "Rate", key: "rate" },
+  { header: "Item Price", key: "rate" },
   { header: "Discount", key: "discount" },
   { header: "Tax Name", key: "tax_name" },
   { header: "Tax Percentage", key: "tax_percentage" },

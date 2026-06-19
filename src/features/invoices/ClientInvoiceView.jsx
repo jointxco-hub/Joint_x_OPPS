@@ -10,6 +10,7 @@ import {
   Truck,
 } from "lucide-react";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
+import { normalizeClientTemplateSetting } from "./invoiceSettings";
 
 const BRAND = {
   name: "JointX",
@@ -20,12 +21,6 @@ const BRAND = {
   samplePacksSite: "x1.jointx.co.za",
   logo: "/icons/jointx-logo.png",
 };
-
-const BANKING = [
-  ["Account name", "JointX"],
-  ["Reference", "Use the invoice number"],
-  ["Payment proof", BRAND.email],
-];
 
 const TERMS = [
   "Payment confirms the order and allows production to begin. Production starts once payment, artwork, sizing, quantities, and delivery details are confirmed.",
@@ -71,7 +66,17 @@ function deliveryRows(order) {
   ]);
 }
 
-export default function ClientInvoiceView({ invoice, order }) {
+export default function ClientInvoiceView({ invoice, order, template: rawTemplate }) {
+  const template = normalizeClientTemplateSetting(rawTemplate);
+  const brand = {
+    name: template.businessDisplayName || BRAND.name,
+    email: template.contactEmail || BRAND.email,
+    phone: template.contactPhone || BRAND.phone,
+    whatsapp: template.contactWhatsapp || BRAND.whatsapp,
+    primarySite: template.primarySite || BRAND.primarySite,
+    samplePacksSite: template.samplePacksSite || BRAND.samplePacksSite,
+    logo: template.logoUrl || BRAND.logo,
+  };
   const states = getInvoiceDisplayStates(invoice);
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const reference = invoice.reference_number || order?.order_number || "Not set";
@@ -84,18 +89,21 @@ export default function ClientInvoiceView({ invoice, order }) {
           <div className="min-w-0">
             <div className="mb-7 flex items-center gap-4">
               <img
-                src={BRAND.logo}
-                alt="JointX"
+                src={brand.logo}
+                alt={brand.name}
                 className="h-14 w-14 rounded-lg border border-slate-200 object-contain"
+                onError={(event) => {
+                  event.currentTarget.style.display = "none";
+                }}
               />
               <div>
-                <p className="text-xl font-semibold tracking-tight">{BRAND.name}</p>
+                <p className="text-xl font-semibold tracking-tight">{brand.name}</p>
                 <div className="mt-2 grid gap-1 text-xs leading-5 text-slate-500">
-                  <InlineContact icon={Mail} value={BRAND.email} />
-                  <InlineContact icon={Phone} value={BRAND.phone} />
-                  <InlineContact icon={MessageCircle} value={`WhatsApp ${BRAND.whatsapp}`} />
-                  <InlineContact icon={Globe2} value={BRAND.primarySite} />
-                  <InlineContact icon={Globe2} value={`${BRAND.samplePacksSite} - sample packs`} />
+                  {brand.email && <InlineContact icon={Mail} value={brand.email} />}
+                  {brand.phone && <InlineContact icon={Phone} value={brand.phone} />}
+                  {brand.whatsapp && <InlineContact icon={MessageCircle} value={`WhatsApp ${brand.whatsapp}`} />}
+                  {brand.primarySite && <InlineContact icon={Globe2} value={brand.primarySite} />}
+                  {brand.samplePacksSite && <InlineContact icon={Globe2} value={`${brand.samplePacksSite} - sample packs`} />}
                 </div>
               </div>
             </div>
@@ -141,9 +149,9 @@ export default function ClientInvoiceView({ invoice, order }) {
           <div className="space-y-2 text-sm text-slate-600">
             <KeyValue label="Order reference" value={reference} />
             <KeyValue label="Currency" value={invoice.currency_code || "ZAR"} />
-            <KeyValue label="Support" value={BRAND.email} />
-            <KeyValue label="Primary site" value={BRAND.primarySite} />
-            <KeyValue label="Sample packs" value={BRAND.samplePacksSite} />
+            <KeyValue label="Support" value={brand.email || "Not configured"} />
+            {brand.primarySite && <KeyValue label="Primary site" value={brand.primarySite} />}
+            {brand.samplePacksSite && <KeyValue label="Sample packs" value={brand.samplePacksSite} />}
           </div>
         </Panel>
       </section>
@@ -183,7 +191,7 @@ export default function ClientInvoiceView({ invoice, order }) {
             {items.map((item, index) => (
               <div key={item.id || item.line_number || index} className="grid gap-4 px-5 py-5 sm:grid-cols-[70px_1fr_64px_92px_105px] sm:items-start">
                 <div className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                  {item.thumbnail_url ? (
+                  {template.showProductThumbnails !== false && item.thumbnail_url ? (
                     <img src={item.thumbnail_url} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <div className="grid h-full w-full place-items-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">Item</div>
@@ -214,20 +222,18 @@ export default function ClientInvoiceView({ invoice, order }) {
             </p>
             <p className="mt-3">
               Use <span className="font-semibold text-slate-950">{invoice.invoice_number}</span> as your payment reference.
-              Send proof of payment to <span className="font-semibold text-slate-950">{BRAND.email}</span> or WhatsApp {BRAND.whatsapp}.
+              {brand.email ? <> Send proof of payment to <span className="font-semibold text-slate-950">{brand.email}</span>.</> : null}
             </p>
           </div>
 
-          <div className="rounded-lg border border-slate-200 p-4">
-            <p className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              <CreditCard className="h-3.5 w-3.5" /> Banking details
-            </p>
-            <div className="space-y-2">
-              {BANKING.map(([label, value]) => (
-                <KeyValue key={label} label={label} value={value} />
-              ))}
+          {template.paymentInstructions ? (
+            <div className="rounded-lg border border-slate-200 p-4">
+              <p className="mb-3 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                <CreditCard className="h-3.5 w-3.5" /> Payment instructions
+              </p>
+              <p className="whitespace-pre-line break-words text-sm leading-6 text-slate-600">{template.paymentInstructions}</p>
             </div>
-          </div>
+          ) : null}
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -236,13 +242,17 @@ export default function ClientInvoiceView({ invoice, order }) {
           ))}
           <div className="my-3 border-t border-slate-200" />
           <Summary label="Total" value={invoice.total} strong />
-          <Summary label="Paid" value={invoice.amount_paid} />
-          <div className="mt-4 rounded-lg bg-slate-950 px-4 py-3 text-white">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-300">Balance due</span>
-              <span className="text-xl font-semibold">{money(invoice.balance_due)}</span>
-            </div>
-          </div>
+          {template.showPaidBalanceBlock !== false && (
+            <>
+              <Summary label="Paid" value={invoice.amount_paid} />
+              <div className="mt-4 rounded-lg bg-slate-950 px-4 py-3 text-white">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-300">Balance due</span>
+                  <span className="text-xl font-semibold">{money(invoice.balance_due)}</span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -256,14 +266,12 @@ export default function ClientInvoiceView({ invoice, order }) {
             </li>
           ))}
         </ol>
-        <p className="mt-4 text-xs leading-5 text-slate-500">
-          More order, delivery, and product information is available at {BRAND.primarySite}. X1 sample pack information is available at {BRAND.samplePacksSite}.
-        </p>
+        {template.footerNote && <p className="mt-4 text-xs leading-5 text-slate-500">{template.footerNote}</p>}
       </section>
 
       <footer className="mt-7 border-t border-slate-200 pt-5 text-center text-xs text-slate-500">
-        <p>Thank you for choosing {BRAND.name}. Made for real use, handled with care.</p>
-        <p className="mt-2">{BRAND.primarySite} / {BRAND.samplePacksSite}</p>
+        <p>{template.thankYouMessage || `Thank you for choosing ${brand.name}.`}</p>
+        <p className="mt-2">{[brand.primarySite, brand.samplePacksSite].filter(Boolean).join(" / ")}</p>
       </footer>
     </article>
   );
