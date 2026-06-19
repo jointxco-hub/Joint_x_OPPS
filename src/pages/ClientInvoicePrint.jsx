@@ -37,7 +37,7 @@ export default function ClientInvoicePrint() {
           .client-invoice section, .client-invoice article { break-inside: avoid; }
         }
       `}</style>
-      <div className="print-controls sticky top-0 z-10 border-b border-zinc-200 bg-white/90 px-4 py-3 backdrop-blur">
+      <div className="print-controls sticky top-0 z-10 border-b border-zinc-200 bg-white/90 px-3 py-3 backdrop-blur sm:px-4">
         <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
@@ -46,18 +46,18 @@ export default function ClientInvoicePrint() {
           >
             <ArrowLeft className="h-4 w-4" /> Back
           </button>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button variant="outline" onClick={printInvoice} className="rounded-xl">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row">
+            <Button variant="outline" onClick={printInvoice} className="min-w-0 rounded-xl px-3 text-xs sm:text-sm">
               <Printer className="h-4 w-4" /> Print client invoice
             </Button>
-            <Button onClick={printInvoice} className="rounded-xl">
+            <Button onClick={printInvoice} className="min-w-0 rounded-xl px-3 text-xs sm:text-sm">
               <Download className="h-4 w-4" /> Save as PDF
             </Button>
           </div>
         </div>
       </div>
 
-      <main className="px-4 py-8 print:p-0">
+      <main className="px-2 py-4 sm:px-4 sm:py-8 print:p-0">
         {!invoiceId ? (
           <Message title="Missing invoice" body="Open this page from an OPPS invoice to print it." />
         ) : isLoading ? (
