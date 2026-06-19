@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Save, Users } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { dataClient } from "@/api/dataClient";
 import { applyInvoiceTotals } from "./invoiceCalculations";
 import { validateInvoice } from "./invoiceValidation";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
@@ -32,9 +34,33 @@ function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
+function searchableClientText(client = {}) {
+  return [
+    client.name,
+    client.client_name,
+    client.email,
+    client.client_email,
+    client.phone,
+    client.client_phone,
+    client.whatsapp,
+    client.brand_name,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function clientInvoiceFields(client = {}) {
+  return {
+    customer_id: client.id || "",
+    customer_name: client.name || client.client_name || "",
+    customer_email: client.email || client.client_email || "",
+    customer_phone: client.phone || client.client_phone || client.whatsapp || "",
+    customer_billing_address: client.billing_address || client.delivery_address || client.delivery_note || "",
+  };
+}
+
 export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, isSaving = false }) {
   const isEditing = Boolean(initialInvoice?.id);
   const [step, setStep] = useState(0);
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [invoice, setInvoice] = useState({
     customer_id: initialInvoice?.customer_id || "",
     customer_name: initialInvoice?.customer_name || "",
@@ -62,6 +88,28 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
       : [{ ...starterItem }]
   );
 
+  const { data: clients = [], isLoading: clientsLoading } = useQuery({
+    queryKey: ["clients", "invoice-create"],
+    queryFn: () => dataClient.entities.Client.list("-created_date", 200),
+    enabled: step === 0,
+    staleTime: 60_000,
+  });
+
+  const clientSuggestions = useMemo(() => {
+    const query = String(invoice.customer_name || invoice.customer_email || "").trim().toLowerCase();
+    const activeClients = clients.filter((client) => !client.is_archived);
+    if (!query) return activeClients.slice(0, 5);
+
+    return activeClients
+      .map((client) => ({
+        client,
+        score: searchableClientText(client).includes(query) ? 1 : 0,
+      }))
+      .filter((entry) => entry.score > 0)
+      .slice(0, 6)
+      .map((entry) => entry.client);
+  }, [clients, invoice.customer_email, invoice.customer_name]);
+
   const calculated = useMemo(() => applyInvoiceTotals(invoice, items), [invoice, items]);
   const validation = useMemo(
     () => validateInvoice({ ...calculated.invoice, invoice_number: initialInvoice?.invoice_number || "pending" }, calculated.items),
@@ -70,6 +118,14 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
 
   const setField = (field, value) => setInvoice((current) => ({ ...current, [field]: value }));
   const canAdvance = step < steps.length - 1;
+
+  const selectClient = (client) => {
+    setInvoice((current) => ({
+      ...current,
+      ...clientInvoiceFields(client),
+    }));
+    setShowClientSuggestions(false);
+  };
 
   const submit = (status) => {
     onSave({
@@ -116,11 +172,56 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                   <p className="text-sm text-muted-foreground">Who should this invoice be made out to?</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <Input value={invoice.customer_name} onChange={(event) => setField("customer_name", event.target.value)} placeholder="Customer name" className="h-11 rounded-xl" />
+                  <div className="relative">
+                    <Input
+                      value={invoice.customer_name}
+                      onChange={(event) => {
+                        setField("customer_name", event.target.value);
+                        setShowClientSuggestions(true);
+                      }}
+                      onFocus={() => setShowClientSuggestions(true)}
+                      placeholder="Customer name"
+                      className="h-11 rounded-xl"
+                    />
+                    {showClientSuggestions && (
+                      <div className="absolute left-0 right-0 top-12 z-20 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+                        <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          <Users className="h-3.5 w-3.5" /> Existing clients
+                        </div>
+                        {clientsLoading ? (
+                          <p className="px-3 py-3 text-sm text-muted-foreground">Loading clients...</p>
+                        ) : clientSuggestions.length === 0 ? (
+                          <p className="px-3 py-3 text-sm text-muted-foreground">No matching clients. Continue typing to create a new invoice customer.</p>
+                        ) : (
+                          <div className="max-h-72 overflow-y-auto py-1">
+                            {clientSuggestions.map((client) => (
+                              <button
+                                key={client.id || client.email || client.name}
+                                type="button"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => selectClient(client)}
+                                className="block w-full px-3 py-2 text-left hover:bg-secondary/60"
+                              >
+                                <span className="block truncate text-sm font-semibold text-foreground">{client.name || client.client_name}</span>
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {[client.email || client.client_email, client.phone || client.client_phone || client.whatsapp].filter(Boolean).join(" / ") || "No contact details"}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <Input value={invoice.customer_email} onChange={(event) => setField("customer_email", event.target.value)} type="email" placeholder="Email" className="h-11 rounded-xl" />
                   <Input value={invoice.customer_phone} onChange={(event) => setField("customer_phone", event.target.value)} placeholder="Phone" className="h-11 rounded-xl" />
                   <Input value={invoice.customer_billing_address} onChange={(event) => setField("customer_billing_address", event.target.value)} placeholder="Billing address" className="h-11 rounded-xl" />
                 </div>
+                {invoice.customer_id && (
+                  <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    Linked to existing client record.
+                  </p>
+                )}
               </div>
             )}
 
