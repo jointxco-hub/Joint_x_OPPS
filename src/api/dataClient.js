@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabaseClient';
+import { getCurrentTenantId } from '@/lib/tenantContext';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -62,6 +63,7 @@ const PRIORITY_MAP = {
 const ENTITY_CONFIG = {
   Client: {
     table: 'clients',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -158,6 +160,7 @@ const ENTITY_CONFIG = {
   },
   Order: {
     table: 'orders',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -1606,6 +1609,11 @@ async function runSelect(entityName, filter = {}, sort, limit) {
     ...mapFilter(entityConfig, filter),
   };
 
+  if (entityConfig.tenantScoped) {
+    const tenantId = await getCurrentTenantId();
+    if (tenantId) combinedFilter.tenant_id = tenantId;
+  }
+
   for (const [key, value] of Object.entries(combinedFilter)) {
     query = query.eq(key, value);
   }
@@ -1650,6 +1658,10 @@ async function runInsert(entityName, payload = {}) {
   }
 
   const record = entityConfig.serialize(payload);
+  if (entityConfig.tenantScoped) {
+    const tenantId = await getCurrentTenantId();
+    if (tenantId) record.tenant_id = tenantId;
+  }
   const { data, error } = await supabase
     .from(entityConfig.table)
     .insert(record)
@@ -1676,12 +1688,15 @@ async function runUpdate(entityName, id, payload = {}) {
   }
 
   const record = entityConfig.serialize(payload);
-  const { data, error } = await supabase
+  let query = supabase
     .from(entityConfig.table)
     .update(record)
-    .eq('id', id)
-    .select('*')
-    .single();
+    .eq('id', id);
+  if (entityConfig.tenantScoped) {
+    const tenantId = await getCurrentTenantId();
+    if (tenantId) query = query.eq('tenant_id', tenantId);
+  }
+  const { data, error } = await query.select('*').single();
 
   if (error) {
     const msg = supabaseErrorMessage(error);
@@ -1702,7 +1717,12 @@ async function runDelete(entityName, id) {
     return false;
   }
 
-  const { error } = await supabase.from(entityConfig.table).delete().eq('id', id);
+  let query = supabase.from(entityConfig.table).delete().eq('id', id);
+  if (entityConfig.tenantScoped) {
+    const tenantId = await getCurrentTenantId();
+    if (tenantId) query = query.eq('tenant_id', tenantId);
+  }
+  const { error } = await query;
   if (error) {
     console.warn(`[dataClient] ${entityName} delete failed:`, error.message);
     return false;
