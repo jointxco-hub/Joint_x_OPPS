@@ -160,9 +160,9 @@ async function createInvoiceActivity(invoiceId, input = {}) {
   return data;
 }
 
-export async function nextInvoiceNumber() {
+export async function nextInvoiceNumber(tenantId) {
   ensureSupabase();
-  const { data, error } = await supabase.rpc("next_opps_invoice_number");
+  const { data, error } = await supabase.rpc("next_opps_invoice_number", { p_tenant_id: tenantId });
   if (error) throw new Error(error.message);
   return data;
 }
@@ -171,7 +171,7 @@ export async function createInvoice(input = {}) {
   ensureSupabase();
   const userId = await getAuthUserId();
   const tenantId = await getTenantId();
-  const invoiceNumber = input.invoice_number || await nextInvoiceNumber();
+  const invoiceNumber = input.invoice_number || await nextInvoiceNumber(tenantId);
   const rawItems = Array.isArray(input.items) ? input.items : [];
   const { invoice, items } = applyInvoiceTotals(
     { ...input, invoice_number: invoiceNumber },
