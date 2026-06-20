@@ -95,7 +95,7 @@ export default function Layout({ children, currentPageName }) {
     <div className="min-h-screen bg-background font-inter">
       {/* Desktop Sidebar */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-[220px] lg:flex-col z-40">
-        <div className="flex flex-col flex-1 bg-card border-r border-border shadow-apple-sm">
+        <div className="flex min-h-0 flex-col flex-1 bg-card border-r border-border shadow-apple-sm">
           {/* Logo */}
           <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
             <div className="w-9 h-9 rounded-xl bg-primary/8 flex items-center justify-center flex-shrink-0">
@@ -113,7 +113,7 @@ export default function Layout({ children, currentPageName }) {
           </div>
 
           {/* Primary Nav */}
-          <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+          <nav className="min-h-0 flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-3 pb-2">Main</p>
             {primaryNav.map(item => {
               const isActive = currentPageName === item.page;
