@@ -4,8 +4,8 @@ create or replace function public.assign_file_metadata_tenant()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare folder_tenant uuid; project_tenant uuid; order_tenant uuid; client_tenant uuid; resolved_tenant uuid;
 begin
-  if tg_table_name = 'folders' and new.parent_id is not null then select tenant_id into folder_tenant from public.folders where id = new.parent_id;
-  elsif tg_table_name = 'client_assets' and new.folder_id is not null then select tenant_id into folder_tenant from public.folders where id = new.folder_id;
+  if tg_table_name = 'folders' and (to_jsonb(new)->>'parent_id') is not null then select tenant_id into folder_tenant from public.folders where id = (to_jsonb(new)->>'parent_id')::uuid;
+  elsif tg_table_name = 'client_assets' and (to_jsonb(new)->>'folder_id') is not null then select tenant_id into folder_tenant from public.folders where id = (to_jsonb(new)->>'folder_id')::uuid;
   end if;
   if new.project_id is not null then select tenant_id into project_tenant from public.projects where id = new.project_id; end if;
   if new.order_id is not null then select tenant_id into order_tenant from public.orders where id = new.order_id; end if;
