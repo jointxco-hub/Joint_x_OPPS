@@ -652,6 +652,7 @@ const ENTITY_CONFIG = {
 
   FinanceBudgetBucket: {
     table: 'finance_budget_buckets',
+    tenantScoped: true,
     sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
     filterMap: { created_date: 'created_at', updated_date: 'updated_at', status: 'status' },
     normalize(row) {
@@ -674,6 +675,7 @@ const ENTITY_CONFIG = {
 
   FinanceBuyingItem: {
     table: 'finance_buying_items',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -1266,6 +1268,7 @@ const ENTITY_CONFIG = {
 
   MoneyModel: {
     table: 'money_model_snapshots',
+    tenantScoped: true,
     sortMap: { created_date: 'created_at', period_start: 'period_start' },
     filterMap: { created_date: 'created_at', offer_key: 'offer_key' },
     normalize(row) {
