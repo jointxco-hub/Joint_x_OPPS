@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabaseClient";
+import { getCurrentTenantId } from "@/lib/tenantContext";
 import { applyInvoiceTotals, calculateInvoiceLine } from "@/features/invoices/invoiceCalculations";
 import { validateInvoice } from "@/features/invoices/invoiceValidation";
 import {
@@ -63,6 +64,12 @@ async function getAuthUserId() {
   ensureSupabase();
   const { data } = await supabase.auth.getUser();
   return data?.user?.id || null;
+}
+
+async function getTenantId() {
+  const tenantId = await getCurrentTenantId();
+  if (!tenantId) throw new Error("No active tenant is available for invoicing.");
+  return tenantId;
 }
 
 function invoiceRecord(invoice = {}, userId = null) {
@@ -131,6 +138,7 @@ async function createInvoiceActivity(invoiceId, input = {}) {
   if (!invoiceId) return null;
   ensureSupabase();
   const userId = await getAuthUserId();
+  const tenantId = await getTenantId();
   const type = input.activity_type || "invoice_updated";
   const { data, error } = await supabase
     .from("opps_invoice_activity")
@@ -142,6 +150,7 @@ async function createInvoiceActivity(invoiceId, input = {}) {
       from_status: input.from_status || null,
       to_status: input.to_status || null,
       metadata: input.metadata || {},
+      tenant_id: tenantId,
       created_by: userId,
     })
     .select("*")
@@ -161,6 +170,7 @@ export async function nextInvoiceNumber() {
 export async function createInvoice(input = {}) {
   ensureSupabase();
   const userId = await getAuthUserId();
+  const tenantId = await getTenantId();
   const invoiceNumber = input.invoice_number || await nextInvoiceNumber();
   const rawItems = Array.isArray(input.items) ? input.items : [];
   const { invoice, items } = applyInvoiceTotals(
@@ -177,6 +187,7 @@ export async function createInvoice(input = {}) {
     .from("opps_invoices")
     .insert({
       ...invoiceRecord(invoice, userId),
+      tenant_id: tenantId,
       created_by: userId,
     })
     .select("*")
@@ -185,7 +196,7 @@ export async function createInvoice(input = {}) {
   if (error) throw new Error(error.message);
 
   if (items.length > 0) {
-    const itemRows = items.map((item, index) => invoiceItemRecord(item, createdInvoice.id, index));
+    const itemRows = items.map((item, index) => ({ ...invoiceItemRecord(item, createdInvoice.id, index), tenant_id: tenantId }));
     const { error: itemError } = await supabase.from("opps_invoice_items").insert(itemRows);
     if (itemError) throw new Error(itemError.message);
   }
@@ -201,6 +212,7 @@ export async function createInvoice(input = {}) {
 export async function updateInvoice(id, input = {}) {
   ensureSupabase();
   const userId = await getAuthUserId();
+  const tenantId = await getTenantId();
   const hasItems = Array.isArray(input.items);
   const rawItems = hasItems ? input.items : [];
   const { invoice, items } = hasItems
@@ -210,6 +222,7 @@ export async function updateInvoice(id, input = {}) {
     .from("opps_invoices")
     .select("id,status")
     .eq("id", id)
+    .eq("tenant_id", tenantId)
     .single();
 
   if (currentError) throw new Error(currentError.message);
@@ -227,6 +240,7 @@ export async function updateInvoice(id, input = {}) {
     .from("opps_invoices")
     .update(invoiceRecord(invoice, userId))
     .eq("id", id)
+    .eq("tenant_id", tenantId)
     .select("*")
     .single();
 
@@ -245,11 +259,12 @@ export async function updateInvoice(id, input = {}) {
     const { error: deleteError } = await supabase
       .from("opps_invoice_items")
       .delete()
-      .eq("invoice_id", id);
+      .eq("invoice_id", id)
+      .eq("tenant_id", tenantId);
     if (deleteError) throw new Error(deleteError.message);
 
     if (items.length > 0) {
-      const itemRows = items.map((item, index) => invoiceItemRecord(item, id, index));
+      const itemRows = items.map((item, index) => ({ ...invoiceItemRecord(item, id, index), tenant_id: tenantId }));
       const { error: itemError } = await supabase.from("opps_invoice_items").insert(itemRows);
       if (itemError) throw new Error(itemError.message);
     }
@@ -260,10 +275,12 @@ export async function updateInvoice(id, input = {}) {
 
 export async function getInvoice(id, options = {}) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const { data, error } = await supabase
     .from("opps_invoices")
     .select("*")
     .eq("id", id)
+    .eq("tenant_id", tenantId)
     .single();
 
   if (error) throw new Error(error.message);
@@ -275,6 +292,7 @@ export async function getInvoice(id, options = {}) {
 
 export async function listInvoices(options = {}) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const page = Math.max(Number(options.page || 1), 1);
   const pageSize = Math.min(Math.max(Number(options.pageSize || 25), 1), 100);
   const from = (page - 1) * pageSize;
@@ -283,6 +301,7 @@ export async function listInvoices(options = {}) {
   let query = supabase
     .from("opps_invoices")
     .select(INVOICE_LIST_COLUMNS, { count: "exact" })
+    .eq("tenant_id", tenantId)
     .order(options.sortBy || "invoice_date", { ascending: options.ascending === true })
     .range(from, to);
 
@@ -306,10 +325,12 @@ export async function listInvoices(options = {}) {
 
 export async function listInvoiceItems(invoiceId) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const { data, error } = await supabase
     .from("opps_invoice_items")
     .select("*")
     .eq("invoice_id", invoiceId)
+    .eq("tenant_id", tenantId)
     .order("line_number", { ascending: true });
 
   if (error) throw new Error(error.message);
@@ -517,6 +538,7 @@ export async function markInvoiceImportedToZoho(invoiceIds = []) {
 export async function createInvoiceExportRecord(input = {}) {
   ensureSupabase();
   const userId = await getAuthUserId();
+  const tenantId = await getTenantId();
   const { data, error } = await supabase
     .from("opps_invoice_exports")
     .insert({
@@ -533,6 +555,7 @@ export async function createInvoiceExportRecord(input = {}) {
       notes: input.notes || null,
       export_filters: input.export_filters || {},
       template_version: input.template_version || ZOHO_INVOICE_TEMPLATE_VERSION,
+      tenant_id: tenantId,
     })
     .select("*")
     .single();
@@ -543,10 +566,12 @@ export async function createInvoiceExportRecord(input = {}) {
 
 export async function listInvoiceExports(options = {}) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const limit = Math.min(Math.max(Number(options.limit || 20), 1), 100);
   const { data, error } = await supabase
     .from("opps_invoice_exports")
     .select("*")
+    .eq("tenant_id", tenantId)
     .order("exported_at", { ascending: false })
     .limit(limit);
 
@@ -556,10 +581,12 @@ export async function listInvoiceExports(options = {}) {
 
 export async function getApprovedInvoicesForExport(options = {}) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const limit = Math.min(Math.max(Number(options.limit || 100), 1), 500);
   let query = supabase
     .from("opps_invoices")
     .select("*")
+    .eq("tenant_id", tenantId)
     .eq("status", "approved")
     .is("zoho_exported_at", null)
     .order("invoice_date", { ascending: true })
@@ -579,6 +606,7 @@ export async function getApprovedInvoicesForExport(options = {}) {
     .from("opps_invoice_items")
     .select("*")
     .in("invoice_id", invoiceIds)
+    .eq("tenant_id", tenantId)
     .order("line_number", { ascending: true });
 
   if (itemError) throw new Error(itemError.message);
@@ -598,11 +626,13 @@ export async function getApprovedInvoicesForExport(options = {}) {
 
 export async function listInvoiceActivity(invoiceId, options = {}) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const limit = Math.min(Math.max(Number(options.limit || 25), 1), 100);
   const { data, error } = await supabase
     .from("opps_invoice_activity")
     .select("*")
     .eq("invoice_id", invoiceId)
+    .eq("tenant_id", tenantId)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -630,10 +660,12 @@ function defaultSettingForKey(settingKey) {
 
 export async function getInvoiceSetting(settingKey) {
   ensureSupabase();
+  const tenantId = await getTenantId();
   const { data, error } = await supabase
     .from("opps_invoice_export_settings")
     .select("setting_key,setting_value,updated_at")
     .eq("setting_key", settingKey)
+    .eq("tenant_id", tenantId)
     .maybeSingle();
 
   if (error) throw new Error(error.message);
@@ -643,14 +675,16 @@ export async function getInvoiceSetting(settingKey) {
 export async function saveInvoiceSetting(settingKey, settingValue = {}) {
   ensureSupabase();
   const userId = await getAuthUserId();
+  const tenantId = await getTenantId();
   const { data, error } = await supabase
     .from("opps_invoice_export_settings")
     .upsert({
       setting_key: settingKey,
       setting_value: settingValue || {},
+      tenant_id: tenantId,
       updated_by: userId,
       created_by: userId,
-    }, { onConflict: "setting_key" })
+    }, { onConflict: "tenant_id,setting_key" })
     .select("setting_key,setting_value,updated_at")
     .single();
 
