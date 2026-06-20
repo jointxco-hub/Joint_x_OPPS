@@ -45,7 +45,7 @@ as $$
       upper(coalesce(o.order_number, '')) = input.raw_lookup
       or upper(coalesce(o.tracking_number, '')) = input.raw_lookup
       or upper(o.id::text) = input.raw_lookup
-      or exists (select 1 from unnest(coalesce(o.invoice_numbers, '{}'::text[])) number where upper(number) = input.raw_lookup)
+      or exists (select 1 from jsonb_array_elements_text(coalesce(o.invoice_numbers, '[]'::jsonb)) number where upper(number) = input.raw_lookup)
     )
   order by o.updated_at desc
   limit 1;
