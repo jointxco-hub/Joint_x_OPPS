@@ -345,6 +345,7 @@ const ENTITY_CONFIG = {
   },
   InventoryItem: {
     table: 'inventory',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -444,6 +445,7 @@ const ENTITY_CONFIG = {
   },
   Supplier: {
     table: 'suppliers',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -487,6 +489,7 @@ const ENTITY_CONFIG = {
   },
   PurchaseOrder: {
     table: 'purchase_orders',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
