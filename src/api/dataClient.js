@@ -1286,6 +1286,7 @@ const ENTITY_CONFIG = {
 
   Folder: {
     table: 'folders',
+    tenantScoped: true,
     sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
     filterMap: {
       created_date: 'created_at',
@@ -1369,6 +1370,7 @@ const ENTITY_CONFIG = {
 
   ClientAsset: {
     table: 'client_assets',
+    tenantScoped: true,
     sortMap: { created_date: 'created_at', updated_date: 'updated_at' },
     filterMap: {
       created_date: 'created_at',
