@@ -4,11 +4,11 @@ create or replace function public.assign_purchasing_tenant()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare supplier_tenant uuid; project_tenant uuid; order_tenant uuid; resolved_tenant uuid;
 begin
-  if tg_table_name = 'inventory' and new.preferred_supplier_id is not null then select tenant_id into supplier_tenant from public.suppliers where id = new.preferred_supplier_id;
+  if tg_table_name = 'inventory' and (to_jsonb(new)->>'preferred_supplier_id') is not null then select tenant_id into supplier_tenant from public.suppliers where id = (to_jsonb(new)->>'preferred_supplier_id')::uuid;
   elsif tg_table_name = 'purchase_orders' then
-    if new.supplier_id is not null then select tenant_id into supplier_tenant from public.suppliers where id = new.supplier_id; end if;
-    if new.project_id is not null then select tenant_id into project_tenant from public.projects where id = new.project_id; end if;
-    if new.linked_order_id is not null then select tenant_id into order_tenant from public.orders where id = new.linked_order_id; end if;
+    if (to_jsonb(new)->>'supplier_id') is not null then select tenant_id into supplier_tenant from public.suppliers where id = (to_jsonb(new)->>'supplier_id')::uuid; end if;
+    if (to_jsonb(new)->>'project_id') is not null then select tenant_id into project_tenant from public.projects where id = (to_jsonb(new)->>'project_id')::uuid; end if;
+    if (to_jsonb(new)->>'linked_order_id') is not null then select tenant_id into order_tenant from public.orders where id = (to_jsonb(new)->>'linked_order_id')::uuid; end if;
   end if;
   resolved_tenant := coalesce(supplier_tenant, project_tenant, order_tenant);
   if (supplier_tenant is not null and resolved_tenant <> supplier_tenant) or (project_tenant is not null and resolved_tenant <> project_tenant) or (order_tenant is not null and resolved_tenant <> order_tenant) then raise exception 'Supplier, project, and order links must belong to one tenant.'; end if;
