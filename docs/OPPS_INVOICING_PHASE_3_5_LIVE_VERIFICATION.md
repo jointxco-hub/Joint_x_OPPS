@@ -379,3 +379,16 @@ Reason:
 - Activity history: passed
 - Duplicate management: passed
 - Performance check: passed
+
+## RLS Role Testing (2026-06-20)
+
+- Admin / finance level 1: passed read access to invoices, activity, and settings.
+- Finance level 2: passed read and settings-write access using a transaction-only role simulation; the transaction was rolled back.
+- Unauthorized/non-finance: passed denial test. An authenticated `user` saw zero invoice, activity, and settings rows, and a settings write was blocked.
+- Production user roles remain unchanged. No RLS probe records persisted.
+
+## Zoho Customer CSV Alignment
+
+- Status: pending official Zoho Books customer/contact import sample.
+- No customer headers were changed. The centralized mapping remains in `src/features/invoices/zohoCustomerExportConfig.js`.
+- Next evidence required: download the customer/contact import sample from this organization's Zoho Books account and compare its headers before changing the mapping.
