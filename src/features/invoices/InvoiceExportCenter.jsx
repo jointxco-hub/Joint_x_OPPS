@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Download, RefreshCw, RotateCcw, Save, Settings2 } from "lucide-react";
+import { CheckCircle2, Download, RefreshCw, RotateCcw, Save, Settings2, Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { dataClient } from "@/api/dataClient";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   createInvoiceExportRecord,
   getApprovedInvoicesForExport,
@@ -27,6 +38,7 @@ import {
   normalizeClientTemplateSetting,
   normalizeColumns,
 } from "./invoiceSettings";
+import { buildZohoCustomerImportPreview, importableCustomerRows } from "./zohoCustomerImport";
 
 function downloadCsv(fileName, csv) {
   const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
@@ -45,6 +57,9 @@ export default function InvoiceExportCenter({ active = true }) {
   const [invoiceColumns, setInvoiceColumns] = useState(ZOHO_INVOICE_CSV_COLUMNS);
   const [customerColumns, setCustomerColumns] = useState(ZOHO_CUSTOMER_CSV_COLUMNS);
   const [clientTemplate, setClientTemplate] = useState(normalizeClientTemplateSetting());
+  const [customerImportPreview, setCustomerImportPreview] = useState(null);
+  const [customerImportFileName, setCustomerImportFileName] = useState("");
+  const [customerImportOpen, setCustomerImportOpen] = useState(false);
 
   const invoiceSettingsQuery = useQuery({
     queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.invoiceMapping],
@@ -67,6 +82,12 @@ export default function InvoiceExportCenter({ active = true }) {
   const candidatesQuery = useQuery({
     queryKey: ["invoiceExportCandidates"],
     queryFn: () => getApprovedInvoicesForExport({ includeItems: true, limit: 100 }),
+    enabled: active,
+  });
+
+  const clientsQuery = useQuery({
+    queryKey: ["clients", "zoho-customer-import"],
+    queryFn: () => dataClient.entities.Client.list("name", 500),
     enabled: active,
   });
 
@@ -113,6 +134,8 @@ export default function InvoiceExportCenter({ active = true }) {
     if (!customerPreview) return null;
     return customerPreview.rows.slice(0, 8);
   }, [customerPreview]);
+
+  const customerImportRows = useMemo(() => importableCustomerRows(customerImportPreview), [customerImportPreview]);
 
   const exportMutation = useMutation({
     mutationFn: async () => {
@@ -169,6 +192,28 @@ export default function InvoiceExportCenter({ active = true }) {
     onError: (error) => toast.error(error?.message || "Could not reset settings"),
   });
 
+  const customerImportMutation = useMutation({
+    mutationFn: async () => {
+      const rows = importableCustomerRows(customerImportPreview);
+      const results = await Promise.allSettled(rows.map((row) => (
+        row.action === "update"
+          ? dataClient.entities.Client.update(row.client.id, row.payload)
+          : dataClient.entities.Client.create(row.payload)
+      )));
+      return {
+        imported: results.filter((result) => result.status === "fulfilled").length,
+        failed: results.filter((result) => result.status === "rejected").length,
+      };
+    },
+    onSuccess: ({ imported, failed }) => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      setCustomerImportOpen(false);
+      if (failed) toast.error(`${imported} clients imported, ${failed} could not be imported`);
+      else toast.success(`${imported} clients imported from Zoho CSV`);
+    },
+    onError: (error) => toast.error(error?.message || "Could not import customers"),
+  });
+
   const buildPreview = () => {
     const result = buildZohoInvoiceCsv(candidates, { columns: invoiceColumns });
     setPreview(result);
@@ -184,6 +229,30 @@ export default function InvoiceExportCenter({ active = true }) {
     downloadCsv(getZohoCustomerExportFileName(), result.csv);
     setCustomerPreview(result);
     toast.success("Customer CSV downloaded");
+  };
+
+  const selectCustomerImportFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      toast.error("Choose a Zoho customer CSV file");
+      return;
+    }
+    try {
+      const previewResult = buildZohoCustomerImportPreview(
+        await file.text(),
+        clientsQuery.data || [],
+      );
+      if (previewResult.rows.length === 0) {
+        toast.error("The CSV has no customer rows to preview");
+        return;
+      }
+      setCustomerImportFileName(file.name);
+      setCustomerImportPreview(previewResult);
+    } catch (error) {
+      toast.error(error?.message || "Could not read customer CSV");
+    }
   };
 
   const renameHeader = (type, key, header) => {
@@ -295,6 +364,64 @@ export default function InvoiceExportCenter({ active = true }) {
 
       <Card className="rounded-2xl border-border shadow-apple-sm">
         <CardContent className="space-y-4 p-4 md:p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="font-semibold text-foreground">Import customers from Zoho CSV</p>
+              <p className="mt-1 text-sm text-muted-foreground">Matches an existing client by email, then by an unambiguous exact name. Blank fields do not erase OPPS data.</p>
+            </div>
+            <Button variant="outline" asChild className="rounded-xl">
+              <label>
+                <Upload className="h-4 w-4" /> Choose customer CSV
+                <Input className="sr-only" type="file" accept=".csv,text/csv" onChange={selectCustomerImportFile} />
+              </label>
+            </Button>
+          </div>
+
+          {customerImportPreview && (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <p className="font-medium text-foreground">{customerImportFileName}</p>
+                <p className="text-muted-foreground">
+                  {customerImportRows.filter((row) => row.action === "create").length} new / {customerImportRows.filter((row) => row.action === "update").length} updates / {customerImportPreview.invalidCount} skipped
+                </p>
+              </div>
+              <div className="overflow-x-auto rounded-xl border border-border">
+                <table className="w-full min-w-[720px] text-left text-xs">
+                  <thead className="bg-secondary/50 text-muted-foreground">
+                    <tr>
+                      <th className="p-2">Customer</th>
+                      <th className="p-2">Email</th>
+                      <th className="p-2">Phone</th>
+                      <th className="p-2">Action</th>
+                      <th className="p-2">Match</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customerImportPreview.rows.slice(0, 12).map((row) => (
+                      <tr key={row.rowNumber} className="border-t border-border">
+                        <td className="max-w-[220px] truncate p-2">{row.customer.customer_name || "Missing"}</td>
+                        <td className="max-w-[220px] truncate p-2">{row.customer.email || "-"}</td>
+                        <td className="p-2">{row.customer.phone || "-"}</td>
+                        <td className="p-2 capitalize">{row.action}</td>
+                        <td className="p-2">{row.client?.name || row.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {customerImportPreview.rows.length > 12 && (
+                <p className="text-xs text-muted-foreground">Showing the first 12 of {customerImportPreview.rows.length} rows.</p>
+              )}
+              <Button onClick={() => setCustomerImportOpen(true)} disabled={customerImportRows.length === 0 || clientsQuery.isLoading} className="rounded-xl">
+                <Upload className="h-4 w-4" /> Import {customerImportRows.length} clients
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border shadow-apple-sm">
+        <CardContent className="space-y-4 p-4 md:p-5">
           <div>
             <p className="font-semibold text-foreground">Step 2: Export approved invoices</p>
             <p className="mt-1 text-sm text-muted-foreground">Draft invoices are skipped. Export history is recorded before OPPS marks invoices exported.</p>
@@ -330,6 +457,23 @@ export default function InvoiceExportCenter({ active = true }) {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={customerImportOpen} onOpenChange={setCustomerImportOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Import Zoho customer CSV?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will create {customerImportRows.filter((row) => row.action === "create").length} clients and update {customerImportRows.filter((row) => row.action === "update").length} matched clients. Skipped rows will not be changed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={customerImportMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => customerImportMutation.mutate()} disabled={customerImportMutation.isPending}>
+              {customerImportMutation.isPending ? "Importing..." : "Import clients"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {exportPreview && (
         <Card className="rounded-2xl border-border shadow-apple-sm">

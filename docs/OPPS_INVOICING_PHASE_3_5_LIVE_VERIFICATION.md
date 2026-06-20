@@ -392,3 +392,10 @@ Reason:
 - Status: pending official Zoho Books customer/contact import sample.
 - No customer headers were changed. The centralized mapping remains in `src/features/invoices/zohoCustomerExportConfig.js`.
 - Next evidence required: download the customer/contact import sample from this organization's Zoho Books account and compare its headers before changing the mapping.
+
+## Manual Zoho Customer Import
+
+- Zoho customer CSV upload now previews client creates, email/name matches, and skipped duplicate or incomplete rows before confirmation.
+- Existing client updates only apply non-empty imported contact fields; OPPS status and unrelated client data remain unchanged.
+- Build and quoted-CSV parsing checks passed.
+- Live QA pending: import a small non-production Zoho customer export and verify the preview before confirming it.
