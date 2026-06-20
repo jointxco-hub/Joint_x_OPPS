@@ -29,3 +29,9 @@
 ## Current Decision
 
 Joint X is the first tenant. OPPS and X LAB remain connected applications inside that tenant until a product decision explicitly separates X LAB into its own tenant.
+
+## Isolation Verification
+
+- 2026-06-21: passed a transaction-only second-tenant simulation in production.
+- An admin-role account assigned exclusively to the temporary tenant saw zero Joint X clients, orders, invoices, and X LAB requests.
+- The tenant, membership changes, and probe all rolled back with no persisted production data.
