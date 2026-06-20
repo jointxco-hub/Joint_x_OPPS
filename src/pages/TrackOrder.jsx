@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -201,34 +201,13 @@ export default function TrackOrder() {
     // Normalise input the same way filenames are normalised on upload
     const valNorm = val.replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "");
 
-    // Search across order number, tracking number, id, extracted invoice numbers,
-    // and invoice file names (stem only, normalised) so "xlab labels" finds its order
-    let orders = await dataClient.entities.Order.list();
-    const found = orders.find(o =>
-      o.order_number?.toUpperCase() === val ||
-      o.tracking_number?.toUpperCase() === val ||
-      o.id === val ||
-      (Array.isArray(o.invoice_numbers) && o.invoice_numbers.some(
-        (/** @type {string} */ n) => n.toUpperCase() === val || n.toUpperCase() === valNorm
-      )) ||
-      (Array.isArray(o.invoice_files) && o.invoice_files.some((/** @type {any} */ f) => {
-        const stem = (f.name || "").replace(/\.[^.]+$/, "").toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "");
-        return stem === val || stem === valNorm;
-      }))
-    );
-    
-    if (found) {
-      setOrder(found);
-    } else {
-      // Try ClientOrder as fallback
-      const clientOrders = await dataClient.entities.ClientOrder.list();
-      const clientFound = clientOrders.find(co => co.tracking_code?.toUpperCase() === val);
-      if (clientFound) {
-        setOrder(clientFound);
-      } else {
-        setError("No order found with this tracking code or invoice number. Please check and try again.");
-      }
-    }
+    const { data, error: lookupError } = await supabase.rpc("get_public_order_tracking", {
+      p_lookup: valNorm || val,
+      p_tenant_slug: "joint-x",
+    });
+    if (lookupError) setError("We could not look up that order right now.");
+    else if (data) setOrder(data);
+    else setError("No order found with this tracking code or invoice number. Please check and try again.");
     
     setLoading(false);
   };
