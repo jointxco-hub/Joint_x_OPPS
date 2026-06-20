@@ -557,6 +557,7 @@ const ENTITY_CONFIG = {
   },
   Payment: {
     table: 'transactions',
+    tenantScoped: true,
     baseFilter: { type: 'income' },
     sortMap: {
       created_date: 'created_at',
@@ -599,6 +600,7 @@ const ENTITY_CONFIG = {
   },
   Expense: {
     table: 'transactions',
+    tenantScoped: true,
     baseFilter: { type: 'expense' },
     sortMap: {
       created_date: 'created_at',
