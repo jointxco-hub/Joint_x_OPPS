@@ -126,6 +126,7 @@ const ENTITY_CONFIG = {
   },
   Project: {
     table: 'projects',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -246,6 +247,7 @@ const ENTITY_CONFIG = {
   },
   Task: {
     table: 'tasks',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
@@ -291,6 +293,7 @@ const ENTITY_CONFIG = {
   },
   OpsTask: {
     table: 'ops_tasks',
+    tenantScoped: true,
     sortMap: {
       created_date: 'created_at',
       updated_date: 'updated_at',
