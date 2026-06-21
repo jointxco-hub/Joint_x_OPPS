@@ -62,7 +62,10 @@ function MoneyModelInner() {
   const [offerFilter, setOfferFilter] = useState("all");
   const [showNewSnapshot, setShowNewSnapshot] = useState(false);
   const queryClient = useQueryClient();
-  const createMutation = useMutation({ mutationFn: (data) => dataClient.entities.MoneyModel.create(data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["moneyModel"] }); setShowNewSnapshot(false); } });
+  const createMutation = useMutation({
+    mutationFn: (data) => dataClient.entities.MoneyModel.create(data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["moneyModel"] }); setShowNewSnapshot(false); },
+  });
 
   const { data: snapshots = [], isLoading } = useQuery({
     queryKey: ["moneyModel"],
@@ -236,16 +239,27 @@ function MoneyModelInner() {
             </table>
           </div>
         )}
-        <SnapshotDialog open={showNewSnapshot} onOpenChange={setShowNewSnapshot} onCreate={(data) => createMutation.mutate(data)} saving={createMutation.isPending} />
+        <SnapshotDialog open={showNewSnapshot} onOpenChange={setShowNewSnapshot} onCreate={(data) => createMutation.mutate(data)} saving={createMutation.isPending} error={createMutation.error?.message} />
       </div>
     </div>
   );
 }
 
-function SnapshotDialog({ open, onOpenChange, onCreate, saving }) {
-  const [offerKey, setOfferKey] = useState(""); const [revenue, setRevenue] = useState("");
-  const submit = (event) => { event.preventDefault(); if (offerKey.trim()) onCreate({ offer_key: offerKey.trim(), period_start: new Date().toISOString().slice(0, 10), revenue: Number(revenue || 0), units_sold: 0 }); };
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Add money model snapshot</DialogTitle></DialogHeader><form onSubmit={submit} className="space-y-3"><Input autoFocus placeholder="Offer key" value={offerKey} onChange={(event) => setOfferKey(event.target.value)} /><Input type="number" min="0" placeholder="Revenue" value={revenue} onChange={(event) => setRevenue(event.target.value)} /><DialogFooter><Button type="submit" disabled={!offerKey.trim() || saving}>{saving ? "Saving..." : "Save snapshot"}</Button></DialogFooter></form></DialogContent></Dialog>;
+function SnapshotDialog({ open, onOpenChange, onCreate, saving, error }) {
+  const [offerKey, setOfferKey] = useState("");
+  const [periodStart, setPeriodStart] = useState(() => new Date().toISOString().slice(0, 7));
+  const [unitsSold, setUnitsSold] = useState("");
+  const [revenue, setRevenue] = useState("");
+  const [cogs, setCogs] = useState("");
+  const [adSpend, setAdSpend] = useState("");
+  const submit = (event) => {
+    event.preventDefault();
+    if (!offerKey.trim() || !periodStart) return;
+    const start = `${periodStart}-01`;
+    const end = new Date(Number(periodStart.slice(0, 4)), Number(periodStart.slice(5, 7)), 0).toISOString().slice(0, 10);
+    onCreate({ offer_key: offerKey.trim(), period_start: start, period_end: end, units_sold: Number(unitsSold || 0), revenue: Number(revenue || 0), cogs: Number(cogs || 0), ad_spend: Number(adSpend || 0) });
+  };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Add money model snapshot</DialogTitle></DialogHeader><form onSubmit={submit} className="space-y-3"><Input autoFocus placeholder="Offer key" value={offerKey} onChange={(event) => setOfferKey(event.target.value)} /><Input type="month" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /><div className="grid grid-cols-2 gap-3"><Input type="number" min="0" placeholder="Units sold" value={unitsSold} onChange={(event) => setUnitsSold(event.target.value)} /><Input type="number" min="0" placeholder="Revenue" value={revenue} onChange={(event) => setRevenue(event.target.value)} /><Input type="number" min="0" placeholder="COGS" value={cogs} onChange={(event) => setCogs(event.target.value)} /><Input type="number" min="0" placeholder="Ad spend" value={adSpend} onChange={(event) => setAdSpend(event.target.value)} /></div>{error && <p className="text-sm text-destructive">{error}</p>}<DialogFooter><Button type="submit" disabled={!offerKey.trim() || !periodStart || saving}>{saving ? "Saving..." : "Save snapshot"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
 export default function MoneyModel() {
