@@ -117,6 +117,22 @@ During rollout, an unknown host must show a neutral "site not configured" respon
 
 Each phase is additive and reversible by disabling a `tenant_domains` row. Do not remove the existing Joint X tracker or storefront routes during the rollout.
 
+## Phase 1 Production Verification: 2026-06-21
+
+Migration `202606210008_tenant_host_routing.sql` was applied to production and `supabase/tests/tenant_host_routing.sql` passed.
+
+- Passed: active Joint X mappings exist for `ops.jointx.co.za` (`ops`, `public_tracking`) and `xlab.jointx.co.za` (`storefront`, `public_tracking`).
+- Passed: public tracking host resolution returns only `tenant_slug` and `hostname`; it does not expose a tenant UUID, memberships, or other mapping data.
+- Passed: uppercase `OPS.JOINTX.CO.ZA` resolves to the `joint-x` public-tracking mapping.
+- Passed: unknown hosts resolve to no tenant and do not fall back to `joint-x`.
+- Passed: scheme-prefixed, port-bearing, path-bearing, and trailing-dot values are rejected by hostname normalization and resolve to no tenant.
+- Passed: rollback-only `pending` and `disabled` mappings resolve to no tenant.
+- Passed: rollback-only authenticated-host probe returned one row for an active Joint X member and zero rows for the Tenant A-only QA member against the same active XOS host.
+- Passed: under the anonymous database role, the existing Joint X tracking RPC still returned one requested order and did not include `tenant_id`, task, finance, or asset data.
+- Confirmed: no browser code, public tracker call, X LAB storefront model, uploads policy, or tenant-switcher behavior changed in this phase.
+
+The Phase 2 host-aware tracking implementation can now use the production resolver foundation. Client-tenant tracking remains disabled until that later phase and its disposable-host QA pass.
+
 ## Tenant Public Tracking QA
 
 - `ops.jointx.co.za/track` resolves only `joint-x` and continues to return one matching Joint X order.
