@@ -73,6 +73,8 @@ Run every row as both Tenant A and Tenant B, targeting the other tenant's record
 - Passed: simulated Tenant A access saw zero Tenant B records across clients, orders, invoices, transactions, projects, ops tasks, folders, assets, suppliers, inventory, purchase orders, finance buckets, buying items, and money model snapshots.
 - Passed: the same read-isolation result held from Tenant B against Tenant A.
 - Passed: each tenant saw only its own income row through the `income` security-invoker view; no cross-tenant expense rows were visible.
+- Found and fixed: Tenant A could initially create a Tenant A order linked to Tenant B's client. The transaction rolled back; no record persisted. Commit `8200f84` adds database parent-tenant guards for orders and invoices.
+- Passed after fix: the same cross-client order probe is rejected by the database.
 - Needs manual follow-up: the current Tasks UI creates `ops_tasks`; no browser create path was found for the legacy `tasks` table.
 - Pending: cross-tenant mutation/parent-link probes, public tracking lookup variants, invoice sequence negative probe, X LAB bridge UI/RPC checks, and direct uploads URL limitation confirmation.
 
