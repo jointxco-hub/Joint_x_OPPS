@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { createPageUrl } from "../utils";
 import { Link } from "react-router-dom";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 const statusConfig = {
   planning: { label: "Planning", color: "bg-slate-100 text-slate-700", icon: Clock },
@@ -63,6 +64,11 @@ export default function Projects() {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       toast.success("Project archived");
     },
+  });
+  const createMutation = useMutation({
+    mutationFn: (data) => dataClient.entities.Project.create(data),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["projects"] }); setShowNewProject(false); toast.success("Project created"); },
+    onError: (error) => toast.error(error?.message || "Could not create project"),
   });
 
   const filteredProjects = projects
@@ -225,6 +231,14 @@ export default function Projects() {
         )}
 
       </div>
+      <NewProjectDialog open={showNewProject} onOpenChange={setShowNewProject} onCreate={(data) => createMutation.mutate(data)} saving={createMutation.isPending} />
     </div>
   );
+}
+
+function NewProjectDialog({ open, onOpenChange, onCreate, saving }) {
+  const [name, setName] = useState("");
+  const [notes, setNotes] = useState("");
+  const submit = (event) => { event.preventDefault(); if (name.trim()) onCreate({ name: name.trim(), notes, status: "planning", priority: "normal" }); };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>New Project</DialogTitle></DialogHeader><form onSubmit={submit} className="space-y-3"><Input autoFocus placeholder="Project name" value={name} onChange={(event) => setName(event.target.value)} /><Input placeholder="Notes (optional)" value={notes} onChange={(event) => setNotes(event.target.value)} /><DialogFooter><Button type="submit" disabled={!name.trim() || saving}>{saving ? "Creating..." : "Create project"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }

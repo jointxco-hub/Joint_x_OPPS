@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { dataClient } from "@/api/dataClient";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DollarSign, TrendingUp, AlertCircle, Plus } from "lucide-react";
 import { format } from "date-fns";
 import AdminOnly from "@/components/common/AdminOnly";
 import HelperHint from "@/components/common/HelperHint";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 function paybackColor(days) {
   if (days === null || days === undefined) return "bg-secondary text-muted-foreground";
@@ -57,6 +60,9 @@ function RevenueSparkline({ snaps }) {
 
 function MoneyModelInner() {
   const [offerFilter, setOfferFilter] = useState("all");
+  const [showNewSnapshot, setShowNewSnapshot] = useState(false);
+  const queryClient = useQueryClient();
+  const createMutation = useMutation({ mutationFn: (data) => dataClient.entities.MoneyModel.create(data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["moneyModel"] }); setShowNewSnapshot(false); } });
 
   const { data: snapshots = [], isLoading } = useQuery({
     queryKey: ["moneyModel"],
@@ -103,6 +109,7 @@ function MoneyModelInner() {
               Revenue & payback by offer
             </p>
           </div>
+          <Button onClick={() => setShowNewSnapshot(true)}><Plus className="w-4 h-4" /> Add snapshot</Button>
         </div>
 
         {/* Summary tiles */}
@@ -229,9 +236,16 @@ function MoneyModelInner() {
             </table>
           </div>
         )}
+        <SnapshotDialog open={showNewSnapshot} onOpenChange={setShowNewSnapshot} onCreate={(data) => createMutation.mutate(data)} saving={createMutation.isPending} />
       </div>
     </div>
   );
+}
+
+function SnapshotDialog({ open, onOpenChange, onCreate, saving }) {
+  const [offerKey, setOfferKey] = useState(""); const [revenue, setRevenue] = useState("");
+  const submit = (event) => { event.preventDefault(); if (offerKey.trim()) onCreate({ offer_key: offerKey.trim(), period_start: new Date().toISOString().slice(0, 10), revenue: Number(revenue || 0), units_sold: 0 }); };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent><DialogHeader><DialogTitle>Add money model snapshot</DialogTitle></DialogHeader><form onSubmit={submit} className="space-y-3"><Input autoFocus placeholder="Offer key" value={offerKey} onChange={(event) => setOfferKey(event.target.value)} /><Input type="number" min="0" placeholder="Revenue" value={revenue} onChange={(event) => setRevenue(event.target.value)} /><DialogFooter><Button type="submit" disabled={!offerKey.trim() || saving}>{saving ? "Saving..." : "Save snapshot"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
 export default function MoneyModel() {
