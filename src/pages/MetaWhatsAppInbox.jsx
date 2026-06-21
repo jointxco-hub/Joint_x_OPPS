@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +53,12 @@ export default function MetaWhatsAppInbox() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [search, setSearch] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const [departmentDraft, setDepartmentDraft] = useState("support");
+  const [statusDraft, setStatusDraft] = useState("open");
+  const [orderDraft, setOrderDraft] = useState("");
+  const [clientDraft, setClientDraft] = useState("");
+  const [internalNoteDraft, setInternalNoteDraft] = useState("");
 
   useEffect(() => {
     setFilters({
@@ -86,13 +92,58 @@ export default function MetaWhatsAppInbox() {
     },
   });
 
+  const ordersQuery = useQuery({
+    queryKey: ["opps-inbox-orders"],
+    enabled: !!supabase,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("orders")
+        .select("id, order_number, client_name, status, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const clientsQuery = useQuery({
+    queryKey: ["opps-inbox-clients"],
+    enabled: !!supabase,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("clients")
+        .select("id, name, email, phone, whatsapp_name, created_at")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   const conversations = conversationsQuery.data ?? [];
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) || conversations[0] || null;
+  const orders = ordersQuery.data ?? [];
+  const clients = clientsQuery.data ?? [];
 
   const selectedConversationMessages = useMemo(() => {
     const messages = selectedConversation?.opps_messages ?? [];
     return [...messages].sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime());
   }, [selectedConversation]);
+
+  const conversationNotesQuery = useQuery({
+    queryKey: ["opps-conversation-notes", selectedConversation?.id],
+    enabled: !!selectedConversation?.id && !!supabase,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("opps_conversation_notes")
+        .select("id, conversation_id, note_type, note, created_by, created_at")
+        .eq("conversation_id", selectedConversation.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
 
   const updateQuery = (next) => {
     const params = new URLSearchParams(searchParams);
@@ -105,6 +156,22 @@ export default function MetaWhatsAppInbox() {
     });
     setSearchParams(params, { replace: true });
   };
+
+  useEffect(() => {
+    if (!selectedConversation) return;
+    const latestIntelligence = getLatestIntelligence(selectedConversation);
+    setDepartmentDraft(selectedConversation.assigned_department || latestIntelligence?.suggested_department || "support");
+    setStatusDraft(selectedConversation.status || "open");
+    setOrderDraft(selectedConversation.linked_order_id || "");
+    setClientDraft(selectedConversation.linked_client_id || "");
+    setInternalNoteDraft("");
+  }, [
+    selectedConversation?.id,
+    selectedConversation?.assigned_department,
+    selectedConversation?.status,
+    selectedConversation?.linked_order_id,
+    selectedConversation?.linked_client_id,
+  ]);
 
   const filteredConversations = useMemo(() => {
     return conversations.filter((conversation) => {
@@ -120,35 +187,90 @@ export default function MetaWhatsAppInbox() {
     });
   }, [conversations, filters, search]);
 
-  const todayInboundCount = useMemo(() => {
-    return conversations.reduce((total, conversation) => {
-      const messages = conversation.opps_messages || [];
-      return total + messages.filter((message) => message.direction === "inbound" && isToday(new Date(message.created_at))).length;
-    }, 0);
-  }, [conversations]);
-
+  const inboxStats = useMemo(() => summarizeToday(conversations), [conversations]);
   const unreadConversations = conversations.filter((item) => Number(item.unread_count || 0) > 0).length;
-  const highRiskMessages = conversations.filter((item) => getLatestMessage(item)?.opps_message_intelligence?.[0]?.risk_level === "high").length;
-  const requestCounts = countRequests(conversations);
-  const teamLogCount = conversations.filter((item) => getLatestMessage(item)?.opps_message_intelligence?.[0]?.intent === "team_log").length;
+  const todayInboundCount = inboxStats.inbound;
+  const highRiskMessages = inboxStats.highRisk;
+  const requestCounts = inboxStats.intentCounts;
+  const teamLogCount = inboxStats.teamLog;
+  const selectedLatestMessage = selectedConversationMessages[selectedConversationMessages.length - 1];
+  const selectedIntelligence = selectedLatestMessage?.opps_message_intelligence?.[0];
+  const selectedConversationNotes = conversationNotesQuery.data ?? [];
 
-  const summarySignalsQuery = useQuery({
-    queryKey: ["opps-daily-activity-signals"],
-    queryFn: async () => {
-      if (!supabase) return [];
-      const { data, error } = await supabase
-        .from("opps_daily_activity_signals")
-        .select("signal_key, signal_value, signal_date")
-        .order("signal_date", { ascending: false })
-        .order("signal_value", { ascending: false });
+  const updateConversationMutation = useMutation({
+    mutationFn: async ({ conversationId, patch }) => {
+      const { error } = await supabase.from("opps_conversations").update(patch).eq("id", conversationId);
       if (error) throw error;
-      return data ?? [];
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["opps-conversations"] });
+      await queryClient.invalidateQueries({ queryKey: ["opps-conversation-notes", selectedConversation?.id] });
     },
   });
 
-  const signals = summarySignalsQuery.data ?? [];
-  const selectedLatestMessage = selectedConversationMessages[selectedConversationMessages.length - 1];
-  const selectedIntelligence = selectedLatestMessage?.opps_message_intelligence?.[0];
+  const addNoteMutation = useMutation({
+    mutationFn: async ({ conversationId, note }) => {
+      const { data: authUser } = await supabase.auth.getUser();
+      const { error } = await supabase.from("opps_conversation_notes").insert({
+        conversation_id: conversationId,
+        tenant_id: selectedConversation?.tenant_id || null,
+        note_type: "internal",
+        note,
+        created_by: authUser?.user?.id || null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      setInternalNoteDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["opps-conversations"] });
+      await queryClient.invalidateQueries({ queryKey: ["opps-conversation-notes", selectedConversation?.id] });
+    },
+  });
+
+  const saveConversationLinkMutation = useMutation({
+    mutationFn: async ({ conversationId, patch }) => {
+      const { error } = await supabase.from("opps_conversations").update(patch).eq("id", conversationId);
+      if (error) throw error;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["opps-conversations"] });
+    },
+  });
+
+  const markConversationRead = () => {
+    if (!selectedConversation) return;
+    updateConversationMutation.mutate({ conversationId: selectedConversation.id, patch: { unread_count: 0 } });
+  };
+
+  const setConversationStatus = (status) => {
+    if (!selectedConversation) return;
+    updateConversationMutation.mutate({ conversationId: selectedConversation.id, patch: { status } });
+    setStatusDraft(status);
+  };
+
+  const saveDepartment = () => {
+    if (!selectedConversation) return;
+    updateConversationMutation.mutate({ conversationId: selectedConversation.id, patch: { assigned_department: departmentDraft } });
+  };
+
+  const saveLinks = () => {
+    if (!selectedConversation) return;
+    saveConversationLinkMutation.mutate({
+      conversationId: selectedConversation.id,
+      patch: {
+        linked_order_id: orderDraft || null,
+        linked_client_id: clientDraft || null,
+      },
+    });
+  };
+
+  const addInternalNote = () => {
+    if (!selectedConversation || !internalNoteDraft.trim()) return;
+    addNoteMutation.mutate({
+      conversationId: selectedConversation.id,
+      note: internalNoteDraft.trim(),
+    });
+  };
 
   if (!supabase) {
     return <EmptyState title="Supabase not configured" body="Set the Supabase environment variables to use the WhatsApp inbox." />;
@@ -174,8 +296,8 @@ export default function MetaWhatsAppInbox() {
               </div>
             </div>
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-1">
-              <SummaryCard label="Quote / order / artwork requests" value={requestCounts.quote_request + requestCounts.order_update + requestCounts.artwork_request} icon={PackageSearch} />
-              <SummaryCard label="Finance / delivery / support" value={requestCounts.invoice_request + requestCounts.delivery_request + requestCounts.general_support + requestCounts.complaint} icon={Users} />
+              <SummaryCard label="Quote / order / artwork requests" value={requestCounts.quote_request + requestCounts.order_update + requestCounts.production_update + requestCounts.artwork_request + requestCounts.design_update} icon={PackageSearch} />
+              <SummaryCard label="Finance / delivery / support" value={requestCounts.invoice_request + requestCounts.payment_query + requestCounts.delivery_request + requestCounts.general_support + requestCounts.complaint} icon={Users} />
               <SummaryCard label="Team-log style messages" value={teamLogCount} icon={PanelLeftOpen} />
             </div>
           </div>
@@ -235,9 +357,10 @@ export default function MetaWhatsAppInbox() {
 
               <div className="space-y-2">
                 {filteredConversations.map((conversation) => {
-                  const latestMessage = conversation.opps_messages?.[0];
-                  const intelligence = latestMessage?.opps_message_intelligence?.[0];
+                  const latestMessage = getLatestMessage(conversation);
+                  const intelligence = getLatestIntelligence(conversation);
                   const isActive = selectedConversation?.id === conversation.id;
+                  const displayDepartment = conversation.assigned_department || intelligence?.suggested_department || "support";
                   return (
                     <button
                       key={conversation.id}
@@ -261,7 +384,7 @@ export default function MetaWhatsAppInbox() {
                           <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-wide">
                             <Badge variant="outline" className="rounded-full">{INTENT_LABELS[intelligence?.intent || "unknown"]}</Badge>
                             <Badge variant={intelligence?.risk_level === "high" ? "destructive" : "secondary"} className="rounded-full">{intelligence?.risk_level || "normal"} risk</Badge>
-                            <Badge variant="outline" className="rounded-full">{DEPARTMENT_LABELS[intelligence?.suggested_department || "support"]}</Badge>
+                            <Badge variant="outline" className="rounded-full">{conversation.assigned_department ? `Assigned ${DEPARTMENT_LABELS[displayDepartment] || displayDepartment}` : DEPARTMENT_LABELS[displayDepartment] || displayDepartment}</Badge>
                             {conversation.linked_order_id && <Badge variant="outline" className="rounded-full">Order linked</Badge>}
                           </div>
                         </div>
@@ -295,6 +418,43 @@ export default function MetaWhatsAppInbox() {
                   <MiniStat label="Unread" value={selectedConversation.unread_count || 0} />
                 </div>
 
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={markConversationRead} className="rounded-2xl">Mark as read</Button>
+                  <Button variant={statusDraft === "open" ? "default" : "outline"} onClick={() => setConversationStatus("open")} className="rounded-2xl">Mark open</Button>
+                  <Button variant={statusDraft === "closed" ? "default" : "outline"} onClick={() => setConversationStatus("closed")} className="rounded-2xl">Mark closed</Button>
+                </div>
+
+                <div className="grid gap-3 rounded-3xl border border-border bg-secondary/20 p-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-foreground">Manual department</p>
+                    <Select value={departmentDraft} onValueChange={setDepartmentDraft}>
+                      <SelectTrigger className="rounded-2xl"><SelectValue placeholder="Assign department" /></SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(DEPARTMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={saveDepartment} className="rounded-2xl">Save department</Button>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-sm font-semibold text-foreground">Link conversation</p>
+                    <Select value={orderDraft || "none"} onValueChange={(value) => setOrderDraft(value === "none" ? "" : value)}>
+                      <SelectTrigger className="rounded-2xl"><SelectValue placeholder="Link order" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No order linked</SelectItem>
+                        {orders.slice(0, 100).map((order) => <SelectItem key={order.id} value={order.id}>{formatOrderLabel(order)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Select value={clientDraft || "none"} onValueChange={(value) => setClientDraft(value === "none" ? "" : value)}>
+                      <SelectTrigger className="rounded-2xl"><SelectValue placeholder="Link client" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No client linked</SelectItem>
+                        {clients.slice(0, 100).map((client) => <SelectItem key={client.id} value={client.id}>{formatClientLabel(client)}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button onClick={saveLinks} className="rounded-2xl">Link conversation</Button>
+                  </div>
+                </div>
+
                 <div className="space-y-3 rounded-3xl border border-border bg-secondary/20 p-4">
                   <p className="text-sm font-semibold text-foreground">Message history</p>
                   <div className="max-h-[460px] space-y-3 overflow-y-auto pr-1">
@@ -315,6 +475,35 @@ export default function MetaWhatsAppInbox() {
                     ))}
                     {selectedConversationMessages.length === 0 && <EmptyState title="No messages yet" body="Inbound messages will populate this thread after webhook capture." compact />}
                   </div>
+                </div>
+
+                <div className="rounded-3xl border border-border bg-background p-4">
+                  <p className="text-sm font-semibold text-foreground">Internal notes</p>
+                  <div className="mt-3 space-y-2">
+                    <Textarea value={internalNoteDraft} onChange={(event) => setInternalNoteDraft(event.target.value)} placeholder="Add an internal note for Ops, CIC, or the next shift..." className="min-h-[100px] rounded-2xl" />
+                    <Button onClick={addInternalNote} className="rounded-2xl">Add internal note</Button>
+                  </div>
+                  <div className="mt-4 space-y-2">
+                    {selectedConversationNotes.map((note) => (
+                      <div key={note.id} className="rounded-2xl border border-border bg-secondary/30 p-3">
+                        <p className="text-sm text-foreground">{note.note}</p>
+                        <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+                          {note.note_type} • {note.created_at ? format(new Date(note.created_at), "d MMM yyyy, HH:mm") : "Now"}
+                        </p>
+                      </div>
+                    ))}
+                    {selectedConversationNotes.length === 0 && <p className="text-sm text-muted-foreground">No internal notes yet.</p>}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-1">
+                  <CicCard label="Support messages today" value={inboxStats.support} />
+                  <CicCard label="Design signals today" value={inboxStats.design} />
+                  <CicCard label="Production signals today" value={inboxStats.production} />
+                  <CicCard label="Finance signals today" value={inboxStats.finance} />
+                  <CicCard label="Delivery signals today" value={inboxStats.delivery} />
+                  <CicCard label="Team logs today" value={inboxStats.teamLog} />
+                  <CicCard label="High-risk issues today" value={inboxStats.highRisk} tone="amber" />
                 </div>
               </div>
             ) : (
@@ -341,30 +530,10 @@ export default function MetaWhatsAppInbox() {
                 </div>
               </div>
 
-              <div className="grid gap-3">
-                <CicCard label="Inbound today" value={todayInboundCount} />
-                <CicCard label="Unread conversations" value={unreadConversations} />
-                <CicCard label="High-risk messages" value={highRiskMessages} tone="amber" />
-                <CicCard label="Team-log messages" value={teamLogCount} />
-              </div>
-
               <div className="rounded-3xl border border-border bg-background p-4">
                 <label className="mb-2 block text-sm font-semibold text-foreground">Reply sending disabled in Phase 1</label>
                 <Textarea disabled value="Reply sending disabled in Phase 1" className="min-h-[110px] rounded-2xl bg-secondary/40" />
                 <Button disabled className="mt-3 w-full rounded-2xl">Disabled draft reply</Button>
-              </div>
-
-              <div className="rounded-3xl border border-border bg-background p-4">
-                <p className="text-sm font-semibold text-foreground">Daily activity signals</p>
-                <div className="mt-3 space-y-2 text-sm">
-                  {signals.slice(0, 6).map((signal) => (
-                    <div key={`${signal.signal_key}-${signal.signal_date}`} className="flex items-center justify-between rounded-2xl bg-secondary/40 px-3 py-2">
-                      <span className="capitalize text-muted-foreground">{signal.signal_key.replace(/_/g, " ")}</span>
-                      <span className="font-semibold text-foreground">{signal.signal_value}</span>
-                    </div>
-                  ))}
-                  {signals.length === 0 && <p className="text-muted-foreground">No signals yet.</p>}
-                </div>
               </div>
             </div>
           </div>
@@ -459,5 +628,72 @@ function countRequests(conversations) {
 function getLatestMessage(conversation) {
   const messages = conversation?.opps_messages || [];
   return [...messages].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+}
+
+function getLatestIntelligence(conversation) {
+  return getLatestMessage(conversation)?.opps_message_intelligence?.[0] || null;
+}
+
+function summarizeToday(conversations) {
+  const intentCounts = {
+    quote_request: 0,
+    order_update: 0,
+    artwork_request: 0,
+    invoice_request: 0,
+    payment_query: 0,
+    delivery_request: 0,
+    complaint: 0,
+    team_log: 0,
+    production_update: 0,
+    design_update: 0,
+    general_support: 0,
+    unknown: 0,
+  };
+
+  const summary = {
+    inbound: 0,
+    highRisk: 0,
+    support: 0,
+    design: 0,
+    production: 0,
+    finance: 0,
+    delivery: 0,
+    teamLog: 0,
+    intentCounts,
+  };
+
+  conversations.forEach((conversation) => {
+    (conversation.opps_messages || []).forEach((message) => {
+      if (message.direction !== "inbound" || !message.created_at || !isToday(new Date(message.created_at))) return;
+      summary.inbound += 1;
+      const intelligence = message.opps_message_intelligence?.[0];
+      const intent = intelligence?.intent || "unknown";
+      const riskLevel = intelligence?.risk_level || "normal";
+
+      if (intentCounts[intent] !== undefined) {
+        intentCounts[intent] += 1;
+      } else {
+        intentCounts.unknown += 1;
+      }
+
+      if (riskLevel === "high") summary.highRisk += 1;
+      if (["quote_request", "complaint", "general_support"].includes(intent)) summary.support += 1;
+      if (["artwork_request", "design_update"].includes(intent)) summary.design += 1;
+      if (["order_update", "production_update"].includes(intent)) summary.production += 1;
+      if (["invoice_request", "payment_query"].includes(intent)) summary.finance += 1;
+      if (intent === "delivery_request") summary.delivery += 1;
+      if (intent === "team_log") summary.teamLog += 1;
+    });
+  });
+
+  return summary;
+}
+
+function formatOrderLabel(order) {
+  return [order.order_number, order.client_name || order.status].filter(Boolean).join(" • ") || order.id;
+}
+
+function formatClientLabel(client) {
+  return [client.name, client.whatsapp_name || client.phone || client.email].filter(Boolean).join(" • ") || client.id;
 }
 

@@ -9,17 +9,20 @@ const VERIFY_TOKEN = Deno.env.get('META_VERIFY_TOKEN') || '';
 const APP_SECRET = Deno.env.get('META_APP_SECRET') || '';
 
 const INTENT_RULES = [
-  { intent: 'quote_request', department: 'support', keywords: ['quote', 'price', 'pricing', 'estimate', 'cost', 'how much'] },
-  { intent: 'order_update', department: 'production', keywords: ['order update', 'status of my order', 'where is my order', 'progress', 'ready yet'] },
-  { intent: 'artwork_request', department: 'design', keywords: ['artwork', 'logo', 'design', 'mockup', 'proof', 'file'] },
-  { intent: 'invoice_request', department: 'finance', keywords: ['invoice', 'statement', 'receipt', 'proof of payment', 'payment'] },
-  { intent: 'delivery_request', department: 'delivery', keywords: ['delivery', 'courier', 'tracking', 'late', 'eta', 'arrive'] },
-  { intent: 'complaint', department: 'support', keywords: ['complaint', 'wrong order', 'angry', 'refund', 'issue', 'problem', 'late'] },
-  { intent: 'team_log', department: 'admin', keywords: ['internal', 'team', 'ops note', 'log', 'handover'] },
+  { intent: 'team_log', department: 'admin', keywords: ['logged in', 'done', 'finished', 'prepared', 'printed', 'dtf', 'artwork', 'design done', 'order packed', 'paxi', 'courier', 'sent', 'delivered', 'internal', 'team', 'ops note', 'log', 'handover'] },
+  { intent: 'complaint', department: 'support', keywords: ['complaint', 'wrong order', 'angry', 'refund', 'issue', 'problem', 'late delivery'] },
+  { intent: 'payment_query', department: 'finance', keywords: ['payment issue', 'payment', 'paid', 'eft', 'deposit', 'balance', 'proof of payment', 'not paid', 'chargeback'] },
+  { intent: 'invoice_request', department: 'finance', keywords: ['invoice', 'statement', 'receipt', 'invoice please', 'receipt please'] },
+  { intent: 'delivery_request', department: 'delivery', keywords: ['delivery', 'courier', 'tracking', 'late', 'eta', 'arrive', 'paxi'] },
+  { intent: 'production_update', department: 'production', keywords: ['production update', 'production', 'printing', 'printed', 'ready for production', 'in production', 'packed'] },
+  { intent: 'order_update', department: 'production', keywords: ['order update', 'status of my order', 'where is my order', 'progress', 'ready yet', 'update on my order'] },
+  { intent: 'artwork_request', department: 'design', keywords: ['artwork', 'send artwork', 'logo', 'design', 'mockup', 'proof', 'file'] },
+  { intent: 'design_update', department: 'design', keywords: ['design update', 'design done', 'design approved', 'proof approved', 'artwork updated'] },
+  { intent: 'quote_request', department: 'support', keywords: ['quote', 'price', 'pricing', 'estimate', 'cost', 'how much', 'quote please'] },
   { intent: 'general_support', department: 'support', keywords: ['hello', 'hi', 'help', 'support', 'assist'] },
 ];
 
-const RISK_KEYWORDS = ['refund', 'payment issue', 'complaint', 'urgent', 'angry', 'wrong order', 'late delivery'];
+const RISK_KEYWORDS = ['refund', 'payment issue', 'complaint', 'urgent', 'angry', 'wrong order', 'late delivery', 'late', 'not paid', 'chargeback'];
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -377,8 +380,11 @@ function getNextAction(intent, highRisk) {
     order_update: 'Check order status and respond with a human update.',
     artwork_request: 'Check artwork files and design queue.',
     invoice_request: 'Review invoice or payment query with finance.',
+    payment_query: 'Review payment status and confirm funds manually.',
     delivery_request: 'Check delivery status before replying.',
     complaint: 'Escalate to support and production lead.',
+    production_update: 'Review production queue and update operations.',
+    design_update: 'Review design queue and update the creative team.',
     team_log: 'Log internally and review in Ops.',
     general_support: 'Triage and assign to support.',
     unknown: 'Review the message and assign a department.',
