@@ -58,14 +58,14 @@ Run every row as both Tenant A and Tenant B, targeting the other tenant's record
 
 | Domain | List | Read by ID | Update/Delete | Cross-parent create | Result |
 | --- | --- | --- | --- | --- | --- |
-| Clients and orders | blocked | blocked | blocked | blocked | pending |
-| Invoices and sequences | blocked | blocked | blocked | blocked | pending |
-| Transactions and order support | blocked | blocked | blocked | blocked | pending |
-| Projects, tasks, ops tasks | blocked | blocked | blocked | blocked | pending |
-| Folders and asset metadata | blocked | blocked | blocked | blocked | pending |
-| Suppliers, inventory, purchase orders | blocked | blocked | blocked | blocked | pending |
-| Finance and reporting | blocked | blocked | blocked | blocked | pending |
-| X LAB bridge RPCs | blocked | blocked | blocked | blocked | pending |
+| Clients and orders | passed | passed | passed | fixed, then passed | passed after `8200f84` |
+| Invoices and sequences | passed | passed | passed | passed | passed |
+| Transactions and order support | passed | passed | passed for transactions | passed for transactions | needs follow-up for tag/exception/history UI paths |
+| Projects, tasks, ops tasks | passed | passed | passed | passed for projects and ops tasks | passed; legacy `tasks` direct probe passed |
+| Folders and asset metadata | passed | passed | passed | passed | passed |
+| Suppliers, inventory, purchase orders | passed | passed | passed for purchase orders | passed for purchase orders | passed; inventory link variants need follow-up |
+| Finance and reporting | passed | passed | passed where parent links exist | needs follow-up | passed for reporting; unsupported parent-link variants deferred |
+| X LAB bridge RPCs | passed for prior read simulation | passed for prior read simulation | blocked | blocked | blocked: live RPC probe needs an authenticated CLI session |
 
 ## QA Run Results: 2026-06-21
 
@@ -79,22 +79,24 @@ Run every row as both Tenant A and Tenant B, targeting the other tenant's record
 - Passed: Tenant A could not update or delete a Tenant B record by ID.
 - Passed: Tenant A could not call `next_opps_invoice_number` with Tenant B's tenant ID.
 - Passed: sequence rows are independent: Joint X 2026 remains at `6`; Tenant A and Tenant B are each at `1`.
-- Needs follow-up: the public tracker deliberately hard-codes the Joint X tenant until a tenant/host routing decision is made. It remains safe for Joint X, but QA tenant public tracking variants are not available through the current UI.
-- Needs manual follow-up: the current Tasks UI creates `ops_tasks`; no browser create path was found for the legacy `tasks` table.
-- Pending: cross-tenant mutation/parent-link probes, public tracking lookup variants, invoice sequence negative probe, X LAB bridge UI/RPC checks, and direct uploads URL limitation confirmation.
+- Passed: a direct legacy `tasks` RLS probe inserted a rollback-only Tenant A task; Tenant B received zero rows for list/read, update, and delete. The legacy table is tenant-isolated even though the current UI creates `ops_tasks`.
+- Blocked: the current public tracker deliberately hard-codes the Joint X tenant. It remains safe for Joint X, but Tenant A/B public tracking variants cannot be tested until tenant/host routing exists.
+- Blocked: the final live X LAB bridge-RPC mutation probe could not run because the local Supabase CLI session expired. Earlier production simulation already confirmed zero cross-tenant X LAB request reads; list/read/update/reply/status wrapper verification remains required after re-authentication.
+- Deferred: copied `uploads` public URLs may remain accessible even though folder and asset metadata is tenant-isolated. Private bucket and signed-URL hardening is Phase 2C.1 and was not changed here.
 
 ## Public Tracking
 
-- Test an order number, courier tracking number, and invoice number for each QA tenant.
-- Confirm the response contains exactly one matching order.
-- Confirm no task, project, finance, purchase, inventory, client asset, or sequence data is returned.
+- Passed: anonymous `get_public_order_tracking` returns one requested Joint X order, not an order list.
+- Passed: the public result does not include task, project, finance, purchase, inventory, asset, or sequence data.
+- Blocked: order-number, courier-number, and invoice-number variants for Tenant A/B are intentionally unavailable until tenant/host routing determines the tenant before lookup.
 
 ## Reporting And Invoice Checks
 
-- `income`, `expenses`, and `v_founder_dependency_score` show only the signed-in tenant's rows/aggregate.
-- Joint X invoices remain unchanged and the next Joint X invoice continues after `OPPS-INV-2026-0006`.
-- Tenant A and Tenant B can independently generate the same formatted number when their counters begin at the same value.
-- Tenant A cannot call `next_opps_invoice_number` with Tenant B's tenant ID.
+- Passed: `income` returned only the signed-in tenant's row through the security-invoker view; no cross-tenant expense rows were visible.
+- Needs follow-up: direct aggregate verification for `expenses` and `v_founder_dependency_score` remains outstanding.
+- Passed: Joint X invoices remain unchanged and its 2026 sequence remains at `6` after `OPPS-INV-2026-0006`.
+- Passed: Tenant A and Tenant B each own an independent 2026 sequence at `1`.
+- Passed: Tenant A cannot call `next_opps_invoice_number` with Tenant B's tenant ID.
 
 ## Known File Limitation
 
@@ -114,9 +116,19 @@ where slug in ('tenant-a-qa', 'tenant-b-qa');
 
 If deletion is blocked, tenant-owned QA records remain. Remove those records first; do not use cascading deletes against production data.
 
+## Closure Decision
+
+**Conditional go for the next engineering phase; no-go for real client onboarding yet.**
+
+- Passed: two disposable tenants can coexist with read isolation, mutation denial, parent-link protection, tenant-aware invoice sequences, reporting row isolation, and file metadata isolation.
+- Fixed: the one discovered cross-tenant create defect was contained, rolled back, and corrected in commit `8200f84`; its regression probe now passes.
+- Blocked before onboarding: tenant/host routing is required for client-tenant public tracking.
+- Deferred before onboarding: Phase 2C.1 must make uploads private and issue signed URLs.
+- Needs follow-up: complete the live X LAB bridge RPC mutation probe after Supabase CLI re-authentication; verify the remaining aggregate views and the niche order-support/inventory link variants.
+
 ## Current Automated Evidence
 
-- Passed: temporary two-tenant production simulation showed zero Joint X clients, orders, invoices, and X LAB requests to a member assigned only to a second tenant.
-- Passed: anonymous tracking returns one requested order through `get_public_order_tracking`.
-- Blocked: no `tenant-a-qa` / `tenant-b-qa` tenants or disposable Auth users existed in production when this drill was started on 2026-06-21.
-- Pending manual browser verification: each matrix row above, report views, invoice continuity, uploads URL limitation, and real UI create/update/delete flows.
+- Passed: QA tenants, Auth users, and tenant-only memberships exist in production for this controlled drill.
+- Passed: temporary two-tenant production simulations showed zero cross-tenant clients, orders, invoices, transactions, projects, tasks, assets, purchasing, finance records, and X LAB request reads.
+- Passed: anonymous Joint X tracking returns one requested order through `get_public_order_tracking`.
+- Blocked/deferred items are listed in the closure decision above; no unrecorded pending QA work remains.
