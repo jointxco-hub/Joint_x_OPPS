@@ -44,7 +44,7 @@ create table public.tenant_domains (
   verified_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (hostname)
+  unique (hostname, surface)
 );
 
 create unique index tenant_domains_one_primary_per_surface
@@ -55,6 +55,7 @@ create unique index tenant_domains_one_primary_per_surface
 The production migration will also:
 
 - normalize and validate `hostname` in a trigger: lowercase, no scheme, no path, no port, no wildcard, and no trailing dot;
+- allow one hostname to expose several approved surfaces, but reject any attempt to map that hostname to different tenants;
 - seed only verified active Joint X rows for `ops.jointx.co.za` and `xlab.jointx.co.za` with the appropriate surfaces;
 - enable RLS; allow app admins to manage mappings while regular members cannot enumerate domains;
 - expose a minimal `resolve_tenant_host(p_hostname, p_surface)` RPC for public routing, returning only active mappings and safe display configuration;
