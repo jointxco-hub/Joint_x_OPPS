@@ -67,7 +67,7 @@ const FileManager = lazy(() => import('./pages/FileManager'));
 const Home = lazy(() => import('./pages/Home'));
 const Inventory = lazy(() => import('./pages/Inventory'));
 const Invoices = lazy(() => import('./pages/Invoices'));
-const MetaWhatsAppInbox = lazy(() => import('./pages/MetaWhatsAppInbox'));
+const MetaWhatsAppInbox = lazy(() => import('./pages/MetaWhatsAppInboxV2'));
 const NotesHub = lazy(() => import('./pages/NotesHub'));
 const OnboardingManagement = lazy(() => import('./pages/OnboardingManagement'));
 const Operations = lazy(() => import('./pages/Operations'));
