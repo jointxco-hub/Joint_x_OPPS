@@ -102,4 +102,5 @@ If deletion is blocked, tenant-owned QA records remain. Remove those records fir
 
 - Passed: temporary two-tenant production simulation showed zero Joint X clients, orders, invoices, and X LAB requests to a member assigned only to a second tenant.
 - Passed: anonymous tracking returns one requested order through `get_public_order_tracking`.
+- Blocked: no `tenant-a-qa` / `tenant-b-qa` tenants or disposable Auth users existed in production when this drill was started on 2026-06-21.
 - Pending manual browser verification: each matrix row above, report views, invoice continuity, uploads URL limitation, and real UI create/update/delete flows.
