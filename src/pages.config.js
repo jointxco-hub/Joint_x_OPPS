@@ -67,6 +67,7 @@ const FileManager = lazy(() => import('./pages/FileManager'));
 const Home = lazy(() => import('./pages/Home'));
 const Inventory = lazy(() => import('./pages/Inventory'));
 const Invoices = lazy(() => import('./pages/Invoices'));
+const MetaWhatsAppInbox = lazy(() => import('./pages/MetaWhatsAppInbox'));
 const NotesHub = lazy(() => import('./pages/NotesHub'));
 const OnboardingManagement = lazy(() => import('./pages/OnboardingManagement'));
 const Operations = lazy(() => import('./pages/Operations'));
@@ -111,6 +112,7 @@ export const PAGES = {
     "Home": Home,
     "Inventory": Inventory,
     "Invoices": Invoices,
+    "MetaWhatsAppInbox": MetaWhatsAppInbox,
     "NotesHub": NotesHub,
     "OnboardingManagement": OnboardingManagement,
     "Operations": Operations,

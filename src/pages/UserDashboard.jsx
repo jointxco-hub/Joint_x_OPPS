@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -102,6 +102,26 @@ export default function UserDashboard() {
       }),
   });
 
+  const { data: whatsappConversations = [] } = useQuery({
+    queryKey: ["my-whatsapp-hub"],
+    enabled: !!supabase,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("opps_conversations")
+        .select(`
+          id, unread_count, last_message_at, last_message_preview,
+          opps_messages (
+            id, created_at, direction,
+            opps_message_intelligence ( intent, risk_level, suggested_department )
+          )
+        `)
+        .eq("channel", "whatsapp")
+        .order("last_message_at", { ascending: false, nullsFirst: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
   // ── Ops tasks (primary task entity used across the app) ──────────────────
   const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
   const { data: opsTasks = [], isLoading: tasksLoading } = useQuery({
@@ -189,6 +209,25 @@ export default function UserDashboard() {
   const weekScore = myWeekOpsTasks.length > 0
     ? Math.round((weekDone / myWeekOpsTasks.length) * 100)
     : 0;
+
+  const whatsappWidgets = useMemo(() => {
+    const latestByConversation = whatsappConversations.map((conversation) => {
+      const latestMessage = [...(conversation.opps_messages || [])].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+      return {
+        ...conversation,
+        latestMessage,
+        intelligence: latestMessage?.opps_message_intelligence?.[0],
+      };
+    });
+
+    return {
+      actionNeeded: latestByConversation.filter((item) => Number(item.unread_count || 0) > 0).length,
+      design: latestByConversation.filter((item) => item.intelligence?.intent === "artwork_request").length,
+      production: latestByConversation.filter((item) => item.intelligence?.intent === "order_update").length,
+      finance: latestByConversation.filter((item) => item.intelligence?.intent === "invoice_request").length,
+      activity: latestByConversation.filter((item) => item.intelligence?.intent === "team_log").length,
+    };
+  }, [whatsappConversations]);
   // ── Guards ────────────────────────────────────────────────────────────────
   if (userLoading) return (
     <div className="min-h-screen bg-background flex items-center justify-center">
@@ -379,6 +418,24 @@ export default function UserDashboard() {
         {/* 7 — My Tags Inbox */}
         <MyTagsInbox tags={myTags} userEmail={userEmail} />
 
+        {/* 7b — WhatsApp / Meta Inbox shortcuts */}
+        <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">WhatsApp items needing action</h2>
+              <p className="text-xs text-muted-foreground">Quick links into the Phase 1 inbox</p>
+            </div>
+            <Link to="/MetaWhatsAppInbox" className="text-xs text-primary hover:underline">Open inbox</Link>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <WhatsAppHubCard label="WhatsApp items needing action" value={whatsappWidgets.actionNeeded} to="/MetaWhatsAppInbox?unread=1" />
+            <WhatsAppHubCard label="Design requests detected" value={whatsappWidgets.design} to="/MetaWhatsAppInbox?intent=artwork_request" />
+            <WhatsAppHubCard label="Production/order update requests" value={whatsappWidgets.production} to="/MetaWhatsAppInbox?intent=order_update" />
+            <WhatsAppHubCard label="Finance/invoice/payment queries" value={whatsappWidgets.finance} to="/MetaWhatsAppInbox?intent=invoice_request" />
+            <WhatsAppHubCard label="Daily activity signals" value={whatsappWidgets.activity} to="/MetaWhatsAppInbox?intent=team_log" />
+          </div>
+        </div>
+
         {/* 8 — KPI grid */}
         {kpis.length > 0 && (
           <div className="mb-6">
@@ -446,5 +503,18 @@ export default function UserDashboard() {
 
       </div>
     </div>
+  );
+}
+
+/**
+ * @param {{ label: string; value: string | number; to: string }} props
+ */
+function WhatsAppHubCard({ label, value, to }) {
+  return (
+    <Link to={to} className="rounded-2xl border border-border bg-secondary/20 p-4 transition-colors hover:border-primary/30 hover:bg-primary/5">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
+      <p className="mt-1 text-xs text-primary">Open filtered inbox</p>
+    </Link>
   );
 }

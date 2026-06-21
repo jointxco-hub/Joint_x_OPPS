@@ -28,6 +28,7 @@ const moreNav = [
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
   { name: "Clients", page: "Clients", icon: Building2 },
   { name: "Projects", page: "Projects", icon: FolderOpen },
+  { name: "WhatsApp Inbox", page: "MetaWhatsAppInbox", icon: Inbox, adminOnly: true },
   { name: "Client Requests", page: "ClientRequests", icon: Inbox },
   { name: "Goals", page: "Goals", icon: Flag },
   { name: "My Expenses", page: "TeamExpenses", icon: CreditCard },
