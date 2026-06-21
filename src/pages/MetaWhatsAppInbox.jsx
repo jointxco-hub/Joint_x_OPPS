@@ -10,14 +10,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { format, isToday } from "date-fns";
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   BadgeCheck,
+  ChevronDown,
+  ChevronUp,
   Filter,
   MessageCircle,
   PackageSearch,
   PanelLeftOpen,
   Users,
   Waves,
+  X,
 } from "lucide-react";
 
 const DEFAULT_FILTERS = {
@@ -25,6 +29,7 @@ const DEFAULT_FILTERS = {
   risk: "all",
   department: "all",
   intent: "all",
+  status: "all",
 };
 
 const INTENT_LABELS = {
@@ -32,10 +37,13 @@ const INTENT_LABELS = {
   order_update: "Order update",
   artwork_request: "Artwork request",
   invoice_request: "Invoice request",
+  payment_query: "Payment query",
   delivery_request: "Delivery request",
   complaint: "Complaint",
   general_support: "General support",
   team_log: "Team log",
+  production_update: "Production update",
+  design_update: "Design update",
   unknown: "Unknown",
 };
 
@@ -59,6 +67,10 @@ export default function MetaWhatsAppInbox() {
   const [orderDraft, setOrderDraft] = useState("");
   const [clientDraft, setClientDraft] = useState("");
   const [internalNoteDraft, setInternalNoteDraft] = useState("");
+  const [mobileView, setMobileView] = useState("list");
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
+  const [showAllSignals, setShowAllSignals] = useState(false);
+  const [showActions, setShowActions] = useState(false);
 
   useEffect(() => {
     setFilters({
@@ -66,6 +78,7 @@ export default function MetaWhatsAppInbox() {
       risk: searchParams.get("risk") || "all",
       department: searchParams.get("department") || "all",
       intent: searchParams.get("intent") || "all",
+      status: searchParams.get("status") || "all",
     });
     setSearch(searchParams.get("q") || "");
     setSelectedConversationId(searchParams.get("conversation"));
@@ -78,7 +91,7 @@ export default function MetaWhatsAppInbox() {
       const { data, error } = await supabase
         .from("opps_conversations")
         .select(`
-          id, tenant_id, channel, wa_id, phone, display_name, linked_client_id, linked_order_id,
+          id, tenant_id, channel, wa_id, phone, display_name, linked_client_id, linked_order_id, assigned_department,
           last_message_at, last_message_preview, unread_count, status,
           opps_messages (
             id, direction, message_type, body, received_at, created_at,
@@ -181,8 +194,9 @@ export default function MetaWhatsAppInbox() {
       if (search && !haystack.includes(search.toLowerCase())) return false;
       if (filters.unread && Number(conversation.unread_count || 0) <= 0) return false;
       if (filters.risk !== "all" && (intelligence?.risk_level || "normal") !== filters.risk) return false;
-      if (filters.department !== "all" && (intelligence?.suggested_department || "support") !== filters.department) return false;
+      if (filters.department !== "all" && (conversation.assigned_department || intelligence?.suggested_department || "support") !== filters.department) return false;
       if (filters.intent !== "all" && (intelligence?.intent || "unknown") !== filters.intent) return false;
+      if (filters.status !== "all" && (conversation.status || "open") !== filters.status) return false;
       return true;
     });
   }, [conversations, filters, search]);
@@ -279,7 +293,15 @@ export default function MetaWhatsAppInbox() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(26,122,94,0.14),_transparent_35%),linear-gradient(180deg,#f8faf8_0%,#ffffff_100%)]">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-5 px-4 py-5 md:px-6 lg:px-8">
-        <header className="overflow-hidden rounded-[2rem] border border-emerald-100 bg-slate-950 text-white shadow-[0_30px_80px_rgba(15,23,42,0.25)]">
+        <header className="md:hidden">
+          <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white shadow-lg">
+            <div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-200">Meta WhatsApp</p><h1 className="text-lg font-bold">Inbox</h1></div><Waves className="h-5 w-5 text-emerald-300" /></div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center"><CompactMetric label="Unread" value={unreadConversations} /><CompactMetric label="High risk" value={highRiskMessages} /><CompactMetric label="Inbound" value={todayInboundCount} /></div>
+            <button type="button" onClick={() => setShowAllSignals((value) => !value)} className="mt-3 flex w-full items-center justify-between text-xs font-medium text-slate-300">Today&apos;s signals {showAllSignals ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+            {showAllSignals && <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-200"><span>Support {inboxStats.support}</span><span>Design {inboxStats.design}</span><span>Production {inboxStats.production}</span><span>Finance {inboxStats.finance}</span><span>Delivery {inboxStats.delivery}</span><span>Team logs {teamLogCount}</span></div>}
+          </div>
+        </header>
+        <header className="hidden overflow-hidden rounded-[2rem] border border-emerald-100 bg-slate-950 text-white shadow-[0_30px_80px_rgba(15,23,42,0.25)] md:block">
           <div className="grid gap-6 p-6 lg:grid-cols-[1.3fr_0.7fr] lg:p-8">
             <div>
               <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200">
@@ -304,7 +326,7 @@ export default function MetaWhatsAppInbox() {
         </header>
 
         <section className="grid gap-4 xl:grid-cols-[1fr_0.95fr_0.7fr]">
-          <div className="rounded-[1.75rem] border border-border bg-card/95 p-4 shadow-sm backdrop-blur xl:col-span-1">
+          <div className={`rounded-[1.75rem] border border-border bg-card/95 p-3 shadow-sm backdrop-blur md:p-4 xl:col-span-1 ${mobileView === "conversation" ? "hidden md:block" : ""}`}>
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Conversation list</h2>
@@ -313,7 +335,8 @@ export default function MetaWhatsAppInbox() {
               <Badge variant="secondary" className="rounded-full">{filteredConversations.length}</Badge>
             </div>
             <div className="space-y-3">
-              <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
+              <MobileFilterBar filters={filters} setFilters={setFilters} updateQuery={updateQuery} search={search} setSearch={setSearch} selectedConversationId={selectedConversationId} showMore={showMoreFilters} setShowMore={setShowMoreFilters} />
+              <div className="hidden gap-2 md:grid md:grid-cols-2 xl:grid-cols-1">
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, phone, preview" className="rounded-2xl" />
                 <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-2">
                   <TogglePill active={filters.unread} onClick={() => {
@@ -366,6 +389,7 @@ export default function MetaWhatsAppInbox() {
                       key={conversation.id}
                       onClick={() => {
                         setSelectedConversationId(conversation.id);
+                        setMobileView("conversation");
                         updateQuery({ unread: filters.unread, q: search, risk: filters.risk, department: filters.department, intent: filters.intent, conversation: conversation.id });
                       }}
                       className={`w-full rounded-2xl border p-4 text-left transition-all ${isActive ? "border-emerald-200 bg-emerald-50 shadow-sm" : "border-border bg-background hover:border-emerald-100 hover:bg-secondary/40"}`}
@@ -398,33 +422,37 @@ export default function MetaWhatsAppInbox() {
             </div>
           </div>
 
-          <div className="rounded-[1.75rem] border border-border bg-card/95 p-4 shadow-sm backdrop-blur xl:col-span-1">
+          <div className={`rounded-[1.75rem] border border-border bg-card/95 p-3 shadow-sm backdrop-blur md:p-4 xl:col-span-1 ${mobileView === "list" ? "hidden md:block" : ""}`}>
             {selectedConversation ? (
               <div className="flex h-full flex-col gap-4">
                 <div className="flex items-start justify-between gap-3 border-b border-border pb-4">
-                  <div>
+                  <div className="flex items-start gap-2">
+                    <Button variant="ghost" size="icon" onClick={() => setMobileView("list")} className="-ml-2 mt-0.5 rounded-xl md:hidden" aria-label="Back to chats"><ArrowLeft className="h-4 w-4" /></Button>
+                    <div>
                     <h2 className="text-xl font-semibold text-foreground">{selectedConversation.display_name || "Conversation"}</h2>
                     <p className="text-sm text-muted-foreground">{selectedConversation.phone || selectedConversation.wa_id || "No phone saved"}</p>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-2 text-right">
+                    <Button variant="outline" onClick={() => setShowActions(true)} className="rounded-xl md:hidden">Actions</Button>
                     <Badge variant="outline" className="rounded-full">{selectedConversation.status}</Badge>
                     <span className="text-xs text-muted-foreground">{selectedConversation.last_message_at ? format(new Date(selectedConversation.last_message_at), "d MMM yyyy, HH:mm") : "No recent message"}</span>
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="hidden gap-3 md:grid md:grid-cols-3">
                   <MiniStat label="Linked order" value={selectedConversation.linked_order_id || "None"} />
                   <MiniStat label="Linked client" value={selectedConversation.linked_client_id || "None"} />
                   <MiniStat label="Unread" value={selectedConversation.unread_count || 0} />
                 </div>
 
-                <div className="flex flex-wrap gap-2">
+                <div className="hidden flex-wrap gap-2 md:flex">
                   <Button onClick={markConversationRead} className="rounded-2xl">Mark as read</Button>
                   <Button variant={statusDraft === "open" ? "default" : "outline"} onClick={() => setConversationStatus("open")} className="rounded-2xl">Mark open</Button>
                   <Button variant={statusDraft === "closed" ? "default" : "outline"} onClick={() => setConversationStatus("closed")} className="rounded-2xl">Mark closed</Button>
                 </div>
 
-                <div className="grid gap-3 rounded-3xl border border-border bg-secondary/20 p-4 md:grid-cols-2">
+                <div className="hidden gap-3 rounded-3xl border border-border bg-secondary/20 p-4 md:grid md:grid-cols-2">
                   <div className="space-y-2">
                     <p className="text-sm font-semibold text-foreground">Manual department</p>
                     <Select value={departmentDraft} onValueChange={setDepartmentDraft}>
@@ -455,7 +483,7 @@ export default function MetaWhatsAppInbox() {
                   </div>
                 </div>
 
-                <div className="space-y-3 rounded-3xl border border-border bg-secondary/20 p-4">
+                <div className="space-y-3 rounded-3xl border border-border bg-secondary/20 p-3 md:p-4">
                   <p className="text-sm font-semibold text-foreground">Message history</p>
                   <div className="max-h-[460px] space-y-3 overflow-y-auto pr-1">
                     {selectedConversationMessages.map((message) => (
@@ -477,7 +505,7 @@ export default function MetaWhatsAppInbox() {
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-border bg-background p-4">
+                <div className="hidden rounded-3xl border border-border bg-background p-4 md:block">
                   <p className="text-sm font-semibold text-foreground">Internal notes</p>
                   <div className="mt-3 space-y-2">
                     <Textarea value={internalNoteDraft} onChange={(event) => setInternalNoteDraft(event.target.value)} placeholder="Add an internal note for Ops, CIC, or the next shift..." className="min-h-[100px] rounded-2xl" />
@@ -496,7 +524,7 @@ export default function MetaWhatsAppInbox() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-1">
+                <div className="hidden gap-3 md:grid md:grid-cols-2 lg:grid-cols-1">
                   <CicCard label="Support messages today" value={inboxStats.support} />
                   <CicCard label="Design signals today" value={inboxStats.design} />
                   <CicCard label="Production signals today" value={inboxStats.production} />
@@ -511,7 +539,7 @@ export default function MetaWhatsAppInbox() {
             )}
           </div>
 
-          <div className="rounded-[1.75rem] border border-border bg-card/95 p-4 shadow-sm backdrop-blur xl:col-span-1">
+          <div className="hidden rounded-[1.75rem] border border-border bg-card/95 p-4 shadow-sm backdrop-blur md:block xl:col-span-1">
             <div className="space-y-4">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Intelligence summary</h2>
@@ -539,6 +567,17 @@ export default function MetaWhatsAppInbox() {
           </div>
         </section>
 
+        {showActions && selectedConversation && (
+          <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-3 md:hidden" role="dialog" aria-modal="true" aria-label="Conversation actions">
+            <div className="max-h-[88vh] w-full overflow-y-auto rounded-[1.75rem] bg-background p-4 shadow-2xl">
+              <div className="mb-4 flex items-center justify-between"><div><p className="text-base font-bold">Conversation actions</p><p className="text-xs text-muted-foreground">Internal OPPS coordination only</p></div><Button variant="ghost" size="icon" className="rounded-full" onClick={() => setShowActions(false)}><X className="h-5 w-5" /></Button></div>
+              <div className="grid grid-cols-2 gap-2"><Button onClick={markConversationRead} className="rounded-xl">Mark as read</Button><Button variant="outline" onClick={() => setConversationStatus(statusDraft === "open" ? "closed" : "open")} className="rounded-xl">{statusDraft === "open" ? "Close" : "Reopen"}</Button></div>
+              <div className="mt-4 space-y-2 rounded-2xl bg-secondary/35 p-3"><label className="text-sm font-semibold">Assign department</label><Select value={departmentDraft} onValueChange={setDepartmentDraft}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(DEPARTMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button onClick={saveDepartment} className="w-full rounded-xl">Save assignment</Button></div>
+              <details className="mt-3 rounded-2xl border border-border p-3"><summary className="cursor-pointer text-sm font-semibold">More actions: links and internal note</summary><div className="mt-3 space-y-3"><Select value={orderDraft || "none"} onValueChange={(value) => setOrderDraft(value === "none" ? "" : value)}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Link order" /></SelectTrigger><SelectContent><SelectItem value="none">No order linked</SelectItem>{orders.slice(0, 100).map((order) => <SelectItem key={order.id} value={order.id}>{formatOrderLabel(order)}</SelectItem>)}</SelectContent></Select><Select value={clientDraft || "none"} onValueChange={(value) => setClientDraft(value === "none" ? "" : value)}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Link client" /></SelectTrigger><SelectContent><SelectItem value="none">No client linked</SelectItem>{clients.slice(0, 100).map((client) => <SelectItem key={client.id} value={client.id}>{formatClientLabel(client)}</SelectItem>)}</SelectContent></Select><Button variant="outline" onClick={saveLinks} className="w-full rounded-xl">Save links</Button><Textarea value={internalNoteDraft} onChange={(event) => setInternalNoteDraft(event.target.value)} placeholder="Add internal note..." className="min-h-[84px] rounded-xl" /><Button onClick={addInternalNote} className="w-full rounded-xl">Add internal note</Button></div></details>
+            </div>
+          </div>
+        )}
+
         <footer className="rounded-[1.5rem] border border-dashed border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
           Phase 1 only captures incoming Meta WhatsApp events. No auto reply, outbound send, discount, refund, delivery promise, or payment confirmation behavior exists here.
         </footer>
@@ -557,6 +596,20 @@ function Metric({ label, value, icon: Icon, tone = "emerald" }) {
       <p className="mt-2 text-2xl font-black">{value}</p>
     </div>
   );
+}
+
+function CompactMetric({ label, value }) {
+  return <div className="rounded-xl bg-white/10 px-2 py-2"><p className="text-lg font-bold leading-none">{value}</p><p className="mt-1 text-[10px] uppercase tracking-wide text-slate-300">{label}</p></div>;
+}
+
+function MobileFilterBar({ filters, setFilters, updateQuery, search, setSearch, selectedConversationId, showMore, setShowMore }) {
+  const setFilter = (patch) => {
+    const next = { ...filters, ...patch };
+    setFilters(next);
+    updateQuery({ unread: next.unread, risk: next.risk, department: next.department, intent: next.intent, status: next.status, q: search, conversation: selectedConversationId });
+  };
+  const chip = (label, active, onClick) => <button type="button" onClick={onClick} className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${active ? "bg-emerald-600 text-white" : "bg-secondary text-muted-foreground"}`}>{label}</button>;
+  return <div className="space-y-2 md:hidden"><Input value={search} onChange={(event) => { setSearch(event.target.value); updateQuery({ q: event.target.value, unread: filters.unread, risk: filters.risk, department: filters.department, intent: filters.intent, status: filters.status, conversation: selectedConversationId }); }} placeholder="Search chats" className="h-9 rounded-xl" /><div className="flex gap-2 overflow-x-auto pb-1">{chip("All", !filters.unread && filters.risk === "all" && filters.department === "all" && filters.intent === "all" && filters.status === "all", () => setFilter({ unread: false, risk: "all", department: "all", intent: "all", status: "all" }))}{chip("Unread", filters.unread, () => setFilter({ unread: !filters.unread }))}{chip("High Risk", filters.risk === "high", () => setFilter({ risk: filters.risk === "high" ? "all" : "high" }))}{chip("Mine / Role", filters.department !== "all", () => setShowMore(!showMore))}{chip("More", showMore, () => setShowMore(!showMore))}</div>{showMore && <div className="flex flex-wrap gap-2 rounded-xl border border-border p-2">{chip("Support", filters.department === "support", () => setFilter({ department: filters.department === "support" ? "all" : "support" }))}{chip("Quotes", filters.intent === "quote_request", () => setFilter({ intent: filters.intent === "quote_request" ? "all" : "quote_request" }))}{["design", "production", "finance", "delivery"].map((value) => chip(DEPARTMENT_LABELS[value], filters.department === value, () => setFilter({ department: filters.department === value ? "all" : value })))}{chip("Team Logs", filters.intent === "team_log", () => setFilter({ intent: filters.intent === "team_log" ? "all" : "team_log" }))}{chip("Closed", filters.status === "closed", () => setFilter({ status: filters.status === "closed" ? "all" : "closed" }))}</div>}</div>;
 }
 
 function SummaryCard({ label, value, icon: Icon }) {
