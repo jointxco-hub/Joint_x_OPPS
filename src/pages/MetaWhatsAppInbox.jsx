@@ -56,6 +56,17 @@ const DEPARTMENT_LABELS = {
   admin: "Admin",
 };
 
+const ROLE_VIEW_LABELS = {
+  all: "All conversations",
+  cic: "CIC / Admin",
+  support: "Support",
+  design: "Design",
+  production: "Production",
+  finance: "Finance",
+  delivery: "Delivery",
+  team_logs: "Team Logs",
+};
+
 export default function MetaWhatsAppInbox() {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
@@ -71,6 +82,7 @@ export default function MetaWhatsAppInbox() {
   const [showMoreFilters, setShowMoreFilters] = useState(false);
   const [showAllSignals, setShowAllSignals] = useState(false);
   const [showActions, setShowActions] = useState(false);
+  const [roleView, setRoleView] = useState("all");
 
   useEffect(() => {
     setFilters({
@@ -80,6 +92,7 @@ export default function MetaWhatsAppInbox() {
       intent: searchParams.get("intent") || "all",
       status: searchParams.get("status") || "all",
     });
+    setRoleView(searchParams.get("role") || "all");
     setSearch(searchParams.get("q") || "");
     setSelectedConversationId(searchParams.get("conversation"));
   }, [searchParams]);
@@ -197,9 +210,10 @@ export default function MetaWhatsAppInbox() {
       if (filters.department !== "all" && (conversation.assigned_department || intelligence?.suggested_department || "support") !== filters.department) return false;
       if (filters.intent !== "all" && (intelligence?.intent || "unknown") !== filters.intent) return false;
       if (filters.status !== "all" && (conversation.status || "open") !== filters.status) return false;
+      if (!matchesRoleView(conversation, roleView)) return false;
       return true;
     });
-  }, [conversations, filters, search]);
+  }, [conversations, filters, search, roleView]);
 
   const inboxStats = useMemo(() => summarizeToday(conversations), [conversations]);
   const unreadConversations = conversations.filter((item) => Number(item.unread_count || 0) > 0).length;
@@ -207,6 +221,7 @@ export default function MetaWhatsAppInbox() {
   const highRiskMessages = inboxStats.highRisk;
   const requestCounts = inboxStats.intentCounts;
   const teamLogCount = inboxStats.teamLog;
+  const roleWorkload = useMemo(() => summarizeRoleWorkload(conversations), [conversations]);
   const selectedLatestMessage = selectedConversationMessages[selectedConversationMessages.length - 1];
   const selectedIntelligence = selectedLatestMessage?.opps_message_intelligence?.[0];
   const selectedConversationNotes = conversationNotesQuery.data ?? [];
@@ -296,7 +311,7 @@ export default function MetaWhatsAppInbox() {
         <header className="md:hidden">
           <div className="rounded-2xl bg-slate-950 px-4 py-3 text-white shadow-lg">
             <div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-200">Meta WhatsApp</p><h1 className="text-lg font-bold">Inbox</h1></div><Waves className="h-5 w-5 text-emerald-300" /></div>
-            <div className="mt-3 grid grid-cols-3 gap-2 text-center"><CompactMetric label="Unread" value={unreadConversations} /><CompactMetric label="High risk" value={highRiskMessages} /><CompactMetric label="Inbound" value={todayInboundCount} /></div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center"><CompactMetric label="Unread" value={unreadConversations} /><CompactMetric label="High risk" value={highRiskMessages} /><CompactMetric label="My role / open" value={roleView === "all" || roleView === "cic" ? roleWorkload.open : roleWorkload[roleView] || 0} /></div>
             <button type="button" onClick={() => setShowAllSignals((value) => !value)} className="mt-3 flex w-full items-center justify-between text-xs font-medium text-slate-300">Today&apos;s signals {showAllSignals ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
             {showAllSignals && <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-200"><span>Support {inboxStats.support}</span><span>Design {inboxStats.design}</span><span>Production {inboxStats.production}</span><span>Finance {inboxStats.finance}</span><span>Delivery {inboxStats.delivery}</span><span>Team logs {teamLogCount}</span></div>}
           </div>
@@ -311,6 +326,7 @@ export default function MetaWhatsAppInbox() {
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 md:text-base">
                 Verify Meta webhooks, store inbound WhatsApp events, and surface them for inbox, My Hub, and CIC triage. Phase 1 does not send messages or automate replies.
               </p>
+              <div className="mt-4 max-w-sm"><label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-100">Role view</label><Select value={roleView} onValueChange={(value) => { setRoleView(value); updateQuery({ role: value }); }}><SelectTrigger className="rounded-xl border-white/20 bg-white/10 text-white"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(ROLE_VIEW_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Metric label="Inbound today" value={todayInboundCount} icon={MessageCircle} />
                 <Metric label="Unread conversations" value={unreadConversations} icon={BadgeCheck} />
@@ -325,6 +341,10 @@ export default function MetaWhatsAppInbox() {
           </div>
         </header>
 
+        <div className="hidden grid-cols-7 gap-2 rounded-2xl border border-border bg-card p-3 md:grid">
+          <WorkloadCard label="Support open" value={roleWorkload.support} /><WorkloadCard label="Design open" value={roleWorkload.design} /><WorkloadCard label="Production open" value={roleWorkload.production} /><WorkloadCard label="Finance open" value={roleWorkload.finance} /><WorkloadCard label="Delivery open" value={roleWorkload.delivery} /><WorkloadCard label="High-risk open" value={roleWorkload.highRisk} tone="amber" /><WorkloadCard label="Team logs today" value={teamLogCount} />
+        </div>
+
         <section className="grid gap-4 xl:grid-cols-[1fr_0.95fr_0.7fr]">
           <div className={`rounded-[1.75rem] border border-border bg-card/95 p-3 shadow-sm backdrop-blur md:p-4 xl:col-span-1 ${mobileView === "conversation" ? "hidden md:block" : ""}`}>
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -335,7 +355,7 @@ export default function MetaWhatsAppInbox() {
               <Badge variant="secondary" className="rounded-full">{filteredConversations.length}</Badge>
             </div>
             <div className="space-y-3">
-              <MobileFilterBar filters={filters} setFilters={setFilters} updateQuery={updateQuery} search={search} setSearch={setSearch} selectedConversationId={selectedConversationId} showMore={showMoreFilters} setShowMore={setShowMoreFilters} />
+              <MobileFilterBar filters={filters} setFilters={setFilters} updateQuery={updateQuery} search={search} setSearch={setSearch} selectedConversationId={selectedConversationId} showMore={showMoreFilters} setShowMore={setShowMoreFilters} roleView={roleView} setRoleView={setRoleView} />
               <div className="hidden gap-2 md:grid md:grid-cols-2 xl:grid-cols-1">
                 <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, phone, preview" className="rounded-2xl" />
                 <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-2">
@@ -384,6 +404,7 @@ export default function MetaWhatsAppInbox() {
                   const intelligence = getLatestIntelligence(conversation);
                   const isActive = selectedConversation?.id === conversation.id;
                   const displayDepartment = conversation.assigned_department || intelligence?.suggested_department || "support";
+                  const actionNeeded = needsAction(conversation);
                   return (
                     <button
                       key={conversation.id}
@@ -406,9 +427,10 @@ export default function MetaWhatsAppInbox() {
                           <p className="truncate text-xs text-muted-foreground">{conversation.phone || conversation.wa_id || "No phone saved"}</p>
                           <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{conversation.last_message_preview || latestMessage?.body || "No message preview"}</p>
                           <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-wide">
+                            {actionNeeded && <Badge className="rounded-full bg-amber-500 text-amber-950">Needs action</Badge>}
                             <Badge variant="outline" className="rounded-full">{INTENT_LABELS[intelligence?.intent || "unknown"]}</Badge>
                             <Badge variant={intelligence?.risk_level === "high" ? "destructive" : "secondary"} className="rounded-full">{intelligence?.risk_level || "normal"} risk</Badge>
-                            <Badge variant="outline" className="rounded-full">{conversation.assigned_department ? `Assigned ${DEPARTMENT_LABELS[displayDepartment] || displayDepartment}` : DEPARTMENT_LABELS[displayDepartment] || displayDepartment}</Badge>
+                            <Badge variant="outline" className="rounded-full">{conversation.assigned_department ? `Assigned ${DEPARTMENT_LABELS[displayDepartment] || displayDepartment}` : `Suggested ${DEPARTMENT_LABELS[displayDepartment] || displayDepartment}`}</Badge>
                             {conversation.linked_order_id && <Badge variant="outline" className="rounded-full">Order linked</Badge>}
                           </div>
                         </div>
@@ -445,6 +467,8 @@ export default function MetaWhatsAppInbox() {
                   <MiniStat label="Linked client" value={selectedConversation.linked_client_id || "None"} />
                   <MiniStat label="Unread" value={selectedConversation.unread_count || 0} />
                 </div>
+
+                <div className="flex flex-wrap gap-2 text-xs"><Badge variant="outline" className="rounded-full">Assigned: {DEPARTMENT_LABELS[selectedConversation.assigned_department] || "Unassigned"}</Badge><Badge variant="secondary" className="rounded-full">Suggested: {DEPARTMENT_LABELS[selectedIntelligence?.suggested_department || "support"] || "Support"}</Badge>{needsAction(selectedConversation) && <Badge className="rounded-full bg-amber-500 text-amber-950">Needs action</Badge>}</div>
 
                 <div className="hidden flex-wrap gap-2 md:flex">
                   <Button onClick={markConversationRead} className="rounded-2xl">Mark as read</Button>
@@ -487,7 +511,7 @@ export default function MetaWhatsAppInbox() {
                   <p className="text-sm font-semibold text-foreground">Message history</p>
                   <div className="max-h-[460px] space-y-3 overflow-y-auto pr-1">
                     {selectedConversationMessages.map((message) => (
-                      <div key={message.id} className={`rounded-2xl border p-3 ${message.direction === "inbound" ? "border-emerald-100 bg-white" : "border-border bg-slate-50"}`}>
+                      <div key={message.id} className={`rounded-2xl border p-3 ${message.opps_message_intelligence?.[0]?.intent === "team_log" ? "border-slate-300 bg-slate-100" : message.direction === "inbound" ? "border-emerald-100 bg-white" : "border-border bg-slate-50"}`}>
                         <div className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
                           <span>{message.direction}</span>
                           <span>{message.created_at ? format(new Date(message.created_at), "d MMM, HH:mm") : "Now"}</span>
@@ -495,7 +519,7 @@ export default function MetaWhatsAppInbox() {
                         <p className="mt-2 text-sm text-foreground">{message.body || message.message_type || "Status update"}</p>
                         {message.opps_message_intelligence?.[0] && (
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <Badge variant="outline" className="rounded-full">{message.opps_message_intelligence[0].intent || "unknown"}</Badge>
+                            <Badge variant="outline" className="rounded-full">{INTENT_LABELS[message.opps_message_intelligence[0].intent] || "Unknown"}</Badge>
                             <Badge variant={message.opps_message_intelligence[0].risk_level === "high" ? "destructive" : "secondary"} className="rounded-full">{message.opps_message_intelligence[0].risk_level} risk</Badge>
                           </div>
                         )}
@@ -573,6 +597,7 @@ export default function MetaWhatsAppInbox() {
               <div className="mb-4 flex items-center justify-between"><div><p className="text-base font-bold">Conversation actions</p><p className="text-xs text-muted-foreground">Internal OPPS coordination only</p></div><Button variant="ghost" size="icon" className="rounded-full" onClick={() => setShowActions(false)}><X className="h-5 w-5" /></Button></div>
               <div className="grid grid-cols-2 gap-2"><Button onClick={markConversationRead} className="rounded-xl">Mark as read</Button><Button variant="outline" onClick={() => setConversationStatus(statusDraft === "open" ? "closed" : "open")} className="rounded-xl">{statusDraft === "open" ? "Close" : "Reopen"}</Button></div>
               <div className="mt-4 space-y-2 rounded-2xl bg-secondary/35 p-3"><label className="text-sm font-semibold">Assign department</label><Select value={departmentDraft} onValueChange={setDepartmentDraft}><SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(DEPARTMENT_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button onClick={saveDepartment} className="w-full rounded-xl">Save assignment</Button></div>
+              <div className="mt-3 grid grid-cols-2 gap-2">{Object.entries(DEPARTMENT_LABELS).map(([value, label]) => <Button key={value} variant="outline" className="rounded-xl text-xs" onClick={() => { setDepartmentDraft(value); updateConversationMutation.mutate({ conversationId: selectedConversation.id, patch: { assigned_department: value } }); }}>{`Assign ${label}`}</Button>)}</div>
               <details className="mt-3 rounded-2xl border border-border p-3"><summary className="cursor-pointer text-sm font-semibold">More actions: links and internal note</summary><div className="mt-3 space-y-3"><Select value={orderDraft || "none"} onValueChange={(value) => setOrderDraft(value === "none" ? "" : value)}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Link order" /></SelectTrigger><SelectContent><SelectItem value="none">No order linked</SelectItem>{orders.slice(0, 100).map((order) => <SelectItem key={order.id} value={order.id}>{formatOrderLabel(order)}</SelectItem>)}</SelectContent></Select><Select value={clientDraft || "none"} onValueChange={(value) => setClientDraft(value === "none" ? "" : value)}><SelectTrigger className="rounded-xl"><SelectValue placeholder="Link client" /></SelectTrigger><SelectContent><SelectItem value="none">No client linked</SelectItem>{clients.slice(0, 100).map((client) => <SelectItem key={client.id} value={client.id}>{formatClientLabel(client)}</SelectItem>)}</SelectContent></Select><Button variant="outline" onClick={saveLinks} className="w-full rounded-xl">Save links</Button><Textarea value={internalNoteDraft} onChange={(event) => setInternalNoteDraft(event.target.value)} placeholder="Add internal note..." className="min-h-[84px] rounded-xl" /><Button onClick={addInternalNote} className="w-full rounded-xl">Add internal note</Button></div></details>
             </div>
           </div>
@@ -602,14 +627,15 @@ function CompactMetric({ label, value }) {
   return <div className="rounded-xl bg-white/10 px-2 py-2"><p className="text-lg font-bold leading-none">{value}</p><p className="mt-1 text-[10px] uppercase tracking-wide text-slate-300">{label}</p></div>;
 }
 
-function MobileFilterBar({ filters, setFilters, updateQuery, search, setSearch, selectedConversationId, showMore, setShowMore }) {
+function MobileFilterBar({ filters, setFilters, updateQuery, search, setSearch, selectedConversationId, showMore, setShowMore, roleView, setRoleView }) {
   const setFilter = (patch) => {
     const next = { ...filters, ...patch };
     setFilters(next);
     updateQuery({ unread: next.unread, risk: next.risk, department: next.department, intent: next.intent, status: next.status, q: search, conversation: selectedConversationId });
   };
   const chip = (label, active, onClick) => <button type="button" onClick={onClick} className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${active ? "bg-emerald-600 text-white" : "bg-secondary text-muted-foreground"}`}>{label}</button>;
-  return <div className="space-y-2 md:hidden"><Input value={search} onChange={(event) => { setSearch(event.target.value); updateQuery({ q: event.target.value, unread: filters.unread, risk: filters.risk, department: filters.department, intent: filters.intent, status: filters.status, conversation: selectedConversationId }); }} placeholder="Search chats" className="h-9 rounded-xl" /><div className="flex gap-2 overflow-x-auto pb-1">{chip("All", !filters.unread && filters.risk === "all" && filters.department === "all" && filters.intent === "all" && filters.status === "all", () => setFilter({ unread: false, risk: "all", department: "all", intent: "all", status: "all" }))}{chip("Unread", filters.unread, () => setFilter({ unread: !filters.unread }))}{chip("High Risk", filters.risk === "high", () => setFilter({ risk: filters.risk === "high" ? "all" : "high" }))}{chip("Mine / Role", filters.department !== "all", () => setShowMore(!showMore))}{chip("More", showMore, () => setShowMore(!showMore))}</div>{showMore && <div className="flex flex-wrap gap-2 rounded-xl border border-border p-2">{chip("Support", filters.department === "support", () => setFilter({ department: filters.department === "support" ? "all" : "support" }))}{chip("Quotes", filters.intent === "quote_request", () => setFilter({ intent: filters.intent === "quote_request" ? "all" : "quote_request" }))}{["design", "production", "finance", "delivery"].map((value) => chip(DEPARTMENT_LABELS[value], filters.department === value, () => setFilter({ department: filters.department === value ? "all" : value })))}{chip("Team Logs", filters.intent === "team_log", () => setFilter({ intent: filters.intent === "team_log" ? "all" : "team_log" }))}{chip("Closed", filters.status === "closed", () => setFilter({ status: filters.status === "closed" ? "all" : "closed" }))}</div>}</div>;
+  const changeRole = (value) => { setRoleView(value); updateQuery({ role: value }); };
+  return <div className="space-y-2 md:hidden"><Input value={search} onChange={(event) => { setSearch(event.target.value); updateQuery({ q: event.target.value, unread: filters.unread, risk: filters.risk, department: filters.department, intent: filters.intent, status: filters.status, role: roleView, conversation: selectedConversationId }); }} placeholder="Search chats" className="h-9 rounded-xl" /><div className="flex gap-2 overflow-x-auto pb-1">{chip("All", roleView === "all" && !filters.unread && filters.risk === "all" && filters.department === "all" && filters.intent === "all" && filters.status === "all", () => { changeRole("all"); setFilter({ unread: false, risk: "all", department: "all", intent: "all", status: "all" }); })}{chip("Mine / Role", roleView !== "all", () => setShowMore(!showMore))}{chip("Unread", filters.unread, () => setFilter({ unread: !filters.unread }))}{chip("High Risk", filters.risk === "high", () => setFilter({ risk: filters.risk === "high" ? "all" : "high" }))}{chip("More", showMore, () => setShowMore(!showMore))}</div>{showMore && <div className="space-y-2 rounded-xl border border-border p-2"><Select value={roleView} onValueChange={changeRole}><SelectTrigger className="h-9 rounded-xl"><SelectValue placeholder="Role view" /></SelectTrigger><SelectContent>{Object.entries(ROLE_VIEW_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><div className="flex flex-wrap gap-2">{chip("Support", filters.department === "support", () => setFilter({ department: filters.department === "support" ? "all" : "support" }))}{chip("Quotes", filters.intent === "quote_request", () => setFilter({ intent: filters.intent === "quote_request" ? "all" : "quote_request" }))}{["design", "production", "finance", "delivery"].map((value) => chip(DEPARTMENT_LABELS[value], filters.department === value, () => setFilter({ department: filters.department === value ? "all" : value })))}{chip("Team Logs", filters.intent === "team_log", () => setFilter({ intent: filters.intent === "team_log" ? "all" : "team_log" }))}{chip("Closed", filters.status === "closed", () => setFilter({ status: filters.status === "closed" ? "all" : "closed" }))}</div></div>}</div>;
 }
 
 function SummaryCard({ label, value, icon: Icon }) {
@@ -638,6 +664,10 @@ function CicCard({ label, value, tone }) {
       <p className="text-lg font-bold text-foreground">{value}</p>
     </div>
   );
+}
+
+function WorkloadCard({ label, value, tone }) {
+  return <div className={`rounded-xl px-2 py-2 ${tone === "amber" ? "bg-amber-50 text-amber-950" : "bg-secondary/50"}`}><p className="text-[10px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground">{label}</p><p className="mt-1 text-lg font-bold">{value}</p></div>;
 }
 
 function TogglePill({ active, onClick, icon: Icon, label }) {
@@ -685,6 +715,35 @@ function getLatestMessage(conversation) {
 
 function getLatestIntelligence(conversation) {
   return getLatestMessage(conversation)?.opps_message_intelligence?.[0] || null;
+}
+
+function needsAction(conversation) {
+  const intelligence = getLatestIntelligence(conversation);
+  return Number(conversation?.unread_count || 0) > 0 || conversation?.status === "open" || intelligence?.risk_level === "high" || !conversation?.assigned_department || intelligence?.intent === "unknown" || !!intelligence?.suggested_next_action;
+}
+
+function matchesRoleView(conversation, roleView) {
+  if (roleView === "all" || roleView === "cic") return true;
+  const intelligence = getLatestIntelligence(conversation);
+  const department = conversation.assigned_department || intelligence?.suggested_department;
+  const intent = intelligence?.intent || "unknown";
+  const text = [conversation.last_message_preview, ...(conversation.opps_messages || []).map((message) => message.body)].filter(Boolean).join(" ").toLowerCase();
+  if (roleView === "team_logs") return intent === "team_log" || /\b(logged in|done|finished|prepared|printed|packed|sent|delivered|blocker|blocking|daily update)\b/.test(text);
+  if (department === roleView) return true;
+  const intents = { support: ["general_support", "quote_request", "complaint", "unknown"], design: ["artwork_request", "design_update"], production: ["production_update", "order_update"], finance: ["invoice_request", "payment_query"], delivery: ["delivery_request"] };
+  const keywords = { design: /\b(dtf|artwork|design|prep)\b/, production: /\b(printed|packed|prepared|printing|order movement)\b/, finance: /\b(payment received|proof of payment|balance|invoice|payment)\b/, delivery: /\b(paxi|courier guy|courier|collected|collection|tracking|address)\b/ };
+  return intents[roleView]?.includes(intent) || keywords[roleView]?.test(text) || false;
+}
+
+function summarizeRoleWorkload(conversations) {
+  const counts = { open: 0, support: 0, design: 0, production: 0, finance: 0, delivery: 0, highRisk: 0 };
+  conversations.forEach((conversation) => {
+    if (conversation.status === "closed") return;
+    counts.open += 1;
+    if (getLatestIntelligence(conversation)?.risk_level === "high") counts.highRisk += 1;
+    ["support", "design", "production", "finance", "delivery"].forEach((role) => { if (matchesRoleView(conversation, role)) counts[role] += 1; });
+  });
+  return counts;
 }
 
 function summarizeToday(conversations) {
