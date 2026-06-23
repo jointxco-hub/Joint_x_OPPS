@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { createPortal } from "react-dom";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,8 +36,14 @@ export default function FileLightbox({ file, onClose }) {
 
   const createCommentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.FileComment.create(data),
-    onSuccess: () => {
+    onSuccess: async (_comment, variables) => {
       queryClient.invalidateQueries({ queryKey: ['fileComments', file.id] });
+      if (variables.mentioned_user && file.tenant_id) {
+        const currentUser = await dataClient.auth.me().catch(() => null);
+        supabase.functions.invoke("send-push-notification", {
+          body: { tenant_id: file.tenant_id, user_email: variables.mentioned_user, event_type: "TAGGED", payload: { message: `${currentUser?.full_name || currentUser?.email || "A team member"} tagged you on ${file.title || file.name || "a file"}.` } },
+        }).then(({ error }) => { if (error) console.warn("Tag push notification failed:", error); });
+      }
       setShowCommentForm(false);
       setCommentData({ comment_text: "", mentioned_user: "", file_status: "none" });
       toast.success("Comment added!");
