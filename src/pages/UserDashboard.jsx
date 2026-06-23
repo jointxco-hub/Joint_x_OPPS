@@ -418,6 +418,13 @@ export default function UserDashboard() {
         {/* 7 — My Tags Inbox */}
         <MyTagsInbox tags={myTags} userEmail={userEmail} />
 
+        <section className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-sm font-semibold text-foreground">Daily & weekly updates</h2><p className="mt-1 text-xs text-muted-foreground">Share progress, blockers and support needed without leaving the team waiting.</p></div>
+            <Link to="/TeamUpdates" className="rounded-xl bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground">Open Team Updates</Link>
+          </div>
+        </section>
+
         {/* 7b — WhatsApp / Meta Inbox shortcuts */}
         <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between gap-3">
