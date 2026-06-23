@@ -1,4 +1,4 @@
-import { Component, useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -32,16 +32,7 @@ import DailyQbrCheck from "@/components/hub/DailyQbrCheck";
 import MyTagsInbox from "@/components/hub/MyTagsInbox";
 import KpiTile from "@/components/hub/KpiTile";
 import WamPanel from "@/components/hub/WamPanel";
-import WorkQueue from "@/components/hub/WorkQueue";
-import WorkReports from "@/components/hub/WorkReports";
-import TeamActivityPanel from "@/components/hub/TeamActivityPanel";
 
-class HubFeatureBoundary extends Component {
-  state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch(error) { console.error("My Hub optional panel failed:", error); }
-  render() { return this.state.failed ? null : this.props.children; }
-}
 const opsStatusColors = {
   not_started: "bg-slate-100 text-slate-700",
   in_progress: "bg-primary/10 text-primary",
@@ -111,20 +102,27 @@ export default function UserDashboard() {
       }),
   });
 
-  const { data: myOverdueOrders = [] } = useQuery({
-    queryKey: ["my-overdue-orders", userEmail],
-    enabled: !!userEmail && !!supabase,
+  const { data: whatsappConversations = [] } = useQuery({
+    queryKey: ["my-whatsapp-hub"],
+    enabled: !!supabase,
     queryFn: async () => {
-      const today = format(new Date(), "yyyy-MM-dd");
-      const { data, error } = await supabase.from("orders")
-        .select("id, tenant_id, order_number, client_name, due_date, status")
-        .eq("assigned_to", userEmail)
-        .eq("is_archived", false)
-        .lt("due_date", today);
+      const { data, error } = await supabase
+        .from("opps_conversations")
+        .select(`
+          id, unread_count, last_message_at, last_message_preview,
+          opps_messages (
+            id, created_at, direction,
+            opps_message_intelligence ( intent, risk_level, suggested_department )
+          )
+        `)
+        .eq("channel", "whatsapp")
+        .order("last_message_at", { ascending: false, nullsFirst: false });
       if (error) throw error;
-      return (data ?? []).filter((order) => !["delivered", "cancelled"].includes(order.status));
+      return data ?? [];
     },
   });
+
+  // ── Ops tasks (primary task entity used across the app) ──────────────────
   const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
   const { data: opsTasks = [], isLoading: tasksLoading } = useQuery({
     queryKey: ["user-opsTasks", userEmail],
@@ -205,50 +203,6 @@ export default function UserDashboard() {
     const d = t.deadline || t.due_date;
     return d && isPast(new Date(d)) && !isToday(new Date(d)) && !isTaskComplete(t);
   });
-  useEffect(() => {
-    if (!userEmail || !supabase) return;
-    const today = format(new Date(), "yyyy-MM-dd");
-    overdueTasks.filter((task) => task.tenant_id).forEach((task) => {
-      const reminderKey = `jx-overdue-reminder:${today}:${task.id}`;
-      if (localStorage.getItem(reminderKey)) return;
-      localStorage.setItem(reminderKey, "1");
-      supabase.functions.invoke("send-push-notification", {
-        body: {
-          tenant_id: task.tenant_id,
-          user_email: userEmail,
-          event_type: "OVERDUE_WORK",
-          payload: { task_id: task.id, message: `Overdue: ${task.title || "a task assigned to you"}` },
-        },
-      }).then(({ error }) => {
-        if (error) {
-          localStorage.removeItem(reminderKey);
-          console.warn("Overdue reminder push failed:", error);
-        }
-      });
-    });
-  }, [overdueTasks, userEmail]);
-  useEffect(() => {
-    if (!userEmail || !supabase) return;
-    const today = format(new Date(), "yyyy-MM-dd");
-    myOverdueOrders.filter((order) => order.tenant_id).forEach((order) => {
-      const reminderKey = `jx-overdue-order-reminder:${today}:${order.id}`;
-      if (localStorage.getItem(reminderKey)) return;
-      localStorage.setItem(reminderKey, "1");
-      supabase.functions.invoke("send-push-notification", {
-        body: {
-          tenant_id: order.tenant_id,
-          user_email: userEmail,
-          event_type: "OVERDUE_WORK",
-          payload: { order_id: order.id, message: `Overdue order: ${order.order_number || "Order"}${order.client_name ? ` � ${order.client_name}` : ""}` },
-        },
-      }).then(({ error }) => {
-        if (error) {
-          localStorage.removeItem(reminderKey);
-          console.warn("Overdue order reminder push failed:", error);
-        }
-      });
-    });
-  }, [myOverdueOrders, userEmail]);
   const urgentOpsTasks = myOpsTasks.filter(t => t.priority === "urgent" && !isTaskComplete(t));
   const myWeekOpsTasks = myOpsTasks.filter(t => t.week_number === currentWeek);
   const weekDone = myWeekOpsTasks.filter(isTaskComplete).length;
@@ -256,6 +210,25 @@ export default function UserDashboard() {
     ? Math.round((weekDone / myWeekOpsTasks.length) * 100)
     : 0;
 
+  const whatsappWidgets = useMemo(() => {
+    const latestByConversation = whatsappConversations.map((conversation) => {
+      const latestMessage = [...(conversation.opps_messages || [])].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
+      return {
+        ...conversation,
+        latestMessage,
+        intelligence: latestMessage?.opps_message_intelligence?.[0],
+      };
+    });
+
+    return {
+      actionNeeded: latestByConversation.filter((item) => Number(item.unread_count || 0) > 0).length,
+      design: latestByConversation.filter((item) => item.intelligence?.intent === "artwork_request").length,
+      production: latestByConversation.filter((item) => item.intelligence?.intent === "order_update").length,
+      finance: latestByConversation.filter((item) => item.intelligence?.intent === "invoice_request").length,
+      activity: latestByConversation.filter((item) => item.intelligence?.intent === "team_log").length,
+    };
+  }, [whatsappConversations]);
+  // ── Guards ────────────────────────────────────────────────────────────────
   if (userLoading) return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -444,10 +417,6 @@ export default function UserDashboard() {
 
         {/* 7 — My Tags Inbox */}
         <MyTagsInbox tags={myTags} userEmail={userEmail} />
-
-        <HubFeatureBoundary><WorkQueue user={user} /></HubFeatureBoundary>
-        <HubFeatureBoundary><WorkReports user={user} role={myRole} /></HubFeatureBoundary>
-        <HubFeatureBoundary><TeamActivityPanel user={user} /></HubFeatureBoundary>
 
         {/* 7b — WhatsApp / Meta Inbox shortcuts */}
         <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
