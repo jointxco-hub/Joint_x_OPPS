@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Component, useState, useEffect, useMemo, useRef } from "react";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -33,6 +33,12 @@ import MyTagsInbox from "@/components/hub/MyTagsInbox";
 import KpiTile from "@/components/hub/KpiTile";
 import WamPanel from "@/components/hub/WamPanel";
 
+class HubFeatureBoundary extends Component {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error) { console.error("My Hub optional panel failed:", error); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
 const opsStatusColors = {
   not_started: "bg-slate-100 text-slate-700",
   in_progress: "bg-primary/10 text-primary",
@@ -436,9 +442,9 @@ export default function UserDashboard() {
         {/* 7 — My Tags Inbox */}
         <MyTagsInbox tags={myTags} userEmail={userEmail} />
 
-        <WorkQueue user={user} />
-        <WorkReports user={user} role={myRole} />
-        <TeamActivityPanel user={user} />
+        <HubFeatureBoundary><WorkQueue user={user} /></HubFeatureBoundary>
+        <HubFeatureBoundary><WorkReports user={user} role={myRole} /></HubFeatureBoundary>
+        <HubFeatureBoundary><TeamActivityPanel user={user} /></HubFeatureBoundary>
 
         {/* 7b — WhatsApp / Meta Inbox shortcuts */}
         <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
