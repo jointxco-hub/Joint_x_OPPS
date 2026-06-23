@@ -456,9 +456,9 @@ function BugFormDialog({ users, onClose, existing }) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {users.map(user => (
+                  {users.filter(isAssignableTeamUser).map(user => (
                     <SelectItem key={user.id} value={user.email}>
-                      {user.full_name || user.email}
+                      {userDisplayName(user)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -596,9 +596,9 @@ function IdeaFormDialog({ users, onClose }) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="unassigned">Unassigned</SelectItem>
-                {users.map(user => (
+                {users.filter(isAssignableTeamUser).map(user => (
                   <SelectItem key={user.id} value={user.email}>
-                    {user.full_name || user.email}
+                    {userDisplayName(user)}
                   </SelectItem>
                 ))}
               </SelectContent>

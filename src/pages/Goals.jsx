@@ -124,8 +124,8 @@ function GoalFormModal({ open, onClose, existing, users = [], currentUser }) {
             <select value={form.assigned_to || ""} onChange={set("assigned_to")}
               className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
               <option value="">Unassigned / company</option>
-              {users.map(user => (
-                <option key={user.id} value={user.email}>{user.full_name || user.name || user.email}</option>
+              {users.filter(isAssignableTeamUser).map(user => (
+                <option key={user.id} value={user.email}>{userDisplayName(user)}</option>
               ))}
             </select>
           ) : (

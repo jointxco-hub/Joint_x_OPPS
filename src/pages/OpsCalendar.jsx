@@ -259,7 +259,7 @@ export default function OpsCalendar() {
                   <SelectTrigger className="w-36 h-9 rounded-xl"><SelectValue placeholder="All Members" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Members</SelectItem>
-                    {users.map(u => <SelectItem key={u.id} value={u.email}>{u.full_name || u.email}</SelectItem>)}
+                    {users.filter(isAssignableTeamUser).map(u => <SelectItem key={u.id} value={u.email}>{userDisplayName(u)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select value={filterStatus} onValueChange={setFilterStatus}>

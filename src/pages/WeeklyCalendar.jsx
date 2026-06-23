@@ -521,7 +521,7 @@ function TaskRow({ task, users, goals, onStatusToggle, onUpdate, onEdit, onDelet
           <div className="flex flex-wrap items-center gap-1 md:gap-2 mt-2">
             {assignedUsers.map(user => (
               <span key={user.id} className="text-xs px-2 py-0.5 bg-slate-100 rounded truncate max-w-[100px]">
-                {user.full_name || user.email}
+                {userDisplayName(user)}
               </span>
             ))}
             <Badge className={`text-xs ${priorityColors[task.priority]}`}>
@@ -730,13 +730,13 @@ function TaskFormDialog({ task, users, projects, orders, goals, onClose, onSubmi
               Assign To (Multi-select)
             </label>
             <div className="border rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
-              {users.map(user => (
+              {users.filter(isAssignableTeamUser).map(user => (
                 <label key={user.id} className="flex items-center gap-2 cursor-pointer">
                   <Checkbox
                     checked={selectedUsers.includes(user.email)}
                     onCheckedChange={() => toggleUser(user.email)}
                   />
-                  <span className="text-sm">{user.full_name || user.email}</span>
+                  <span className="text-sm">{userDisplayName(user)}</span>
                 </label>
               ))}
             </div>
