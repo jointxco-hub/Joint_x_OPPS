@@ -17,6 +17,7 @@ import NotificationsPanel from "@/components/common/NotificationsPanel";
 const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
   { name: "My Hub", page: "UserDashboard", icon: UserCircle },
+  { name: "My Profile", page: "MyProfile", icon: UserCircle },
   { name: "Orders", page: "Orders", icon: Package },
   { name: "Tasks", page: "Tasks", icon: ClipboardList },
   { name: "Team Updates", page: "TeamUpdates", icon: ClipboardList },

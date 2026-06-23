@@ -87,6 +87,7 @@ const OpsCalendar = lazy(() => import('./pages/OpsCalendar'));
 const UserDashboard = lazy(() => import('./pages/UserDashboard'));
 const TeamUpdates = lazy(() => import('./pages/TeamUpdates'));
 const Directory = lazy(() => import('./pages/Directory'));
+const MyProfile = lazy(() => import('./pages/MyProfile'));
 const TeamProfiles = lazy(() => import('./pages/TeamProfiles'));
 const TeamExpenses = lazy(() => import('./pages/TeamExpenses'));
 const ArchivePage = lazy(() => import('./pages/Archive'));
@@ -137,6 +138,7 @@ export const PAGES = {
     "UserDashboard": UserDashboard,
     "TeamUpdates": TeamUpdates,
     "Directory": Directory,
+    "MyProfile": MyProfile,
     "SignIn": SignIn,
     "OffersDashboard": OffersDashboard,
     "MoneyModel": MoneyModel,

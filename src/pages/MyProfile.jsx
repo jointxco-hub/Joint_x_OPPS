@@ -1,0 +1,11 @@
+import { useEffect, useState } from "react";
+import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
+import { toast } from "sonner";
+
+export default function MyProfile() {
+  const [user, setUser] = useState(null); const [name, setName] = useState(""); const [saving, setSaving] = useState(false);
+  useEffect(() => { dataClient.auth.me().then((value) => { setUser(value); setName(value?.preferred_name || value?.full_name || ""); }).catch(() => {}); }, []);
+  const save = async () => { if (!user?.email || !name.trim()) return; setSaving(true); try { const { error } = await supabase.from("users").update({ preferred_name: name.trim() }).eq("user_email", user.email); if (error) throw error; await dataClient.auth.updateMe({ full_name: name.trim() }); const updated = await dataClient.auth.me(); setUser(updated); toast.success("Preferred name saved"); } catch (error) { toast.error(error?.message || "Could not save preferred name"); } finally { setSaving(false); } };
+  return <main className="min-h-screen bg-background"><div className="mx-auto max-w-xl px-4 py-8"><p className="text-xs font-semibold uppercase tracking-wider text-primary">My profile</p><h1 className="mt-1 text-2xl font-bold">How the team sees you</h1><p className="mt-2 text-sm text-muted-foreground">Your preferred name appears first in team directory, assignment and tagging lists. Email stays as the account identifier.</p><label className="mt-6 block text-sm font-semibold">Preferred name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-2 w-full rounded-xl border border-input bg-background p-3" placeholder="Your preferred name" /></label><p className="mt-2 text-xs text-muted-foreground">Account: {user?.email || "Loading…"}</p><button onClick={save} disabled={saving || !name.trim()} className="mt-5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">{saving ? "Saving…" : "Save name"}</button></div></main>;
+}
