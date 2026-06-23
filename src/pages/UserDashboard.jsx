@@ -102,6 +102,20 @@ export default function UserDashboard() {
       }),
   });
 
+  const { data: myOverdueOrders = [] } = useQuery({
+    queryKey: ["my-overdue-orders", userEmail],
+    enabled: !!userEmail && !!supabase,
+    queryFn: async () => {
+      const today = format(new Date(), "yyyy-MM-dd");
+      const { data, error } = await supabase.from("orders")
+        .select("id, tenant_id, order_number, client_name, due_date, status")
+        .eq("assigned_to", userEmail)
+        .eq("is_archived", false)
+        .lt("due_date", today);
+      if (error) throw error;
+      return (data ?? []).filter((order) => !["delivered", "cancelled"].includes(order.status));
+    },
+  });
   const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
   const { data: opsTasks = [], isLoading: tasksLoading } = useQuery({
     queryKey: ["user-opsTasks", userEmail],
@@ -204,6 +218,28 @@ export default function UserDashboard() {
       });
     });
   }, [overdueTasks, userEmail]);
+  useEffect(() => {
+    if (!userEmail || !supabase) return;
+    const today = format(new Date(), "yyyy-MM-dd");
+    myOverdueOrders.filter((order) => order.tenant_id).forEach((order) => {
+      const reminderKey = `jx-overdue-order-reminder:${today}:${order.id}`;
+      if (localStorage.getItem(reminderKey)) return;
+      localStorage.setItem(reminderKey, "1");
+      supabase.functions.invoke("send-push-notification", {
+        body: {
+          tenant_id: order.tenant_id,
+          user_email: userEmail,
+          event_type: "OVERDUE_WORK",
+          payload: { order_id: order.id, message: `Overdue order: ${order.order_number || "Order"}${order.client_name ? ` · ${order.client_name}` : ""}` },
+        },
+      }).then(({ error }) => {
+        if (error) {
+          localStorage.removeItem(reminderKey);
+          console.warn("Overdue order reminder push failed:", error);
+        }
+      });
+    });
+  }, [myOverdueOrders, userEmail]);
   const urgentOpsTasks = myOpsTasks.filter(t => t.priority === "urgent" && !isTaskComplete(t));
   const myWeekOpsTasks = myOpsTasks.filter(t => t.week_number === currentWeek);
   const weekDone = myWeekOpsTasks.filter(isTaskComplete).length;
