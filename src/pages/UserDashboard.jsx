@@ -32,6 +32,9 @@ import DailyQbrCheck from "@/components/hub/DailyQbrCheck";
 import MyTagsInbox from "@/components/hub/MyTagsInbox";
 import KpiTile from "@/components/hub/KpiTile";
 import WamPanel from "@/components/hub/WamPanel";
+import WorkQueue from "@/components/hub/WorkQueue";
+import WorkReports from "@/components/hub/WorkReports";
+import TeamActivityPanel from "@/components/hub/TeamActivityPanel";
 
 class HubFeatureBoundary extends Component {
   state = { failed: false };
