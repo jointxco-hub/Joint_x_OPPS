@@ -401,7 +401,7 @@ const ENTITY_CONFIG = {
       return {
         ...row,
         email: row.user_email,
-        name: row.full_name,
+        name: row.preferred_name || row.full_name,
         profile_photo: row.avatar_url,
         created_date: row.created_at,
         updated_date: row.updated_at,
@@ -412,6 +412,7 @@ const ENTITY_CONFIG = {
         auth_user_id: payload.auth_user_id,
         user_email: payload.user_email ?? payload.email,
         full_name: payload.full_name ?? payload.name,
+        preferred_name: payload.preferred_name,
         role: payload.role,
         department: payload.department,
         phone: payload.phone,

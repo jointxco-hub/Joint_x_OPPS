@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { toast } from "sonner";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
 
 export default function NewTaskForm({ users = [], onClose, onCreate }) {
   const [title, setTitle] = useState("");
@@ -112,9 +113,9 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
                   <SelectTrigger className="rounded-xl h-9 text-sm"><SelectValue placeholder="Unassigned" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="_none">Unassigned</SelectItem>
-                    {users.filter(u => u.is_active !== false).map(u => (
+                    {users.filter(isAssignableTeamUser).map(u => (
                       <SelectItem key={u.id || u.email} value={u.email || u.user_email}>
-                        {u.full_name || u.name || u.email}
+                        {userDisplayName(u)} · {userRoleLabel(u)}
                       </SelectItem>
                     ))}
                   </SelectContent>

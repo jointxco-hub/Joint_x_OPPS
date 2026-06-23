@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
 import CommentThread from "@/components/common/CommentThread";
 import MediaPreview from "@/components/common/MediaPreview";
 import FileLightbox from "@/components/files/FileLightbox";
@@ -296,13 +297,13 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
                 + Add / remove team members
               </summary>
               <div className="mt-2 border rounded-xl p-2 max-h-36 overflow-y-auto space-y-1 bg-secondary/20">
-                {users.filter(u => u.is_active !== false).map(u => (
+                {users.filter(isAssignableTeamUser).map(u => (
                   <label key={u.id || u.email} className="flex items-center gap-2 cursor-pointer p-1 rounded-lg hover:bg-secondary/50">
                     <Checkbox
                       checked={Array.isArray(task.assigned_to) ? task.assigned_to.includes(u.email) : task.assigned_to === u.email}
                       onCheckedChange={() => toggleAssignee(u.email)}
                     />
-                    <span className="text-sm">{u.full_name || u.name || u.email}</span>
+                    <span className="text-sm">{userDisplayName(u)} · {userRoleLabel(u)}</span>
                   </label>
                 ))}
               </div>

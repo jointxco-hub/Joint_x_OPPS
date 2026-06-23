@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Users, Paperclip, Plus, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const STAGES = ['design', 'sourcing', 'sampling', 'cutting', 'printing', 'pressing', 'finishing', 'packing', 'delivery', 'other'];
@@ -222,10 +223,10 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
             </label>
             <div className="border rounded-lg p-3 max-h-36 overflow-y-auto space-y-2 bg-slate-50">
               {users.length === 0 && <p className="text-xs text-slate-400">No users found</p>}
-              {users.map(u => (
+              {users.filter(isAssignableTeamUser).map(u => (
                 <label key={u.id} className="flex items-center gap-2 cursor-pointer">
                   <Checkbox checked={selectedUsers.includes(u.email)} onCheckedChange={() => toggleUser(u.email)} />
-                  <span className="text-sm">{u.full_name || u.email}</span>
+                  <span className="text-sm">{userDisplayName(u)} · {userRoleLabel(u)}</span>
                 </label>
               ))}
             </div>

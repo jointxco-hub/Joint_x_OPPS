@@ -102,27 +102,6 @@ export default function UserDashboard() {
       }),
   });
 
-  const { data: whatsappConversations = [] } = useQuery({
-    queryKey: ["my-whatsapp-hub"],
-    enabled: !!supabase,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("opps_conversations")
-        .select(`
-          id, unread_count, last_message_at, last_message_preview,
-          opps_messages (
-            id, created_at, direction,
-            opps_message_intelligence ( intent, risk_level, suggested_department )
-          )
-        `)
-        .eq("channel", "whatsapp")
-        .order("last_message_at", { ascending: false, nullsFirst: false });
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-
-  // ── Ops tasks (primary task entity used across the app) ──────────────────
   const opsEntity = /** @type {any} */ (dataClient.entities).OpsTask;
   const { data: opsTasks = [], isLoading: tasksLoading } = useQuery({
     queryKey: ["user-opsTasks", userEmail],
@@ -210,25 +189,6 @@ export default function UserDashboard() {
     ? Math.round((weekDone / myWeekOpsTasks.length) * 100)
     : 0;
 
-  const whatsappWidgets = useMemo(() => {
-    const latestByConversation = whatsappConversations.map((conversation) => {
-      const latestMessage = [...(conversation.opps_messages || [])].sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0];
-      return {
-        ...conversation,
-        latestMessage,
-        intelligence: latestMessage?.opps_message_intelligence?.[0],
-      };
-    });
-
-    return {
-      actionNeeded: latestByConversation.filter((item) => Number(item.unread_count || 0) > 0).length,
-      design: latestByConversation.filter((item) => item.intelligence?.intent === "artwork_request").length,
-      production: latestByConversation.filter((item) => item.intelligence?.intent === "order_update").length,
-      finance: latestByConversation.filter((item) => item.intelligence?.intent === "invoice_request").length,
-      activity: latestByConversation.filter((item) => item.intelligence?.intent === "team_log").length,
-    };
-  }, [whatsappConversations]);
-  // ── Guards ────────────────────────────────────────────────────────────────
   if (userLoading) return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
@@ -417,6 +377,10 @@ export default function UserDashboard() {
 
         {/* 7 — My Tags Inbox */}
         <MyTagsInbox tags={myTags} userEmail={userEmail} />
+
+        <WorkQueue user={user} />
+        <WorkReports user={user} role={myRole} />
+        <TeamActivityPanel user={user} />
 
         {/* 7b — WhatsApp / Meta Inbox shortcuts */}
         <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">

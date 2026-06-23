@@ -1,0 +1,21 @@
+import { useMemo, useState } from "react";
+import { startOfWeek, format } from "date-fns";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/lib/supabaseClient";
+import { toast } from "sonner";
+
+function prompts(role, reportType) {
+  const roleLabel = role || "team member";
+  return reportType === "daily" ? { title: `Daily ${roleLabel} check-in`, priorities: "Today’s priority work", wins: "What moved forward today", blockers: "What is blocked or waiting", support: "Support or decision needed" } : { title: `Weekly ${roleLabel} report`, priorities: "Next week’s three priorities", wins: "This week’s results", blockers: "Risks, delays, or blockers", support: "What you need from the team/admin" };
+}
+
+export default function WorkReports({ user, role }) {
+  const queryClient = useQueryClient();
+  const [reportType, setReportType] = useState("daily");
+  const [form, setForm] = useState({ wins: "", priorities: "", blockers: "", support_needed: "" });
+  const { data: membership } = useQuery({ queryKey: ["my-tenant-membership", user?.email], enabled: Boolean(user?.email), queryFn: async () => { const { data: auth } = await supabase.auth.getUser(); const { data, error } = await supabase.from("tenant_memberships").select("tenant_id").eq("auth_user_id", auth.user?.id).eq("status", "active").limit(1).maybeSingle(); if (error) throw error; return data; } });
+  const periodStart = reportType === "daily" ? format(new Date(), "yyyy-MM-dd") : format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd");
+  const copy = useMemo(() => prompts(role?.key || role?.name || user?.role, reportType), [role, reportType, user?.role]);
+  const save = useMutation({ mutationFn: async () => { if (!membership?.tenant_id) throw new Error("No active workspace membership found"); const { error } = await supabase.from("opps_work_reports").upsert({ tenant_id: membership.tenant_id, user_email: user.email, user_name: user.full_name || user.email, role_key: role?.key || user.role || "team", report_type: reportType, period_start: periodStart, ...form, submitted_at: new Date().toISOString() }, { onConflict: "user_email,report_type,period_start" }); if (error) throw error; const { error: activityError } = await supabase.from("opps_activity_events").insert({ tenant_id: membership.tenant_id, actor_email: user.email, actor_name: user.full_name || user.email, event_type: `${reportType}_report_submitted`, entity_type: "work_report", summary: `${user.full_name || user.email} submitted a ${reportType} report` }); if (activityError) throw activityError; }, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["team-activity"] }); toast.success(`${reportType === "daily" ? "Daily" : "Weekly"} report saved`); }, onError: e => toast.error(e?.message || "Could not save report") });
+  return <section className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm"><div className="mb-3 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-foreground">{copy.title}</h2><p className="text-xs text-muted-foreground">A short operating update for your team and admins.</p></div><div className="flex rounded-lg bg-secondary p-1 text-xs"><button type="button" onClick={() => setReportType("daily")} className={`rounded-md px-2 py-1 ${reportType === "daily" ? "bg-background shadow-sm" : ""}`}>Daily</button><button type="button" onClick={() => setReportType("weekly")} className={`rounded-md px-2 py-1 ${reportType === "weekly" ? "bg-background shadow-sm" : ""}`}>Weekly</button></div></div><div className="grid gap-2 md:grid-cols-2">{[["priorities", copy.priorities], ["wins", copy.wins], ["blockers", copy.blockers], ["support_needed", copy.support]].map(([key, label]) => <label key={key} className="text-xs font-medium text-muted-foreground">{label}<textarea value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} className="mt-1 min-h-20 w-full rounded-lg border border-input bg-background p-2 text-sm text-foreground" /></label>)}</div><button type="button" disabled={save.isPending} onClick={() => save.mutate()} className="mt-3 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">{save.isPending ? "Saving…" : "Submit report"}</button></section>;
+}

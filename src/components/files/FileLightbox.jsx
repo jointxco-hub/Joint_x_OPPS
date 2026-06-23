@@ -31,6 +31,8 @@ export default function FileLightbox({ file, onClose }) {
     queryFn: () => dataClient.entities.User.list('-created_date', 100)
   });
 
+  const mentionableUsers = users.filter(isAssignableTeamUser);
+
   const createCommentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.FileComment.create(data),
     onSuccess: () => {
@@ -155,9 +157,9 @@ export default function FileLightbox({ file, onClose }) {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="">None</SelectItem>
-                        {users.map(user => (
+                        {mentionableUsers.map(user => (
                           <SelectItem key={user.id} value={user.email}>
-                            {user.full_name || user.email}
+                            {userDisplayName(user)} · {userRoleLabel(user)}
                           </SelectItem>
                         ))}
                       </SelectContent>

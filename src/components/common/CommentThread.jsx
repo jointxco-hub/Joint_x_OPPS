@@ -58,7 +58,7 @@ export default function CommentThread({
   const [taggedEmail, setTaggedEmail] = useState("_none");
   const [visibility, setVisibility] = useState("internal");
   const [myEmail, setMyEmail] = useState("");
-  const activeUsers = useMemo(() => users.filter((user) => user.is_active !== false), [users]);
+  const activeUsers = useMemo(() => users.filter(isAssignableTeamUser), [users]);
 
   useEffect(() => {
     dataClient.auth.me().then(u => { if (u?.email) setMyEmail(u.email); }).catch(() => {});

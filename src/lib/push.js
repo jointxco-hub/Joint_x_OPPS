@@ -109,6 +109,19 @@ async function savePushSubscription(subscription) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user?.email) return;
 
+    const { data: membership, error: membershipError } = await supabase
+      .from('tenant_memberships')
+      .select('tenant_id')
+      .eq('auth_user_id', user.id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    if (membershipError) throw membershipError;
+    if (!membership?.tenant_id) {
+      console.warn('No active workspace membership for push subscription');
+      return;
+    }
+
     const endpoint = subscription.endpoint;
     const auth = subscription.getKey?.('auth');
     const p256dh = subscription.getKey?.('p256dh');
@@ -127,6 +140,7 @@ async function savePushSubscription(subscription) {
       .from('push_subscriptions')
       .upsert(
         {
+          tenant_id: membership.tenant_id,
           user_email: user.email,
           endpoint,
           auth: authStr,
