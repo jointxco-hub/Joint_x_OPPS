@@ -3,9 +3,9 @@ import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import { userDisplayName } from "@/lib/teamUsers";
 
-export default function InvestorRoleToggle({ member, onChanged }) {
+export default function InvestorRoleToggle({ member, onChanged, allowAdminChange = false }) {
   const [saving, setSaving] = useState(false);
-  if (member?.role === "admin") return null;
+  if (member?.role === "admin" && !allowAdminChange) return null;
   const investor = member?.role === "investor";
   const update = async () => {
     setSaving(true);
