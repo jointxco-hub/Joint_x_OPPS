@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Target, Plus, Star, Pencil, Archive, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";

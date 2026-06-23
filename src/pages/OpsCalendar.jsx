@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { dataClient } from "@/api/dataClient";
+import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
