@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
+import { supabase } from "@/lib/supabaseClient";
+import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
 
@@ -31,6 +33,12 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
         assigned_to: assignedTo && assignedTo !== "_none" ? [assignedTo] : [],
       };
       const created = await createWithOfflineQueue("OpsTask", payload);
+      if (!created?.isQueuedOffline && created?.tenant_id && assignedTo && assignedTo !== "_none") {
+        const actor = await dataClient.auth.me().catch(() => null);
+        supabase.functions.invoke("send-push-notification", {
+          body: { tenant_id: created.tenant_id, user_email: assignedTo, event_type: "TASK_ASSIGNED", payload: { task_id: created.id, message: `${actor?.full_name || actor?.email || "A team member"} assigned you: ${trimmed}` } },
+        }).then(({ error }) => { if (error) console.warn("Task assignment push notification failed:", error); });
+      }
       toast.success(created?.isQueuedOffline ? "Task saved offline. It will sync when online." : "Task created");
       onCreate(created);
     } catch (err) {
