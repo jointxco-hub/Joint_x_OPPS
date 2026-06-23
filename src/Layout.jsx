@@ -19,6 +19,7 @@ const primaryNav = [
   { name: "My Hub", page: "UserDashboard", icon: UserCircle },
   { name: "Orders", page: "Orders", icon: Package },
   { name: "Tasks", page: "Tasks", icon: ClipboardList },
+  { name: "Team Updates", page: "TeamUpdates", icon: ClipboardList },
 ];
 
 const moreNav = [
