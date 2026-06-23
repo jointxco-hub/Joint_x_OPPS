@@ -182,6 +182,28 @@ export default function UserDashboard() {
     const d = t.deadline || t.due_date;
     return d && isPast(new Date(d)) && !isToday(new Date(d)) && !isTaskComplete(t);
   });
+  useEffect(() => {
+    if (!userEmail || !supabase) return;
+    const today = format(new Date(), "yyyy-MM-dd");
+    overdueTasks.filter((task) => task.tenant_id).forEach((task) => {
+      const reminderKey = `jx-overdue-reminder:${today}:${task.id}`;
+      if (localStorage.getItem(reminderKey)) return;
+      localStorage.setItem(reminderKey, "1");
+      supabase.functions.invoke("send-push-notification", {
+        body: {
+          tenant_id: task.tenant_id,
+          user_email: userEmail,
+          event_type: "OVERDUE_WORK",
+          payload: { task_id: task.id, message: `Overdue: ${task.title || "a task assigned to you"}` },
+        },
+      }).then(({ error }) => {
+        if (error) {
+          localStorage.removeItem(reminderKey);
+          console.warn("Overdue reminder push failed:", error);
+        }
+      });
+    });
+  }, [overdueTasks, userEmail]);
   const urgentOpsTasks = myOpsTasks.filter(t => t.priority === "urgent" && !isTaskComplete(t));
   const myWeekOpsTasks = myOpsTasks.filter(t => t.week_number === currentWeek);
   const weekDone = myWeekOpsTasks.filter(isTaskComplete).length;
