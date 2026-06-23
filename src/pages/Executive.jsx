@@ -19,6 +19,7 @@ import TransactionHistory from "@/components/executive/TransactionHistory";
 import FinanceInsights from "@/components/executive/FinanceInsights";
 import BuyingList from "@/components/executive/BuyingList";
 import BudgetBuckets from "@/components/executive/BudgetBuckets";
+import OperationsHealth from "@/components/executive/OperationsHealth";
 
 const DEFAULT_PIN = "1234";
 const PIN_STORAGE_KEY = "exec_pin_hash";
@@ -94,6 +95,7 @@ const TABS = [
   { id: "insights",      label: "Insights",      icon: Lightbulb },
   { id: "buying",        label: "Buying List",   icon: ShoppingCart },
   { id: "budgets",       label: "Budgets",       icon: Wallet },
+  { id: "operations",    label: "Operations",   icon: Target },
 ];
 
 // ── Dashboard ─────────────────────────────────────────────────
@@ -217,6 +219,8 @@ function ExecutiveDashboard({ user, showChangePIN, setShowChangePIN, onLock }) {
         )}
 
         {/* ── Overview tab ─────────────────────────────────── */}
+        {activeTab === "operations" && <OperationsHealth orders={orders} />}
+
         {activeTab === "overview" && (
           <div className="space-y-5">
             <FinanceKPIs
