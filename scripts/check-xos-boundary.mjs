@@ -43,6 +43,14 @@ if (!shell.includes("signInWithPassword") || !shell.includes("signInWithOAuth") 
   fail("XOSAdminShell must own both email/password and Google sign-in.");
 }
 
+if (!shell.includes("listXosOrders") || !shell.includes("Read-only demo order progress") || !shell.includes("Available now")) {
+  fail("XOS Orders preview must stay inside the XOSAdminShell.");
+}
+
+if (app.includes("get_xos_orders_for_host") || app.includes("listXosOrders")) {
+  fail("OPPS app/root must not own the XOS Orders preview.");
+}
+
 if (!shell.includes("redirectTo: `${window.location.origin}/`") || !shell.includes("window.location.replace(`${window.location.origin}/`)")) {
   fail("XOS sign-in must return to the same XOS host root.");
 }

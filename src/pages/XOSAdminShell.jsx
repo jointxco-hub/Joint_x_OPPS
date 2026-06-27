@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/AuthContext";
 import AppLoader from "@/components/common/AppLoader";
 import SignedFileLink from "@/components/common/SignedFileLink";
-import { listXosFiles, listXosRequests } from "@/lib/xosModules";
+import { listXosFiles, listXosOrders, listXosRequests } from "@/lib/xosModules";
 
 const MODULES = [
   { label: "Orders", icon: Package },
@@ -13,6 +13,8 @@ const MODULES = [
   { label: "Reports", icon: BarChart3 },
   { label: "Store Settings", icon: Settings },
 ];
+
+const ACTIVE_MODULES = new Set(["Orders", "Requests", "Files"]);
 
 const EMPTY_GATE = {
   loading: true,
@@ -25,8 +27,10 @@ const EMPTY_GATE = {
 
 const EMPTY_MODULE_STATE = {
   loading: false,
+  orders: [],
   requests: [],
   files: [],
+  ordersError: "",
   requestsError: "",
   filesError: "",
 };
@@ -69,12 +73,32 @@ function formatDate(value) {
   }
 }
 
+function formatCurrency(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return "Amount pending";
+  try {
+    return new Intl.NumberFormat("en-ZA", {
+      style: "currency",
+      currency: "ZAR",
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    return `R${Math.round(amount)}`;
+  }
+}
+
 function formatFileSize(value) {
   const size = Number(value);
   if (!Number.isFinite(size) || size <= 0) return "Size pending";
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatItemCount(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count <= 0) return "Items pending";
+  return `${count} item${count === 1 ? "" : "s"}`;
 }
 
 function StatusPill({ children }) {
@@ -190,9 +214,16 @@ export default function XOSAdminShell() {
     const loadModules = async () => {
       if (!gate.allowed || !gate.hostname) return;
 
-      setModules((current) => ({ ...current, loading: true, requestsError: "", filesError: "" }));
+      setModules((current) => ({
+        ...current,
+        loading: true,
+        ordersError: "",
+        requestsError: "",
+        filesError: "",
+      }));
 
-      const [requestsResult, filesResult] = await Promise.all([
+      const [ordersResult, requestsResult, filesResult] = await Promise.all([
+        listXosOrders({ hostname: window.location.hostname, limit: 20 }),
         listXosRequests({ hostname: window.location.hostname, limit: 20 }),
         listXosFiles({ hostname: window.location.hostname, limit: 20 }),
       ]);
@@ -200,8 +231,10 @@ export default function XOSAdminShell() {
       if (!cancelled) {
         setModules({
           loading: false,
+          orders: ordersResult.data,
           requests: requestsResult.data,
           files: filesResult.data,
+          ordersError: ordersResult.error || "",
           requestsError: requestsResult.error || "",
           filesError: filesResult.error || "",
         });
@@ -375,7 +408,7 @@ export default function XOSAdminShell() {
               <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{gate.tenant_name}</p>
               <h2 className="mt-1 text-lg font-semibold tracking-tight text-zinc-950">Workspace overview</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
-                This demo workspace shows how a client can access their own requests and private files through a tenant-gated XOS surface.
+                This demo workspace shows how a client can access their own orders, requests, and private files through a tenant-gated XOS surface.
               </p>
             </div>
             <div className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
@@ -387,8 +420,63 @@ export default function XOSAdminShell() {
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {MODULES.map(({ label, icon: Icon }) => (
-            <ModuleCard key={label} label={label} icon={Icon} active={label === "Requests" || label === "Files"} />
+            <ModuleCard key={label} label={label} icon={Icon} active={ACTIVE_MODULES.has(label)} />
           ))}
+        </section>
+
+        <section className="mt-6 rounded-lg border border-zinc-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-zinc-900">Orders</h2>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">Read-only demo order progress for this XOS workspace.</p>
+            </div>
+            <span className="w-fit rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Available now</span>
+          </div>
+          {modules.loading && <LoadingRows label="orders" />}
+          {!modules.loading && modules.ordersError && <ErrorState>{modules.ordersError}</ErrorState>}
+          {!modules.loading && !modules.ordersError && modules.orders.length === 0 && (
+            <EmptyState>No demo orders yet.</EmptyState>
+          )}
+          {!modules.loading && !modules.ordersError && modules.orders.length > 0 && (
+            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+              {modules.orders.map((order) => (
+                <article key={order.order_number} className="rounded-lg border border-zinc-200 bg-zinc-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-zinc-950">{order.order_number || "Demo order"}</p>
+                      <p className="mt-1 truncate text-xs text-zinc-500">{order.client_name || "Client"}</p>
+                    </div>
+                    <StatusPill>{order.status}</StatusPill>
+                  </div>
+                  <p className="mt-3 line-clamp-2 min-h-[40px] text-xs leading-5 text-zinc-600">
+                    {order.summary || "Client-facing progress update pending."}
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-zinc-500">
+                    <div className="rounded-md bg-white px-3 py-2">
+                      <p className="font-medium text-zinc-700">Stage</p>
+                      <p className="mt-1 capitalize">{String(order.stage || "received").replaceAll("_", " ")}</p>
+                    </div>
+                    <div className="rounded-md bg-white px-3 py-2">
+                      <p className="font-medium text-zinc-700">Items</p>
+                      <p className="mt-1">{formatItemCount(order.item_count)}</p>
+                    </div>
+                    <div className="rounded-md bg-white px-3 py-2">
+                      <p className="font-medium text-zinc-700">Created</p>
+                      <p className="mt-1">{formatDate(order.created_at)}</p>
+                    </div>
+                    <div className="rounded-md bg-white px-3 py-2">
+                      <p className="font-medium text-zinc-700">Due</p>
+                      <p className="mt-1">{formatDate(order.due_date)}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-500">
+                    <span>{formatCurrency(order.total_amount)}</span>
+                    {order.tracking_reference && <span>Tracking {order.tracking_reference}</span>}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="mt-6 grid gap-5 lg:grid-cols-2">
