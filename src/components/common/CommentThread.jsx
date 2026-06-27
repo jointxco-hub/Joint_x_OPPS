@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
+import { isAssignableTeamUser } from "@/lib/teamUsers";
 
 const REACTIONS = ["👍", "❤️", "✅", "🔥", "🙌"];
 
