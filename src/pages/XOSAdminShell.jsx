@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/AuthContext";
 import AppLoader from "@/components/common/AppLoader";
 import SignedFileLink from "@/components/common/SignedFileLink";
-import { listXosFiles, listXosOrders, listXosRequests } from "@/lib/xosModules";
+import { createXosRequest, listXosFiles, listXosOrders, listXosRequests } from "@/lib/xosModules";
 
 const MODULES = [
   { label: "Orders", icon: Package },
@@ -15,6 +15,13 @@ const MODULES = [
 ];
 
 const ACTIVE_MODULES = new Set(["Orders", "Requests", "Files"]);
+
+const EMPTY_REQUEST_FORM = {
+  title: "",
+  category: "general",
+  priority: "normal",
+  message: "",
+};
 
 const EMPTY_GATE = {
   loading: true,
@@ -161,6 +168,10 @@ export default function XOSAdminShell() {
   const [signingInWithGoogle, setSigningInWithGoogle] = useState(false);
   const [gate, setGate] = useState(EMPTY_GATE);
   const [modules, setModules] = useState(EMPTY_MODULE_STATE);
+  const [showRequestForm, setShowRequestForm] = useState(false);
+  const [requestForm, setRequestForm] = useState(EMPTY_REQUEST_FORM);
+  const [requestSubmitState, setRequestSubmitState] = useState({ loading: false, error: "", success: "" });
+  const [moduleReloadKey, setModuleReloadKey] = useState(0);
 
   useEffect(() => {
     console.info("XOS_BOUNDARY_ACTIVE", window.location.hostname);
@@ -246,7 +257,44 @@ export default function XOSAdminShell() {
     return () => {
       cancelled = true;
     };
-  }, [gate.allowed, gate.hostname]);
+  }, [gate.allowed, gate.hostname, moduleReloadKey]);
+
+  const submitNewRequest = async (event) => {
+    event.preventDefault();
+
+    const title = requestForm.title.trim();
+    const message = requestForm.message.trim();
+
+    if (title.length < 3) {
+      setRequestSubmitState({ loading: false, error: "Add a request title.", success: "" });
+      return;
+    }
+
+    if (message.length < 5) {
+      setRequestSubmitState({ loading: false, error: "Add request details.", success: "" });
+      return;
+    }
+
+    setRequestSubmitState({ loading: true, error: "", success: "" });
+
+    const result = await createXosRequest({
+      hostname: window.location.hostname,
+      title: title.slice(0, 160),
+      message: message.slice(0, 2000),
+      category: requestForm.category,
+      priority: requestForm.priority,
+    });
+
+    if (result.error) {
+      setRequestSubmitState({ loading: false, error: result.error, success: "" });
+      return;
+    }
+
+    setRequestForm(EMPTY_REQUEST_FORM);
+    setShowRequestForm(false);
+    setRequestSubmitState({ loading: false, error: "", success: "Request sent to OPPS." });
+    setModuleReloadKey((key) => key + 1);
+  };
 
   const redirectToXosRoot = () => {
     window.location.replace(`${window.location.origin}/`);
@@ -481,13 +529,95 @@ export default function XOSAdminShell() {
 
         <section className="mt-6 grid gap-5 lg:grid-cols-2">
           <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
-            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-4">
+            <div className="flex flex-col gap-3 border-b border-zinc-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-base font-semibold text-zinc-900">Requests</h2>
                 <p className="mt-1 text-xs leading-5 text-zinc-500">Client-facing demo requests for this XOS workspace.</p>
               </div>
-              <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Available now</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Available now</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRequestForm((visible) => !visible);
+                    setRequestSubmitState({ loading: false, error: "", success: "" });
+                  }}
+                  className="inline-flex h-8 items-center justify-center rounded-md bg-zinc-950 px-3 text-xs font-semibold text-white hover:bg-zinc-800"
+                >
+                  {showRequestForm ? "Close" : "New Request"}
+                </button>
+              </div>
             </div>
+            {showRequestForm && (
+              <form onSubmit={submitNewRequest} className="border-b border-zinc-200 bg-zinc-50 px-4 py-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block text-xs font-medium text-zinc-700">
+                    Title
+                    <input
+                      type="text"
+                      value={requestForm.title}
+                      onChange={(event) => setRequestForm((current) => ({ ...current, title: event.target.value.slice(0, 160) }))}
+                      maxLength={160}
+                      required
+                      className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                    />
+                  </label>
+                  <label className="block text-xs font-medium text-zinc-700">
+                    Category
+                    <select
+                      value={requestForm.category}
+                      onChange={(event) => setRequestForm((current) => ({ ...current, category: event.target.value }))}
+                      className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                    >
+                      <option value="general">General</option>
+                      <option value="orders">Orders</option>
+                      <option value="files">Files</option>
+                      <option value="design">Design</option>
+                      <option value="store">Store</option>
+                    </select>
+                  </label>
+                  <label className="block text-xs font-medium text-zinc-700">
+                    Priority
+                    <select
+                      value={requestForm.priority}
+                      onChange={(event) => setRequestForm((current) => ({ ...current, priority: event.target.value }))}
+                      className="mt-1 h-10 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                    >
+                      <option value="low">Low</option>
+                      <option value="normal">Normal</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </label>
+                  <div className="hidden sm:block" />
+                  <label className="block text-xs font-medium text-zinc-700 sm:col-span-2">
+                    Message
+                    <textarea
+                      value={requestForm.message}
+                      onChange={(event) => setRequestForm((current) => ({ ...current, message: event.target.value.slice(0, 2000) }))}
+                      maxLength={2000}
+                      required
+                      rows={4}
+                      className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-zinc-500">Creates a tenant-scoped request for OPPS review.</p>
+                  <button
+                    type="submit"
+                    disabled={requestSubmitState.loading}
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-700 px-4 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {requestSubmitState.loading ? "Sending..." : "Send request"}
+                  </button>
+                </div>
+                {requestSubmitState.error && <p className="mt-3 text-sm text-red-600">{requestSubmitState.error}</p>}
+              </form>
+            )}
+            {!showRequestForm && requestSubmitState.success && (
+              <p className="border-b border-zinc-100 px-4 py-3 text-sm text-emerald-700">{requestSubmitState.success}</p>
+            )}
             <div className="divide-y divide-zinc-100">
               {modules.loading && <LoadingRows label="requests" />}
               {!modules.loading && modules.requestsError && <ErrorState>{modules.requestsError}</ErrorState>}

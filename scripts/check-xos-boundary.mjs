@@ -47,8 +47,12 @@ if (!shell.includes("listXosOrders") || !shell.includes("Read-only demo order pr
   fail("XOS Orders preview must stay inside the XOSAdminShell.");
 }
 
-if (app.includes("get_xos_orders_for_host") || app.includes("listXosOrders")) {
-  fail("OPPS app/root must not own the XOS Orders preview.");
+if (!shell.includes("createXosRequest") || !shell.includes("New Request") || !shell.includes("Creates a tenant-scoped request for OPPS review.")) {
+  fail("XOS request creation must stay inside the XOSAdminShell.");
+}
+
+if (app.includes("get_xos_orders_for_host") || app.includes("listXosOrders") || app.includes("create_xos_request_for_host") || app.includes("createXosRequest")) {
+  fail("OPPS app/root must not own XOS module RPCs.");
 }
 
 if (!shell.includes("redirectTo: `${window.location.origin}/`") || !shell.includes("window.location.replace(`${window.location.origin}/`)")) {
