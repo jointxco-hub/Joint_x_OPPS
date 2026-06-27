@@ -57,6 +57,7 @@ import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import OrderFilesTab from "@/components/orders/drawer/OrderFilesTab";
 import { normalizeOrderFileFolders } from "@/components/orders/drawer/OrderDrawerShared";
+import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
 
 const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
 
@@ -455,6 +456,32 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
   const courier = resolvedCouriers.find(c => c.value === order.courier);
   const trackingUrl = buildCourierTrackingUrl(courier, order.tracking_number);
   const [copiedTracking, setCopiedTracking] = useState(false);
+
+  const handlePrintPosReceipt = async () => {
+    const result = await printIminReceipt(buildOrderThermalPayload({
+      order: {
+        ...order,
+        client_email: displayClientEmail,
+        whatsapp_name: displayWhatsappName,
+        saved_contact_name: displaySavedContactName,
+      },
+      totalPaid,
+      balance,
+      statusLabel: statusConfig[order.status]?.label || order.status,
+      stageLabel: labelFor(PRODUCTION_DETAIL_STAGES, order.production_detail_stage) || order.pipeline_stage,
+      methodLabel: labelFor(PRODUCTION_METHODS, order.production_method),
+      trackingUrl,
+    }));
+
+    if (result.ok) {
+      toast.success(`Printed POS receipt via ${result.bridgeName || "iMin printer"}`);
+      return;
+    }
+
+    toast.info("iMin printer not detected. Opening browser print instead.");
+    setPrintView("summary");
+    window.setTimeout(() => fallbackBrowserPrint(), 300);
+  };
   const [copiedXlab, setCopiedXlab] = useState(false);
   const copyTrackingLink = () => {
     const code = encodeURIComponent(order.order_number || order.tracking_number || order.id || "");
@@ -667,14 +694,24 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   <p className="text-sm font-semibold text-foreground">Order printouts</p>
                   <p className="text-xs text-muted-foreground">Quick production print views for this order.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPrintView("summary")}
-                  className="inline-flex items-center gap-2 rounded-full bg-foreground px-3 py-2 text-xs font-semibold text-background hover:bg-foreground/90"
-                >
-                  <Printer className="h-3.5 w-3.5" />
-                  Print summary
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintPosReceipt}
+                    className="inline-flex items-center gap-2 rounded-full bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Print POS Receipt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintView("summary")}
+                    className="inline-flex items-center gap-2 rounded-full bg-foreground px-3 py-2 text-xs font-semibold text-background hover:bg-foreground/90"
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Print summary
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <EditField label="Client Name" field="client_name" value={order.client_name}
@@ -1243,6 +1280,47 @@ function DraftTextarea({ label, value, onSave, placeholder }) {
   );
 }
 
+function buildOrderThermalPayload({ order, totalPaid, balance, statusLabel, stageLabel, methodLabel, trackingUrl }) {
+  const products = Array.isArray(order.products) && order.products.length
+    ? order.products
+    : [{ name: order.notes || order.special_instructions || "Order setup", quantity: 1 }];
+
+  return {
+    type: "order_brief",
+    storeName: "Joint X OPPS",
+    orderNumber: order.order_number || order.id,
+    customerName: order.client_name || order.whatsapp_name || order.saved_contact_name,
+    phone: order.client_phone || order.phone || order.whatsapp_number,
+    dateTime: new Date().toLocaleString(),
+    status: statusLabel,
+    stage: [methodLabel, stageLabel].filter(Boolean).join(" / "),
+    lineItems: products.map((product) => ({
+      qty: product.quantity || product.qty || 1,
+      itemName: product.name || product.title || product.item_name || "Item",
+      size: product.size || product.sizes,
+      color: product.color || product.colour,
+      printPosition: formatProductOptions(product.selected_print_options || product.print_options || product.printOptions) || product.print_method || product.print,
+      notes: product.notes,
+    })),
+    totals: [
+      { label: "Total", value: formatReceiptMoney(order.total_amount) },
+      { label: "Paid", value: formatReceiptMoney(totalPaid) },
+      { label: "Balance", value: formatReceiptMoney(balance) },
+    ],
+    internalNotes: order.internal_notes || order.notes || order.special_instructions,
+    codeText: trackingUrl || (order.order_number ? `${window.location.origin}/track?order=${encodeURIComponent(order.order_number)}` : ""),
+  };
+}
+
+function labelFor(options, value) {
+  if (!value) return "";
+  return options.find((option) => option.value === value)?.label || String(value).replace(/_/g, " ");
+}
+
+function formatReceiptMoney(value) {
+  const amount = Number(value || 0);
+  return Number.isFinite(amount) ? `R${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "-";
+}
 function EditField({ label, value, help, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options }) {
   return (
     <div className="bg-secondary/30 rounded-xl p-3">

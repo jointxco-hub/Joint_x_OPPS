@@ -22,6 +22,8 @@ import ConfirmDialog from "@/components/common/ConfirmDialog";
 import InvoiceStatusBadge from "./InvoiceStatusBadge";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
+import { printIminReceipt } from "@/lib/pos/iminPrinter";
+import { toast } from "sonner";
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -97,6 +99,17 @@ export default function InvoiceDetailDrawer({
     if (!invoice || partialAmountInvalid) return;
     onMarkPartiallyPaid?.(invoice, partialAmountNumber, partialNote);
     setPartialPaymentOpen(false);
+  };
+
+  const printPosInvoiceSummary = async () => {
+    const result = await printIminReceipt(buildInvoiceThermalPayload(invoice));
+    if (result.ok) {
+      toast.success(`Printed POS receipt via ${result.bridgeName || "iMin printer"}`);
+      return;
+    }
+
+    toast.info("iMin printer not detected. Opening browser invoice print instead.");
+    openClientInvoice(invoice, true);
   };
 
   return (
@@ -244,6 +257,9 @@ export default function InvoiceDetailDrawer({
                 <Button variant="outline" onClick={() => openClientInvoice(invoice, true)} className="rounded-xl">
                   <Printer className="h-4 w-4" /> Print client invoice
                 </Button>
+                <Button variant="outline" onClick={printPosInvoiceSummary} className="rounded-xl">
+                  <Printer className="h-4 w-4" /> Print POS Receipt
+                </Button>
                 {["approved", "exported", "imported_to_zoho"].includes(invoice.status) && (
                   <Button variant="outline" onClick={exportSingle} className="rounded-xl">
                     <Download className="h-4 w-4" /> {invoice.status === "approved" ? "Export CSV" : "Re-export CSV"}
@@ -350,6 +366,33 @@ function Info({ label, value }) {
   );
 }
 
+
+function buildInvoiceThermalPayload(invoice) {
+  const items = Array.isArray(invoice?.items) ? invoice.items : [];
+
+  return {
+    type: "invoice_summary",
+    storeName: "Joint X OPPS",
+    invoiceNumber: invoice?.invoice_number,
+    orderNumber: invoice?.source_order_id,
+    customerName: invoice?.customer_name,
+    dateTime: invoice?.invoice_date ? String(invoice.invoice_date).slice(0, 10) : new Date().toLocaleString(),
+    status: invoice?.status,
+    lineItems: items.map((item) => ({
+      qty: item.quantity,
+      itemName: item.item_name || item.item_description || "Invoice item",
+      notes: item.item_description,
+    })),
+    totals: [
+      { label: "Subtotal", value: money(invoice?.subtotal) },
+      invoice?.shipping_charge ? { label: "Shipping", value: money(invoice.shipping_charge) } : null,
+      { label: "Total", value: money(invoice?.total) },
+      invoice?.amount_paid ? { label: "Paid", value: money(invoice.amount_paid) } : null,
+      invoice?.balance_due !== undefined && invoice?.balance_due !== null ? { label: "Balance", value: money(invoice.balance_due) } : null,
+    ].filter(Boolean),
+    footer: "Printed from OPPS",
+  };
+}
 function ActivitySection({ activity, isLoading }) {
   return (
     <div className="rounded-2xl border border-border bg-card">

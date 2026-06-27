@@ -13,10 +13,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Users, Plus, Crown, Shield, UserCheck, Archive, BookOpen,
   Pencil, Trash2, MessageSquare, ArrowUpCircle, Clock, Wrench,
-  CheckCircle2, ChevronDown, ChevronUp, AlertCircle, RefreshCw
+  CheckCircle2, ChevronDown, ChevronUp, AlertCircle, RefreshCw, Printer
 } from "lucide-react";
 import { createPageUrl } from "../utils";
 import { toast } from "sonner";
+import { detectIminPrinter, printIminReceipt } from "@/lib/pos/iminPrinter";
 
 const criticalityColors = {
   critical: "bg-red-100 text-red-700",
@@ -238,6 +239,7 @@ export default function RolesManagement() {
             { key: "team", label: "Team Access", icon: Shield },
             { key: "roles", label: "Roles", icon: Users },
             { key: "sops", label: "SOPs", icon: BookOpen },
+            { key: "tools", label: "System Tools", icon: Wrench },
           ].map(t => (
             <button
               key={t.key}
@@ -371,6 +373,10 @@ export default function RolesManagement() {
           />
         )}
 
+        {settingsTab === "tools" && (
+          <SystemToolsTab />
+        )}
+
         {/* Role form dialog */}
         {showRoleForm && (
           <RoleFormDialog
@@ -396,6 +402,62 @@ export default function RolesManagement() {
 
 // ── SOPs tab ──────────────────────────────────────────────────────────────────
 
+
+function SystemToolsTab() {
+  const handleTestPosPrinter = async () => {
+    const detection = detectIminPrinter();
+    const paperWidth = getConfiguredPaperWidth();
+    const result = await printIminReceipt({
+      type: "test",
+      storeName: "OPPS POS PRINTER TEST",
+      dateTime: new Date().toLocaleString(),
+      status: detection.bridgeName ? `Bridge: ${detection.bridgeName}` : "Bridge: not detected",
+      stage: `Paper width: ${paperWidth}mm`,
+      lineItems: [
+        {
+          qty: 1,
+          itemName: "If you can read this, iMin printing is working.",
+        },
+      ],
+      footer: "Printed from OPPS",
+    }, { paperWidth });
+
+    if (result.ok) {
+      toast.success(`Test receipt printed via ${result.bridgeName || detection.bridgeName || "iMin printer"}`);
+      return;
+    }
+
+    toast.info("iMin printer not detected. No POS test receipt was sent.");
+  };
+
+  const detection = detectIminPrinter();
+  const paperWidth = getConfiguredPaperWidth();
+
+  return (
+    <Card className="max-w-2xl">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Printer className="h-5 w-5 text-[#0F9B8E]" />
+          POS Printer
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          <p>Bridge: <span className="font-semibold text-slate-900">{detection.bridgeName || "Not detected"}</span></p>
+          <p>Paper width: <span className="font-semibold text-slate-900">{paperWidth}mm</span></p>
+        </div>
+        <Button type="button" onClick={handleTestPosPrinter} className="rounded-xl">
+          <Printer className="h-4 w-4" /> Test POS Printer
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function getConfiguredPaperWidth() {
+  if (typeof window === "undefined") return 58;
+  return window.localStorage?.getItem("opps:imin-paper-width") === "80" ? 80 : 58;
+}
 function SOPFormButton({ roles, onCreate }) {
   const [open, setOpen] = useState(false);
   return (
