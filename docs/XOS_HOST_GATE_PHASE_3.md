@@ -139,3 +139,37 @@ Lint:
 - `npm.cmd run build` passed.
 - `npm.cmd run lint` remains blocked by the existing repo-wide unused import backlog.
 
+
+## XOS Boundary Fix
+
+Date: 2026-06-27
+
+Reason:
+- Live browser testing showed `demo.xos.jointx.co.za` could render the internal OPPS dashboard/sidebar after Google login and membership resolution.
+
+Fix:
+- `src/App.jsx` now detects `*.xos.jointx.co.za` at the top-level `App()` boundary.
+- XOS hosts hard-return `XosOnlyApp` before `<Router>`, OPPS routes, layout, navigation tracking, global refresh, PWA install prompt, visual edit agent, and tenant-context flows can mount.
+- `XOSAdminShell` owns Google sign-in directly and redirects back to `window.location.origin + "/"`.
+- XOS hosts no longer use the shared `/SignIn` route, query params, localStorage, or `jx_current_tenant` for tenant selection.
+- Added `npm.cmd run check:xos-boundary` static guard to fail if XOS is placed back under Router/OPPS components or if the shell starts using shared SignIn/query/localStorage tenant selection.
+
+Verification:
+- `npm.cmd run check:xos-boundary` passed.
+- `npm.cmd run build` passed.
+- `npm.cmd run lint` remains blocked by the existing repo-wide unused import backlog.
+- Frontend deployed with `npx.cmd vercel --prod --yes`.
+- Production deployment URL: `https://joint-x-opps-lkzdwbgj2-joint-x.vercel.app`
+- Vercel production alias reported: `https://ops.jointx.co.za`
+
+Post-deploy route checks:
+- `https://demo.xos.jointx.co.za` returned `200`
+- `https://ops.jointx.co.za` returned `200`
+- `https://ops.jointx.co.za/track` returned `200`
+- `https://xlab.jointx.co.za/track` returned `200`
+
+Manual browser retest required:
+- logged out XOS host should show only the XOS sign-in/access state
+- logged-in user without demo membership should show `Access Denied`
+- logged-in user with `demo-xos` membership should show only the minimal XOS shell
+- XOS host must not show OPPS sidebar/dashboard

@@ -21,10 +21,6 @@ const EMPTY_GATE = {
   hostname: "",
 };
 
-function signInHref() {
-  const next = `${window.location.pathname}${window.location.search}`;
-  return `/SignIn?next=${encodeURIComponent(next || "/")}`;
-}
 
 function GateState({ title, message, action }) {
   return (
@@ -44,6 +40,8 @@ function GateState({ title, message, action }) {
 
 export default function XOSAdminShell() {
   const { isLoadingAuth, isAuthenticated, user } = useAuth();
+  const [signInError, setSignInError] = useState('');
+  const [signingIn, setSigningIn] = useState(false);
   const [gate, setGate] = useState(EMPTY_GATE);
 
   useEffect(() => {
@@ -88,6 +86,25 @@ export default function XOSAdminShell() {
     };
   }, [isLoadingAuth, isAuthenticated]);
 
+  const signInWithGoogle = async () => {
+    if (!supabase) {
+      setSignInError("Sign-in is not configured for this workspace.");
+      return;
+    }
+
+    setSignInError("");
+    setSigningIn(true);
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/` },
+    });
+
+    if (error) {
+      setSignInError(error.message || "Google sign-in failed.");
+      setSigningIn(false);
+    }
+  };
   if (isLoadingAuth || gate.loading) {
     return <AppLoader />;
   }
@@ -107,12 +124,17 @@ export default function XOSAdminShell() {
         title="Sign In Required"
         message="Sign in with an account that has access to this client workspace."
         action={
-          <a
-            href={signInHref()}
-            className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800"
-          >
-            Sign in
-          </a>
+          <div className="mt-6 space-y-3">
+            <button
+              type="button"
+              onClick={signInWithGoogle}
+              disabled={signingIn}
+              className="inline-flex h-10 items-center justify-center rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {signingIn ? "Opening Google..." : "Sign in with Google"}
+            </button>
+            {signInError && <p className="text-sm text-red-600">{signInError}</p>}
+          </div>
         }
       />
     );

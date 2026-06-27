@@ -22,7 +22,7 @@ const MainPage = mainPageKey ? Pages[mainPageKey] : () => <></>;
 const SignInPage = Pages['SignIn'];
 const TrackOrderPage = Pages['TrackOrder'];
 
-// Paths that are public — rendered without the internal layout and no auth check
+// Paths that are public - rendered without the internal layout and no auth check
 const PUBLIC_PATHS = ['/TrackOrder', '/track', '/SignIn'];
 
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
@@ -34,9 +34,8 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, isAuthenticated, navigateToLogin } = useAuth();
   const location = useLocation();
-  const isXosHost = isXosAdminHost();
 
-  // Public pages — bypass auth and layout entirely
+  // Public pages - bypass auth and layout entirely
   if (PUBLIC_PATHS.includes(location.pathname)) {
     return (
       <Suspense fallback={<AppLoader />}>
@@ -47,11 +46,6 @@ const AuthenticatedApp = () => {
         </Routes>
       </Suspense>
     );
-  }
-
-
-  if (isXosHost) {
-    return <XOSAdminShell />;
   }
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
@@ -100,23 +94,40 @@ const AuthenticatedApp = () => {
 };
 
 
-function App() {
-  const isXosHost = isXosAdminHost();
+function XosOnlyApp() {
+  return (
+    <AuthProvider>
+      <QueryClientProvider client={queryClientInstance}>
+        <Toaster />
+        <XOSAdminShell />
+      </QueryClientProvider>
+    </AuthProvider>
+  )
+}
 
+function OppsApp() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
-          {!isXosHost && <NavigationTracker />}
+          <NavigationTracker />
           <AuthenticatedApp />
-          {!isXosHost && <GlobalRefreshControl />}
+          <GlobalRefreshControl />
         </Router>
         <Toaster />
-        {!isXosHost && <PWAInstallPrompt />}
-        {!isXosHost && <VisualEditAgent />}
+        <PWAInstallPrompt />
+        <VisualEditAgent />
       </QueryClientProvider>
     </AuthProvider>
   )
+}
+
+function App() {
+  if (isXosAdminHost()) {
+    return <XosOnlyApp />
+  }
+
+  return <OppsApp />
 }
 
 export default App
