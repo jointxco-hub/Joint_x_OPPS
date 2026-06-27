@@ -55,10 +55,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
+import OrderFilesTab from "@/components/orders/drawer/OrderFilesTab";
 import { normalizeOrderFileFolders } from "@/components/orders/drawer/OrderDrawerShared";
 
 const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
-const OrderFilesTab = React.lazy(() => import("@/components/orders/drawer/OrderFilesTab"));
+
 const PortalTab = React.lazy(() => import("@/components/orders/drawer/PortalTab"));
 const OrderQuickPrintSheet = React.lazy(() => import("@/components/orders/drawer/OrderQuickPrintSheet"));
 const InvoicesTab = React.lazy(() => import("@/components/orders/drawer/InvoicesTab"));
@@ -186,7 +187,7 @@ class DrawerSectionBoundary extends React.Component {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <p className="font-semibold">{this.props.label || "This section"} could not load</p>
           <p className="mt-1 text-xs leading-5">You can still use the rest of this order. Close and reopen after saving any changes.</p>
-          {this.props.label === "Order workspace" && this.state.errorMessage && (
+          {this.state.errorMessage && (
             <p className="mt-2 break-words font-mono text-[11px] text-amber-800">{this.state.errorMessage}</p>
           )}
         </div>
@@ -1297,3 +1298,4 @@ function TimelineEntry({ icon, label, time }) {
     </div>
   );
 }
+
