@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Download, MessageSquare, X, Send } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
 
 export default function FileLightbox({ file, onClose }) {
   const [showCommentForm, setShowCommentForm] = useState(false);
@@ -244,4 +245,5 @@ export default function FileLightbox({ file, onClose }) {
 
   return createPortal(lightbox, document.body);
 }
+
 
