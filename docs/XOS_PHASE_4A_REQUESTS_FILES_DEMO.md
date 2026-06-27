@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress.
+Closed for engineering after signed Storage object repair. Final authenticated browser click-through should be confirmed from a real `demo-xos` member session.
 
 Scope is intentionally small: make `demo.xos.jointx.co.za` useful with client-facing Requests and Files only, without exposing OPPS internals or onboarding a real client.
 
@@ -87,4 +87,28 @@ Live checks:
 - Fresh browser DOM for `demo.xos.jointx.co.za` showed `XOS Boundary Active` and no OPPS dashboard/sidebar markers.
 - Disposable live demo member SQL probe confirmed `demo.xos.jointx.co.za` returns seeded `DEMO-XOS` Requests and Files only through the host-scoped XOS RPCs.
 
-Authenticated browser click-through for the Phase 4A Files module should be completed with a real `demo-xos` member session after deploy. The file links use the existing signed URL helper and the payload does not return raw signed URLs, tenant IDs, or public tracking file arrays.
+Browser file click-through finding:
+
+- Authenticated browser QA showed the XOS UI and Files module correctly, but opening a demo file returned `404 Not found` from a signed Supabase URL.
+- Observed signed path: `/storage/v1/object/sign/uploads/8d4496f1-7c39-4f30-b6d4-45bded18a421/xos-demo/welcome-note.txt`.
+- Root cause: `storage.objects` metadata rows existed for the disposable demo paths, but the object bodies were missing or unreadable.
+
+Storage repair:
+
+- Removed the broken disposable demo objects only:
+  - `8d4496f1-7c39-4f30-b6d4-45bded18a421/xos-demo/welcome-note.txt`
+  - `8d4496f1-7c39-4f30-b6d4-45bded18a421/xos-demo/brand-brief.pdf`
+- Uploaded fresh disposable demo object bodies to the exact same paths.
+- Download verification passed:
+  - `welcome-note.txt` downloaded at 82 bytes.
+  - `brand-brief.pdf` downloaded at 620 bytes.
+
+Post-repair verification:
+
+- `supabase/tests/xos_requests_files_demo.sql` passed.
+- `supabase/tests/private_uploads_signed_urls.sql` passed.
+- `npm.cmd run check:xos-boundary` passed.
+- `npm.cmd run build` passed.
+- No frontend deploy was required because the fix changed only Storage object bytes.
+
+The file links continue to use the existing signed URL helper and the payload does not return raw signed URLs, tenant IDs, or public tracking file arrays.
