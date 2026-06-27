@@ -4,7 +4,7 @@ Date: 2026-06-27
 
 ## Status
 
-Implementation verified for the Demo XOS workspace.
+Live verified for the Demo XOS workspace.
 
 Phase 4C adds a read-only Orders preview to `demo.xos.jointx.co.za`. It does not add order mutation, OPPS routes, tenant switching, finance tools, supplier views, production staff tools, or full portal behavior.
 
@@ -82,7 +82,7 @@ All seeded rows use obvious `DEMO-XOS` labels and no real client data.
 - does not mount OPPS layout, OPPS sidebar, or OPPS route tables
 - keeps file access through the existing signed-link component
 
-## QA Steps
+## Verification
 
 Completed checks:
 
@@ -92,15 +92,29 @@ Completed checks:
 - `npm.cmd run check:xos-boundary` passed
 - `npm.cmd run build` passed
 
-Manual/live checks still required before production deploy:
+Deployment:
 
-- `demo.xos.jointx.co.za` shows XOS shell only
-- Orders shows only `demo-xos` demo orders
-- Requests still load
-- Files still open through signed URLs
-- OPPS remains normal at `ops.jointx.co.za`
-- public tracking remains normal at `ops.jointx.co.za/track` and `xlab.jointx.co.za/track`
+- Phase 4C deployed to production.
+- Production route: `https://demo.xos.jointx.co.za`
+- Deployment verified.
+
+Authenticated browser QA passed:
+
+- Orders card shows `Available now`.
+- Orders section renders demo orders.
+- Orders are read-only.
+- Requests still render.
+- Files still render.
+- Signed file open works through the signed Storage URL flow.
+- No OPPS dashboard/sidebar appears on the demo host.
+- No risky internal order fields were visible.
+
+Current active client workspace loop:
+
+- Orders
+- Requests
+- Files
 
 ## Real Client Status
 
-Real client onboarding remains paused. Phase 4C is a controlled demo-only preview until SQL, build, browser, and rollback verification are complete.
+Real client onboarding remains paused. Phase 4C is live-verified as a controlled demo-only preview; real onboarding still needs a separate go/no-go checklist.
