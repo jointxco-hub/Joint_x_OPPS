@@ -199,3 +199,24 @@ Verification:
 - `npm.cmd run check:xos-boundary` passed.
 - `npm.cmd run build` passed.
 - Browser/manual checks after deployment should confirm the marker is visible and console logs `XOS_BOUNDARY_ACTIVE` on `demo.xos.jointx.co.za`.
+
+Deployment:
+- Commit: `e05b880`
+- Production deployment URL: `https://joint-x-opps-1zd28b2a1-joint-x.vercel.app`
+- Vercel alias reported: `https://ops.jointx.co.za`
+
+Post-deploy checks:
+- `https://demo.xos.jointx.co.za` returned `200`
+- `https://ops.jointx.co.za` returned `200`
+- `https://ops.jointx.co.za/track` returned `200`
+- `https://xlab.jointx.co.za/track` returned `200`
+- `demo.xos.jointx.co.za` served `/assets/index-BbwKsACO.js`
+- deployed XOS bundle contains `XOS_BOUNDARY_ACTIVE`
+- deployed XOS bundle contains `Sign in with email`
+- deployed XOS bundle contains `Continue with Google`
+- deployed XOS bundle contains `service_worker_disabled`
+- deployed `/sw.js` contains the XOS host guard, unregister call, no-store fetch path, and `joint-x-shell-v5`
+
+Manual browser retest focus:
+- If a browser still shows OPPS once after this deploy, reload once after the new bundle logs `XOS_BOUNDARY_ACTIVE service_worker_disabled`; that pass unregisters the old worker and clears app-shell caches for the XOS origin.
+- After cleanup, `demo.xos.jointx.co.za` should show only the XOS sign-in/access/shell states and never OPPS navigation or dashboard.
