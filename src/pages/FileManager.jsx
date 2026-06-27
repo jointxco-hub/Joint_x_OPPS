@@ -11,6 +11,7 @@ import {
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
+import { useSignedFileUrl } from "@/lib/privateFiles";
 
 const FOLDER_COLORS = {
   blue:   { bg: "bg-blue-50",   icon: "text-blue-500",   hex: "#dbeafe" },
@@ -28,19 +29,36 @@ function getFileExt(url, type) {
   return m ? m[1].toLowerCase() : null;
 }
 
+function FileDownloadLink({ file }) {
+  const { url, loading, error, isPrivate } = useSignedFileUrl(file.file_url);
+  const href = url || (isPrivate ? "" : file.file_url);
+  return (
+    <a
+      href={href || undefined}
+      download
+      aria-disabled={loading || Boolean(error) || !href}
+      className={`p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all ${loading || error || !href ? "pointer-events-none opacity-50" : ""}`}
+      title={error ? "File access unavailable" : loading ? "Preparing secure link" : "Download"}
+    >
+      <Download className="w-3.5 h-3.5" />
+    </a>
+  );
+}
+
 function FilePill({ file }) {
   const [imgError, setImgError] = useState(false);
+  const { url: signedUrl, loading: signingUrl } = useSignedFileUrl(file.file_url);
   const ext = getFileExt(file.file_url, file.file_type);
   const isImage = ext && ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
   const isPdf = ext === "pdf";
   const isDoc = ext && ["doc", "docx"].includes(ext);
   const isSheet = ext && ["xls", "xlsx", "csv"].includes(ext);
 
-  if (isImage && !imgError) {
+  if (isImage && !imgError && !signingUrl && signedUrl) {
     return (
       <div className="w-full h-28 overflow-hidden bg-secondary">
         <img
-          src={file.file_url}
+          src={signedUrl}
           alt={file.title}
           className="w-full h-full object-cover"
           onError={() => setImgError(true)}
@@ -394,14 +412,7 @@ export default function FileManager() {
                       className="flex items-center gap-1 mt-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <a
-                        href={file.file_url}
-                        download
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-                        title="Download"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </a>
+                      <FileDownloadLink file={file} />
                       <button
                         onClick={() => setFileForm(file)}
                         className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"

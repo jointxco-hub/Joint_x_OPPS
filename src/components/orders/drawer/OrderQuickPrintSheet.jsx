@@ -1,6 +1,7 @@
 import { Printer, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { normalizeOrderFileFolders } from "./OrderDrawerShared";
+import { isPrivateFileReference } from "@/lib/privateFiles";
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
@@ -249,7 +250,7 @@ function OrderPrintMetric({ label, value, tone }) {
 }
 
 function isPrintableImage(url = "") {
-  return /\.(png|jpe?g|webp|gif|avif)(\?.*)?$/i.test(String(url));
+  return !isPrivateFileReference(url) && /\.(png|jpe?g|webp|gif|avif)(\?.*)?$/i.test(String(url));
 }
 
 function printFileName(url = "") {

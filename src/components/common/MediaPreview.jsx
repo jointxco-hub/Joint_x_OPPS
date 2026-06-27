@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Download, ExternalLink, File, Play, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useSignedFileUrl } from "@/lib/privateFiles";
 
 function isImage(url = "") {
   return /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
@@ -17,9 +18,14 @@ function isPdf(url = "") {
 export default function MediaPreview({ url, title = "Attachment", className = "" }) {
   const [open, setOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const image = isImage(url) && !imgError;
-  const video = isVideo(url);
-  const pdf = isPdf(url);
+  const { url: signedUrl, loading, error, isPrivate } = useSignedFileUrl(url);
+  const displayUrl = signedUrl || "";
+  const fallbackUrl = isPrivate ? "" : url;
+  const linkUrl = displayUrl || fallbackUrl;
+  const canRenderSecureMedia = Boolean(displayUrl || fallbackUrl);
+  const image = isImage(url) && !imgError && canRenderSecureMedia && !loading && !error;
+  const video = isVideo(url) && canRenderSecureMedia && !loading && !error;
+  const pdf = isPdf(url) && canRenderSecureMedia && !loading && !error;
 
   return (
     <>
@@ -29,7 +35,7 @@ export default function MediaPreview({ url, title = "Attachment", className = ""
         className={`aspect-square overflow-hidden rounded-xl border border-border bg-secondary/30 transition-all hover:border-primary/40 ${className}`}
       >
         {image ? (
-          <img src={url} alt={title} loading="lazy" className="h-full w-full object-cover" onError={() => setImgError(true)} />
+          <img src={linkUrl} alt={title} loading="lazy" className="h-full w-full object-cover" onError={() => setImgError(true)} />
         ) : video ? (
           <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-muted-foreground">
             <Play className="h-6 w-6" />
@@ -50,12 +56,12 @@ export default function MediaPreview({ url, title = "Attachment", className = ""
               <p className="truncate text-sm font-semibold text-foreground">{title}</p>
               <div className="flex items-center gap-1">
                 <Button asChild variant="ghost" size="icon" className="rounded-full">
-                  <a href={url} download>
+                  <a href={linkUrl || undefined} download>
                     <Download className="h-4 w-4" />
                   </a>
                 </Button>
                 <Button asChild variant="ghost" size="icon" className="rounded-full">
-                  <a href={url} target="_blank" rel="noreferrer">
+                  <a href={linkUrl || undefined} target="_blank" rel="noreferrer">
                     <ExternalLink className="h-4 w-4" />
                   </a>
                 </Button>
@@ -65,12 +71,12 @@ export default function MediaPreview({ url, title = "Attachment", className = ""
               </div>
             </div>
             <div className="flex max-h-[78vh] items-center justify-center overflow-hidden rounded-xl bg-secondary/30">
-              {isImage(url) && !imgError ? (
-                <img src={url} alt={title} className="max-h-[78vh] max-w-full object-contain" onError={() => setImgError(true)} />
+              {image ? (
+                <img src={linkUrl} alt={title} className="max-h-[78vh] max-w-full object-contain" onError={() => setImgError(true)} />
               ) : video ? (
-                <video src={url} controls className="max-h-[78vh] max-w-full" />
+                <video src={linkUrl} controls className="max-h-[78vh] max-w-full" />
               ) : pdf ? (
-                <iframe src={url} title={title} className="h-[78vh] w-full border-0" />
+                <iframe src={linkUrl} title={title} className="h-[78vh] w-full border-0" />
               ) : (
                 <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 p-6 text-center">
                   <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-background">
@@ -78,17 +84,17 @@ export default function MediaPreview({ url, title = "Attachment", className = ""
                   </span>
                   <div>
                     <p className="text-sm font-semibold text-foreground">Preview is not available for this file type.</p>
-                    <p className="mt-1 text-sm text-muted-foreground">Download it or open it in the browser.</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{error ? "You do not have access to this private file, or the signed link expired." : loading ? "Preparing secure file link..." : "Download it or open it in the browser."}</p>
                   </div>
                   <div className="flex flex-wrap justify-center gap-2">
                     <Button asChild variant="outline" className="rounded-full">
-                      <a href={url} download>
+                      <a href={linkUrl || undefined} download>
                         <Download className="mr-2 h-4 w-4" />
                         Download
                       </a>
                     </Button>
                     <Button asChild variant="outline" className="rounded-full">
-                      <a href={url} target="_blank" rel="noreferrer">
+                      <a href={linkUrl || undefined} target="_blank" rel="noreferrer">
                         <ExternalLink className="mr-2 h-4 w-4" />
                         Open
                       </a>

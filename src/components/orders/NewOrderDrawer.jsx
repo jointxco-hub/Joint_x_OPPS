@@ -8,6 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
 import { getInternalClientFileLibrary } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
+import { isPrivateFileReference } from "@/lib/privateFiles";
 import { toast } from "sonner";
 
 /**
@@ -32,7 +33,7 @@ function fuzzyScore(query, target) {
 }
 
 function isImageUrl(url = "") {
-  return /\.(png|jpe?g|webp|gif|avif|svg)(\?.*)?$/i.test(String(url));
+  return !isPrivateFileReference(url) && /\.(png|jpe?g|webp|gif|avif|svg)(\?.*)?$/i.test(String(url));
 }
 
 function fileNameFromUrl(url = "") {

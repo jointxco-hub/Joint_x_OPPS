@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabaseClient';
 import { getCurrentTenantId } from '@/lib/tenantContext';
+import { toPrivateUploadRef } from '@/lib/privateFiles';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -2015,16 +2016,28 @@ export const dataClient = {
   },
   integrations: {
     Core: {
-      async UploadFile({ file }) {
+      async UploadFile({ file, visibility = 'private', folder = 'uploads' }) {
         if (!file) return { file_url: '' };
         if (!supabase) return { file_url: URL.createObjectURL(file) };
 
         const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-        const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`;
+        const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '/');
+        const random = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const isPublic = visibility === 'public';
+        const bucket = isPublic ? 'public-assets' : 'uploads';
+        let storagePath;
+
+        if (isPublic) {
+          storagePath = `${String(folder || 'public').replace(/^\/+|\/+$/g, '')}/${datePrefix}/${random}-${safeName}`;
+        } else {
+          const tenantId = await getCurrentTenantId();
+          if (!tenantId) throw new Error('No active tenant is selected for private upload.');
+          storagePath = `${tenantId}/${datePrefix}/${random}-${safeName}`;
+        }
 
         const { error } = await supabase.storage
-          .from('uploads')
-          .upload(path, file, { cacheControl: '31536000', upsert: false });
+          .from(bucket)
+          .upload(storagePath, file, { cacheControl: isPublic ? '31536000' : '300', upsert: false });
 
         if (error) {
           const msg = error.message || '';
@@ -2033,17 +2046,26 @@ export const dataClient = {
           throw Object.assign(
             new Error(
               isBucketMissing
-                ? 'Bucket "uploads" not found — create a public bucket named exactly "uploads" in Supabase → Storage'
+                ? `Bucket "${bucket}" not found - run the private uploads migration in Supabase.`
                 : isRLS
-                ? 'Missing Storage INSERT policy — Supabase → Storage → uploads → Policies → add INSERT for authenticated'
+                ? 'Supabase RLS is blocking this storage upload for the active tenant.'
                 : msg || 'Storage upload failed'
             ),
             { isStorageError: true }
           );
         }
 
-        const { data } = supabase.storage.from('uploads').getPublicUrl(path);
-        return { file_url: data.publicUrl };
+        if (isPublic) {
+          const { data } = supabase.storage.from(bucket).getPublicUrl(storagePath);
+          return { file_url: data.publicUrl, storage_bucket: bucket, storage_path: storagePath, is_public: true };
+        }
+
+        return {
+          file_url: toPrivateUploadRef(bucket, storagePath),
+          storage_bucket: bucket,
+          storage_path: storagePath,
+          is_private: true,
+        };
       },
       async InvokeLLM() {
         throw new Error('LLM integration is not configured in the Supabase-only build.');

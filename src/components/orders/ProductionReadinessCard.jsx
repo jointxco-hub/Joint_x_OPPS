@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import SignedFileLink from "@/components/common/SignedFileLink";
 
 const STATUS_OPTIONS = [
   { value: "pending", label: "Pending" },
@@ -581,9 +582,9 @@ function PrintFileList({ files, empty }) {
       {validFiles.map((file, index) => (
         <div key={`${file.url || file.name}-${index}`} className="break-words rounded-lg border border-zinc-200 p-2 text-sm">
           {file.url ? (
-            <a href={file.url} target="_blank" rel="noreferrer" className="text-zinc-950 underline underline-offset-2">
+            <SignedFileLink url={file.url} target="_blank" rel="noreferrer" className="text-zinc-950 underline underline-offset-2">
               {file.name || file.url}
-            </a>
+            </SignedFileLink>
           ) : (
             <span>{file.name}</span>
           )}

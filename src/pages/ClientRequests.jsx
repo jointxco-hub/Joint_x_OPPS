@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { getSignedFileUrl, useSignedFileUrl } from "@/lib/privateFiles";
 
 const TYPE_OPTIONS = [
   { value: "all", label: "All types" },
@@ -757,10 +758,27 @@ function collectPayloadReferences(request) {
   return refs.slice(0, 20);
 }
 
-function PayloadReferencesSection({ references, onPreview }) {
-  const canShowImage = (url = "", type = "") => (
-    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || String(type || "").toLowerCase().startsWith("image/")
+function canShowImageFile(url = "", type = "") {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || String(type || "").toLowerCase().startsWith("image/");
+}
+
+function SecureFileThumb({ url, type, name }) {
+  const { url: signedUrl, loading, error, isPrivate } = useSignedFileUrl(url);
+  const displayUrl = signedUrl || (isPrivate ? "" : url);
+  const canRender = displayUrl && !loading && !error && canShowImageFile(url, type);
+
+  return (
+    <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary">
+      {canRender ? (
+        <img src={displayUrl} alt={name || ""} loading="lazy" className="h-full w-full object-cover" />
+      ) : (
+        <FileText className="h-4 w-4 text-muted-foreground" />
+      )}
+    </span>
   );
+}
+
+function PayloadReferencesSection({ references, onPreview }) {
 
   return (
     <section className="rounded-xl border border-border p-4">
@@ -776,13 +794,7 @@ function PayloadReferencesSection({ references, onPreview }) {
             onClick={() => onPreview?.({ file_url: ref.url, file_name: ref.name, file_type: ref.type })}
             className="flex items-center gap-3 rounded-xl border border-border bg-background p-2 text-left text-sm hover:border-primary/30"
           >
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary">
-              {canShowImage(ref.url, ref.type) ? (
-                <img src={ref.url} alt="" loading="lazy" className="h-full w-full object-cover" />
-              ) : (
-                <FileText className="h-4 w-4 text-muted-foreground" />
-              )}
-            </span>
+            <SecureFileThumb url={ref.url} type={ref.type} name={ref.name} />
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium text-foreground">{ref.name}</span>
               <span className="block truncate text-xs text-muted-foreground">{ref.type}</span>
@@ -799,9 +811,6 @@ function ClientFilesSection({ library, loading, onPreview }) {
   const folders = Array.isArray(library?.folders) ? library.folders : [];
   const files = Array.isArray(library?.files) ? library.files : [];
   const folderName = (folderId) => folders.find((folder) => folder.id === folderId)?.name || "References";
-  const canShowImage = (url = "", type = "") => (
-    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || String(type || "").toLowerCase().startsWith("image/")
-  );
   const grouped = files.reduce((acc, file) => {
     const name = folderName(file.folder_id);
     if (!acc[name]) acc[name] = [];
@@ -853,13 +862,7 @@ function ClientFilesSection({ library, loading, onPreview }) {
                   onClick={() => onPreview?.(file)}
                   className="flex items-center gap-3 rounded-xl border border-border bg-background p-2 text-left text-sm hover:border-primary/30"
                 >
-                  <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary">
-                    {canShowImage(file.file_url, file.file_type) ? (
-                      <img src={file.file_url} alt="" loading="lazy" className="h-full w-full object-cover" />
-                    ) : (
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </span>
+                  <SecureFileThumb url={file.file_url} type={file.file_type} name={file.file_name} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-foreground">{file.file_name || "File"}</span>
                     <span className="block truncate text-xs text-muted-foreground">
@@ -881,8 +884,11 @@ function FilePreviewPanel({ file, onClose }) {
   const url = file?.file_url || "";
   const name = file?.file_name || "Client file";
   const type = String(file?.file_type || name || url).toLowerCase();
-  const canShowImage = /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(url) || type.startsWith("image/");
-  const canShowPdf = /\.pdf(\?|#|$)/i.test(url) || type.includes("pdf");
+  const { url: signedUrl, loading, error, isPrivate } = useSignedFileUrl(url);
+  const displayUrl = signedUrl || (isPrivate ? "" : url);
+  const canPreview = displayUrl && !loading && !error;
+  const canShowImage = canPreview && canShowImageFile(url, type);
+  const canShowPdf = canPreview && (/\.pdf(\?|#|$)/i.test(url) || type.includes("pdf"));
 
   return (
     <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
@@ -898,9 +904,10 @@ function FilePreviewPanel({ file, onClose }) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => {
-                navigator.clipboard?.writeText(url);
-                toast.success("File link copied");
+              onClick={async () => {
+                const copyUrl = isPrivate ? await getSignedFileUrl(url) : displayUrl;
+                await navigator.clipboard?.writeText(copyUrl || url);
+                toast.success(isPrivate ? "Secure file link copied" : "File link copied");
               }}
             >
               Copy link
@@ -911,15 +918,15 @@ function FilePreviewPanel({ file, onClose }) {
 
       <div className="overflow-hidden rounded-xl border border-border bg-background">
         {canShowImage ? (
-          <img src={url} alt={name} className="max-h-[60vh] w-full object-contain" loading="lazy" />
+          <img src={displayUrl} alt={name} className="max-h-[60vh] w-full object-contain" loading="lazy" />
         ) : canShowPdf ? (
-          <iframe title={name} src={url} className="h-[60vh] w-full bg-white" />
+          <iframe title={name} src={displayUrl} className="h-[60vh] w-full bg-white" />
         ) : (
           <div className="flex min-h-48 flex-col items-center justify-center gap-3 p-6 text-center">
             <FileText className="h-8 w-8 text-muted-foreground" />
             <div>
               <p className="text-sm font-semibold text-foreground">Preview is not available for this file type.</p>
-              <p className="mt-1 text-sm text-muted-foreground">Copy the file link if this file type needs a specialist app.</p>
+              <p className="mt-1 text-sm text-muted-foreground">{error ? "You do not have access to this file." : loading ? "Preparing secure file link..." : "Copy the file link if this file type needs a specialist app."}</p>
             </div>
           </div>
         )}

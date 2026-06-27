@@ -11,6 +11,7 @@ import { Download, MessageSquare, X, Send } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
+import { useSignedFileUrl } from "@/lib/privateFiles";
 
 export default function FileLightbox({ file, onClose }) {
   const [showCommentForm, setShowCommentForm] = useState(false);
@@ -67,7 +68,9 @@ export default function FileLightbox({ file, onClose }) {
     });
   };
 
-  const fileUrl = file.file_url || file.url || file.fileUrl || "";
+  const rawFileUrl = file.file_url || file.url || file.fileUrl || "";
+  const { url: signedFileUrl, loading: signingFile, error: signedFileError } = useSignedFileUrl(rawFileUrl);
+  const fileUrl = signedFileUrl || "";
   const fileName = file.title || file.name || file.file_name || "";
   const fileType = file.file_type || file.mime_type || file.type || "";
   const imagePattern = /\.(jpg|jpeg|png|gif|webp|svg)(\?|#|$)/i;
@@ -99,7 +102,16 @@ export default function FileLightbox({ file, onClose }) {
         <div className="flex-1 overflow-y-auto bg-white">
           {/* File Preview */}
           <div className="flex min-h-[68vh] items-center justify-center bg-slate-100 p-3 sm:p-5">
-            {isImage && !imgError ? (
+            {signingFile ? (
+              <div className="text-center text-slate-500">
+                <p className="text-sm font-medium">Preparing secure file link...</p>
+              </div>
+            ) : signedFileError ? (
+              <div className="text-center text-slate-500">
+                <p className="mb-2 text-sm font-medium">File access is unavailable</p>
+                <p className="text-xs">You may not have access to this tenant file, or the signed link expired.</p>
+              </div>
+            ) : isImage && !imgError ? (
               <img
                 src={fileUrl}
                 alt={fileName || "File preview"}
@@ -172,7 +184,7 @@ export default function FileLightbox({ file, onClose }) {
                         <SelectItem value="none">None</SelectItem>
                         {mentionableUsers.map(user => (
                           <SelectItem key={user.id} value={user.email}>
-                            {userDisplayName(user)} · {userRoleLabel(user)}
+                            {userDisplayName(user)} ï¿½ {userRoleLabel(user)}
                           </SelectItem>
                         ))}
                       </SelectContent>

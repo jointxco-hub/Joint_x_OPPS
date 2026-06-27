@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Archive, ExternalLink, FileText, Mail, MapPin, Phone, Plus, RefreshCw, Search, ShoppingBag, Users } from "lucide-react";
 import { toast } from "sonner";
+import SignedFileLink from "@/components/common/SignedFileLink";
 
 const ACTIVE_ORDER_STATUSES = new Set(['confirmed', 'in_production', 'ready', 'shipped']);
 const DONE_ORDER_STATUSES = new Set(['delivered']);
@@ -575,9 +576,9 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
             ) : (
               <div className="space-y-2">
                 {files.slice(0, 12).map((file) => (
-                  <a
+                  <SignedFileLink
                     key={file.id}
-                    href={file.url}
+                    url={file.url}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center justify-between gap-3 rounded-md bg-slate-50 p-3 text-sm hover:bg-slate-100"
@@ -587,7 +588,7 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
                       <span className="block text-xs text-slate-500">{file.type} - {file.order_number || 'Order'}</span>
                     </span>
                     <ExternalLink className="w-4 h-4 text-slate-400" />
-                  </a>
+                  </SignedFileLink>
                 ))}
               </div>
             )}

@@ -159,7 +159,7 @@ export default function UserDashboard() {
     if (!file) return;
     setUploadingPhoto(true);
     try {
-      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file, visibility: "public" });
       await dataClient.auth.updateMe({ profile_photo: file_url });
       const updated = await dataClient.auth.me();
       setUser(updated);

@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { getInternalClientFileLibrary, saveInternalClientFileLink } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
+import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
@@ -344,8 +345,9 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
 
   const copyFileLink = async (url) => {
     try {
-      await navigator.clipboard.writeText(url);
-      toast.success("File link copied");
+      const copyUrl = isPrivateFileReference(url) ? await getSignedFileUrl(url) : url;
+      await navigator.clipboard.writeText(copyUrl || url);
+      toast.success(isPrivateFileReference(url) ? "Secure file link copied" : "File link copied");
     } catch {
       toast.error("Could not copy file link");
     }
@@ -392,7 +394,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     }
   };
 
-  const isImageUrl = (url) => /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
+  const isImageUrl = (url) => !isPrivateFileReference(url) && /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
 
   const FolderPreview = ({ urls = [], tone = "primary" }) => {
     const previewUrls = urls.filter(isImageUrl).slice(0, 4);

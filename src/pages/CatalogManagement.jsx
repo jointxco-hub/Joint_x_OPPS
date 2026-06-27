@@ -56,7 +56,7 @@ export default function CatalogManagement() {
 
     setUploadingImage(true);
     try {
-      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file, visibility: "public" });
       await updateMutation.mutateAsync({ 
         id: item.id, 
         data: { ...item, image_url: file_url } 
@@ -95,7 +95,7 @@ export default function CatalogManagement() {
 
     for (const file of files) {
       try {
-        const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file, visibility: "public" });
         uploadedUrls.push(file_url);
       } catch (error) {
         console.error("Upload failed:", error);

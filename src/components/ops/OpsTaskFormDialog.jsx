@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Users, Paperclip, Plus, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
+import SignedFileLink from "@/components/common/SignedFileLink";
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const STAGES = ['design', 'sourcing', 'sampling', 'cutting', 'printing', 'pressing', 'finishing', 'packing', 'delivery', 'other'];
@@ -314,7 +315,7 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
             <div className="space-y-2">
               {(formData.supporting_files || []).map((f, i) => (
                 <div key={i} className="flex items-center gap-2 bg-slate-50 rounded p-2">
-                  <a href={f.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 flex-1 truncate hover:underline">{f.name}</a>
+                  <SignedFileLink url={f.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 flex-1 truncate hover:underline">{f.name}</SignedFileLink>
                   <Button type="button" variant="ghost" size="icon" className="h-5 w-5" onClick={() => removeFile(i)}>
                     <X className="w-3 h-3" />
                   </Button>

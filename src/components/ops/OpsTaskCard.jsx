@@ -7,6 +7,7 @@ import {
   CheckCircle, Circle, Clock, ChevronDown, ChevronRight,
   Trash2, Pencil, Plus, Paperclip, MessageSquare, AlertTriangle, Archive
 } from "lucide-react";
+import SignedFileLink from "@/components/common/SignedFileLink";
 
 const statusColors = {
   not_started: "bg-slate-100 text-slate-700",
@@ -208,11 +209,11 @@ export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onE
               <p className="text-xs font-semibold text-slate-700 mb-1">Files & Links</p>
               <div className="space-y-1">
                 {task.supporting_files.map((f, i) => (
-                  <a key={i} href={f.url} target="_blank" rel="noopener noreferrer"
+                  <SignedFileLink key={i} url={f.url} target="_blank" rel="noopener noreferrer"
                     className="flex items-center gap-2 text-xs text-primary hover:underline bg-primary/5 rounded p-1.5">
                     <Paperclip className="w-3 h-3" />
                     {f.name}
-                  </a>
+                  </SignedFileLink>
                 ))}
               </div>
             </div>

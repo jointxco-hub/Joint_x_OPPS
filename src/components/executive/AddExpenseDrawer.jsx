@@ -307,7 +307,7 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
               <div className="grid grid-cols-3 gap-2 mt-2">
                 {receiptUrls.map((url, idx) => (
                   <div key={idx} className="relative group rounded-xl overflow-hidden border border-border aspect-square bg-secondary">
-                    <img src={url} alt="receipt" className="w-full h-full object-cover" />
+                    <MediaPreview url={url} title="Receipt" className="h-full w-full rounded-none" />
                     <button
                       type="button"
                       onClick={() => removeReceipt(idx)}
