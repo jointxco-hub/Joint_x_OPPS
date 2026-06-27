@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { dataClient } from '@/api/dataClient';
 import { subscribeToPush } from '@/lib/push';
+import { isXosAdminHost } from '@/lib/xosHost';
 
 const AuthContext = createContext();
 
@@ -23,7 +24,9 @@ export const AuthProvider = ({ children }) => {
       const currentUser = await dataClient.auth.me();
       setUser(currentUser);
       setIsAuthenticated(Boolean(currentUser));
-      if (currentUser) subscribeToPush().catch((error) => console.warn('Push subscription retry failed:', error));
+      if (currentUser && !isXosAdminHost()) {
+        subscribeToPush().catch((error) => console.warn('Push subscription retry failed:', error));
+      }
     } catch (error) {
       console.error('Supabase auth bootstrap failed:', error);
       setAuthError({

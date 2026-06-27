@@ -1,4 +1,5 @@
-const CACHE_NAME = "joint-x-shell-v4";
+const IS_XOS_SERVICE_WORKER_HOST = self.location.hostname.endsWith(".xos.jointx.co.za");
+const CACHE_NAME = "joint-x-shell-v5";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -39,6 +40,7 @@ function extractAssetUrls(html) {
 }
 
 async function warmAppShell() {
+  if (IS_XOS_SERVICE_WORKER_HOST) return;
   const cache = await caches.open(CACHE_NAME);
   await safeCacheAll(cache, APP_SHELL);
 
@@ -63,15 +65,20 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
-    )
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => IS_XOS_SERVICE_WORKER_HOST || key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => IS_XOS_SERVICE_WORKER_HOST ? self.registration.unregister() : undefined)
   );
   self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
+
+  if (IS_XOS_SERVICE_WORKER_HOST) {
+    event.respondWith(fetch(request, { cache: "no-store" }));
+    return;
+  }
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
@@ -128,6 +135,7 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("push", (event) => {
+  if (IS_XOS_SERVICE_WORKER_HOST) return;
   let payload = {
     title: "Joint X update",
     body: "You have a new notification.",
@@ -178,6 +186,7 @@ self.addEventListener("push", (event) => {
 });
 
 self.addEventListener("notificationclick", (event) => {
+  if (IS_XOS_SERVICE_WORKER_HOST) return;
   event.notification.close();
   const url = event.notification.data?.url || "/";
   const eventType = event.notification.data?.event_type || 'generic';
@@ -199,6 +208,7 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 self.addEventListener("notificationclose", (event) => {
+  if (IS_XOS_SERVICE_WORKER_HOST) return;
   // Can track notification dismissals here if needed
   console.log("Notification closed:", event.notification.tag);
 });

@@ -173,3 +173,29 @@ Manual browser retest required:
 - logged-in user without demo membership should show `Access Denied`
 - logged-in user with `demo-xos` membership should show only the minimal XOS shell
 - XOS host must not show OPPS sidebar/dashboard
+
+## XOS Boundary Cache/Auth Fix
+
+Date: 2026-06-27
+
+Live issue:
+- `demo.xos.jointx.co.za` could still render OPPS after login even after the top-level React XOS branch was added.
+
+Investigation result:
+- `App.jsx` branch ordering was already correct: `App()` returns `XosOnlyApp` before `OppsApp` and before `<Router>`.
+- XOS did not use shared OPPS `/SignIn`, query params, localStorage, or tenant slug selection.
+- The remaining credible leak path was browser-controlled app-shell state: `src/main.jsx` registered `/sw.js` globally, `AuthContext` could subscribe to push after login, and `public/sw.js` could serve cached navigation HTML/assets. On an XOS host that can preserve an older OPPS bundle after OAuth/session changes.
+
+Fix:
+- `src/main.jsx` now detects XOS hosts before service-worker bootstrap and unregisters existing service workers plus clears browser caches on `*.xos.jointx.co.za`.
+- `src/lib/AuthContext.jsx` now skips push subscription setup on XOS hosts after auth bootstrap.
+- `public/sw.js` now treats `*.xos.jointx.co.za` as network-only/no-cache, skips shell warming, deletes caches, unregisters itself, and ignores push/notification handlers.
+- `XOSAdminShell` now renders a visible `XOS Boundary Active` marker and logs `XOS_BOUNDARY_ACTIVE` so the active branch can be confirmed in browser.
+- `XOSAdminShell` now owns both login methods: email/password and Google.
+- Both login methods return to `window.location.origin + "/"`; no OPPS host or shared route is used.
+- `scripts/check-xos-boundary.mjs` now covers App boundary order, XOS sign-in ownership, same-host redirects, service-worker disabling, push skipping, and worker no-cache/unregister behavior.
+
+Verification:
+- `npm.cmd run check:xos-boundary` passed.
+- `npm.cmd run build` passed.
+- Browser/manual checks after deployment should confirm the marker is visible and console logs `XOS_BOUNDARY_ACTIVE` on `demo.xos.jointx.co.za`.

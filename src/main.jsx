@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import './index.css'
 import { subscribeToPush } from './lib/push.js'
+import { isXosAdminHost } from './lib/xosHost.js'
+
+const isXosBoundaryHost = isXosAdminHost();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   // <React.StrictMode>
@@ -10,8 +13,35 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   // </React.StrictMode>,
 )
 
+async function disableServiceWorkerForXos() {
+  if (!('serviceWorker' in navigator)) return;
+
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+
+    console.info('XOS_BOUNDARY_ACTIVE service_worker_disabled');
+
+    if (navigator.serviceWorker.controller) {
+      window.location.reload();
+    }
+  } catch (err) {
+    console.warn('XOS service worker cleanup failed:', err);
+  }
+}
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
+    if (isXosBoundaryHost) {
+      await disableServiceWorkerForXos();
+      return;
+    }
+
     try {
       let refreshing = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -36,7 +66,7 @@ if ('serviceWorker' in navigator) {
   });
   
   // Listen for messages from service worker about new orders/updates
-  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+  if (!isXosBoundaryHost && navigator.serviceWorker.controller) {
     navigator.serviceWorker.addEventListener('message', (event) => {
       const { type, payload } = event.data || {};
       if (type === 'ORDER_SYNCED' && payload) {
@@ -55,6 +85,4 @@ if (import.meta.hot) {
     window.parent?.postMessage({ type: 'sandbox:afterUpdate' }, '*');
   });
 }
-
-
 
