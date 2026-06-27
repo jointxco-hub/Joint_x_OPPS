@@ -8,7 +8,6 @@ Applied to the linked DB via controlled direct SQL because migration history has
 
 - `supabase/migrations/202606270001_private_uploads_signed_urls.sql`
 - `supabase/migrations/202606270002_harden_private_upload_path_access.sql`
-- `supabase/migrations/202606270002_harden_private_upload_path_access.sql`
 
 Initial SQL assertion run failed correctly with: `Tenant A path spoofing bypassed tenant-prefix isolation.` Root cause: the first `is_private_upload_path_accessible(...)` implementation let parser-null slash paths fall through to app-admin recovery. The corrective migration now denies malformed slash paths before any admin fallback.
 
@@ -19,9 +18,18 @@ Verification completed:
 - `npm.cmd run check:xos-boundary` passed.
 - `npm.cmd run lint` remains blocked by the existing repo-wide unused-import backlog.
 
-Frontend deployment is still pending in this doc section until the production deploy and live smoke checks complete.
+Frontend deployment completed: `https://joint-x-opps-mg4d2wi15-joint-x.vercel.app` and aliased to `https://ops.jointx.co.za`.
 
-Real client onboarding remains blocked until deploy and live verification pass.
+Live smoke checks after deploy:
+
+- `https://ops.jointx.co.za` returned 200.
+- `https://ops.jointx.co.za/track` returned 200.
+- `https://xlab.jointx.co.za/track` returned 200.
+- `https://demo.xos.jointx.co.za` returned 200 and served JS containing `XOS_BOUNDARY_ACTIVE`, `XOS Boundary Active`, `resolve_xos_admin_gate`, `private-upload://`, and `createSignedUrl`.
+
+Authenticated OPPS file preview/download clicking still needs a browser-session smoke test. The DB policy assertions and deployed JS confirm tenant-aware signed URL plumbing is present.
+
+Real client onboarding remains blocked until authenticated browser file preview/download verification passes and legacy public upload backfill/recovery is planned.
 
 ## Current Risk Audit
 
@@ -138,4 +146,4 @@ Lint:
 - Existing public object URLs may stop loading once `uploads` becomes private; affected legacy files need a controlled backfill or admin recovery flow.
 - SQL can assert path access and policies, but signed URL expiry is enforced through Supabase Storage API calls and the frontend helper.
 - XOS file modules are not built in this phase.
-- Real client onboarding remains blocked until production migration, SQL assertions, build, deploy, and live verification pass.
+- Real client onboarding remains blocked until authenticated browser file preview/download verification passes and legacy public upload backfill/recovery is planned.
