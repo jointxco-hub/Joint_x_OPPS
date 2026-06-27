@@ -33,7 +33,7 @@ const EMPTY_MODULE_STATE = {
 
 function BoundaryMarker() {
   return (
-    <div className="fixed right-3 top-3 z-50 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 shadow-sm">
+    <div className="fixed bottom-3 right-3 z-50 rounded-full border border-emerald-200 bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm backdrop-blur">
       XOS LIVE BUILD e05b880 ACTIVE | XOS Boundary Active
     </div>
   );
@@ -87,14 +87,45 @@ function StatusPill({ children }) {
 
 function ModuleCard({ label, icon: Icon, active = false }) {
   return (
-    <article className={`rounded-md border bg-white p-4 ${active ? "border-zinc-300" : "border-zinc-200"}`}>
-      <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
-        <Icon className="h-4 w-4" />
+    <article
+      className={`min-h-[132px] rounded-lg border bg-white p-4 transition ${
+        active
+          ? "border-emerald-200 shadow-sm shadow-emerald-900/5"
+          : "border-zinc-200 opacity-70"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-md ${active ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-500"}`}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${active ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-500"}`}>
+          {active ? "Available now" : "Coming soon"}
+        </span>
       </div>
-      <h3 className="text-sm font-semibold">{label}</h3>
-      <p className="mt-2 text-xs leading-5 text-zinc-500">{active ? "Available for demo" : "Coming soon"}</p>
+      <h3 className="mt-4 text-sm font-semibold text-zinc-950">{label}</h3>
+      <p className="mt-2 text-xs leading-5 text-zinc-500">
+        {active ? "Tenant-gated demo data for this workspace." : "Planned for a later XOS phase."}
+      </p>
     </article>
   );
+}
+
+function LoadingRows({ label }) {
+  return (
+    <div className="space-y-3 px-4 py-5">
+      <p className="text-sm text-zinc-500">Loading {label}...</p>
+      <div className="h-14 rounded-md bg-zinc-100" />
+      <div className="h-14 rounded-md bg-zinc-100" />
+    </div>
+  );
+}
+
+function EmptyState({ children }) {
+  return <p className="px-4 py-6 text-sm text-zinc-500">{children}</p>;
+}
+
+function ErrorState({ children }) {
+  return <p className="px-4 py-6 text-sm text-red-600">{children}</p>;
 }
 
 export default function XOSAdminShell() {
@@ -322,25 +353,36 @@ export default function XOSAdminShell() {
     <main className="min-h-screen bg-zinc-50 text-zinc-950">
       <BoundaryMarker />
       <header className="border-b border-zinc-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">XOS Admin</p>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight">{gate.tenant_name}</h1>
-            <p className="mt-1 text-xs text-zinc-500">{gate.tenant_slug}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">XOS Workspace</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-950 sm:text-3xl">Demo XOS Workspace</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-600">
+              A secure client workspace for requests, files, and future store operations.
+            </p>
           </div>
-          <div className="text-right text-xs text-zinc-500">
-            <p className="font-medium text-zinc-700">{user?.email || "Signed in"}</p>
-            <p>Access confirmed for {gate.hostname}</p>
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-left text-xs text-zinc-500 sm:text-right">
+            <p className="font-medium text-zinc-800">{user?.email || "Signed in"}</p>
+            <p className="mt-1">Access confirmed for {gate.hostname}</p>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-4 py-8">
-        <section className="mb-8">
-          <h2 className="text-sm font-semibold text-zinc-900">Workspace Shell</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-600">
-            This client-facing surface is gated by the configured host and your active tenant membership.
-          </p>
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:py-8">
+        <section className="mb-6 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{gate.tenant_name}</p>
+              <h2 className="mt-1 text-lg font-semibold tracking-tight text-zinc-950">Workspace overview</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-600">
+                This demo workspace shows how a client can access their own requests and private files through a tenant-gated XOS surface.
+              </p>
+            </div>
+            <div className="rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
+              <p className="font-medium text-zinc-700">Tenant</p>
+              <p className="mt-1">{gate.tenant_slug}</p>
+            </div>
+          </div>
         </section>
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -349,19 +391,20 @@ export default function XOSAdminShell() {
           ))}
         </section>
 
-        <section className="mt-8 grid gap-5 lg:grid-cols-2">
-          <div className="rounded-md border border-zinc-200 bg-white">
-            <div className="border-b border-zinc-200 px-4 py-3">
-              <h2 className="text-sm font-semibold text-zinc-900">Requests</h2>
-              <p className="mt-1 text-xs text-zinc-500">Client-facing demo requests for this XOS workspace.</p>
+        <section className="mt-6 grid gap-5 lg:grid-cols-2">
+          <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900">Requests</h2>
+                <p className="mt-1 text-xs leading-5 text-zinc-500">Client-facing demo requests for this XOS workspace.</p>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Available now</span>
             </div>
             <div className="divide-y divide-zinc-100">
-              {modules.loading && <p className="px-4 py-5 text-sm text-zinc-500">Loading requests...</p>}
-              {!modules.loading && modules.requestsError && (
-                <p className="px-4 py-5 text-sm text-red-600">{modules.requestsError}</p>
-              )}
+              {modules.loading && <LoadingRows label="requests" />}
+              {!modules.loading && modules.requestsError && <ErrorState>{modules.requestsError}</ErrorState>}
               {!modules.loading && !modules.requestsError && modules.requests.length === 0 && (
-                <p className="px-4 py-5 text-sm text-zinc-500">No demo requests yet.</p>
+                <EmptyState>No demo requests yet.</EmptyState>
               )}
               {!modules.loading && !modules.requestsError && modules.requests.map((request) => (
                 <article key={request.id} className="px-4 py-4">
@@ -384,38 +427,39 @@ export default function XOSAdminShell() {
             </div>
           </div>
 
-          <div className="rounded-md border border-zinc-200 bg-white">
-            <div className="border-b border-zinc-200 px-4 py-3">
-              <h2 className="text-sm font-semibold text-zinc-900">Files</h2>
-              <p className="mt-1 text-xs text-zinc-500">Private demo files open with short-lived signed links.</p>
+          <div className="rounded-lg border border-zinc-200 bg-white shadow-sm">
+            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-4 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900">Files</h2>
+                <p className="mt-1 text-xs leading-5 text-zinc-500">Private demo files open with short-lived signed links.</p>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700">Available now</span>
             </div>
             <div className="divide-y divide-zinc-100">
-              {modules.loading && <p className="px-4 py-5 text-sm text-zinc-500">Loading files...</p>}
-              {!modules.loading && modules.filesError && (
-                <p className="px-4 py-5 text-sm text-red-600">{modules.filesError}</p>
-              )}
+              {modules.loading && <LoadingRows label="files" />}
+              {!modules.loading && modules.filesError && <ErrorState>{modules.filesError}</ErrorState>}
               {!modules.loading && !modules.filesError && modules.files.length === 0 && (
-                <p className="px-4 py-5 text-sm text-zinc-500">No demo files yet.</p>
+                <EmptyState>No demo files yet.</EmptyState>
               )}
               {!modules.loading && !modules.filesError && modules.files.map((file) => (
                 <article key={file.id} className="px-4 py-4">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold text-zinc-900">{file.file_name || "Client file"}</p>
-                      <p className="mt-1 text-xs text-zinc-500">
+                      <p className="mt-1 text-xs leading-5 text-zinc-500">
                         {[file.folder_name, file.file_type, formatFileSize(file.file_size)].filter(Boolean).join(" / ")}
                       </p>
+                      <p className="mt-2 text-[11px] text-zinc-500">{formatDate(file.created_at)}</p>
                     </div>
                     <SignedFileLink
                       url={file.file_ref}
                       target="_blank"
                       rel="noreferrer"
-                      className="shrink-0 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50"
+                      className="inline-flex h-9 shrink-0 items-center justify-center rounded-md border border-zinc-300 px-3 text-xs font-semibold text-zinc-800 hover:bg-zinc-50"
                     >
-                      Open
+                      Open file
                     </SignedFileLink>
                   </div>
-                  <p className="mt-3 text-[11px] text-zinc-500">{formatDate(file.created_at)}</p>
                 </article>
               ))}
             </div>
