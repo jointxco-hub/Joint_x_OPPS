@@ -2,6 +2,8 @@
 
 ## Status
 
+Phase 2C.1 is closed for engineering.
+
 Controlled DB verification passed after a corrective hardening migration.
 
 Applied to the linked DB via controlled direct SQL because migration history has existing drift that makes broad `db push` unsafe for this phase:
@@ -27,9 +29,15 @@ Live smoke checks after deploy:
 - `https://xlab.jointx.co.za/track` returned 200.
 - `https://demo.xos.jointx.co.za` returned 200 and served JS containing `XOS_BOUNDARY_ACTIVE`, `XOS Boundary Active`, `resolve_xos_admin_gate`, `private-upload://`, and `createSignedUrl`.
 
-Authenticated OPPS file preview/download clicking still needs a browser-session smoke test. The DB policy assertions and deployed JS confirm tenant-aware signed URL plumbing is present.
+Authenticated OPPS browser-session smoke passed on production as a Joint X admin:
 
-Real client onboarding remains blocked until authenticated browser file preview/download verification passes and legacy public upload backfill/recovery is planned.
+- Existing order file preview opens in-app.
+- Direct file click opens through a signed Supabase Storage URL under `/storage/v1/object/sign/uploads/...`.
+- Client account modal `Files & Invoices` links still load.
+- Public tracking pages remain clean with no `private-upload://` refs and no `tenant_id`.
+- `https://demo.xos.jointx.co.za` still shows `XOS Boundary Active` and no OPPS fallthrough.
+
+Real client onboarding remains blocked until the next onboarding checklist is approved and legacy public upload backfill/recovery is planned.
 
 ## Current Risk Audit
 
@@ -146,4 +154,4 @@ Lint:
 - Existing public object URLs may stop loading once `uploads` becomes private; affected legacy files need a controlled backfill or admin recovery flow.
 - SQL can assert path access and policies, but signed URL expiry is enforced through Supabase Storage API calls and the frontend helper.
 - XOS file modules are not built in this phase.
-- Real client onboarding remains blocked until authenticated browser file preview/download verification passes and legacy public upload backfill/recovery is planned.
+- Real client onboarding remains blocked until the next onboarding checklist is approved and legacy public upload backfill/recovery is planned.
