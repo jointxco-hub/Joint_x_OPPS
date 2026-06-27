@@ -40,7 +40,7 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
         }).then(({ error }) => { if (error) console.warn("Task assignment push notification failed:", error); });
       }
       toast.success(created?.isQueuedOffline ? "Task saved offline. It will sync when online." : "Task created");
-      onCreate(created);
+      onCreate?.(created);
     } catch (err) {
       toast.error(err?.message || "Failed to create task");
     } finally {
@@ -123,7 +123,7 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
                     <SelectItem value="_none">Unassigned</SelectItem>
                     {users.filter(isAssignableTeamUser).map(u => (
                       <SelectItem key={u.id || u.email} value={u.email || u.user_email}>
-                        {userDisplayName(u)} · {userRoleLabel(u)}
+                        {userDisplayName(u)} - {userRoleLabel(u)}
                       </SelectItem>
                     ))}
                   </SelectContent>

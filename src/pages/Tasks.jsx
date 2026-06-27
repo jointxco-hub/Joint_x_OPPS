@@ -11,7 +11,7 @@ import { format, isPast } from "date-fns";
 import TaskDrawer from "@/components/tasks/TaskDrawer";
 import NewTaskForm from "@/components/tasks/NewTaskForm";
 import RefreshButton from "@/components/common/RefreshButton";
-import { getTaskCompletionPatch, getTaskEntityName, mergeTaskLists, toEntityTaskPayload } from "@/lib/taskAdapters";
+import { getTaskCompletionPatch, getTaskEntityName, mergeTaskLists, normalizeOpsTaskForViews, toEntityTaskPayload } from "@/lib/taskAdapters";
 import { toast } from "sonner";
 
 const priorityBar = {
@@ -360,7 +360,7 @@ export default function Tasks() {
             queryClient.invalidateQueries({ queryKey: ["opsTasks"] });
             queryClient.invalidateQueries({ queryKey: ["legacyTasks"] });
             setShowNew(false);
-            if (createdTask) setSelectedTask(createdTask);
+            if (createdTask) setSelectedTask(normalizeOpsTaskForViews(createdTask));
           }}
         />
       )}
