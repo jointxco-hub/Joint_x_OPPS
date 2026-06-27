@@ -220,3 +220,53 @@ Post-deploy checks:
 Manual browser retest focus:
 - If a browser still shows OPPS once after this deploy, reload once after the new bundle logs `XOS_BOUNDARY_ACTIVE service_worker_disabled`; that pass unregisters the old worker and clears app-shell caches for the XOS origin.
 - After cleanup, `demo.xos.jointx.co.za` should show only the XOS sign-in/access/shell states and never OPPS navigation or dashboard.
+
+## XOS Runtime Bundle Proof
+
+Date: 2026-06-27
+
+Question answered:
+- `demo.xos.jointx.co.za` is definitely serving the newest deployed JS bundle from the `joint-x-opps` Vercel project.
+
+Vercel wiring proof:
+- `vercel domains inspect demo.xos.jointx.co.za` reports project `joint-x-opps`.
+- `vercel domains inspect ops.jointx.co.za` reports project `joint-x-opps`.
+- Local `.vercel/project.json` points to project `joint-x-opps` (`prj_q5oyxd1CvlGkSRd1tj63PVqaqv9s`).
+- Local Git remote is `https://github.com/jointxco-hub/Joint_x_OPPS.git`.
+- Production deployment `https://joint-x-opps-13fg2y5ew-joint-x.vercel.app` is ready and aliases both `https://ops.jointx.co.za` and `https://demo.xos.jointx.co.za`.
+- Deployment commit is `765e174`, which is newer than `e05b880`.
+
+Live HTML/asset proof from `https://demo.xos.jointx.co.za`:
+- status: `200`
+- final URI: `https://demo.xos.jointx.co.za/`
+- no redirect location header
+- server: `Vercel`
+- cache-control: `public, max-age=0, must-revalidate`
+- Vercel cache: `HIT`
+- asset served: `/assets/index-BEGxN7Fh.js`
+
+Live JS proof from `/assets/index-BEGxN7Fh.js`:
+- contains `XOS LIVE BUILD e05b880 ACTIVE`
+- contains `XOS_PRE_REACT_BOUNDARY_ACTIVE`
+- contains `XOS_BOUNDARY_ACTIVE`
+- contains `service_worker_disabled`
+- contains `Sign in with email`
+- contains `Continue with Google`
+
+Live service-worker proof from `https://demo.xos.jointx.co.za/sw.js`:
+- status: `200`
+- contains `IS_XOS_SERVICE_WORKER_HOST`
+- contains `self.registration.unregister()`
+- contains `cache: "no-store"`
+- contains `joint-x-shell-v5`
+
+Route checks after marker deployment:
+- `https://ops.jointx.co.za` returned `200`
+- `https://ops.jointx.co.za/track` returned `200`
+- `https://xlab.jointx.co.za/track` returned `200`
+
+Conclusion:
+- The domain is not pointed at a wrong Vercel project.
+- The domain is not serving an old deployment at the network level.
+- The live network bundle includes the XOS-only boundary markers and the XOS sign-in UI.
+- If a specific browser still lands in OPPS, the remaining cause is local browser state during/after OAuth, most likely an already-installed service worker/app-shell cache or an auth redirect changing the address bar. The new pre-React code and worker guard are present to prove and clear that path on reload.
