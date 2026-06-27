@@ -158,8 +158,8 @@ Verification:
 - `npm.cmd run check:xos-boundary` passed.
 - `npm.cmd run build` passed.
 - `npm.cmd run lint` remains blocked by the existing repo-wide unused import backlog.
-- Frontend deployed with `npx.cmd vercel --prod --yes`.
-- Production deployment URL: `https://joint-x-opps-lkzdwbgj2-joint-x.vercel.app`
+- Frontend deployed from committed `ce145cc` with `npx.cmd vercel --prod --yes`.
+- Production deployment URL: `https://joint-x-opps-4hkt6ek8o-joint-x.vercel.app`
 - Vercel production alias reported: `https://ops.jointx.co.za`
 
 Post-deploy route checks:
