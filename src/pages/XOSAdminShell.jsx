@@ -3,6 +3,8 @@ import { BarChart3, FileText, FolderOpen, Package, Settings, ShieldCheck } from 
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/lib/AuthContext";
 import AppLoader from "@/components/common/AppLoader";
+import SignedFileLink from "@/components/common/SignedFileLink";
+import { listXosFiles, listXosRequests } from "@/lib/xosModules";
 
 const MODULES = [
   { label: "Orders", icon: Package },
@@ -19,6 +21,14 @@ const EMPTY_GATE = {
   tenant_slug: "",
   tenant_name: "",
   hostname: "",
+};
+
+const EMPTY_MODULE_STATE = {
+  loading: false,
+  requests: [],
+  files: [],
+  requestsError: "",
+  filesError: "",
 };
 
 function BoundaryMarker() {
@@ -46,6 +56,47 @@ function GateState({ title, message, action }) {
   );
 }
 
+function formatDate(value) {
+  if (!value) return "No date";
+  try {
+    return new Intl.DateTimeFormat("en-ZA", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(value));
+  } catch {
+    return "No date";
+  }
+}
+
+function formatFileSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return "Size pending";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function StatusPill({ children }) {
+  return (
+    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-medium capitalize text-zinc-600">
+      {String(children || "new").replaceAll("_", " ")}
+    </span>
+  );
+}
+
+function ModuleCard({ label, icon: Icon, active = false }) {
+  return (
+    <article className={`rounded-md border bg-white p-4 ${active ? "border-zinc-300" : "border-zinc-200"}`}>
+      <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
+        <Icon className="h-4 w-4" />
+      </div>
+      <h3 className="text-sm font-semibold">{label}</h3>
+      <p className="mt-2 text-xs leading-5 text-zinc-500">{active ? "Available for demo" : "Coming soon"}</p>
+    </article>
+  );
+}
+
 export default function XOSAdminShell() {
   const { isLoadingAuth, isAuthenticated, user, checkAppState } = useAuth();
   const [email, setEmail] = useState("");
@@ -54,6 +105,7 @@ export default function XOSAdminShell() {
   const [signingInWithEmail, setSigningInWithEmail] = useState(false);
   const [signingInWithGoogle, setSigningInWithGoogle] = useState(false);
   const [gate, setGate] = useState(EMPTY_GATE);
+  const [modules, setModules] = useState(EMPTY_MODULE_STATE);
 
   useEffect(() => {
     console.info("XOS_BOUNDARY_ACTIVE", window.location.hostname);
@@ -100,6 +152,37 @@ export default function XOSAdminShell() {
       cancelled = true;
     };
   }, [isLoadingAuth, isAuthenticated]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadModules = async () => {
+      if (!gate.allowed || !gate.hostname) return;
+
+      setModules((current) => ({ ...current, loading: true, requestsError: "", filesError: "" }));
+
+      const [requestsResult, filesResult] = await Promise.all([
+        listXosRequests({ hostname: window.location.hostname, limit: 20 }),
+        listXosFiles({ hostname: window.location.hostname, limit: 20 }),
+      ]);
+
+      if (!cancelled) {
+        setModules({
+          loading: false,
+          requests: requestsResult.data,
+          files: filesResult.data,
+          requestsError: requestsResult.error || "",
+          filesError: filesResult.error || "",
+        });
+      }
+    };
+
+    loadModules();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gate.allowed, gate.hostname]);
 
   const redirectToXosRoot = () => {
     window.location.replace(`${window.location.origin}/`);
@@ -262,14 +345,81 @@ export default function XOSAdminShell() {
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {MODULES.map(({ label, icon: Icon }) => (
-            <article key={label} className="rounded-md border border-zinc-200 bg-white p-4">
-              <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
-                <Icon className="h-4 w-4" />
-              </div>
-              <h3 className="text-sm font-semibold">{label}</h3>
-              <p className="mt-2 text-xs leading-5 text-zinc-500">Coming soon</p>
-            </article>
+            <ModuleCard key={label} label={label} icon={Icon} active={label === "Requests" || label === "Files"} />
           ))}
+        </section>
+
+        <section className="mt-8 grid gap-5 lg:grid-cols-2">
+          <div className="rounded-md border border-zinc-200 bg-white">
+            <div className="border-b border-zinc-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-zinc-900">Requests</h2>
+              <p className="mt-1 text-xs text-zinc-500">Client-facing demo requests for this XOS workspace.</p>
+            </div>
+            <div className="divide-y divide-zinc-100">
+              {modules.loading && <p className="px-4 py-5 text-sm text-zinc-500">Loading requests...</p>}
+              {!modules.loading && modules.requestsError && (
+                <p className="px-4 py-5 text-sm text-red-600">{modules.requestsError}</p>
+              )}
+              {!modules.loading && !modules.requestsError && modules.requests.length === 0 && (
+                <p className="px-4 py-5 text-sm text-zinc-500">No demo requests yet.</p>
+              )}
+              {!modules.loading && !modules.requestsError && modules.requests.map((request) => (
+                <article key={request.id} className="px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-zinc-900">{request.title || "Client request"}</p>
+                      <p className="mt-1 line-clamp-2 text-xs leading-5 text-zinc-500">{request.preview || "No preview"}</p>
+                    </div>
+                    <StatusPill>{request.status}</StatusPill>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+                    <span>{request.client_name || "Client"}</span>
+                    <span aria-hidden="true">/</span>
+                    <span className="capitalize">{String(request.request_type || "request").replaceAll("_", " ")}</span>
+                    <span aria-hidden="true">/</span>
+                    <span>{formatDate(request.created_at)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-zinc-200 bg-white">
+            <div className="border-b border-zinc-200 px-4 py-3">
+              <h2 className="text-sm font-semibold text-zinc-900">Files</h2>
+              <p className="mt-1 text-xs text-zinc-500">Private demo files open with short-lived signed links.</p>
+            </div>
+            <div className="divide-y divide-zinc-100">
+              {modules.loading && <p className="px-4 py-5 text-sm text-zinc-500">Loading files...</p>}
+              {!modules.loading && modules.filesError && (
+                <p className="px-4 py-5 text-sm text-red-600">{modules.filesError}</p>
+              )}
+              {!modules.loading && !modules.filesError && modules.files.length === 0 && (
+                <p className="px-4 py-5 text-sm text-zinc-500">No demo files yet.</p>
+              )}
+              {!modules.loading && !modules.filesError && modules.files.map((file) => (
+                <article key={file.id} className="px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-zinc-900">{file.file_name || "Client file"}</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {[file.folder_name, file.file_type, formatFileSize(file.file_size)].filter(Boolean).join(" / ")}
+                      </p>
+                    </div>
+                    <SignedFileLink
+                      url={file.file_ref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50"
+                    >
+                      Open
+                    </SignedFileLink>
+                  </div>
+                  <p className="mt-3 text-[11px] text-zinc-500">{formatDate(file.created_at)}</p>
+                </article>
+              ))}
+            </div>
+          </div>
         </section>
       </div>
     </main>
