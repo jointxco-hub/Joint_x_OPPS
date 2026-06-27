@@ -157,14 +157,15 @@ Host routing determines which tenant may request a file. It does not make a publ
 
 ## X LAB Bridge Follow-up
 
-After `supabase login` restores the CLI session, rerun the rollback-only Tenant A to Tenant B bridge probe against:
+Completed after Phase 2C.1. See `docs/XLAB_BRIDGE_MUTATION_RECHECK.md`.
 
-- `get_internal_client_requests` list/read filtering;
-- `update_internal_client_request_status` mutation denial;
-- file-reply creation and parent-message linkage;
-- bridge records for requests, messages, and file metadata where available.
+- `get_internal_client_requests` list/read filtering passed.
+- `update_internal_client_request_status` cross-tenant mutation denial passed.
+- file-reply creation and parent-message linkage passed.
+- bridge records for requests, messages, and file metadata passed.
+- legacy unscoped bridge RPC execute privileges were revoked from `PUBLIC`, `anon`, and `authenticated`.
 
-Record the result in `TENANT_TWO_TENANT_QA.md`. This verification remains independent of host routing: the bridge wrappers must enforce tenant membership even when invoked directly.
+This verification remains independent of host routing: the bridge wrappers enforce tenant membership even when invoked directly.
 
 ## XOS Readiness Exit Criteria
 

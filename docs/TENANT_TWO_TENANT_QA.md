@@ -65,7 +65,7 @@ Run every row as both Tenant A and Tenant B, targeting the other tenant's record
 | Folders and asset metadata | passed | passed | passed | passed | passed |
 | Suppliers, inventory, purchase orders | passed | passed | passed for purchase orders | passed for purchase orders | passed; inventory link variants need follow-up |
 | Finance and reporting | passed | passed | passed where parent links exist | needs follow-up | passed for reporting; unsupported parent-link variants deferred |
-| X LAB bridge RPCs | passed for prior read simulation | passed for prior read simulation | blocked | blocked | blocked: live RPC probe needs an authenticated CLI session |
+| X LAB bridge RPCs | passed | passed | passed | passed | passed after `202606270003` and `202606270004`; see `docs/XLAB_BRIDGE_MUTATION_RECHECK.md` |
 
 ## QA Run Results: 2026-06-21
 
@@ -81,7 +81,7 @@ Run every row as both Tenant A and Tenant B, targeting the other tenant's record
 - Passed: sequence rows are independent: Joint X 2026 remains at `6`; Tenant A and Tenant B are each at `1`.
 - Passed: a direct legacy `tasks` RLS probe inserted a rollback-only Tenant A task; Tenant B received zero rows for list/read, update, and delete. The legacy table is tenant-isolated even though the current UI creates `ops_tasks`.
 - Blocked: the current public tracker deliberately hard-codes the Joint X tenant. It remains safe for Joint X, but Tenant A/B public tracking variants cannot be tested until tenant/host routing exists.
-- Blocked: the final live X LAB bridge-RPC mutation probe could not run because the local Supabase CLI session expired. Earlier production simulation already confirmed zero cross-tenant X LAB request reads; list/read/update/reply/status wrapper verification remains required after re-authentication.
+- Passed: the X LAB bridge mutation recheck passed after corrective migrations `202606270003_harden_xlab_bridge_mutations.sql` and `202606270004_revoke_xlab_unscoped_bridge_rpcs.sql`. The recheck covers list filtering, status mutation denial, reply creation, parent-message linkage, file metadata mutation denial, cross-tenant private upload refs, and unscoped RPC execute revocation.
 - Deferred: copied `uploads` public URLs may remain accessible even though folder and asset metadata is tenant-isolated. Private bucket and signed-URL hardening is Phase 2C.1 and was not changed here.
 
 ## Public Tracking
@@ -124,11 +124,11 @@ If deletion is blocked, tenant-owned QA records remain. Remove those records fir
 - Fixed: the one discovered cross-tenant create defect was contained, rolled back, and corrected in commit `8200f84`; its regression probe now passes.
 - Blocked before onboarding: tenant/host routing is required for client-tenant public tracking.
 - Deferred before onboarding: Phase 2C.1 must make uploads private and issue signed URLs.
-- Needs follow-up: complete the live X LAB bridge RPC mutation probe after Supabase CLI re-authentication; verify the remaining aggregate views and the niche order-support/inventory link variants.
+- Completed: X LAB bridge RPC mutation probe passed; remaining follow-ups are the aggregate views and niche order-support/inventory link variants.
 
 ## Current Automated Evidence
 
 - Passed: QA tenants, Auth users, and tenant-only memberships exist in production for this controlled drill.
 - Passed: temporary two-tenant production simulations showed zero cross-tenant clients, orders, invoices, transactions, projects, tasks, assets, purchasing, finance records, and X LAB request reads.
 - Passed: anonymous Joint X tracking returns one requested order through `get_public_order_tracking`.
-- Blocked/deferred items are listed in the closure decision above; no unrecorded pending QA work remains.
+- Blocked/deferred items are listed in the closure decision above; the prior X LAB bridge mutation blocker is now closed in `docs/XLAB_BRIDGE_MUTATION_RECHECK.md`.
