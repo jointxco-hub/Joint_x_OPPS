@@ -18,15 +18,48 @@ import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShare
 
 const UNSORTED_FOLDER_ID = "__unsorted";
 
+const fileUrlFrom = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "object") {
+    return String(value.file_url || value.url || value.fileUrl || value.invoice_url || value.public_url || "").trim();
+  }
+  return String(value).trim();
+};
+
+const normalizeFileUrlList = (value) => (
+  Array.isArray(value)
+    ? Array.from(new Set(value.map(fileUrlFrom).filter(Boolean)))
+    : []
+);
+
+const normalizeInvoiceFile = (invoice, index) => {
+  if (!invoice) return null;
+  if (typeof invoice === "string") {
+    const url = fileUrlFrom(invoice);
+    return url ? { id: `invoice-url-${index}`, file_url: url, name: url } : null;
+  }
+  if (typeof invoice === "object") {
+    const url = fileUrlFrom(invoice);
+    return {
+      ...invoice,
+      id: invoice.id || invoice.invoice_number || url || `invoice-${index}`,
+      file_url: url,
+    };
+  }
+  return null;
+};
+
 export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
-  const metadata = normalizeOrderFileFolders(order.order_file_folders);
+  const safeOrder = order || {};
+  const metadata = normalizeOrderFileFolders(safeOrder.order_file_folders);
   const queryClient = useQueryClient();
   const [openFolderId, setOpenFolderId] = useState("");
   const [textDialog, setTextDialog] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
   const [copyDialog, setCopyDialog] = useState(null);
   const [previewFile, setPreviewFile] = useState(null);
-  const clientEmail = order.client_email || order.email || "";
+  const clientEmail = safeOrder.client_email || safeOrder.email || "";
   const { data: clientFileLibrary = { folders: [], files: [] }, isLoading: clientFilesLoading } = useQuery({
     queryKey: ["orderClientFileLibrary", clientEmail],
     queryFn: async () => {
@@ -37,10 +70,10 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     enabled: Boolean(clientEmail),
     staleTime: 30_000,
   });
-  const fileUrls = Array.isArray(order.file_urls) ? order.file_urls.filter(Boolean) : [];
-  const visibleUrls = Array.isArray(order.portal_visible_file_urls) ? order.portal_visible_file_urls : [];
-  const invoices = Array.isArray(order.invoice_files) ? order.invoice_files : [];
-  const folders = metadata.folders;
+  const fileUrls = normalizeFileUrlList(safeOrder.file_urls);
+  const visibleUrls = normalizeFileUrlList(safeOrder.portal_visible_file_urls);
+  const invoices = Array.isArray(safeOrder.invoice_files) ? safeOrder.invoice_files.map(normalizeInvoiceFile).filter(Boolean) : [];
+  const folders = Array.isArray(metadata.folders) ? metadata.folders : [];
   const currentFolder = folders.find((folder) => folder.id === openFolderId);
   const fileEntries = [
     ...fileUrls.map((url) => ({
@@ -69,7 +102,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     : [];
   const uploadTargetFolderId = openFolderId && !isInvoiceFolder && !isUnsortedFolder ? openFolderId : "";
 
-  const saveMetadata = (next) => onUpdate(order.id, { order_file_folders: next });
+  const saveMetadata = (next) => onUpdate(safeOrder.id, { order_file_folders: next });
 
   const createFolder = () => {
     setTextDialog({
@@ -205,7 +238,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   };
 
   const toggleClientVisible = (url, checked) => {
-    onUpdate(order.id, {
+    onUpdate(safeOrder.id, {
       portal_visible_file_urls: checked
         ? Array.from(new Set([...visibleUrls, url]))
         : visibleUrls.filter((item) => item !== url),
@@ -233,7 +266,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     } else if (folderId && folderId !== INVOICE_FOLDER_ID) {
       nextFolders[url] = folderId;
     }
-    onUpdate(order.id, {
+    onUpdate(safeOrder.id, {
       file_urls: nextUrls,
       order_file_folders: { ...metadata, fileFolders: nextFolders, fileCopies: nextCopies },
     });
@@ -242,7 +275,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         clientEmail,
         fileUrl: url,
         fileName: displayFileName({ id: `file:${url}`, url }),
-        linkedOrderId: order.id,
+        linkedOrderId: safeOrder.id,
       });
       if (result.error) {
         toast.info("File linked to order, but client library link was not saved yet.");
@@ -277,7 +310,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
 
     nextLabels[`file:${url}`] = label;
 
-    onUpdate(order.id, {
+    onUpdate(safeOrder.id, {
       file_urls: nextUrls,
       order_file_folders: {
         ...metadata,
@@ -332,7 +365,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     const nextFolders = { ...(metadata.fileFolders || {}) };
     delete nextFolders[entry.url];
     const nextLabels = Object.fromEntries(Object.entries(metadata.fileLabels || {}).filter(([key]) => key !== entry.id));
-    onUpdate(order.id, {
+    onUpdate(safeOrder.id, {
       file_urls: fileUrls.filter((item) => item !== entry.url),
       portal_visible_file_urls: visibleUrls.filter((item) => item !== entry.url),
       order_file_folders: {
@@ -344,17 +377,18 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     });
   };
 
-  const invoiceUrl = (invoice) => invoice?.file_url || invoice?.url || invoice?.invoice_url || "";
-  const invoiceTitle = (invoice, index) => invoice?.invoice_number || invoice?.file_name || invoice?.name || `Invoice ${index + 1}`;
+  const invoiceUrl = (invoice) => fileUrlFrom(invoice);
+  const invoiceTitle = (invoice, index) => invoice?.invoice_number || invoice?.file_name || invoice?.name || invoiceUrl(invoice).split("/").filter(Boolean).pop() || `Invoice ${index + 1}`;
   const displayFileName = (entryOrUrl) => {
     const entry = typeof entryOrUrl === "string" ? { id: `file:${entryOrUrl}`, url: entryOrUrl } : entryOrUrl;
-    const override = metadata.fileLabels?.[entry.id] || entry.label;
+    const safeEntry = entry || {};
+    const override = metadata.fileLabels?.[safeEntry.id] || safeEntry.label;
     if (override) return override;
     try {
-      const pathname = new URL(entry.url).pathname;
+      const pathname = new URL(fileUrlFrom(safeEntry.url)).pathname;
       return decodeURIComponent(pathname.split("/").filter(Boolean).pop() || "File");
     } catch {
-      return String(entry.url || "File").split("/").filter(Boolean).pop() || "File";
+      return String(fileUrlFrom(safeEntry.url) || "File").split("/").filter(Boolean).pop() || "File";
     }
   };
 
@@ -434,7 +468,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     }`}>
       <button
         type="button"
-        onClick={() => setPreviewFile({
+        onClick={() => entry.url && setPreviewFile({
           title: displayFileName(entry) || `Order file ${index + 1}`,
           file_url: entry.url,
           url: entry.url,
@@ -524,7 +558,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         {url ? (
           <button
             type="button"
-            onClick={() => setPreviewFile({
+            onClick={() => url && setPreviewFile({
               title: invoiceTitle(invoice, index),
               file_url: url,
               url,
@@ -874,13 +908,14 @@ function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink, o
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               {folderFiles.map((file) => {
-                const alreadyLinked = currentOrderUrls.includes(file.file_url);
+                const fileUrl = fileUrlFrom(file);
+                const alreadyLinked = currentOrderUrls.includes(fileUrl);
                 return (
                   <div key={file.id} className="rounded-xl border border-border bg-background p-2">
                     <div className="flex gap-2">
                       <button type="button" onClick={() => onPreview(file)} className="shrink-0 text-left">
                         <MediaPreview
-                          url={file.file_url}
+                          url={fileUrl}
                           title={file.file_name || "Client file"}
                           className="h-16 w-16 rounded-xl"
                         />
@@ -912,3 +947,4 @@ function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink, o
     </div>
   );
 }
+

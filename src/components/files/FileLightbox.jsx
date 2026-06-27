@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
@@ -16,7 +16,7 @@ export default function FileLightbox({ file, onClose }) {
   const [imgError, setImgError] = useState(false);
   const [commentData, setCommentData] = useState({
     comment_text: "",
-    mentioned_user: "",
+    mentioned_user: "none",
     file_status: "none"
   });
   const queryClient = useQueryClient();
@@ -45,10 +45,14 @@ export default function FileLightbox({ file, onClose }) {
         }).then(({ error }) => { if (error) console.warn("Tag push notification failed:", error); });
       }
       setShowCommentForm(false);
-      setCommentData({ comment_text: "", mentioned_user: "", file_status: "none" });
+      setCommentData({ comment_text: "", mentioned_user: "none", file_status: "none" });
       toast.success("Comment added!");
     }
   });
+
+  useEffect(() => {
+    setImgError(false);
+  }, [file?.file_url, file?.url, file?.fileUrl]);
 
   const handleAddComment = () => {
     if (!commentData.comment_text.trim()) {
@@ -57,6 +61,7 @@ export default function FileLightbox({ file, onClose }) {
     }
     createCommentMutation.mutate({
       ...commentData,
+      mentioned_user: commentData.mentioned_user === "none" ? "" : commentData.mentioned_user,
       file_id: file.id
     });
   };
@@ -163,7 +168,7 @@ export default function FileLightbox({ file, onClose }) {
                         <SelectValue placeholder="Select user..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
                         {mentionableUsers.map(user => (
                           <SelectItem key={user.id} value={user.email}>
                             {userDisplayName(user)} · {userRoleLabel(user)}
@@ -239,3 +244,4 @@ export default function FileLightbox({ file, onClose }) {
 
   return createPortal(lightbox, document.body);
 }
+

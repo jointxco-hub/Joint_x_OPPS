@@ -24,6 +24,8 @@ const primaryNav = [
   { name: "Directory", page: "Directory", icon: UserCircle },
 ];
 
+const mobileBottomNavPages = new Set(["Dashboard", "UserDashboard", "Orders", "Tasks"]);
+
 const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2, adminOnly: true },
   { name: "Invoices", page: "Invoices", icon: DollarSign, financeOnly: true },
@@ -95,6 +97,7 @@ export default function Layout({ children, currentPageName }) {
 
   const allNav = [...primaryNav, ...visibleMoreNav];
   const isMoreActive = visibleMoreNav.some(n => n.page === currentPageName);
+  const mobileBottomNav = primaryNav.filter(item => mobileBottomNavPages.has(item.page));
 
   return (
     <div className="min-h-screen bg-background font-inter">
@@ -235,7 +238,7 @@ export default function Layout({ children, currentPageName }) {
       {/* Mobile Bottom Nav */}
       <div className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/90 backdrop-blur-xl border-t border-border safe-area-bottom">
         <div className="flex items-center justify-around px-2 py-2">
-          {primaryNav.map(item => {
+          {mobileBottomNav.map(item => {
             const isActive = currentPageName === item.page;
             return (
               <Link key={item.page} to={createPageUrl(item.page)}
@@ -269,3 +272,4 @@ export default function Layout({ children, currentPageName }) {
     </div>
   );
 }
+
