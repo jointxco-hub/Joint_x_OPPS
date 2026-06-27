@@ -3,8 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 
-const REDIRECT = `${window.location.origin}/Dashboard`;
-
 export default function SignIn() {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
@@ -15,7 +13,9 @@ export default function SignIn() {
   const { checkAppState } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const next = params.get('next') || '/Dashboard';
+  const rawNext = params.get('next') || '/Dashboard';
+  const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/Dashboard';
+  const redirectTo = window.location.origin + next;
 
   const reset = (toMode = 'password') => {
     setSent(false);
@@ -32,7 +32,7 @@ export default function SignIn() {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: REDIRECT },
+        options: { redirectTo },
       });
       if (error) throw error;
       // Browser navigates away — no further state updates needed
@@ -67,7 +67,7 @@ export default function SignIn() {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: REDIRECT },
+        options: { emailRedirectTo: redirectTo },
       });
       if (error) throw error;
       setSent(true);
@@ -86,7 +86,7 @@ export default function SignIn() {
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: REDIRECT },
+        options: { emailRedirectTo: redirectTo },
       });
       if (error) throw error;
       setSent(true);

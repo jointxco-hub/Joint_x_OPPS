@@ -92,6 +92,14 @@ const PRODUCTION_METHOD_LABELS = {
   custom: "Custom work",
 };
 
+const LOCAL_TRACKING_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const DEFAULT_LOCAL_TENANT_SLUG = "joint-x";
+
+const isLocalTrackingHost = (hostname) => {
+  const normalized = String(hostname || "").toLowerCase();
+  return LOCAL_TRACKING_HOSTS.has(normalized) || normalized.endsWith(".local");
+};
+
 const getStepIndex = (status) => {
   const i = statusSteps.findIndex(s => s.key === status);
   return i === -1 ? 0 : i;
@@ -175,6 +183,12 @@ export default function TrackOrder() {
     const params = new URLSearchParams(window.location.search);
     return (params.get("code") || params.get("order") || params.get("tracking") || "").toUpperCase();
   });
+  const [tenantRoute, setTenantRoute] = useState({
+    loading: true,
+    slug: "",
+    hostname: "",
+    unavailable: false,
+  });
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -192,6 +206,11 @@ export default function TrackOrder() {
 
   const handleSearch = async () => {
     if (!trackingCode.trim()) return;
+    if (tenantRoute.loading) return;
+    if (tenantRoute.unavailable) {
+      setError("This tracking portal is not available for this link.");
+      return;
+    }
     setLoading(true);
     setError("");
     setOrder(null);
@@ -201,9 +220,9 @@ export default function TrackOrder() {
     // Normalise input the same way filenames are normalised on upload
     const valNorm = val.replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "");
 
-    const { data, error: lookupError } = await supabase.rpc("get_public_order_tracking", {
+    const { data, error: lookupError } = await supabase.rpc("get_public_order_tracking_for_host", {
       p_lookup: valNorm || val,
-      p_tenant_slug: "joint-x",
+      p_hostname: window.location.hostname,
     });
     if (lookupError) setError("We could not look up that order right now.");
     else if (data) setOrder(data);
@@ -213,10 +232,50 @@ export default function TrackOrder() {
   };
 
   useEffect(() => {
-    if (trackingCode.trim()) {
+    let cancelled = false;
+
+    const resolveTenantRoute = async () => {
+      const hostname = window.location.hostname;
+
+      if (!supabase || isLocalTrackingHost(hostname)) {
+        if (!cancelled) {
+          setTenantRoute({
+            loading: false,
+            slug: DEFAULT_LOCAL_TENANT_SLUG,
+            hostname,
+            unavailable: false,
+          });
+        }
+        return;
+      }
+
+      const { data, error: routeError } = await supabase.rpc("resolve_public_tracking_tenant", {
+        p_hostname: hostname,
+      });
+      const resolved = Array.isArray(data) ? data[0] : data;
+
+      if (!cancelled) {
+        setTenantRoute({
+          loading: false,
+          slug: resolved?.tenant_slug || "",
+          hostname: resolved?.hostname || hostname,
+          unavailable: Boolean(routeError || !resolved?.tenant_slug),
+        });
+      }
+    };
+
+    resolveTenantRoute();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!tenantRoute.loading && !tenantRoute.unavailable && trackingCode.trim()) {
       handleSearch();
     }
-  }, []);
+  }, [tenantRoute.loading, tenantRoute.unavailable, tenantRoute.slug]);
 
   const currentStepIndex = order ? getStepIndex(order.status) : 0;
   const courier = order ? COURIERS.find(c => c.value === order.courier) : null;
@@ -247,8 +306,14 @@ export default function TrackOrder() {
               <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-[#c0a4e0]" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Track Your Order</h1>
-          <p className="text-white/50 text-sm">Enter your order number, tracking code, or invoice number</p>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">
+            {tenantRoute.unavailable ? "Tracking Portal Unavailable" : "Track Your Order"}
+          </h1>
+          <p className="text-white/50 text-sm">
+            {tenantRoute.unavailable
+              ? "This tracking link is not connected to an active client portal."
+              : "Enter your order number, tracking code, or invoice number"}
+          </p>
         </div>
 
         {/* Search */}
@@ -261,15 +326,21 @@ export default function TrackOrder() {
                 value={trackingCode}
                 onChange={e => setTrackingCode(e.target.value.toUpperCase())}
                 onKeyDown={e => e.key === "Enter" && handleSearch()}
+                disabled={tenantRoute.loading || tenantRoute.unavailable}
                 className="pl-11 h-12 rounded-xl font-mono border-white/15 placeholder:text-white/30"
                 style={{ backgroundColor: "rgba(255,255,255,0.08)", color: "white" }}
               />
             </div>
-            <Button onClick={handleSearch} disabled={loading} className="h-12 px-6 bg-[#1a7a5e] hover:bg-[#1a7a5e]/90 text-white rounded-xl font-medium">
-              {loading ? "..." : "Track"}
+            <Button onClick={handleSearch} disabled={loading || tenantRoute.loading || tenantRoute.unavailable} className="h-12 px-6 bg-[#1a7a5e] hover:bg-[#1a7a5e]/90 text-white rounded-xl font-medium">
+              {loading || tenantRoute.loading ? "..." : "Track"}
             </Button>
           </div>
           {error && <p className="text-red-400 text-sm mt-3 text-center">{error}</p>}
+          {tenantRoute.unavailable && (
+            <p className="text-amber-300 text-sm mt-3 text-center">
+              Please use the tracking link shared by the team.
+            </p>
+          )}
         </div>
 
         {/* Order Result */}

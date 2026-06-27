@@ -13,6 +13,8 @@ import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'r
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import XOSAdminShell from '@/pages/XOSAdminShell';
+import { isXosAdminHost } from '@/lib/xosHost';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -32,6 +34,7 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, isAuthenticated, navigateToLogin } = useAuth();
   const location = useLocation();
+  const isXosHost = isXosAdminHost();
 
   // Public pages — bypass auth and layout entirely
   if (PUBLIC_PATHS.includes(location.pathname)) {
@@ -46,6 +49,10 @@ const AuthenticatedApp = () => {
     );
   }
 
+
+  if (isXosHost) {
+    return <XOSAdminShell />;
+  }
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
     return <AppLoader />;
@@ -94,18 +101,19 @@ const AuthenticatedApp = () => {
 
 
 function App() {
+  const isXosHost = isXosAdminHost();
 
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
-          <NavigationTracker />
+          {!isXosHost && <NavigationTracker />}
           <AuthenticatedApp />
-          <GlobalRefreshControl />
+          {!isXosHost && <GlobalRefreshControl />}
         </Router>
         <Toaster />
-        <PWAInstallPrompt />
-        <VisualEditAgent />
+        {!isXosHost && <PWAInstallPrompt />}
+        {!isXosHost && <VisualEditAgent />}
       </QueryClientProvider>
     </AuthProvider>
   )
