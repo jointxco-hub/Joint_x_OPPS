@@ -35,8 +35,8 @@ if (shell.includes("/SignIn") || shell.includes("useSearchParams") || shell.incl
   fail("XOSAdminShell must not use shared SignIn, query params, localStorage, or jx_current_tenant.");
 }
 
-if (!shell.includes("XOS_BOUNDARY_ACTIVE") || !shell.includes("XOS Boundary Active")) {
-  fail("XOSAdminShell must expose a visible and console boundary marker.");
+if (!shell.includes("XOS_BOUNDARY_ACTIVE") || !shell.includes("XOS Boundary Active") || !shell.includes("XOS LIVE BUILD e05b880 ACTIVE")) {
+  fail("XOSAdminShell must expose the visible live build marker and console boundary marker.");
 }
 
 if (!shell.includes("signInWithPassword") || !shell.includes("signInWithOAuth") || !shell.includes("Continue with Google")) {
@@ -47,7 +47,7 @@ if (!shell.includes("redirectTo: `${window.location.origin}/`") || !shell.includ
   fail("XOS sign-in must return to the same XOS host root.");
 }
 
-if (!main.includes("const isXosBoundaryHost = isXosAdminHost();") || !main.includes("disableServiceWorkerForXos") || !main.includes("service_worker_disabled")) {
+if (!main.includes("const isXosBoundaryHost = isXosAdminHost();") || !main.includes("XOS_PRE_REACT_BOUNDARY_ACTIVE") || !main.includes("document.documentElement.dataset.xosBoundary = 'active'") || !main.includes("disableServiceWorkerForXos") || !main.includes("service_worker_disabled")) {
   fail("main.jsx must disable service worker behavior on XOS hosts.");
 }
 

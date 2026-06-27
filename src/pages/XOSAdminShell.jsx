@@ -24,7 +24,7 @@ const EMPTY_GATE = {
 function BoundaryMarker() {
   return (
     <div className="fixed right-3 top-3 z-50 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 shadow-sm">
-      XOS Boundary Active
+      XOS LIVE BUILD e05b880 ACTIVE | XOS Boundary Active
     </div>
   );
 }

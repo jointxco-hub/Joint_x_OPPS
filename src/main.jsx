@@ -7,6 +7,11 @@ import { isXosAdminHost } from './lib/xosHost.js'
 
 const isXosBoundaryHost = isXosAdminHost();
 
+if (isXosBoundaryHost) {
+  document.documentElement.dataset.xosBoundary = 'active';
+  console.log('XOS_PRE_REACT_BOUNDARY_ACTIVE', window.location.hostname);
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   // <React.StrictMode>
   <App />
