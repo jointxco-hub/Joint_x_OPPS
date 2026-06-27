@@ -4,7 +4,7 @@ Date: 2026-06-27
 
 ## Status
 
-Implementation verified for controlled Demo XOS deployment.
+Live verified for controlled Demo XOS deployment.
 
 Phase 4D adds client request creation to the existing live demo workspace loop:
 
@@ -102,8 +102,22 @@ Manual browser checks:
 
 ## Deployment Status
 
-Not deployed yet. Frontend deploy and authenticated browser QA remain pending.
+Deployed to production:
 
+- Deployment URL: `https://joint-x-opps-iudx7nk2o-joint-x.vercel.app`
+- Production route: `https://demo.xos.jointx.co.za`
+- Production aliases verified for `ops.jointx.co.za` and `demo.xos.jointx.co.za`
+
+Authenticated browser QA passed:
+
+- logged into `demo.xos.jointx.co.za` as a `demo-xos` member
+- no OPPS sidebar/dashboard appeared
+- `New Request` form appeared
+- submitted `DEMO-XOS browser request test`
+- new request appeared in the Requests list
+- Files still displayed and opened through signed URLs
+- Orders still loaded
+- Reports and Store Settings remained `Coming soon`
 ## Known Limitations
 
 - XOS request creation is demo-controlled and insert-only.
