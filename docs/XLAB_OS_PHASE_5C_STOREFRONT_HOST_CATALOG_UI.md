@@ -10,13 +10,17 @@ No checkout, PayFast, custom domain, analytics, client self-publishing, or real 
 
 ## Scope
 
-Phase 5C adds a storefront-only app branch and changes the catalog UI data source.
+Phase 5C keeps the original storefront UI/customer experience and changes only the host routing needed for storefront domains plus the catalog data source.
 
 Changed files:
 
 - `src/lib/storefrontHost.js`
 - `src/App.jsx`
 - `src/pages/ClientCatalog.jsx`
+
+## Correction Note
+
+After initial production review, Phase 5C was narrowed so xlab.jointx.co.za keeps the original ClientCatalog storefront experience. The retained change is the backend-safe host/catalog integration; storefront layout, hero, branding, cart UX, product cards, checkout UI, copy, and PayFast behavior remain unchanged.
 
 ## What Changed
 
@@ -33,16 +37,16 @@ Behavior:
 - treats `xlab.jointx.co.za` and `*.xlab.jointx.co.za` as storefront hosts
 - does not use query params, local storage, cached tenant slugs, or manual tenant selection
 
-### Storefront-Only App Branch
+### Storefront Public Route Branch
 
-`src/App.jsx` now checks storefront hosts before mounting the OPPS app.
+`src/App.jsx` checks storefront hosts before mounting the OPPS app, but still renders the existing `ClientCatalog` page rather than a separate storefront experience.
 
 On storefront hosts:
 
-- renders `ClientCatalog` directly
+- routes `/` and `/ClientCatalog` to the existing `ClientCatalog` page
 - does not mount OPPS layout/sidebar/routes
 - does not run OPPS auth redirect logic
-- does not run OPPS navigation tracker/global refresh/PWA prompt/visual edit agent
+- does not change `ClientCatalog` layout, hero, branding, cart UX, product cards, checkout UI, or copy
 
 Tracking routes are preserved inside the storefront branch:
 
@@ -70,7 +74,7 @@ There is no fallback to global products.
 
 ## Expected Demo Host Behavior
 
-`https://demo.xlab.jointx.co.za` should load the X LAB storefront shell and request catalog data through the host-scoped RPC.
+`https://demo.xlab.jointx.co.za` should load the same X LAB storefront UI/customer experience and request catalog data through the host-scoped RPC.
 
 If DNS/domain wiring is configured, the visible catalog should contain only the seeded `DEMO-XOS` products from Phase 5B:
 
@@ -83,7 +87,7 @@ No tenant ID, private file path, supplier cost, margin, purchase data, internal 
 
 ## Expected Joint X Storefront Behavior
 
-`https://xlab.jointx.co.za` should load the storefront/catalog safely through the same host-scoped RPC.
+`https://xlab.jointx.co.za` should keep the previous X LAB storefront look and customer experience while loading catalog data through the host-scoped RPC.
 
 `https://xlab.jointx.co.za/track` and `https://xlab.jointx.co.za/TrackOrder` should continue to render the public tracking page, not the catalog.
 
@@ -96,7 +100,7 @@ Local checks:
 
 Live checks after deploy:
 
-- `https://xlab.jointx.co.za` returns 200 and loads storefront/catalog safely
+- `https://xlab.jointx.co.za` returns 200 and visually matches the previous X LAB storefront experience
 - `https://xlab.jointx.co.za/track` returns 200 and public tracking still works
 - `https://demo.xlab.jointx.co.za` returns 200 if DNS/domain is configured
 - `https://demo.xlab.jointx.co.za` shows only `DEMO-XOS` catalog products if configured
@@ -120,4 +124,4 @@ The current storefront visual copy remains Joint X/X LAB-oriented until a later 
 
 ## Decision
 
-Phase 5C is the smallest safe frontend bridge from the Phase 5B backend to the existing storefront UI. Proceed next only after production route checks confirm the host branch and catalog RPC behavior.
+Phase 5C is the smallest safe frontend bridge from the Phase 5B backend to the existing storefront UI. The storefront must not be redesigned in this phase; proceed next only after production route checks confirm the host branch and catalog RPC behavior.

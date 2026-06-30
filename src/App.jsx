@@ -107,22 +107,6 @@ function XosOnlyApp() {
   )
 }
 
-function StorefrontOnlyApp() {
-  const path = window.location.pathname;
-  const StorefrontPage = path === '/track' || path === '/TrackOrder'
-    ? TrackOrderPage
-    : ClientCatalogPage;
-
-  return (
-    <QueryClientProvider client={queryClientInstance}>
-      <Suspense fallback={<AppLoader />}>
-        {StorefrontPage ? <StorefrontPage /> : <PageNotFound />}
-      </Suspense>
-      <Toaster />
-    </QueryClientProvider>
-  )
-}
-
 function OppsApp() {
   return (
     <AuthProvider>
@@ -140,13 +124,33 @@ function OppsApp() {
   )
 }
 
+
+function StorefrontPublicApp() {
+  return (
+    <QueryClientProvider client={queryClientInstance}>
+      <Router>
+        <Suspense fallback={<AppLoader />}>
+          <Routes>
+            <Route path="/" element={ClientCatalogPage ? <ClientCatalogPage /> : <PageNotFound />} />
+            <Route path="/ClientCatalog" element={ClientCatalogPage ? <ClientCatalogPage /> : <PageNotFound />} />
+            <Route path="/track" element={TrackOrderPage ? <TrackOrderPage /> : <PageNotFound />} />
+            <Route path="/TrackOrder" element={TrackOrderPage ? <TrackOrderPage /> : <PageNotFound />} />
+            <Route path="*" element={<PageNotFound />} />
+          </Routes>
+        </Suspense>
+      </Router>
+      <Toaster />
+    </QueryClientProvider>
+  )
+}
+
 function App() {
   if (isXosAdminHost()) {
     return <XosOnlyApp />
   }
 
   if (isStorefrontHost()) {
-    return <StorefrontOnlyApp />
+    return <StorefrontPublicApp />
   }
 
   return <OppsApp />
