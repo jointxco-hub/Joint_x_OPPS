@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
+import { normalizeStorefrontHostname } from "@/lib/storefrontHost";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -145,6 +147,29 @@ function getBulkDiscount(totalQty) {
   return tier || BULK_DISCOUNTS[0];
 }
 
+async function fetchStorefrontCatalog(hostname) {
+  if (!supabase) throw new Error("Storefront catalog is not configured.");
+
+  const { data: route, error: routeError } = await supabase
+    .rpc("resolve_public_storefront_tenant", { p_hostname: hostname })
+    .maybeSingle();
+
+  if (routeError) throw routeError;
+  if (!route) {
+    const error = new Error("This storefront is not connected to an active catalog.");
+    error.code = "site_not_configured";
+    throw error;
+  }
+
+  const { data, error } = await supabase.rpc("get_storefront_catalog_for_host", {
+    p_hostname: hostname,
+    p_limit: 200,
+  });
+
+  if (error) throw error;
+  return Array.isArray(data) ? data : [];
+}
+
 export default function ClientCatalog() {
   const [cart, setCart] = useState([]);
   const [showCart, setShowCart] = useState(false);
@@ -160,10 +185,17 @@ export default function ClientCatalog() {
   const [designFiles, setDesignFiles] = useState([]);
   const [uploadingFiles, setUploadingFiles] = useState(false);
 
-  // Fetch catalog items from database
-  const { data: catalogItems = [], isLoading: catalogLoading } = useQuery({
-    queryKey: ['catalogItems'],
-    queryFn: () => dataClient.entities.CatalogItem.list('name', 200)
+  const storefrontHostname = normalizeStorefrontHostname();
+
+  // Fetch catalog items through the host-scoped storefront RPC only.
+  const {
+    data: catalogItems = [],
+    isLoading: catalogLoading,
+    error: catalogError,
+  } = useQuery({
+    queryKey: ['storefrontCatalog', storefrontHostname],
+    queryFn: () => fetchStorefrontCatalog(storefrontHostname),
+    retry: false,
   });
 
   const submitOrderMutation = useMutation({
@@ -856,6 +888,11 @@ export default function ClientCatalog() {
       <div className="max-w-7xl mx-auto px-4 py-12">
         {catalogLoading ? (
           <div className="text-center text-white py-12">Loading catalog...</div>
+        ) : catalogError ? (
+          <div className="text-center text-white py-12">
+            <p className="text-xl mb-2">Storefront not configured</p>
+            <p className="text-slate-400">Please use the storefront link shared by the team.</p>
+          </div>
         ) : Object.keys(groupedCatalog).length === 0 ? (
           <div className="text-center text-white py-12">
             <p className="text-xl mb-2">No products available yet</p>

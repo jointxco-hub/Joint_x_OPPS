@@ -15,12 +15,14 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import XOSAdminShell from '@/pages/XOSAdminShell';
 import { isXosAdminHost } from '@/lib/xosHost';
+import { isStorefrontHost } from '@/lib/storefrontHost';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : () => <></>;
 const SignInPage = Pages['SignIn'];
 const TrackOrderPage = Pages['TrackOrder'];
+const ClientCatalogPage = Pages['ClientCatalog'];
 
 // Paths that are public - rendered without the internal layout and no auth check
 const PUBLIC_PATHS = ['/TrackOrder', '/track', '/SignIn'];
@@ -105,6 +107,22 @@ function XosOnlyApp() {
   )
 }
 
+function StorefrontOnlyApp() {
+  const path = window.location.pathname;
+  const StorefrontPage = path === '/track' || path === '/TrackOrder'
+    ? TrackOrderPage
+    : ClientCatalogPage;
+
+  return (
+    <QueryClientProvider client={queryClientInstance}>
+      <Suspense fallback={<AppLoader />}>
+        {StorefrontPage ? <StorefrontPage /> : <PageNotFound />}
+      </Suspense>
+      <Toaster />
+    </QueryClientProvider>
+  )
+}
+
 function OppsApp() {
   return (
     <AuthProvider>
@@ -125,6 +143,10 @@ function OppsApp() {
 function App() {
   if (isXosAdminHost()) {
     return <XosOnlyApp />
+  }
+
+  if (isStorefrontHost()) {
+    return <StorefrontOnlyApp />
   }
 
   return <OppsApp />
