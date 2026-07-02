@@ -27,6 +27,7 @@ import InvoiceList from "@/features/invoices/InvoiceList";
 import InvoiceCreateFlow from "@/features/invoices/InvoiceCreateFlow";
 import InvoiceDetailDrawer from "@/features/invoices/InvoiceDetailDrawer";
 import InvoiceExportCenter from "@/features/invoices/InvoiceExportCenter";
+import InvoiceItemTemplateManager from "@/features/invoices/InvoiceItemTemplateManager";
 
 function emptyFilters() {
   return {
@@ -251,6 +252,7 @@ export default function Invoices() {
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6 rounded-2xl bg-secondary/60 p-1">
             <TabsTrigger value="list" className="rounded-xl">Overview</TabsTrigger>
+            <TabsTrigger value="items" className="rounded-xl">Saved items</TabsTrigger>
             <TabsTrigger value="export" className="rounded-xl">Export center</TabsTrigger>
           </TabsList>
           <TabsContent value="list">
@@ -266,6 +268,9 @@ export default function Invoices() {
               onCreate={() => { setEditingInvoice(null); setActiveTab("create"); }}
               onSelect={setSelectedInvoice}
             />
+          </TabsContent>
+          <TabsContent value="items">
+            <InvoiceItemTemplateManager active={activeTab === "items"} />
           </TabsContent>
           <TabsContent value="export">
             <InvoiceExportCenter active={activeTab === "export"} />
