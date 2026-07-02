@@ -120,9 +120,53 @@ function invoiceItemRecord(item = {}, invoiceId, index = 0) {
     account_name: item.account_name || null,
     item_total: calculated.item_total,
     source_order_item_id: item.source_order_item_id || null,
+    invoice_item_template_id: item.invoice_item_template_id || null,
+    catalog_item_id: item.catalog_item_id || null,
+    inventory_item_id: item.inventory_item_id || null,
+    source_metadata: item.source_metadata || {},
   });
 }
 
+
+function invoiceItemTemplateRecord(item = {}, userId = null) {
+  const calculated = calculateInvoiceLine(item);
+  return compactObject({
+    name: item.name || item.item_name,
+    description: hasOwn(item, "description") ? item.description || null : item.item_description || null,
+    item_type: item.item_type || "goods",
+    unit: nullableField(item, "unit"),
+    rate: calculated.rate,
+    tax_name: nullableField(item, "tax_name"),
+    tax_percentage: calculated.tax_percentage,
+    account_name: nullableField(item, "account_name"),
+    category: nullableField(item, "category"),
+    client_id: nullableField(item, "client_id"),
+    catalog_item_id: nullableField(item, "catalog_item_id"),
+    inventory_item_id: nullableField(item, "inventory_item_id"),
+    metadata: item.metadata || item.source_metadata || {},
+    is_active: hasOwn(item, "is_active") ? item.is_active !== false : undefined,
+    updated_by: userId,
+  });
+}
+
+export function invoiceItemFromTemplate(template = {}) {
+  return {
+    item_name: template.name || "",
+    item_description: template.description || "",
+    item_type: template.item_type || "goods",
+    quantity: 1,
+    unit: template.unit || "",
+    rate: template.rate || 0,
+    discount: 0,
+    tax_name: template.tax_name || "",
+    tax_percentage: template.tax_percentage || 0,
+    account_name: template.account_name || "",
+    invoice_item_template_id: template.id || "",
+    catalog_item_id: template.catalog_item_id || "",
+    inventory_item_id: template.inventory_item_id || "",
+    source_metadata: template.metadata || {},
+  };
+}
 const ACTIVITY_LABELS = {
   invoice_created: "Invoice created",
   invoice_approved: "Invoice approved",
@@ -694,4 +738,105 @@ export async function saveInvoiceSetting(settingKey, settingValue = {}) {
 
 export async function resetInvoiceSetting(settingKey) {
   return saveInvoiceSetting(settingKey, defaultSettingForKey(settingKey));
+}
+
+export async function listInvoiceItemTemplates(options = {}) {
+  ensureSupabase();
+  const tenantId = await getTenantId();
+  const limit = Math.min(Math.max(Number(options.limit || 100), 1), 300);
+  let query = supabase
+    .from("opps_invoice_item_templates")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .eq("is_active", true)
+    .order(options.sortBy || "updated_at", { ascending: options.ascending === true })
+    .limit(limit);
+
+  if (options.clientId) query = query.or(`client_id.is.null,client_id.eq.${options.clientId}`);
+  if (options.search) query = query.ilike("name", `%${options.search}%`);
+  if (options.category) query = query.eq("category", options.category);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+export async function saveInvoiceItemTemplate(input = {}) {
+  ensureSupabase();
+  const userId = await getAuthUserId();
+  const tenantId = await getTenantId();
+  const record = invoiceItemTemplateRecord(input, userId);
+
+  if (!record.name || !String(record.name).trim()) {
+    throw new Error("Template name is required.");
+  }
+
+  if (input.id) {
+    const { data, error } = await supabase
+      .from("opps_invoice_item_templates")
+      .update(record)
+      .eq("id", input.id)
+      .eq("tenant_id", tenantId)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("opps_invoice_item_templates")
+    .insert({
+      ...record,
+      tenant_id: tenantId,
+      created_by: userId,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function recordInvoiceItemTemplateUse(templateId) {
+  if (!templateId) return null;
+  ensureSupabase();
+  const tenantId = await getTenantId();
+  const { data: current, error: currentError } = await supabase
+    .from("opps_invoice_item_templates")
+    .select("id,usage_count")
+    .eq("id", templateId)
+    .eq("tenant_id", tenantId)
+    .single();
+
+  if (currentError) throw new Error(currentError.message);
+
+  const { data, error } = await supabase
+    .from("opps_invoice_item_templates")
+    .update({
+      usage_count: Number(current?.usage_count || 0) + 1,
+      last_used_at: new Date().toISOString(),
+      updated_by: await getAuthUserId(),
+    })
+    .eq("id", templateId)
+    .eq("tenant_id", tenantId)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function archiveInvoiceItemTemplate(templateId) {
+  ensureSupabase();
+  const tenantId = await getTenantId();
+  const { data, error } = await supabase
+    .from("opps_invoice_item_templates")
+    .update({ is_active: false, updated_by: await getAuthUserId() })
+    .eq("id", templateId)
+    .eq("tenant_id", tenantId)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data;
 }

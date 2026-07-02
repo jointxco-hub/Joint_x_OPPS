@@ -34,6 +34,21 @@ function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
+function fuzzyScore(query, target) {
+  const q = String(query || "").toLowerCase().trim();
+  const t = String(target || "").toLowerCase();
+  if (!q) return 0;
+  if (t === q) return 1;
+  if (t.includes(q)) return 0.9;
+  const words = q.split(/\s+/).filter(Boolean);
+  if (words.length && words.every((word) => t.includes(word))) return 0.75;
+  let qi = 0;
+  for (let i = 0; i < t.length && qi < q.length; i += 1) {
+    if (t[i] === q[qi]) qi += 1;
+  }
+  return (qi / q.length) * 0.45;
+}
+
 function searchableClientText(client = {}) {
   return [
     client.name,
@@ -95,20 +110,38 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     staleTime: 60_000,
   });
 
-  const clientSuggestions = useMemo(() => {
-    const query = String(invoice.customer_name || invoice.customer_email || "").trim().toLowerCase();
-    const activeClients = clients.filter((client) => !client.is_archived);
-    if (!query) return activeClients.slice(0, 5);
+  const { data: existingOrderNames = [] } = useQuery({
+    queryKey: ["invoice-create", "order-client-names"],
+    queryFn: () => dataClient.entities.Order.list("-created_date", 300),
+    enabled: step === 0,
+    staleTime: 60_000,
+    select: (orders) => {
+      const known = new Set(clients.map((client) => String(client.name || client.client_name || "").toLowerCase()));
+      return Array.from(new Set(
+        (orders || [])
+          .map((order) => order.client_name || order.whatsapp_name || order.saved_contact_name)
+          .filter((name) => name && !known.has(String(name).toLowerCase()))
+      ));
+    },
+  });
 
-    return activeClients
-      .map((client) => ({
-        client,
-        score: searchableClientText(client).includes(query) ? 1 : 0,
-      }))
-      .filter((entry) => entry.score > 0)
-      .slice(0, 6)
-      .map((entry) => entry.client);
-  }, [clients, invoice.customer_email, invoice.customer_name]);
+  const clientSuggestions = useMemo(() => {
+    const query = String(invoice.customer_name || invoice.customer_email || "").trim();
+    const activeClients = clients.filter((client) => !client.is_archived);
+    if (!query) return activeClients.slice(0, 6).map((client) => ({ type: "client", item: client, score: 0 }));
+
+    const clientMatches = activeClients
+      .map((client) => ({ type: "client", item: client, score: fuzzyScore(query, searchableClientText(client)) }))
+      .filter((entry) => entry.score > 0.25);
+
+    const historyMatches = existingOrderNames
+      .map((name) => ({ type: "history", item: { name, client_name: name }, score: fuzzyScore(query, name) }))
+      .filter((entry) => entry.score > 0.35);
+
+    return [...clientMatches, ...historyMatches]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 7);
+  }, [clients, existingOrderNames, invoice.customer_email, invoice.customer_name]);
 
   const calculated = useMemo(() => applyInvoiceTotals(invoice, items), [invoice, items]);
   const validation = useMemo(
@@ -194,20 +227,25 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                           <p className="px-3 py-3 text-sm text-muted-foreground">No matching clients. Continue typing to create a new invoice customer.</p>
                         ) : (
                           <div className="max-h-72 overflow-y-auto py-1">
-                            {clientSuggestions.map((client) => (
-                              <button
-                                key={client.id || client.email || client.name}
-                                type="button"
-                                onMouseDown={(event) => event.preventDefault()}
-                                onClick={() => selectClient(client)}
-                                className="block w-full px-3 py-2 text-left hover:bg-secondary/60"
-                              >
-                                <span className="block truncate text-sm font-semibold text-foreground">{client.name || client.client_name}</span>
-                                <span className="block truncate text-xs text-muted-foreground">
-                                  {[client.email || client.client_email, client.phone || client.client_phone || client.whatsapp].filter(Boolean).join(" / ") || "No contact details"}
-                                </span>
-                              </button>
-                            ))}
+                            {clientSuggestions.map((suggestion) => {
+                              const client = suggestion.item;
+                              return (
+                                <button
+                                  key={`${suggestion.type}-${client.id || client.email || client.name}`}
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => selectClient(client)}
+                                  className="block w-full px-3 py-2 text-left hover:bg-secondary/60"
+                                >
+                                  <span className="block truncate text-sm font-semibold text-foreground">{client.name || client.client_name}</span>
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {suggestion.type === "history"
+                                      ? "Seen in order history"
+                                      : [client.email || client.client_email, client.phone || client.client_phone || client.whatsapp].filter(Boolean).join(" / ") || "No contact details"}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -255,7 +293,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                   <h2 className="text-lg font-semibold text-foreground">What are you billing for?</h2>
                   <p className="text-sm text-muted-foreground">Add products, services, discounts, and optional tax details.</p>
                 </div>
-                <InvoiceLineItemsEditor items={items} onChange={setItems} />
+                <InvoiceLineItemsEditor items={items} onChange={setItems} customerId={invoice.customer_id} />
               </div>
             )}
 

@@ -115,8 +115,8 @@ export default function InvoiceDetailDrawer({
   return (
     <>
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="mx-auto max-h-[92vh] max-w-4xl rounded-t-3xl">
-        <DrawerHeader className="border-b border-border text-left">
+      <DrawerContent className="mx-auto max-h-[92vh] max-w-4xl rounded-t-2xl md:rounded-t-3xl">
+        <DrawerHeader className="border-b border-border px-4 py-3 text-left md:px-6 md:py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <DrawerTitle>{invoice?.invoice_number || "Invoice"}</DrawerTitle>
@@ -126,7 +126,7 @@ export default function InvoiceDetailDrawer({
           </div>
         </DrawerHeader>
 
-        <div className="overflow-y-auto px-4 py-5 md:px-6">
+        <div className="overflow-y-auto px-3 py-4 md:px-6 md:py-5">
           {isLoading ? (
             <div className="rounded-2xl border border-border bg-secondary/30 p-6 text-sm text-muted-foreground">Loading invoice details...</div>
           ) : invoice ? (
@@ -137,7 +137,7 @@ export default function InvoiceDetailDrawer({
                 </div>
               ) : null}
               {!isDraft && (
-                <div className="rounded-2xl border border-border bg-secondary/30 p-4 text-sm text-muted-foreground">
+                <div className="rounded-xl border border-border bg-secondary/30 p-3 text-sm text-muted-foreground md:p-4">
                   This invoice is locked because it has already moved beyond draft.
                 </div>
               )}
@@ -182,7 +182,7 @@ export default function InvoiceDetailDrawer({
               </div>
 
               {invoice.source_order_id && (
-                <div className="rounded-2xl border border-border bg-card p-4">
+                <div className="rounded-xl border border-border bg-card p-3 md:p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source order</p>
                   <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-foreground">
                     <ExternalLink className="h-4 w-4 text-muted-foreground" /> {invoice.source_order_id}
@@ -214,7 +214,7 @@ export default function InvoiceDetailDrawer({
                   <Info label="Notes" value={invoice.notes || "No notes"} />
                   <Info label="Terms" value={invoice.terms || "No terms"} />
                 </div>
-                <div className="rounded-2xl border border-border bg-secondary/30 p-4">
+                <div className="rounded-xl border border-border bg-secondary/30 p-3 md:p-4">
                   {[
                     ["Subtotal", invoice.subtotal],
                     ["Discount", -Number(invoice.discount_total || 0)],
@@ -235,7 +235,7 @@ export default function InvoiceDetailDrawer({
 
               <ActivitySection activity={activity} isLoading={isActivityLoading} />
 
-              <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:flex-wrap">
+              <div className="sticky bottom-0 -mx-3 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:flex-wrap sm:bg-transparent sm:px-0 sm:pt-4">
                 {isDraft && (
                   <>
                     <Button variant="outline" onClick={() => onEditDraft?.(invoice)} className="rounded-xl">
@@ -359,9 +359,9 @@ export default function InvoiceDetailDrawer({
 
 function Info({ label, value }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-4">
+    <div className="rounded-xl border border-border bg-card p-3 md:p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-2 break-words text-sm font-medium text-foreground">{value}</p>
+      <p className="mt-1 break-words text-sm font-medium text-foreground">{value}</p>
     </div>
   );
 }

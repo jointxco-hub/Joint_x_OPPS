@@ -118,15 +118,15 @@ export default function InvoiceList({
 
           <div className="space-y-3 md:hidden">
             {invoices.map((invoice) => (
-              <button key={invoice.id} onClick={() => onSelect(invoice)} className="w-full rounded-2xl border border-border bg-card p-4 text-left shadow-apple-sm">
+              <button key={invoice.id} onClick={() => onSelect(invoice)} className="w-full rounded-xl border border-border bg-card p-3 text-left shadow-apple-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-semibold text-foreground">{invoice.invoice_number}</p>
-                    <p className="mt-1 truncate text-sm text-muted-foreground">{invoice.customer_name}</p>
+                    <p className="truncate text-sm font-semibold text-foreground">{invoice.invoice_number}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{invoice.customer_name}</p>
                   </div>
                   <InvoiceStatusBadge status={invoice.status} />
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border pt-3 text-xs">
                   <span className="text-muted-foreground">{formatDate(invoice.invoice_date)}</span>
                   <span className="font-semibold text-foreground">{money(invoice.total)}</span>
                   <span className="font-semibold text-foreground">{money(invoice.balance_due)}</span>

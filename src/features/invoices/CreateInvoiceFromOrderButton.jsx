@@ -14,6 +14,11 @@ function positiveMoneyOrNull(value) {
   return parsed > 0 ? parsed : null;
 }
 
+function uuidOrEmpty(value) {
+  const text = String(value || "");
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text) ? text : "";
+}
+
 function resolveOrderAmountPaid(order = {}, totalPaid = 0) {
   const candidates = [
     totalPaid,
@@ -46,6 +51,18 @@ function itemFromProduct(product = {}, index = 0) {
     tax_name: "",
     tax_percentage: 0,
     account_name: "",
+    source_order_item_id: uuidOrEmpty(product.id || product.catalog_item_id || product.inventory_item_id) || null,
+    catalog_item_id: uuidOrEmpty(product.catalog_item_id || product.product_id),
+    inventory_item_id: uuidOrEmpty(product.inventory_item_id),
+    source_metadata: {
+      source: product.source || "order",
+      category: product.category || product.product_category || "",
+      image_url: product.image_url || product.thumbnail_url || product.cover_image_url || "",
+      size: product.size || product.variant_size || "",
+      color: product.color || product.colour || product.variant_color || "",
+      selected_print_options: Array.isArray(product.selected_print_options) ? product.selected_print_options : [],
+      selected_addons: Array.isArray(product.selected_addons) ? product.selected_addons : [],
+    },
   };
 }
 
