@@ -10,6 +10,7 @@ import {
   INVOICE_SETTING_KEYS,
   defaultCustomerMappingSetting,
   defaultInvoiceMappingSetting,
+  normalizeInvoiceDefaultsSetting,
   normalizeClientTemplateSetting,
 } from "@/features/invoices/invoiceSettings";
 
@@ -699,6 +700,7 @@ function defaultSettingForKey(settingKey) {
   if (settingKey === INVOICE_SETTING_KEYS.invoiceMapping) return defaultInvoiceMappingSetting();
   if (settingKey === INVOICE_SETTING_KEYS.customerMapping) return defaultCustomerMappingSetting();
   if (settingKey === INVOICE_SETTING_KEYS.clientTemplate) return normalizeClientTemplateSetting();
+  if (settingKey === INVOICE_SETTING_KEYS.invoiceDefaults) return normalizeInvoiceDefaultsSetting();
   return {};
 }
 

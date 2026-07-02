@@ -7,13 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { dataClient } from "@/api/dataClient";
+import { getInvoiceSetting } from "@/api/invoices";
 import { applyInvoiceTotals } from "./invoiceCalculations";
 import { validateInvoice } from "./invoiceValidation";
+import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoiceSettings";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
 
 const steps = ["Customer", "Details", "Items", "Review", "Finish"];
-const DEFAULT_PAYMENT_TERMS = "Due on receipt";
-const DEFAULT_TERMS = "Prices are valid for the listed items and quantities. Production starts after approval and required assets are received.";
+const defaultInvoiceDefaults = normalizeInvoiceDefaultsSetting();
 
 const starterItem = {
   item_name: "",
@@ -30,6 +31,12 @@ const starterItem = {
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function addDaysIso(dateIso, days = 0) {
+  const date = dateIso ? new Date(String(dateIso) + "T00:00:00") : new Date();
+  date.setDate(date.getDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
 }
 
 function money(value) {
@@ -100,6 +107,7 @@ function clientInvoiceFields(client = {}) {
 
 export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, isSaving = false }) {
   const isEditing = Boolean(initialInvoice?.id);
+  const initialInvoiceDate = initialInvoice?.invoice_date || todayIso();
   const topRef = useRef(null);
   const [step, setStep] = useState(0);
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
@@ -110,9 +118,9 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     customer_phone: initialInvoice?.customer_phone || "",
     customer_billing_address: initialInvoice?.customer_billing_address || "",
     source_order_id: initialInvoice?.source_order_id || "",
-    invoice_date: initialInvoice?.invoice_date || todayIso(),
-    due_date: initialInvoice?.due_date || "",
-    payment_terms: initialInvoice?.payment_terms || DEFAULT_PAYMENT_TERMS,
+    invoice_date: initialInvoiceDate,
+    due_date: initialInvoice?.due_date || addDaysIso(initialInvoiceDate, defaultInvoiceDefaults.dueDays),
+    payment_terms: initialInvoice?.payment_terms || defaultInvoiceDefaults.paymentTerms,
     currency_code: initialInvoice?.currency_code || "ZAR",
     status: initialInvoice?.status || "draft",
     reference_number: initialInvoice?.reference_number || "",
@@ -121,7 +129,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     adjustment: initialInvoice?.adjustment || 0,
     amount_paid: initialInvoice?.amount_paid || 0,
     notes: initialInvoice?.notes || "",
-    terms: initialInvoice?.terms || DEFAULT_TERMS,
+    terms: initialInvoice?.terms || defaultInvoiceDefaults.terms,
     internal_notes: initialInvoice?.internal_notes || "",
   });
   const [items, setItems] = useState(
@@ -134,6 +142,14 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     queryKey: ["currentUser", "invoice-create"],
     queryFn: () => dataClient.auth.me(),
     staleTime: 300_000,
+  });
+
+  const defaultsQuery = useQuery({
+    queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.invoiceDefaults],
+    queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.invoiceDefaults),
+    enabled: !isEditing,
+    staleTime: 300_000,
+    select: normalizeInvoiceDefaultsSetting,
   });
 
   const { data: clients = [], isLoading: clientsLoading } = useQuery({
@@ -191,6 +207,20 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     if (!name) return;
     setInvoice((current) => current.salesperson_name ? current : { ...current, salesperson_name: name });
   }, [userQuery.data]);
+
+  useEffect(() => {
+    if (isEditing || !defaultsQuery.data) return;
+    setInvoice((current) => {
+      const shouldReplacePaymentTerms = !current.payment_terms || current.payment_terms === defaultInvoiceDefaults.paymentTerms;
+      const shouldReplaceTerms = !current.terms || current.terms === defaultInvoiceDefaults.terms;
+      return {
+        ...current,
+        payment_terms: shouldReplacePaymentTerms ? defaultsQuery.data.paymentTerms : current.payment_terms,
+        due_date: current.due_date || addDaysIso(current.invoice_date, defaultsQuery.data.dueDays),
+        terms: shouldReplaceTerms ? defaultsQuery.data.terms : current.terms,
+      };
+    });
+  }, [defaultsQuery.data, isEditing]);
 
   const setField = (field, value) => setInvoice((current) => ({ ...current, [field]: value }));
   const goToStep = (nextStep) => setStep(Math.max(0, Math.min(nextStep, steps.length - 1)));
@@ -311,23 +341,42 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
               <div className="space-y-5">
                 <div>
                   <h2 className="text-lg font-semibold text-foreground">Invoice details</h2>
-                  <p className="text-sm text-muted-foreground">Set dates, terms, and the reference the team will recognize.</p>
+                  <p className="text-sm text-muted-foreground">Defaults are auto-included. Adjust only what is different for this invoice.</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <Input value={invoice.invoice_date} onChange={(event) => setField("invoice_date", event.target.value)} type="date" className="h-10 rounded-xl" />
-                  <Input value={invoice.due_date} onChange={(event) => setField("due_date", event.target.value)} type="date" className="h-10 rounded-xl" />
-                  <Input value={invoice.payment_terms} onChange={(event) => setField("payment_terms", event.target.value)} placeholder="Payment terms" className="h-10 rounded-xl" />
-                  <Input value={invoice.reference_number} onChange={(event) => setField("reference_number", event.target.value)} placeholder="Reference number" className="h-10 rounded-xl" />
-                  <Input value={invoice.salesperson_name} onChange={(event) => setField("salesperson_name", event.target.value)} placeholder="Salesperson" className="h-10 rounded-xl" />
-                  <Select value={invoice.currency_code} onValueChange={(value) => setField("currency_code", value)}>
-                    <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ZAR">ZAR</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="EUR">EUR</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <LabeledField label="Invoice date">
+                    <Input value={invoice.invoice_date} onChange={(event) => setField("invoice_date", event.target.value)} type="date" className="h-10 rounded-xl" />
+                  </LabeledField>
+                  <LabeledField label="Due date">
+                    <Input value={invoice.due_date} onChange={(event) => setField("due_date", event.target.value)} type="date" className="h-10 rounded-xl" />
+                  </LabeledField>
+                  <LabeledField label="Reference">
+                    <Input value={invoice.reference_number} onChange={(event) => setField("reference_number", event.target.value)} placeholder="Order, PO, or job ref" className="h-10 rounded-xl" />
+                  </LabeledField>
+                  <LabeledField label="Salesperson">
+                    <Input value={invoice.salesperson_name} onChange={(event) => setField("salesperson_name", event.target.value)} placeholder="Auto-selected account" className="h-10 rounded-xl" />
+                  </LabeledField>
+                  <LabeledField label="Currency">
+                    <Select value={invoice.currency_code} onValueChange={(value) => setField("currency_code", value)}>
+                      <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ZAR">ZAR</SelectItem>
+                        <SelectItem value="USD">USD</SelectItem>
+                        <SelectItem value="EUR">EUR</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </LabeledField>
+                  <LabeledField label="Payment terms">
+                    <Input value={invoice.payment_terms} onChange={(event) => setField("payment_terms", event.target.value)} placeholder="Payment terms" className="h-10 rounded-xl" />
+                  </LabeledField>
                 </div>
+                <details className="rounded-xl border border-border bg-secondary/20 p-3 text-sm">
+                  <summary className="cursor-pointer font-semibold text-foreground">Default invoice terms</summary>
+                  <div className="mt-3 space-y-2">
+                    <Textarea value={invoice.terms} onChange={(event) => setField("terms", event.target.value)} placeholder="Terms" className="min-h-20 rounded-xl bg-card" />
+                    <Textarea value={invoice.internal_notes} onChange={(event) => setField("internal_notes", event.target.value)} placeholder="Internal notes" className="min-h-16 rounded-xl bg-card" />
+                  </div>
+                </details>
               </div>
             )}
 
@@ -356,7 +405,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                   <div className="space-y-3">
                     <Textarea value={invoice.notes} onChange={(event) => setField("notes", event.target.value)} placeholder="Notes for the customer" className="min-h-20 rounded-xl" />
                     <details className="rounded-xl border border-border bg-card p-3 text-sm">
-                      <summary className="cursor-pointer font-semibold text-foreground">Terms and internal details</summary>
+                      <summary className="cursor-pointer font-semibold text-foreground">Edit included terms</summary>
                       <div className="mt-3 space-y-3">
                         <Textarea value={invoice.terms} onChange={(event) => setField("terms", event.target.value)} placeholder="Terms" className="min-h-20 rounded-xl" />
                         <Textarea value={invoice.internal_notes} onChange={(event) => setField("internal_notes", event.target.value)} placeholder="Internal notes" className="min-h-16 rounded-xl" />
@@ -478,5 +527,14 @@ function SummaryTile({ label, value }) {
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-1 text-base font-bold text-foreground">{value}</p>
     </div>
+  );
+}
+
+function LabeledField({ label, children }) {
+  return (
+    <label className="space-y-1">
+      <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      {children}
+    </label>
   );
 }

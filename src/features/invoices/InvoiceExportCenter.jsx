@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { dataClient } from "@/api/dataClient";
 import {
   AlertDialog,
@@ -35,6 +36,7 @@ import {
   INVOICE_SETTING_KEYS,
   defaultCustomerMappingSetting,
   defaultInvoiceMappingSetting,
+  normalizeInvoiceDefaultsSetting,
   normalizeClientTemplateSetting,
   normalizeColumns,
 } from "./invoiceSettings";
@@ -56,6 +58,7 @@ export default function InvoiceExportCenter({ active = true }) {
   const [customerPreview, setCustomerPreview] = useState(null);
   const [invoiceColumns, setInvoiceColumns] = useState(ZOHO_INVOICE_CSV_COLUMNS);
   const [customerColumns, setCustomerColumns] = useState(ZOHO_CUSTOMER_CSV_COLUMNS);
+  const [invoiceDefaults, setInvoiceDefaults] = useState(normalizeInvoiceDefaultsSetting());
   const [clientTemplate, setClientTemplate] = useState(normalizeClientTemplateSetting());
   const [customerImportPreview, setCustomerImportPreview] = useState(null);
   const [customerImportFileName, setCustomerImportFileName] = useState("");
@@ -76,6 +79,12 @@ export default function InvoiceExportCenter({ active = true }) {
   const clientTemplateQuery = useQuery({
     queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.clientTemplate],
     queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.clientTemplate),
+    enabled: active,
+  });
+
+  const invoiceDefaultsQuery = useQuery({
+    queryKey: ["invoiceSetting", INVOICE_SETTING_KEYS.invoiceDefaults],
+    queryFn: () => getInvoiceSetting(INVOICE_SETTING_KEYS.invoiceDefaults),
     enabled: active,
   });
 
@@ -124,6 +133,12 @@ export default function InvoiceExportCenter({ active = true }) {
       setClientTemplate(normalizeClientTemplateSetting(clientTemplateQuery.data));
     }
   }, [clientTemplateQuery.data]);
+
+  useEffect(() => {
+    if (invoiceDefaultsQuery.data) {
+      setInvoiceDefaults(normalizeInvoiceDefaultsSetting(invoiceDefaultsQuery.data));
+    }
+  }, [invoiceDefaultsQuery.data]);
 
   const exportPreview = useMemo(() => {
     if (!preview) return null;
@@ -297,6 +312,19 @@ export default function InvoiceExportCenter({ active = true }) {
     const defaults = normalizeClientTemplateSetting();
     setClientTemplate(defaults);
     resetSettingMutation.mutate(INVOICE_SETTING_KEYS.clientTemplate);
+  };
+
+  const saveInvoiceDefaults = () => {
+    saveSettingMutation.mutate({
+      key: INVOICE_SETTING_KEYS.invoiceDefaults,
+      value: normalizeInvoiceDefaultsSetting(invoiceDefaults),
+    });
+  };
+
+  const resetInvoiceDefaults = () => {
+    const defaults = normalizeInvoiceDefaultsSetting();
+    setInvoiceDefaults(defaults);
+    resetSettingMutation.mutate(INVOICE_SETTING_KEYS.invoiceDefaults);
   };
 
   return (
@@ -559,6 +587,28 @@ export default function InvoiceExportCenter({ active = true }) {
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <div>
               <p className="flex items-center gap-2 font-semibold text-foreground">
+                <Settings2 className="h-4 w-4" /> Invoice defaults
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">These values are auto-included when creating invoices manually or from orders.</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button variant="outline" onClick={resetInvoiceDefaults} className="rounded-xl">
+                <RotateCcw className="h-4 w-4" /> Reset
+              </Button>
+              <Button onClick={saveInvoiceDefaults} disabled={saveSettingMutation.isPending} className="rounded-xl">
+                <Save className="h-4 w-4" /> Save defaults
+              </Button>
+            </div>
+          </div>
+          <InvoiceDefaultsEditor defaults={invoiceDefaults} onChange={setInvoiceDefaults} />
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-border shadow-apple-sm">
+        <CardContent className="space-y-4 p-4 md:p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="flex items-center gap-2 font-semibold text-foreground">
                 <Settings2 className="h-4 w-4" /> Client invoice template
               </p>
               <p className="mt-1 text-sm text-muted-foreground">Controls the browser print/PDF view. Payment instructions stay hidden until configured.</p>
@@ -681,6 +731,35 @@ function TemplateEditor({ template, onChange }) {
           Show paid/balance block
         </label>
       </div>
+    </div>
+  );
+}
+
+function InvoiceDefaultsEditor({ defaults, onChange }) {
+  const setField = (key, value) => onChange((current) => ({ ...current, [key]: value }));
+
+  return (
+    <div className="grid gap-3 md:grid-cols-[1fr_160px]">
+      <TemplateInput label="Payment terms" value={defaults.paymentTerms} onChange={(value) => setField("paymentTerms", value)} />
+      <label className="space-y-1">
+        <span className="block text-xs font-medium text-muted-foreground">Due after days</span>
+        <Input
+          value={defaults.dueDays ?? 0}
+          onChange={(event) => setField("dueDays", event.target.value)}
+          type="number"
+          min="0"
+          step="1"
+          className="h-9 rounded-xl bg-card"
+        />
+      </label>
+      <label className="space-y-1 md:col-span-2">
+        <span className="block text-xs font-medium text-muted-foreground">Invoice terms</span>
+        <Textarea
+          value={defaults.terms || ""}
+          onChange={(event) => setField("terms", event.target.value)}
+          className="min-h-24 rounded-xl bg-card"
+        />
+      </label>
     </div>
   );
 }

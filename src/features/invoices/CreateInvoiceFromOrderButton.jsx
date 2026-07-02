@@ -2,7 +2,8 @@ import { FileText } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { createInvoice, listInvoices } from "@/api/invoices";
+import { createInvoice, getInvoiceSetting, listInvoices } from "@/api/invoices";
+import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoiceSettings";
 
 function numberOrZero(value) {
   const parsed = Number(value);
@@ -17,6 +18,12 @@ function positiveMoneyOrNull(value) {
 function uuidOrEmpty(value) {
   const text = String(value || "");
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text) ? text : "";
+}
+
+function addDaysIso(dateIso, days = 0) {
+  const date = dateIso ? new Date(String(dateIso) + "T00:00:00") : new Date();
+  date.setDate(date.getDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
 }
 
 function resolveOrderAmountPaid(order = {}, totalPaid = 0) {
@@ -66,13 +73,14 @@ function itemFromProduct(product = {}, index = 0) {
   };
 }
 
-function invoiceFromOrder(order = {}, totalPaid = 0) {
+function invoiceFromOrder(order = {}, totalPaid = 0, defaults = normalizeInvoiceDefaultsSetting()) {
   const products = Array.isArray(order.products) && order.products.length
     ? order.products
     : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }];
   const items = products.map(itemFromProduct);
   const shippingCharge = numberOrZero(order.shipping_charge ?? order.delivery_fee ?? order.delivery_cost ?? order.courier_fee);
   const amountPaid = resolveOrderAmountPaid(order, totalPaid);
+  const invoiceDate = new Date().toISOString().slice(0, 10);
 
   return {
     customer_id: order.client_id || "",
@@ -81,9 +89,9 @@ function invoiceFromOrder(order = {}, totalPaid = 0) {
     customer_phone: order.client_phone || "",
     customer_billing_address: order.delivery_note || "",
     source_order_id: order.id,
-    invoice_date: new Date().toISOString().slice(0, 10),
-    due_date: order.due_date || "",
-    payment_terms: "",
+    invoice_date: invoiceDate,
+    due_date: order.due_date || addDaysIso(invoiceDate, defaults.dueDays),
+    payment_terms: defaults.paymentTerms,
     currency_code: "ZAR",
     status: "draft",
     reference_number: order.order_number || order.tracking_number || "",
@@ -98,7 +106,7 @@ function invoiceFromOrder(order = {}, totalPaid = 0) {
       order.paid_amount,
     ].some((value) => numberOrZero(value) < 0),
     notes: order.notes || order.special_instructions || "",
-    terms: "",
+    terms: defaults.terms,
     internal_notes: `Created from OPPS order ${order.order_number || order.id || ""}`.trim(),
     items,
   };
@@ -123,7 +131,8 @@ export default function CreateInvoiceFromOrderButton({
       }
     }
 
-    return createInvoice(invoiceFromOrder(order, totalPaid));
+    const defaults = normalizeInvoiceDefaultsSetting(await getInvoiceSetting(INVOICE_SETTING_KEYS.invoiceDefaults));
+    return createInvoice(invoiceFromOrder(order, totalPaid, defaults));
   };
 
   const mutation = useMutation({

@@ -5,6 +5,13 @@ export const INVOICE_SETTING_KEYS = {
   invoiceMapping: "zoho_invoice_header_mapping",
   customerMapping: "zoho_customer_header_mapping",
   clientTemplate: "client_invoice_template",
+  invoiceDefaults: "invoice_defaults",
+};
+
+export const DEFAULT_INVOICE_DEFAULTS = {
+  paymentTerms: "Due on receipt",
+  dueDays: 0,
+  terms: "Prices are valid for the listed items and quantities. Production starts after approval and required assets are received.",
 };
 
 export const DEFAULT_CLIENT_INVOICE_TEMPLATE = {
@@ -49,5 +56,17 @@ export function normalizeClientTemplateSetting(setting = {}) {
     ...(setting || {}),
     showProductThumbnails: setting?.showProductThumbnails !== false,
     showPaidBalanceBlock: setting?.showPaidBalanceBlock !== false,
+  };
+}
+
+
+export function normalizeInvoiceDefaultsSetting(setting = {}) {
+  const dueDays = Number(setting?.dueDays);
+  return {
+    ...DEFAULT_INVOICE_DEFAULTS,
+    ...(setting || {}),
+    paymentTerms: String(setting?.paymentTerms || DEFAULT_INVOICE_DEFAULTS.paymentTerms),
+    dueDays: Number.isFinite(dueDays) && dueDays >= 0 ? Math.round(dueDays) : DEFAULT_INVOICE_DEFAULTS.dueDays,
+    terms: String(setting?.terms || DEFAULT_INVOICE_DEFAULTS.terms),
   };
 }
