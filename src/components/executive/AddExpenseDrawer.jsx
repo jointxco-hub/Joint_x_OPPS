@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { X, Upload, Loader2, Trash2, Camera, ReceiptText, Link2, UserRound, ShoppingBag, FileText, BriefcaseBusiness, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
+import { cn } from "@/lib/utils";
 
 const VAT_RATE = 0.15;
 
@@ -68,6 +69,12 @@ const linkOptions = [
 ];
 
 const linkTypeLabels = Object.fromEntries(linkOptions.map(option => [option.key, option.label]));
+
+const vendorModeOptions = [
+  { value: "existing", label: "Existing" },
+  { value: "new", label: "New" },
+  { value: "none", label: "Cash" },
+];
 
 const defaultForm = (today, initialCategory) => ({
   date: today,
@@ -343,13 +350,12 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <Label>Vendor / paid to {vendorRequired ? "*" : ""}</Label>
-                  <div className="grid grid-cols-3 rounded-full bg-secondary/70 p-0.5 text-[11px]">
-                    {[["existing", "Existing"], ["new", "New"], ["none", "Cash"]].map(([key, label]) => (
-                      <button key={key} type="button" onClick={() => changeVendorMode(key)} className={`rounded-full px-2 py-1 font-medium transition ${vendorMode === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
+                  <SegmentedControl
+                    value={vendorMode}
+                    onChange={changeVendorMode}
+                    options={vendorModeOptions}
+                    className="w-[266px] max-w-[60vw]"
+                  />
                 </div>
                 {vendorMode === "existing" && (
                   <Select value={selectedSupplierId || "none"} onValueChange={v => (v === "none" ? setSelectedSupplierId("") : handleSupplierSelect(v))}>
@@ -445,6 +451,43 @@ function SelectField({ label, value, onValueChange, options }) {
   );
 }
 
+function SegmentedControl({ value, onChange, options, className }) {
+  const activeIndex = Math.max(0, options.findIndex(option => option.value === value));
+
+  return (
+    <div
+      className={cn("relative grid h-9 overflow-hidden rounded-full bg-secondary/70 p-1 text-[11px] shadow-inner", className)}
+      style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+    >
+      <span
+        aria-hidden="true"
+        className="absolute bottom-1 top-1 rounded-full bg-background shadow-sm transition-transform duration-300 ease-out will-change-transform"
+        style={{
+          left: 4,
+          width: `calc((100% - 8px) / ${options.length})`,
+          transform: `translate3d(${activeIndex * 100}%, 0, 0)`,
+        }}
+      />
+      {options.map(option => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "relative z-10 rounded-full px-2 font-semibold transition-colors duration-200",
+              active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function EntitySelect({ label, value, onValueChange, items, getLabel }) {
   return (
     <Field label={label}>
@@ -498,3 +541,4 @@ function MediaPreview({ url, title }) {
   if (isPdf) return <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs font-medium text-muted-foreground">PDF</div>;
   return <img src={url} alt={title} className="h-full w-full object-cover" loading="lazy" />;
 }
+
