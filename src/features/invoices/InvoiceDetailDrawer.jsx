@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, ExternalLink, CheckCircle2, Pencil, Printer } from "lucide-react";
+import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -70,6 +70,7 @@ export default function InvoiceDetailDrawer({
   const [partialNote, setPartialNote] = useState("");
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
   const [duplicateToVoid, setDuplicateToVoid] = useState(null);
+  const [showMoreActions, setShowMoreActions] = useState(false);
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const activeDuplicates = duplicateInvoices.filter((item) => item.status !== "void");
   const displayStates = getInvoiceDisplayStates(invoice);
@@ -130,7 +131,7 @@ export default function InvoiceDetailDrawer({
           {isLoading ? (
             <div className="rounded-2xl border border-border bg-secondary/30 p-6 text-sm text-muted-foreground">Loading invoice details...</div>
           ) : invoice ? (
-            <div className="space-y-5">
+            <div className="space-y-3 md:space-y-5">
               {invoice.status === "exported" || invoice.status === "imported_to_zoho" ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                   This invoice was already exported. Re-export only if you need to upload again or fix a mapping issue.
@@ -170,36 +171,26 @@ export default function InvoiceDetailDrawer({
                 </div>
               )}
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Info label="Payment state" value={displayStates.payment.label} />
-                <Info label="Zoho workflow" value={displayStates.zoho.label} />
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-3">
-                <Info label="Customer email" value={invoice.customer_email || "Missing"} />
-                <Info label="Invoice date" value={String(invoice.invoice_date || "").slice(0, 10)} />
-                <Info label="Due date" value={invoice.due_date ? String(invoice.due_date).slice(0, 10) : "Missing"} />
-              </div>
-
-              {invoice.source_order_id && (
-                <div className="rounded-xl border border-border bg-card p-3 md:p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source order</p>
-                  <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <ExternalLink className="h-4 w-4 text-muted-foreground" /> {invoice.source_order_id}
-                  </p>
+              <div className="rounded-xl border border-border bg-card px-3 py-2.5 md:px-4">
+                <div className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2 md:grid-cols-3">
+                  <DetailRow label="Payment" value={displayStates.payment.label} />
+                  <DetailRow label="Zoho" value={displayStates.zoho.label} />
+                  <DetailRow label="Email" value={invoice.customer_email || "Missing"} />
+                  <DetailRow label="Invoice date" value={String(invoice.invoice_date || "").slice(0, 10)} />
+                  <DetailRow label="Due date" value={invoice.due_date ? String(invoice.due_date).slice(0, 10) : "Missing"} />
+                  {invoice.source_order_id && <DetailRow label="Source" value={invoice.source_order_id} compact />}
                 </div>
-              )}
-
-              <div className="overflow-hidden rounded-2xl border border-border bg-card">
-                <div className="border-b border-border px-4 py-3">
+              </div>
+              <div className="overflow-hidden rounded-xl border border-border bg-card">
+                <div className="border-b border-border px-3 py-2.5 md:px-4 md:py-3">
                   <p className="text-sm font-semibold text-foreground">Line items</p>
                 </div>
                 <div className="divide-y divide-border">
                   {items.map((item) => (
-                    <div key={item.id || item.line_number} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_80px_100px_100px]">
+                    <div key={item.id || item.line_number} className="grid gap-1.5 px-3 py-2.5 text-sm md:grid-cols-[1fr_80px_100px_100px] md:px-4 md:py-3">
                       <div>
                         <p className="font-semibold text-foreground">{item.item_name}</p>
-                        {item.item_description && <p className="mt-1 text-xs text-muted-foreground">{item.item_description}</p>}
+                        {item.item_description && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.item_description}</p>}
                       </div>
                       <p className="text-muted-foreground">Qty {item.quantity}</p>
                       <p className="text-muted-foreground">{money(item.rate)}</p>
@@ -209,11 +200,14 @@ export default function InvoiceDetailDrawer({
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-[1fr_280px]">
-                <div className="space-y-3">
-                  <Info label="Notes" value={invoice.notes || "No notes"} />
-                  <Info label="Terms" value={invoice.terms || "No terms"} />
-                </div>
+              <div className="grid gap-3 md:grid-cols-[1fr_280px]">
+                <details className="rounded-xl border border-border bg-card p-3 text-sm">
+                  <summary className="cursor-pointer font-semibold text-foreground">Notes and terms</summary>
+                  <div className="mt-3 space-y-3 text-muted-foreground">
+                    <p>{invoice.notes || "No notes"}</p>
+                    <p>{invoice.terms || "No terms"}</p>
+                  </div>
+                </details>
                 <div className="rounded-xl border border-border bg-secondary/30 p-3 md:p-4">
                   {[
                     ["Subtotal", invoice.subtotal],
@@ -234,56 +228,63 @@ export default function InvoiceDetailDrawer({
               </div>
 
               <ActivitySection activity={activity} isLoading={isActivityLoading} />
-
-              <div className="sticky bottom-0 -mx-3 flex flex-col gap-2 border-t border-border bg-background/95 px-3 py-3 backdrop-blur sm:static sm:mx-0 sm:flex-row sm:flex-wrap sm:bg-transparent sm:px-0 sm:pt-4">
-                {isDraft && (
-                  <>
-                    <Button variant="outline" onClick={() => onEditDraft?.(invoice)} className="rounded-xl">
-                      <Pencil className="h-4 w-4" /> Edit draft
+              <div className="sticky bottom-0 -mx-3 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur sm:static sm:mx-0 sm:bg-transparent sm:px-0 sm:pt-4">
+                <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
+                  {isDraft ? (
+                    <>
+                      <Button variant="outline" size="sm" onClick={() => onEditDraft?.(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </Button>
+                      <Button size="sm" onClick={() => onApprove?.(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => onDuplicateDraft?.(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
+                      <Copy className="h-3.5 w-3.5" /> Duplicate
                     </Button>
-                    <Button onClick={() => onApprove?.(invoice)} className="rounded-xl">
-                      <CheckCircle2 className="h-4 w-4" /> Approve invoice
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => openClientInvoice(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
+                    <Download className="h-3.5 w-3.5" /> Open
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowMoreActions((value) => !value)} className="h-9 rounded-xl text-xs sm:text-sm">
+                    <MoreHorizontal className="h-3.5 w-3.5" /> More
+                  </Button>
+                  {canTakePayment && (
+                    <Button size="sm" onClick={() => onMarkPaid?.(invoice)} className="col-span-3 h-9 rounded-xl text-xs sm:col-span-1 sm:text-sm">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Mark paid
                     </Button>
-                  </>
-                )}
-                {!isDraft && (
-                  <Button variant="outline" onClick={() => onDuplicateDraft?.(invoice)} className="rounded-xl">
-                    <Copy className="h-4 w-4" /> Duplicate as new draft
-                  </Button>
-                )}
-                <Button variant="outline" onClick={() => openClientInvoice(invoice)} className="rounded-xl">
-                  <Download className="h-4 w-4" /> Open client invoice
-                </Button>
-                <Button variant="outline" onClick={() => openClientInvoice(invoice, true)} className="rounded-xl">
-                  <Printer className="h-4 w-4" /> Print client invoice
-                </Button>
-                <Button variant="outline" onClick={printPosInvoiceSummary} className="rounded-xl">
-                  <Printer className="h-4 w-4" /> Print POS Receipt
-                </Button>
-                {["approved", "exported", "imported_to_zoho"].includes(invoice.status) && (
-                  <Button variant="outline" onClick={exportSingle} className="rounded-xl">
-                    <Download className="h-4 w-4" /> {invoice.status === "approved" ? "Export CSV" : "Re-export CSV"}
-                  </Button>
-                )}
-                {invoice.status === "exported" && (
-                  <Button onClick={() => onMarkImported?.(invoice)} className="rounded-xl">
-                    <CheckCircle2 className="h-4 w-4" /> Mark imported to Zoho
-                  </Button>
-                )}
-                {canTakePayment && (
-                  <>
-                    <Button variant="outline" onClick={openPartialPayment} className="rounded-xl">
-                      <CreditCard className="h-4 w-4" /> Mark partially paid
+                  )}
+                </div>
+                {showMoreActions && (
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                    <Button variant="outline" size="sm" onClick={() => openClientInvoice(invoice, true)} className="h-8 rounded-xl text-xs">
+                      <Printer className="h-3.5 w-3.5" /> Client print
                     </Button>
-                    <Button onClick={() => onMarkPaid?.(invoice)} className="rounded-xl">
-                      <CheckCircle2 className="h-4 w-4" /> Mark paid
+                    <Button variant="outline" size="sm" onClick={printPosInvoiceSummary} className="h-8 rounded-xl text-xs">
+                      <Printer className="h-3.5 w-3.5" /> POS print
                     </Button>
-                  </>
-                )}
-                {!["paid", "void"].includes(invoice.status) && (
-                  <Button variant="outline" onClick={() => setVoidConfirmOpen(true)} className="rounded-xl text-destructive hover:text-destructive">
-                    <Ban className="h-4 w-4" /> Mark void
-                  </Button>
+                    {["approved", "exported", "imported_to_zoho"].includes(invoice.status) && (
+                      <Button variant="outline" size="sm" onClick={exportSingle} className="h-8 rounded-xl text-xs">
+                        <Download className="h-3.5 w-3.5" /> {invoice.status === "approved" ? "Export" : "Re-export"}
+                      </Button>
+                    )}
+                    {invoice.status === "exported" && (
+                      <Button size="sm" onClick={() => onMarkImported?.(invoice)} className="h-8 rounded-xl text-xs">
+                        Imported
+                      </Button>
+                    )}
+                    {canTakePayment && (
+                      <Button variant="outline" size="sm" onClick={openPartialPayment} className="h-8 rounded-xl text-xs">
+                        <CreditCard className="h-3.5 w-3.5" /> Partial
+                      </Button>
+                    )}
+                    {!['paid', 'void'].includes(invoice.status) && (
+                      <Button variant="outline" size="sm" onClick={() => setVoidConfirmOpen(true)} className="h-8 rounded-xl text-xs text-destructive hover:text-destructive">
+                        <Ban className="h-3.5 w-3.5" /> Void
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -357,6 +358,15 @@ export default function InvoiceDetailDrawer({
   );
 }
 
+function DetailRow({ label, value, compact = false }) {
+  return (
+    <div className={compact ? "min-w-0 sm:col-span-2 md:col-span-1" : "min-w-0"}>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
 function Info({ label, value }) {
   return (
     <div className="rounded-xl border border-border bg-card p-3 md:p-4">
@@ -395,8 +405,8 @@ function buildInvoiceThermalPayload(invoice) {
 }
 function ActivitySection({ activity, isLoading }) {
   return (
-    <div className="rounded-2xl border border-border bg-card">
-      <div className="border-b border-border px-4 py-3">
+    <div className="rounded-xl border border-border bg-card">
+      <div className="border-b border-border px-3 py-2.5 md:px-4 md:py-3">
         <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Clock3 className="h-4 w-4 text-muted-foreground" /> Activity
         </p>
@@ -408,13 +418,13 @@ function ActivitySection({ activity, isLoading }) {
           <p className="px-4 py-3 text-sm text-muted-foreground">No activity recorded yet.</p>
         ) : (
           activity.map((entry) => (
-            <div key={entry.id} className="px-4 py-3 text-sm">
+            <div key={entry.id} className="px-3 py-2.5 text-sm md:px-4 md:py-3">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                 <p className="font-semibold text-foreground">{entry.activity_label}</p>
                 <p className="text-xs text-muted-foreground">{formatDateTime(entry.created_at)}</p>
               </div>
               {(entry.from_status || entry.to_status) && (
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                   {[entry.from_status, entry.to_status].filter(Boolean).join(" -> ")}
                 </p>
               )}

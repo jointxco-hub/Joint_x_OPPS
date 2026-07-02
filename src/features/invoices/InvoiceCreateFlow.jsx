@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Save, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Check, Download, Save, Share2, Users } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,7 +11,9 @@ import { applyInvoiceTotals } from "./invoiceCalculations";
 import { validateInvoice } from "./invoiceValidation";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
 
-const steps = ["Customer", "Invoice details", "Line items", "Review", "Save"];
+const steps = ["Customer", "Details", "Items", "Review", "Finish"];
+const DEFAULT_PAYMENT_TERMS = "Due on receipt";
+const DEFAULT_TERMS = "Prices are valid for the listed items and quantities. Production starts after approval and required assets are received.";
 
 const starterItem = {
   item_name: "",
@@ -32,6 +34,30 @@ function todayIso() {
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function downloadTextFile(fileName, contents) {
+  const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function invoicePreviewText(invoice = {}, items = []) {
+  const lines = [
+    `Invoice for ${invoice.customer_name || "Customer"}`,
+    `Date: ${invoice.invoice_date || ""}`,
+    `Due: ${invoice.due_date || invoice.payment_terms || ""}`,
+    "",
+    ...items.map((item) => `${item.quantity || 1} x ${item.item_name || "Item"} @ ${money(item.rate)} = ${money(item.item_total)}`),
+    "",
+    `Total: ${money(invoice.total)}`,
+    `Balance due: ${money(invoice.balance_due)}`,
+  ];
+  return lines.join("\n");
 }
 
 function fuzzyScore(query, target) {
@@ -74,6 +100,7 @@ function clientInvoiceFields(client = {}) {
 
 export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, isSaving = false }) {
   const isEditing = Boolean(initialInvoice?.id);
+  const topRef = useRef(null);
   const [step, setStep] = useState(0);
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [invoice, setInvoice] = useState({
@@ -85,7 +112,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     source_order_id: initialInvoice?.source_order_id || "",
     invoice_date: initialInvoice?.invoice_date || todayIso(),
     due_date: initialInvoice?.due_date || "",
-    payment_terms: initialInvoice?.payment_terms || "",
+    payment_terms: initialInvoice?.payment_terms || DEFAULT_PAYMENT_TERMS,
     currency_code: initialInvoice?.currency_code || "ZAR",
     status: initialInvoice?.status || "draft",
     reference_number: initialInvoice?.reference_number || "",
@@ -94,7 +121,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     adjustment: initialInvoice?.adjustment || 0,
     amount_paid: initialInvoice?.amount_paid || 0,
     notes: initialInvoice?.notes || "",
-    terms: initialInvoice?.terms || "",
+    terms: initialInvoice?.terms || DEFAULT_TERMS,
     internal_notes: initialInvoice?.internal_notes || "",
   });
   const [items, setItems] = useState(
@@ -102,6 +129,12 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
       ? initialInvoice.items
       : [{ ...starterItem }]
   );
+
+  const userQuery = useQuery({
+    queryKey: ["currentUser", "invoice-create"],
+    queryFn: () => dataClient.auth.me(),
+    staleTime: 300_000,
+  });
 
   const { data: clients = [], isLoading: clientsLoading } = useQuery({
     queryKey: ["clients", "invoice-create"],
@@ -149,7 +182,18 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     [calculated, initialInvoice?.invoice_number]
   );
 
+  useEffect(() => {
+    topRef.current?.scrollIntoView({ block: "start" });
+  }, [step]);
+
+  useEffect(() => {
+    const name = userQuery.data?.full_name || userQuery.data?.name || userQuery.data?.email || "";
+    if (!name) return;
+    setInvoice((current) => current.salesperson_name ? current : { ...current, salesperson_name: name });
+  }, [userQuery.data]);
+
   const setField = (field, value) => setInvoice((current) => ({ ...current, [field]: value }));
+  const goToStep = (nextStep) => setStep(Math.max(0, Math.min(nextStep, steps.length - 1)));
   const canAdvance = step < steps.length - 1;
 
   const selectClient = (client) => {
@@ -172,8 +216,8 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-5xl px-4 py-6 md:py-8">
-        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div ref={topRef} className="mx-auto max-w-5xl px-4 py-4 md:py-8">
+        <div className="mb-4 flex flex-col gap-3 md:mb-6 md:flex-row md:items-center md:justify-between">
           <div>
             <button onClick={onCancel} className="mb-3 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
               <ArrowLeft className="h-4 w-4" /> Back to invoices
@@ -185,7 +229,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
             {steps.map((label, index) => (
               <button
                 key={label}
-                onClick={() => setStep(index)}
+                onClick={() => goToStep(index)}
                 className={`rounded-xl px-3 py-2 text-xs font-semibold transition-all ${
                   step === index ? "bg-card text-foreground shadow-apple-sm" : "text-muted-foreground hover:text-foreground"
                 }`}
@@ -196,8 +240,8 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
           </div>
         </div>
 
-        <Card className="rounded-2xl border-border shadow-apple-sm">
-          <CardContent className="p-4 md:p-6">
+        <Card className="rounded-xl border-border shadow-apple-sm">
+          <CardContent className="p-3 md:p-6">
             {step === 0 && (
               <div className="space-y-5">
                 <div>
@@ -214,7 +258,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                       }}
                       onFocus={() => setShowClientSuggestions(true)}
                       placeholder="Customer name"
-                      className="h-11 rounded-xl"
+                      className="h-10 rounded-xl"
                     />
                     {showClientSuggestions && (
                       <div className="absolute left-0 right-0 top-12 z-20 overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
@@ -251,9 +295,9 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                       </div>
                     )}
                   </div>
-                  <Input value={invoice.customer_email} onChange={(event) => setField("customer_email", event.target.value)} type="email" placeholder="Email" className="h-11 rounded-xl" />
-                  <Input value={invoice.customer_phone} onChange={(event) => setField("customer_phone", event.target.value)} placeholder="Phone" className="h-11 rounded-xl" />
-                  <Input value={invoice.customer_billing_address} onChange={(event) => setField("customer_billing_address", event.target.value)} placeholder="Billing address" className="h-11 rounded-xl" />
+                  <Input value={invoice.customer_email} onChange={(event) => setField("customer_email", event.target.value)} type="email" placeholder="Email" className="h-10 rounded-xl" />
+                  <Input value={invoice.customer_phone} onChange={(event) => setField("customer_phone", event.target.value)} placeholder="Phone" className="h-10 rounded-xl" />
+                  <Input value={invoice.customer_billing_address} onChange={(event) => setField("customer_billing_address", event.target.value)} placeholder="Billing address" className="h-10 rounded-xl" />
                 </div>
                 {invoice.customer_id && (
                   <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
@@ -270,13 +314,13 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                   <p className="text-sm text-muted-foreground">Set dates, terms, and the reference the team will recognize.</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <Input value={invoice.invoice_date} onChange={(event) => setField("invoice_date", event.target.value)} type="date" className="h-11 rounded-xl" />
-                  <Input value={invoice.due_date} onChange={(event) => setField("due_date", event.target.value)} type="date" className="h-11 rounded-xl" />
-                  <Input value={invoice.payment_terms} onChange={(event) => setField("payment_terms", event.target.value)} placeholder="Payment terms" className="h-11 rounded-xl" />
-                  <Input value={invoice.reference_number} onChange={(event) => setField("reference_number", event.target.value)} placeholder="Reference number" className="h-11 rounded-xl" />
-                  <Input value={invoice.salesperson_name} onChange={(event) => setField("salesperson_name", event.target.value)} placeholder="Salesperson name" className="h-11 rounded-xl" />
+                  <Input value={invoice.invoice_date} onChange={(event) => setField("invoice_date", event.target.value)} type="date" className="h-10 rounded-xl" />
+                  <Input value={invoice.due_date} onChange={(event) => setField("due_date", event.target.value)} type="date" className="h-10 rounded-xl" />
+                  <Input value={invoice.payment_terms} onChange={(event) => setField("payment_terms", event.target.value)} placeholder="Payment terms" className="h-10 rounded-xl" />
+                  <Input value={invoice.reference_number} onChange={(event) => setField("reference_number", event.target.value)} placeholder="Reference number" className="h-10 rounded-xl" />
+                  <Input value={invoice.salesperson_name} onChange={(event) => setField("salesperson_name", event.target.value)} placeholder="Salesperson" className="h-10 rounded-xl" />
                   <Select value={invoice.currency_code} onValueChange={(value) => setField("currency_code", value)}>
-                    <SelectTrigger className="h-11 rounded-xl"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="ZAR">ZAR</SelectItem>
                       <SelectItem value="USD">USD</SelectItem>
@@ -304,14 +348,20 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                   <p className="text-sm text-muted-foreground">Check totals before the invoice moves to export-ready.</p>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <Input value={invoice.shipping_charge} onChange={(event) => setField("shipping_charge", event.target.value)} type="number" min="0" step="0.01" placeholder="Shipping charge" className="h-11 rounded-xl" />
-                  <Input value={invoice.adjustment} onChange={(event) => setField("adjustment", event.target.value)} type="number" step="0.01" placeholder="Adjustment" className="h-11 rounded-xl" />
-                  <Input value={invoice.amount_paid} onChange={(event) => setField("amount_paid", event.target.value)} type="number" min="0" step="0.01" placeholder="Amount paid" className="h-11 rounded-xl" />
+                  <Input value={invoice.shipping_charge} onChange={(event) => setField("shipping_charge", event.target.value)} type="number" min="0" step="0.01" placeholder="Shipping charge" className="h-10 rounded-xl" />
+                  <Input value={invoice.adjustment} onChange={(event) => setField("adjustment", event.target.value)} type="number" step="0.01" placeholder="Adjustment" className="h-10 rounded-xl" />
+                  <Input value={invoice.amount_paid} onChange={(event) => setField("amount_paid", event.target.value)} type="number" min="0" step="0.01" placeholder="Amount paid" className="h-10 rounded-xl" />
                 </div>
                 <div className="grid gap-3 md:grid-cols-[1fr_280px]">
                   <div className="space-y-3">
-                    <Textarea value={invoice.notes} onChange={(event) => setField("notes", event.target.value)} placeholder="Notes for the customer" className="min-h-24 rounded-xl" />
-                    <Textarea value={invoice.terms} onChange={(event) => setField("terms", event.target.value)} placeholder="Terms" className="min-h-20 rounded-xl" />
+                    <Textarea value={invoice.notes} onChange={(event) => setField("notes", event.target.value)} placeholder="Notes for the customer" className="min-h-20 rounded-xl" />
+                    <details className="rounded-xl border border-border bg-card p-3 text-sm">
+                      <summary className="cursor-pointer font-semibold text-foreground">Terms and internal details</summary>
+                      <div className="mt-3 space-y-3">
+                        <Textarea value={invoice.terms} onChange={(event) => setField("terms", event.target.value)} placeholder="Terms" className="min-h-20 rounded-xl" />
+                        <Textarea value={invoice.internal_notes} onChange={(event) => setField("internal_notes", event.target.value)} placeholder="Internal notes" className="min-h-16 rounded-xl" />
+                      </div>
+                    </details>
                   </div>
                   <div className="rounded-2xl border border-border bg-secondary/30 p-4">
                     {[
@@ -336,9 +386,35 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
 
             {step === 4 && (
               <div className="space-y-5">
-                <div>
-                  <h2 className="text-lg font-semibold text-foreground">Save / Approve</h2>
-                  <p className="text-sm text-muted-foreground">Save as draft if you still need to check details. Approve when it is ready for Zoho export.</p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-foreground">Invoice preview</h2>
+                    <p className="text-sm text-muted-foreground">Check what the team and client will read before you save or approve.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:flex">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadTextFile(`${invoice.customer_name || "invoice"}-draft.txt`, invoicePreviewText(calculated.invoice, calculated.items))}
+                      className="h-9 rounded-xl"
+                    >
+                      <Download className="h-3.5 w-3.5" /> Download
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const text = invoicePreviewText(calculated.invoice, calculated.items);
+                        if (navigator.share) navigator.share({ title: "Invoice draft", text });
+                        else navigator.clipboard?.writeText(text);
+                      }}
+                      className="h-9 rounded-xl"
+                    >
+                      <Share2 className="h-3.5 w-3.5" /> Share
+                    </Button>
+                  </div>
                 </div>
                 {(validation.errors.length > 0 || validation.warnings.length > 0) && (
                   <div className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -346,20 +422,36 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                     {validation.warnings.map((warning) => <p key={`${warning.field}-${warning.message}`}>Check: {warning.message}</p>)}
                   </div>
                 )}
-                <div className="grid gap-3 md:grid-cols-3">
-                  <SummaryTile label="Customer" value={invoice.customer_name || "Missing"} />
-                  <SummaryTile label="Total" value={money(calculated.invoice.total)} />
-                  <SummaryTile label="Balance due" value={money(calculated.invoice.balance_due)} />
+                <div className="overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="border-b border-border px-3 py-2.5">
+                    <p className="text-sm font-semibold text-foreground">{invoice.customer_name || "Missing customer"}</p>
+                    <p className="text-xs text-muted-foreground">{invoice.invoice_date} / {invoice.payment_terms}</p>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {calculated.items.map((item, index) => (
+                      <div key={`${item.item_name}-${index}`} className="grid grid-cols-[1fr_auto] gap-3 px-3 py-2.5 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-foreground">{item.item_name}</p>
+                          <p className="text-xs text-muted-foreground">Qty {item.quantity} / {money(item.rate)}</p>
+                        </div>
+                        <p className="font-semibold text-foreground">{money(item.item_total)}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="space-y-1 border-t border-border bg-secondary/25 px-3 py-2.5 text-sm">
+                    <div className="flex justify-between"><span className="text-muted-foreground">Total</span><span className="font-semibold text-foreground">{money(calculated.invoice.total)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Balance due</span><span className="font-semibold text-foreground">{money(calculated.invoice.balance_due)}</span></div>
+                  </div>
                 </div>
               </div>
             )}
 
             <div className="mt-8 flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
-              <Button variant="outline" onClick={() => setStep(Math.max(step - 1, 0))} disabled={step === 0} className="rounded-xl">
+              <Button variant="outline" onClick={() => goToStep(step - 1)} disabled={step === 0} className="rounded-xl">
                 <ArrowLeft className="h-4 w-4" /> Back
               </Button>
               {canAdvance ? (
-                <Button onClick={() => setStep(Math.min(step + 1, steps.length - 1))} className="rounded-xl">
+                <Button onClick={() => goToStep(step + 1)} className="rounded-xl">
                   Continue <ArrowRight className="h-4 w-4" />
                 </Button>
               ) : (
@@ -382,9 +474,9 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
 
 function SummaryTile({ label, value }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-4">
+    <div className="rounded-xl border border-border bg-card p-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-2 text-lg font-bold text-foreground">{value}</p>
+      <p className="mt-1 text-base font-bold text-foreground">{value}</p>
     </div>
   );
 }

@@ -13,6 +13,26 @@ import {
 } from "@/api/invoices";
 import { calculateInvoiceLine } from "./invoiceCalculations";
 
+
+const serviceCatalogItems = [
+  { id: "svc-dtf-printing", name: "DTF Printing", price: 149, source: "service", category: "Printing", item_type: "services", description: "Print department / DTF transfer production" },
+  { id: "svc-vinyl-printing", name: "Vinyl Printing", price: 110, source: "service", category: "Printing", item_type: "services", description: "Print department / vinyl application" },
+  { id: "svc-screen-printing", name: "Screen Printing", price: 0, source: "service", category: "Printing", item_type: "services", description: "Print department / screen print job" },
+  { id: "svc-embroidery", name: "Embroidery", price: 0, source: "service", category: "Printing", item_type: "services", description: "Embroidery department" },
+  { id: "svc-labeling", name: "Labeling", price: 0, source: "service", category: "Packaging & tagging", item_type: "services", description: "Packaging department / neck labels, tags, or relabeling" },
+  { id: "svc-packing", name: "Packing", price: 0, source: "service", category: "Packaging & tagging", item_type: "services", description: "Packing department / fold, bag, pack, and dispatch prep" },
+  { id: "svc-artwork", name: "Artwork Design", price: 99, source: "service", category: "XLAB content studio", item_type: "services", description: "Content studio / layout, artwork, or file setup" },
+  { id: "svc-product-photo", name: "Product Photography", price: 0, source: "service", category: "XLAB content studio", item_type: "services", description: "Content studio / product photo capture" },
+];
+
+const pickerModes = [
+  ["all", "All"],
+  ["products", "Products"],
+  ["printing", "Printing"],
+  ["packaging", "Packaging"],
+  ["content", "Content"],
+  ["stock", "Stock"],
+];
 const emptyItem = {
   item_name: "",
   item_description: "",
@@ -67,8 +87,8 @@ function lineFromPickerItem(item = {}, current = {}) {
   return {
     ...current,
     item_name: item.name || current.item_name || "Invoice item",
-    item_description: describeProduct(item),
-    item_type: item.item_type || "goods",
+    item_description: item.description || describeProduct(item),
+    item_type: item.item_type || (item.source === "service" ? "services" : "goods"),
     quantity,
     unit: current.unit || "",
     rate: item.price !== "" && item.price !== null && item.price !== undefined ? item.price : current.rate || 0,
@@ -88,7 +108,7 @@ function templateInputFromItem(item = {}) {
   return {
     name: item.item_name,
     item_description: item.item_description,
-    item_type: item.item_type || "goods",
+    item_type: item.item_type || (item.source === "service" ? "services" : "goods"),
     unit: item.unit || "",
     rate: item.rate || 0,
     tax_name: item.tax_name || "",
@@ -138,6 +158,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
   const recordTemplateUseMutation = useMutation({ mutationFn: recordInvoiceItemTemplateUse });
 
   const allPickerItems = useMemo(() => [
+    ...serviceCatalogItems,
     ...catalogItems
       .filter((item) => item.is_archived !== true)
       .filter((item) => item.store_visible !== false)
@@ -181,7 +202,15 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
   const pickerItemsFor = (query) => {
     const q = String(query || "").trim().toLowerCase();
     return allPickerItems
-      .filter((item) => pickerMode === "all" || item.source === pickerMode)
+      .filter((item) => {
+        if (pickerMode === "all") return true;
+        if (pickerMode === "products") return item.source === "catalog";
+        if (pickerMode === "stock") return item.source === "stock";
+        if (pickerMode === "printing") return item.category === "Printing";
+        if (pickerMode === "packaging") return item.category === "Packaging & tagging";
+        if (pickerMode === "content") return item.category === "XLAB content studio";
+        return true;
+      })
       .filter((item) => !q || [item.name, item.category, item.source].filter(Boolean).join(" ").toLowerCase().includes(q))
       .slice(0, 8);
   };
@@ -214,12 +243,10 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-secondary/25 p-3">
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Saved invoice items</p>
-            <p className="text-xs text-muted-foreground">Reuse repeat jobs or save a line after pricing it once.</p>
-          </div>
+      <details className="rounded-xl border border-border bg-secondary/25 p-3" open>
+        <summary className="cursor-pointer text-sm font-semibold text-foreground">Saved invoice items</summary>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">Reuse repeat jobs or save a line after pricing it once.</p>
           <div className="relative sm:w-64">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -252,14 +279,14 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
             ))}
           </div>
         )}
-      </div>
+      </details>
 
       {safeItems.map((item, index) => {
         const calculated = calculateInvoiceLine(item);
         const pickerItems = pickerItemsFor(item.item_name);
         return (
-          <div key={index} className="rounded-xl border border-border bg-card p-3 shadow-apple-sm">
-            <div className="mb-3 flex items-center justify-between gap-3">
+          <div key={index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Line {index + 1}</p>
                 {(item.catalog_item_id || item.inventory_item_id || item.invoice_item_template_id) && (
@@ -307,8 +334,8 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 />
                 {pickerOpenIndex === index && (
                   <div className="absolute left-0 right-0 top-11 z-30 overflow-hidden rounded-xl border border-border bg-card shadow-apple-lg">
-                    <div className="flex gap-1 border-b border-border p-2">
-                      {[["all", "All"], ["catalog", "Shop"], ["stock", "Stock"]].map(([value, label]) => (
+                    <div className="flex gap-1 overflow-x-auto border-b border-border p-2">
+                      {pickerModes.map(([value, label]) => (
                         <button
                           key={value}
                           type="button"
@@ -359,46 +386,53 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                   </div>
                 )}
               </div>
-              <Input
-                value={item.quantity ?? ""}
-                onChange={(event) => updateItem(index, { quantity: event.target.value })}
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Qty"
-                className="h-10 rounded-xl md:col-span-2"
-              />
-              <Input
-                value={item.rate ?? ""}
-                onChange={(event) => updateItem(index, { rate: event.target.value })}
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Rate"
-                className="h-10 rounded-xl md:col-span-2"
-              />
-              <Input
-                value={item.discount ?? ""}
-                onChange={(event) => updateItem(index, { discount: event.target.value })}
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Discount"
-                className="h-10 rounded-xl md:col-span-2"
-              />
-              <div className="flex h-10 items-center justify-end rounded-xl bg-secondary/50 px-3 text-sm font-semibold text-foreground md:col-span-1">
-                R{Number(calculated.item_total || 0).toLocaleString()}
+              <LabeledNumber label="Qty" className="md:col-span-2">
+                <Input
+                  value={item.quantity ?? ""}
+                  onChange={(event) => updateItem(index, { quantity: event.target.value })}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="1"
+                  className="h-8 rounded-lg text-sm"
+                />
+              </LabeledNumber>
+              <LabeledNumber label="Rate" className="md:col-span-2">
+                <Input
+                  value={item.rate ?? ""}
+                  onChange={(event) => updateItem(index, { rate: event.target.value })}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  className="h-8 rounded-lg text-sm"
+                />
+              </LabeledNumber>
+              <LabeledNumber label="Discount" className="md:col-span-2">
+                <Input
+                  value={item.discount ?? ""}
+                  onChange={(event) => updateItem(index, { discount: event.target.value })}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  className="h-8 rounded-lg text-sm"
+                />
+              </LabeledNumber>
+              <div className="rounded-lg bg-secondary/50 px-2 py-1 md:col-span-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
+                <p className="text-sm font-semibold text-foreground">R{Number(calculated.item_total || 0).toLocaleString()}</p>
               </div>
               <Input
                 value={item.item_description || ""}
                 onChange={(event) => updateItem(index, { item_description: event.target.value })}
                 placeholder="Description"
-                className="h-10 rounded-xl md:col-span-5"
+                className="h-9 rounded-xl md:col-span-5"
               />
               <select
                 value={item.item_type || "goods"}
                 onChange={(event) => updateItem(index, { item_type: event.target.value })}
-                className="h-10 rounded-xl border border-input bg-background px-3 text-sm md:col-span-2"
+                className="h-9 rounded-xl border border-input bg-background px-3 text-sm md:col-span-2"
               >
                 <option value="goods">Goods</option>
                 <option value="services">Services</option>
@@ -407,13 +441,13 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 value={item.unit || ""}
                 onChange={(event) => updateItem(index, { unit: event.target.value })}
                 placeholder="Unit"
-                className="h-10 rounded-xl md:col-span-1"
+                className="h-9 rounded-xl md:col-span-1"
               />
               <Input
                 value={item.tax_name || ""}
                 onChange={(event) => updateItem(index, { tax_name: event.target.value })}
                 placeholder="Tax name"
-                className="h-10 rounded-xl md:col-span-2"
+                className="h-9 rounded-xl md:col-span-2"
               />
               <Input
                 value={item.tax_percentage ?? ""}
@@ -422,7 +456,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 min="0"
                 step="0.01"
                 placeholder="Tax %"
-                className="h-10 rounded-xl md:col-span-2"
+                className="h-9 rounded-xl md:col-span-2"
               />
             </div>
           </div>
@@ -432,5 +466,13 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
         <Plus className="h-4 w-4" /> Add line
       </Button>
     </div>
+  );
+}
+function LabeledNumber({ label, className = "", children }) {
+  return (
+    <label className={`block rounded-lg bg-secondary/25 px-2 py-1 ${className}`}>
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      {children}
+    </label>
   );
 }

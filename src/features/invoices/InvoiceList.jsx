@@ -47,7 +47,7 @@ export default function InvoiceList({
           <h2 className="text-lg font-semibold text-foreground">Invoices</h2>
           <p className="text-sm text-muted-foreground">{count || 0} records. Line items load only when an invoice opens.</p>
         </div>
-        <Button onClick={onCreate} className="h-10 rounded-xl">
+        <Button onClick={onCreate} className="hidden h-10 rounded-xl md:inline-flex">
           <Plus className="h-4 w-4" /> Create invoice
         </Button>
       </div>
