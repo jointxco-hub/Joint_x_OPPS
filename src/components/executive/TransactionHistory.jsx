@@ -55,7 +55,7 @@ function normaliseExpense(e) {
     id: e.id,
     rawType: "expense",
     date: e.expense_date || e.date || e.created_at,
-    description: e.vendor || e.paid_to_name || e.notes || e.expense_type || "Expense",
+    description: e.expense_name || e.vendor || e.paid_to_name || e.notes || e.expense_type || "Expense",
     category,
     subcategory: e.subcategory || "",
     amount: e.amount || 0,
@@ -71,6 +71,7 @@ function normaliseExpense(e) {
     createdBy: e.submitted_by || "",
     notes: e.notes || "",
     vendor: e.vendor || e.paid_to_name || "",
+    expenseName: e.expense_name || "",
     paidToName: e.paid_to_name || "",
     expenseType: e.expense_type || "",
     recoveryStatus: e.recovery_status || "",
@@ -725,5 +726,6 @@ function TransactionRow({ tx, user, onRefetch }) {
     </div>
   );
 }
+
 
 

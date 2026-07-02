@@ -49,7 +49,7 @@ export default function TeamExpenses() {
           ) : expenses.map(expense => (
             <div key={expense.id} className="px-4 py-3 border-b border-border last:border-0 flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-foreground truncate">{expense.vendor || expense.paid_to_name || expense.notes || "Expense"}</p>
+                <p className="text-sm font-semibold text-foreground truncate">{expense.expense_name || expense.vendor || expense.paid_to_name || expense.notes || "Expense"}</p>
                 <p className="text-xs text-muted-foreground">{expense.date || "No date"} · {expense.expense_category || expense.category || "uncategorised"}</p>
               </div>
               <div className="text-right flex-shrink-0">
@@ -65,4 +65,5 @@ export default function TeamExpenses() {
     </div>
   );
 }
+
 

@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { X, Upload, Loader2, Trash2, ChevronDown, Camera, ReceiptText } from "lucide-react";
+import { X, Upload, Loader2, Trash2, Camera, ReceiptText, Link2, UserRound, ShoppingBag, FileText, BriefcaseBusiness, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
 
@@ -52,35 +52,40 @@ const paymentLabels = {
 };
 
 const vatTypeLabels = {
+  non_vat: "No VAT",
   vatable: "VATable (15%)",
   zero_rated: "Zero-Rated (0%)",
-  non_vat: "No VAT",
   unknown: "Unknown",
 };
 
-const linkTypeLabels = {
-  none: "General business expense",
-  client: "Client recoverable",
-  project: "Project cost",
-  order: "Order production cost",
-  production_job: "Production job / request",
-};
+const linkOptions = [
+  { key: "none", label: "General", helper: "Business expense, not tied to a customer job.", icon: BriefcaseBusiness },
+  { key: "client", label: "Client", helper: "Useful when it may be recovered from a client.", icon: UserRound },
+  { key: "order", label: "Order", helper: "Adds the cost to one order's profitability.", icon: ShoppingBag },
+  { key: "purchase_order", label: "Supplier PO", helper: "Connects the spend to a buying run or supplier order.", icon: FileText },
+  { key: "project", label: "Project", helper: "Tracks the cost against a broader project.", icon: ClipboardList },
+  { key: "production_job", label: "Production", helper: "Links to an internal production request.", icon: Link2 },
+];
+
+const linkTypeLabels = Object.fromEntries(linkOptions.map(option => [option.key, option.label]));
 
 const defaultForm = (today, initialCategory) => ({
   date: today,
+  expense_name: "",
   expense_type: "supplier_purchase",
   vendor: "",
   paid_to_name: "",
   amount: "",
   category: initialCategory || "production",
-  vat_type: "vatable",
-  payment_method: "eft",
+  vat_type: "non_vat",
+  payment_method: "cash",
   paid_by: "",
   notes: "",
   link_type: "none",
   client_id: "",
   project_id: "",
   order_id: "",
+  purchase_order_id: "",
   production_job_id: "",
   is_reimbursable: false,
   is_client_recoverable: false,
@@ -102,8 +107,8 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
   const [clients, setClients] = useState([]);
   const [projects, setProjects] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [productionJobs, setProductionJobs] = useState([]);
-  const [showLinkSection, setShowLinkSection] = useState(false);
 
   useEffect(() => {
     dataClient.auth.me().then(setCurrentUser).catch(() => {});
@@ -111,6 +116,7 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
     dataClient.entities.Client.filter({ is_archived: false }, "-created_date", 100).then(setClients).catch(() => {});
     dataClient.entities.Project.list("-created_date", 100).then(setProjects).catch(() => {});
     dataClient.entities.Order.list("-created_date", 150).then(setOrders).catch(() => {});
+    dataClient.entities.PurchaseOrder.list("-created_date", 150).then(setPurchaseOrders).catch(() => {});
     dataClient.entities.OpsTask.list("-created_date", 150).then(setProductionJobs).catch(() => {});
   }, []);
 
@@ -119,15 +125,18 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
   const vendorRequired = mode === "full" && form.expense_type === "supplier_purchase";
   const activeProjects = projects.filter(p => p.status !== "archived" && !p.is_archived);
   const activeOrders = orders.filter(o => !o.is_archived && !["cancelled", "delivered"].includes(o.status));
+  const activePurchaseOrders = purchaseOrders.filter(po => !po.is_archived && !["cancelled", "completed", "received"].includes(po.status));
 
   const selectedLinkLabel = useMemo(() => {
     if (form.link_type === "client") return clients.find(c => c.id === form.client_id)?.name;
     if (form.link_type === "project") return activeProjects.find(p => p.id === form.project_id)?.name;
     if (form.link_type === "order") return activeOrders.find(o => o.id === form.order_id)?.order_number;
+    if (form.link_type === "purchase_order") return activePurchaseOrders.find(po => po.id === form.purchase_order_id)?.po_number;
     if (form.link_type === "production_job") return productionJobs.find(j => j.id === form.production_job_id)?.title;
     return "";
-  }, [activeOrders, activeProjects, clients, form, productionJobs]);
+  }, [activeOrders, activeProjects, activePurchaseOrders, clients, form, productionJobs]);
 
+  const currentLink = linkOptions.find(option => option.key === form.link_type) || linkOptions[0];
   const updateForm = (patch) => setForm(prev => ({ ...prev, ...patch }));
 
   const handleSupplierSelect = (id) => {
@@ -165,30 +174,29 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
     }
   };
 
-  const removeReceipt = (idx) => {
-    setReceiptUrls(prev => prev.filter((_, i) => i !== idx));
-  };
+  const removeReceipt = (idx) => setReceiptUrls(prev => prev.filter((_, i) => i !== idx));
 
   const resetLinkFields = (linkType) => ({
     link_type: linkType,
     client_id: linkType === "client" ? form.client_id : "",
     project_id: linkType === "project" ? form.project_id : "",
     order_id: linkType === "order" ? form.order_id : "",
+    purchase_order_id: linkType === "purchase_order" ? form.purchase_order_id : "",
     production_job_id: linkType === "production_job" ? form.production_job_id : "",
-    is_client_recoverable: linkType === "client" ? form.is_client_recoverable : false,
+    is_client_recoverable: ["client", "order"].includes(linkType) ? form.is_client_recoverable : false,
   });
 
   const validate = () => {
     if (mode === "quick") {
-      if (!receiptUrls.length && !form.amount && !form.notes.trim()) {
-        toast.error("Quick capture needs a receipt, amount, or note.");
+      if (!receiptUrls.length && !form.amount && !form.notes.trim() && !form.expense_name.trim()) {
+        toast.error("Quick capture needs a receipt, amount, name, or note.");
         return false;
       }
       return true;
     }
 
-    if (!form.date || !form.amount || !form.category) {
-      toast.error("Date, amount, and category are required.");
+    if (!form.expense_name.trim() || !form.date || !form.amount || !form.category) {
+      toast.error("Name, date, amount, and category are required.");
       return false;
     }
     if (vendorRequired && vendorMode === "existing" && !selectedSupplierId) {
@@ -219,15 +227,17 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
         supplierId = supplier?.id || null;
       }
 
-      const isComplete = Boolean(form.date && form.amount && form.category && (!vendorRequired || vendorName || supplierId));
+      const isComplete = Boolean(form.date && form.amount && form.category && form.expense_name.trim() && (!vendorRequired || vendorName || supplierId));
       const status = mode === "quick" && !isComplete ? "needs_review" : currentUser?.role === "admin" ? "approved" : "captured";
       const linkedClientId = form.link_type === "client" ? form.client_id : "";
       const linkedProjectId = form.link_type === "project" ? form.project_id : "";
       const linkedOrderId = form.link_type === "order" ? form.order_id : "";
+      const linkedPurchaseOrderId = form.link_type === "purchase_order" ? form.purchase_order_id : "";
       const linkedProductionJobId = form.link_type === "production_job" ? form.production_job_id : "";
 
       const payload = {
         date: form.date || today,
+        expense_name: form.expense_name.trim() || form.paid_to_name.trim() || form.notes.trim() || "Quick expense",
         expense_type: form.expense_type,
         vendor_id: supplierId,
         vendor: vendorMode === "none" ? "" : vendorName,
@@ -247,9 +257,11 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
         client_id: linkedClientId,
         project_id: linkedProjectId,
         order_id: linkedOrderId,
+        purchase_order_id: linkedPurchaseOrderId,
         linked_client_id: linkedClientId,
         linked_project_id: linkedProjectId,
         linked_order_id: linkedOrderId,
+        linked_purchase_order_id: linkedPurchaseOrderId,
         linked_production_job_id: linkedProductionJobId,
         is_reimbursable: form.is_reimbursable,
         reimbursement_status: form.is_reimbursable ? "pending" : "not_reimbursable",
@@ -271,145 +283,145 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end md:items-center justify-center p-3 md:p-4">
-      <div className="w-full max-w-2xl bg-card rounded-2xl border border-border shadow-apple-xl max-h-[94vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card z-10">
-          <h2 className="font-semibold text-foreground flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#1a7a5e] inline-block" />
-            Add Expense
-          </h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center hover:bg-border transition-all">
-            <X className="w-4 h-4 text-muted-foreground" />
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 backdrop-blur-sm md:items-center md:p-4">
+      <div className="w-full max-w-xl overflow-hidden rounded-t-3xl border border-border/70 bg-background/95 shadow-2xl ring-1 ring-black/5 md:rounded-3xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:px-5">
+          <div>
+            <h2 className="text-base font-semibold tracking-tight text-foreground">Add Expense</h2>
+            <p className="text-xs text-muted-foreground">Capture once. Finance can clean it up later.</p>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-full bg-secondary/80 text-muted-foreground transition hover:bg-secondary hover:text-foreground">
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-5">
+        <form onSubmit={handleSubmit} className="max-h-[88vh] space-y-4 overflow-y-auto px-4 py-4 md:px-5">
           <Tabs value={mode} onValueChange={setMode} className="w-full">
-            <TabsList className="grid w-full grid-cols-2 rounded-xl bg-secondary p-1">
-              <TabsTrigger value="full" className="rounded-lg gap-2"><ReceiptText className="h-3.5 w-3.5" /> Full Form</TabsTrigger>
-              <TabsTrigger value="quick" className="rounded-lg gap-2"><Camera className="h-3.5 w-3.5" /> Quick Expense</TabsTrigger>
+            <TabsList className="grid h-10 w-full grid-cols-2 rounded-full bg-secondary/70 p-1">
+              <TabsTrigger value="full" className="rounded-full text-xs"><ReceiptText className="mr-1.5 h-3.5 w-3.5" /> Full</TabsTrigger>
+              <TabsTrigger value="quick" className="rounded-full text-xs"><Camera className="mr-1.5 h-3.5 w-3.5" /> Quick</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="quick" className="space-y-4 mt-4">
+            <TabsContent value="quick" className="mt-4 space-y-4">
               <ReceiptUploader receiptUrls={receiptUrls} uploading={uploading} onUpload={handleUpload} onRemove={removeReceipt} quick />
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Date">
-                  <Input type="date" value={form.date} onChange={e => updateForm({ date: e.target.value })} />
+                <Field label="Expense name">
+                  <Input placeholder="Parking, Uber, courier..." value={form.expense_name} onChange={e => updateForm({ expense_name: e.target.value })} />
                 </Field>
-                <Field label="Amount (R)">
+                <Field label="Amount">
                   <Input type="number" min="0" step="0.01" placeholder="Optional" value={form.amount} onChange={e => updateForm({ amount: e.target.value })} />
                 </Field>
               </div>
+              <Field label="Description">
+                <Textarea placeholder="What happened? Add just enough context." value={form.notes} onChange={e => updateForm({ notes: e.target.value })} className="min-h-16 resize-none" />
+              </Field>
               <div className="grid grid-cols-2 gap-3">
                 <SelectField label="Category" value={form.category || "unsorted"} onValueChange={v => updateForm({ category: v })} options={categoryLabels} />
                 <SelectField label="Payment" value={form.payment_method || "unknown"} onValueChange={v => updateForm({ payment_method: v })} options={paymentLabels} />
               </div>
-              <Field label="Paid to / Description">
-                <Input placeholder="Uber driver, parking, cash transport..." value={form.paid_to_name} onChange={e => updateForm({ paid_to_name: e.target.value })} />
-              </Field>
-              <Field label="Notes">
-                <Textarea placeholder="Short context for finance review..." value={form.notes} onChange={e => updateForm({ notes: e.target.value })} className="min-h-20" />
-              </Field>
             </TabsContent>
 
-            <TabsContent value="full" className="space-y-4 mt-4">
-              <div className="grid grid-cols-2 gap-3">
+            <TabsContent value="full" className="mt-4 space-y-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Expense name *">
+                  <Input placeholder="DTF film run, Bolt to supplier..." value={form.expense_name} onChange={e => updateForm({ expense_name: e.target.value })} required />
+                </Field>
                 <Field label="Date *">
                   <Input type="date" value={form.date} onChange={e => updateForm({ date: e.target.value })} required />
                 </Field>
-                <SelectField label="Spend Type *" value={form.expense_type} onValueChange={v => updateForm({ expense_type: v })} options={spendTypeLabels} />
+              </div>
+
+              <Field label="Description">
+                <Textarea placeholder="Short, human description for future review." value={form.notes} onChange={e => updateForm({ notes: e.target.value })} className="min-h-16 resize-none" />
+              </Field>
+
+              <div className="grid grid-cols-2 gap-3">
+                <SelectField label="Spend type" value={form.expense_type} onValueChange={v => updateForm({ expense_type: v })} options={spendTypeLabels} />
+                <SelectField label="Category" value={form.category} onValueChange={v => updateForm({ category: v })} options={categoryLabels} />
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <Label>Vendor / Paid To {vendorRequired ? "*" : ""}</Label>
-                  <div className="grid grid-cols-3 gap-1 bg-secondary rounded-lg p-0.5 text-xs">
-                    {[["existing", "Existing"], ["new", "+ New"], ["none", "No Vendor"]].map(([key, label]) => (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => changeVendorMode(key)}
-                        className={`px-2 py-1 rounded-md font-medium transition-all ${vendorMode === key ? "bg-card shadow-apple-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                      >
+                  <Label>Vendor / paid to {vendorRequired ? "*" : ""}</Label>
+                  <div className="grid grid-cols-3 rounded-full bg-secondary/70 p-0.5 text-[11px]">
+                    {[["existing", "Existing"], ["new", "New"], ["none", "Cash"]].map(([key, label]) => (
+                      <button key={key} type="button" onClick={() => changeVendorMode(key)} className={`rounded-full px-2 py-1 font-medium transition ${vendorMode === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
                         {label}
                       </button>
                     ))}
                   </div>
                 </div>
-
                 {vendorMode === "existing" && (
                   <Select value={selectedSupplierId || "none"} onValueChange={v => (v === "none" ? setSelectedSupplierId("") : handleSupplierSelect(v))}>
-                    <SelectTrigger><SelectValue placeholder="Select a supplier..." /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Select supplier" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">No supplier selected</SelectItem>
                       {suppliers.filter(s => !s.is_archived).map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 )}
-                {vendorMode === "new" && <Input placeholder="Type vendor name..." value={form.vendor} onChange={e => updateForm({ vendor: e.target.value, paid_to_name: e.target.value })} autoFocus />}
-                {vendorMode === "none" && <Input placeholder="Paid to / description, e.g. Taxi, parking, staff cash" value={form.paid_to_name} onChange={e => updateForm({ paid_to_name: e.target.value })} autoFocus />}
+                {vendorMode === "new" && <Input placeholder="Vendor name" value={form.vendor} onChange={e => updateForm({ vendor: e.target.value, paid_to_name: e.target.value })} />}
+                {vendorMode === "none" && <Input placeholder="Paid to, e.g. taxi, parking, runner" value={form.paid_to_name} onChange={e => updateForm({ paid_to_name: e.target.value })} />}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Amount (R) *">
+                <Field label="Amount *">
                   <Input type="number" min="0" step="0.01" placeholder="0.00" value={form.amount} onChange={e => updateForm({ amount: e.target.value })} required />
                 </Field>
-                <SelectField label="VAT Type" value={form.vat_type || "non_vat"} onValueChange={v => updateForm({ vat_type: v })} options={vatTypeLabels} />
+                <SelectField label="VAT" value={form.vat_type || "non_vat"} onValueChange={v => updateForm({ vat_type: v })} options={vatTypeLabels} />
               </div>
-
-              {form.vat_type === "vatable" && amount > 0 && (
-                <div className="bg-[#1a7a5e]/8 border border-[#1a7a5e]/20 text-[#1a7a5e] text-xs rounded-xl px-3 py-2">
-                  Input VAT claimable: <strong>R{vatAmount.toFixed(2)}</strong>
-                </div>
-              )}
+              {form.vat_type === "vatable" && amount > 0 && <p className="text-xs text-muted-foreground">Input VAT estimate: R{vatAmount.toFixed(2)}</p>}
 
               <div className="grid grid-cols-2 gap-3">
-                <SelectField label="Category *" value={form.category} onValueChange={v => updateForm({ category: v })} options={categoryLabels} />
-                <SelectField label="Payment Method" value={form.payment_method || "cash"} onValueChange={v => updateForm({ payment_method: v })} options={paymentLabels} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Paid By">
+                <SelectField label="Payment" value={form.payment_method || "cash"} onValueChange={v => updateForm({ payment_method: v })} options={paymentLabels} />
+                <Field label="Paid by">
                   <Input placeholder={currentUser?.email || "Team member"} value={form.paid_by} onChange={e => updateForm({ paid_by: e.target.value })} />
                 </Field>
-                <div className="grid grid-cols-2 gap-2 pt-6">
-                  <ToggleLine label="Reimbursable?" checked={form.is_reimbursable} onCheckedChange={v => updateForm({ is_reimbursable: v })} />
-                  <ToggleLine label="Recoverable?" checked={form.is_client_recoverable} onCheckedChange={v => updateForm({ is_client_recoverable: v })} />
-                </div>
               </div>
-
-              <Field label="Description / Notes">
-                <Textarea placeholder="What was bought, why, and any receipt context..." value={form.notes} onChange={e => updateForm({ notes: e.target.value })} className="min-h-20" />
-              </Field>
 
               <ReceiptUploader receiptUrls={receiptUrls} uploading={uploading} onUpload={handleUpload} onRemove={removeReceipt} />
             </TabsContent>
           </Tabs>
 
-          <div className="border border-border rounded-xl overflow-hidden">
-            <button type="button" onClick={() => setShowLinkSection(v => !v)} className="w-full flex items-center justify-between px-4 py-3 bg-secondary/50 hover:bg-secondary text-sm font-medium text-foreground transition-all">
-              <span className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#c0a4e0] inline-block" />
-                Link / Cost Allocation
-                {form.link_type !== "none" && <span className="text-xs bg-[#c0a4e0]/30 text-[#7c5fa0] px-2 py-0.5 rounded-full">{selectedLinkLabel || linkTypeLabels[form.link_type]}</span>}
-              </span>
-              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${showLinkSection ? "rotate-180" : ""}`} />
-            </button>
-            {showLinkSection && (
-              <div className="p-4 space-y-3 border-t border-border">
-                <SelectField label="Finance meaning" value={form.link_type} onValueChange={v => updateForm(resetLinkFields(v))} options={linkTypeLabels} />
-                {form.link_type === "client" && <EntitySelect label="Client" value={form.client_id} onValueChange={v => updateForm({ client_id: v })} items={clients} getLabel={c => c.name} />}
-                {form.link_type === "project" && <EntitySelect label="Project" value={form.project_id} onValueChange={v => updateForm({ project_id: v })} items={activeProjects} getLabel={p => p.client_name ? `${p.name} - ${p.client_name}` : p.name} />}
-                {form.link_type === "order" && <EntitySelect label="Order" value={form.order_id} onValueChange={v => updateForm({ order_id: v })} items={activeOrders} getLabel={o => `${o.order_number || "Order"} - ${o.client_name || "Client"}`} />}
-                {form.link_type === "production_job" && <EntitySelect label="Production job / request" value={form.production_job_id} onValueChange={v => updateForm({ production_job_id: v })} items={productionJobs} getLabel={j => j.title || j.name || "Production job"} />}
+          <section className="space-y-3 border-t border-border/70 pt-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">What is this expense for?</h3>
+                <p className="text-xs text-muted-foreground">This decides where the cost appears in profit reports.</p>
               </div>
-            )}
-          </div>
+              {form.link_type !== "none" && <span className="max-w-[45%] truncate rounded-full bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground">{selectedLinkLabel || linkTypeLabels[form.link_type]}</span>}
+            </div>
 
-          <div className="flex gap-3 pt-1">
-            <Button type="button" variant="outline" onClick={onClose} className="flex-1 rounded-xl">Cancel</Button>
-            <Button type="submit" disabled={saving || uploading} className="flex-1 rounded-xl bg-[#1a7a5e] hover:bg-[#155f4a] text-white">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === "quick" ? "Save for Review" : "Save Expense"}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {linkOptions.map(option => {
+                const Icon = option.icon;
+                const active = form.link_type === option.key;
+                return (
+                  <button key={option.key} type="button" onClick={() => updateForm(resetLinkFields(option.key))} className={`flex items-center gap-2 rounded-2xl border px-3 py-2 text-left transition ${active ? "border-foreground bg-foreground text-background" : "border-border bg-background hover:bg-secondary/60"}`}>
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span className="text-xs font-medium">{option.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">{currentLink.helper}</p>
+
+            {form.link_type === "client" && <EntitySelect label="Choose client" value={form.client_id} onValueChange={v => updateForm({ client_id: v })} items={clients} getLabel={c => c.name} />}
+            {form.link_type === "project" && <EntitySelect label="Choose project" value={form.project_id} onValueChange={v => updateForm({ project_id: v })} items={activeProjects} getLabel={p => p.client_name ? `${p.name} - ${p.client_name}` : p.name} />}
+            {form.link_type === "order" && <EntitySelect label="Choose order" value={form.order_id} onValueChange={v => updateForm({ order_id: v })} items={activeOrders} getLabel={o => `${o.order_number || "Order"} - ${o.client_name || "Client"}`} />}
+            {form.link_type === "purchase_order" && <EntitySelect label="Choose supplier PO" value={form.purchase_order_id} onValueChange={v => updateForm({ purchase_order_id: v })} items={activePurchaseOrders} getLabel={po => `${po.po_number || "PO"} - ${po.supplier_name || "Supplier"}`} />}
+            {form.link_type === "production_job" && <EntitySelect label="Choose production job" value={form.production_job_id} onValueChange={v => updateForm({ production_job_id: v })} items={productionJobs} getLabel={j => j.title || j.name || "Production job"} />}
+
+            <div className="grid grid-cols-2 gap-2">
+              <ToggleLine label="Reimbursable" checked={form.is_reimbursable} onCheckedChange={v => updateForm({ is_reimbursable: v })} />
+              <ToggleLine label="Client recoverable" checked={form.is_client_recoverable} onCheckedChange={v => updateForm({ is_client_recoverable: v })} />
+            </div>
+          </section>
+
+          <div className="sticky bottom-0 -mx-4 flex gap-2 border-t border-border/70 bg-background/95 px-4 py-3 backdrop-blur md:-mx-5 md:px-5">
+            <Button type="button" variant="outline" onClick={onClose} className="h-11 flex-1 rounded-full">Cancel</Button>
+            <Button type="submit" disabled={saving || uploading} className="h-11 flex-1 rounded-full bg-foreground text-background hover:bg-foreground/90">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "quick" ? "Save for review" : "Save expense"}
             </Button>
           </div>
         </form>
@@ -419,14 +431,14 @@ export default function AddExpenseDrawer({ onClose, onSaved, initialCategory }) 
 }
 
 function Field({ label, children }) {
-  return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>;
+  return <div className="space-y-1.5"><Label className="text-xs text-muted-foreground">{label}</Label>{children}</div>;
 }
 
 function SelectField({ label, value, onValueChange, options }) {
   return (
     <Field label={label}>
       <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
         <SelectContent>{Object.entries(options).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent>
       </Select>
     </Field>
@@ -437,7 +449,7 @@ function EntitySelect({ label, value, onValueChange, items, getLabel }) {
   return (
     <Field label={label}>
       <Select value={value || "none"} onValueChange={v => onValueChange(v === "none" ? "" : v)}>
-        <SelectTrigger><SelectValue placeholder="Choose..." /></SelectTrigger>
+        <SelectTrigger className="h-10"><SelectValue placeholder="Choose..." /></SelectTrigger>
         <SelectContent>
           <SelectItem value="none">None</SelectItem>
           {items.map(item => <SelectItem key={item.id} value={item.id}>{getLabel(item)}</SelectItem>)}
@@ -449,8 +461,8 @@ function EntitySelect({ label, value, onValueChange, items, getLabel }) {
 
 function ToggleLine({ label, checked, onCheckedChange }) {
   return (
-    <label className="flex items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-xs font-medium text-foreground">
-      <span>{label}</span>
+    <label className="flex h-10 items-center justify-between gap-2 rounded-2xl border border-border px-3 text-xs font-medium text-foreground">
+      <span className="truncate">{label}</span>
       <Switch checked={checked} onCheckedChange={onCheckedChange} />
     </label>
   );
@@ -459,19 +471,19 @@ function ToggleLine({ label, checked, onCheckedChange }) {
 function ReceiptUploader({ receiptUrls, uploading, onUpload, onRemove, quick = false }) {
   return (
     <div className="space-y-2">
-      <Label>Receipts / Screenshots</Label>
-      <label className={`flex items-center justify-center gap-3 w-full cursor-pointer border-2 border-dashed border-[#1a7a5e]/30 rounded-xl hover:border-[#1a7a5e]/60 hover:bg-[#1a7a5e]/5 transition-all ${quick ? "min-h-32 p-5 flex-col text-center" : "p-4"}`}>
-        {uploading ? <Loader2 className="w-5 h-5 animate-spin text-[#1a7a5e]" /> : <Upload className="w-5 h-5 text-[#1a7a5e]" />}
-        <span className="text-sm font-medium text-foreground">{uploading ? "Uploading..." : quick ? "Take photo / Upload receipt" : "Upload receipts or screenshots"}</span>
+      <Label className="text-xs text-muted-foreground">Receipt</Label>
+      <label className={`flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl border border-dashed border-border bg-secondary/30 transition hover:bg-secondary/60 ${quick ? "min-h-24 p-4" : "p-3"}`}>
+        {uploading ? <Loader2 className="h-4 w-4 animate-spin text-foreground" /> : <Upload className="h-4 w-4 text-foreground" />}
+        <span className="text-sm font-medium text-foreground">{uploading ? "Uploading..." : quick ? "Take photo or upload" : "Upload receipt"}</span>
         <input type="file" accept="image/*,application/pdf" multiple capture={quick ? "environment" : undefined} className="hidden" onChange={onUpload} disabled={uploading} />
       </label>
       {receiptUrls.length > 0 && (
-        <div className="grid grid-cols-3 gap-2 mt-2">
+        <div className="grid grid-cols-4 gap-2">
           {receiptUrls.map((url, idx) => (
-            <div key={`${url}-${idx}`} className="relative group rounded-xl overflow-hidden border border-border aspect-square bg-secondary">
+            <div key={`${url}-${idx}`} className="group relative aspect-square overflow-hidden rounded-2xl border border-border bg-secondary">
               <MediaPreview url={url} title="Receipt" />
-              <button type="button" onClick={() => onRemove(idx)} className="absolute top-1 right-1 w-6 h-6 bg-destructive rounded-full flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-all">
-                <Trash2 className="w-3 h-3 text-white" />
+              <button type="button" onClick={() => onRemove(idx)} className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-full bg-background/90 text-destructive shadow-sm">
+                <Trash2 className="h-3 w-3" />
               </button>
             </div>
           ))}
@@ -483,6 +495,6 @@ function ReceiptUploader({ receiptUrls, uploading, onUpload, onRemove, quick = f
 
 function MediaPreview({ url, title }) {
   const isPdf = /\.pdf($|\?)/i.test(url);
-  if (isPdf) return <div className="h-full w-full flex items-center justify-center text-xs font-medium text-muted-foreground px-2 text-center">PDF receipt</div>;
+  if (isPdf) return <div className="flex h-full w-full items-center justify-center px-2 text-center text-xs font-medium text-muted-foreground">PDF</div>;
   return <img src={url} alt={title} className="h-full w-full object-cover" loading="lazy" />;
 }

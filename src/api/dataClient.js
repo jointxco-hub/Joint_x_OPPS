@@ -635,6 +635,7 @@ const ENTITY_CONFIG = {
         date: row.expense_date,
         category: row.expense_category,
         paid_to_name: row.paid_to_name ?? row.vendor,
+        name: row.expense_name ?? row.paid_to_name ?? row.vendor ?? row.notes,
       };
     },
     serialize(payload) {
@@ -643,6 +644,7 @@ const ENTITY_CONFIG = {
         expense_date: payload.expense_date ?? payload.date,
         vendor: payload.vendor,
         vendor_id: idOrUndefined(payload.vendor_id),
+        expense_name: payload.expense_name ?? payload.name,
         paid_to_name: payload.paid_to_name,
         expense_type: payload.expense_type,
         expense_category: payload.expense_category ?? payload.category,
@@ -653,6 +655,7 @@ const ENTITY_CONFIG = {
         project_id: idOrUndefined(payload.project_id),
         client_id: idOrUndefined(payload.client_id),
         order_id: idOrUndefined(payload.order_id),
+        purchase_order_id: idOrUndefined(payload.purchase_order_id),
         submitted_by: payload.submitted_by,
         approval_status: payload.approval_status,
         status: payload.status,
@@ -662,6 +665,7 @@ const ENTITY_CONFIG = {
         linked_client_id: idOrUndefined(payload.linked_client_id ?? payload.client_id),
         linked_project_id: idOrUndefined(payload.linked_project_id ?? payload.project_id),
         linked_order_id: idOrUndefined(payload.linked_order_id ?? payload.order_id),
+        linked_purchase_order_id: idOrUndefined(payload.linked_purchase_order_id ?? payload.purchase_order_id),
         linked_invoice_id: idOrUndefined(payload.linked_invoice_id),
         linked_production_job_id: idOrUndefined(payload.linked_production_job_id ?? payload.production_job_id),
         is_reimbursable: payload.is_reimbursable,
@@ -2127,5 +2131,8 @@ export const dataClient = {
 };
 
 export default dataClient;
+
+
+
 
 
