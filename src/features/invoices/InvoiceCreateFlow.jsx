@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Download, Save, Share2, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, Download, ExternalLink, Printer, Save, Share2, Users } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import { getInvoiceSetting } from "@/api/invoices";
 import { applyInvoiceTotals } from "./invoiceCalculations";
 import { validateInvoice } from "./invoiceValidation";
 import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoiceSettings";
+import ClientInvoiceView from "./ClientInvoiceView";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
 
 const steps = ["Customer", "Details", "Items", "Review", "Finish"];
@@ -51,6 +52,14 @@ function downloadTextFile(fileName, contents) {
   anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function clientInvoiceUrl(invoiceId, options = {}) {
+  if (!invoiceId || typeof window === "undefined") return "";
+  const url = new URL("/ClientInvoicePrint", window.location.origin);
+  url.searchParams.set("invoice", invoiceId);
+  if (options.print) url.searchParams.set("print", "1");
+  return url.toString();
 }
 
 function invoicePreviewText(invoice = {}, items = []) {
@@ -197,6 +206,13 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     () => validateInvoice({ ...calculated.invoice, invoice_number: initialInvoice?.invoice_number || "pending" }, calculated.items),
     [calculated, initialInvoice?.invoice_number]
   );
+  const previewInvoice = useMemo(() => ({
+    ...calculated.invoice,
+    invoice_number: initialInvoice?.invoice_number || "Draft invoice",
+    items: calculated.items,
+  }), [calculated, initialInvoice?.invoice_number]);
+  const savedInvoiceUrl = clientInvoiceUrl(initialInvoice?.id);
+  const savedPrintUrl = clientInvoiceUrl(initialInvoice?.id, { print: true });
 
   useEffect(() => {
     topRef.current?.scrollIntoView({ block: "start" });
@@ -438,9 +454,42 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h2 className="text-lg font-semibold text-foreground">Invoice preview</h2>
-                    <p className="text-sm text-muted-foreground">Check what the team and client will read before you save or approve.</p>
+                    <p className="text-sm text-muted-foreground">This is the client-facing layout. Save first to open or print the live invoice link.</p>
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:flex">
+                    {savedInvoiceUrl && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.open(savedInvoiceUrl, "_blank", "noopener,noreferrer")}
+                        className="h-9 rounded-xl"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open
+                      </Button>
+                    )}
+                    {savedPrintUrl && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.open(savedPrintUrl, "_blank", "noopener,noreferrer")}
+                        className="h-9 rounded-xl"
+                      >
+                        <Printer className="h-3.5 w-3.5" /> Print
+                      </Button>
+                    )}
+                    {savedInvoiceUrl && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigator.clipboard?.writeText(savedInvoiceUrl)}
+                        className="h-9 rounded-xl"
+                      >
+                        <Copy className="h-3.5 w-3.5" /> Copy link
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -472,24 +521,8 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                   </div>
                 )}
                 <div className="overflow-hidden rounded-xl border border-border bg-card">
-                  <div className="border-b border-border px-3 py-2.5">
-                    <p className="text-sm font-semibold text-foreground">{invoice.customer_name || "Missing customer"}</p>
-                    <p className="text-xs text-muted-foreground">{invoice.invoice_date} / {invoice.payment_terms}</p>
-                  </div>
-                  <div className="divide-y divide-border">
-                    {calculated.items.map((item, index) => (
-                      <div key={`${item.item_name}-${index}`} className="grid grid-cols-[1fr_auto] gap-3 px-3 py-2.5 text-sm">
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold text-foreground">{item.item_name}</p>
-                          <p className="text-xs text-muted-foreground">Qty {item.quantity} / {money(item.rate)}</p>
-                        </div>
-                        <p className="font-semibold text-foreground">{money(item.item_total)}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="space-y-1 border-t border-border bg-secondary/25 px-3 py-2.5 text-sm">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Total</span><span className="font-semibold text-foreground">{money(calculated.invoice.total)}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Balance due</span><span className="font-semibold text-foreground">{money(calculated.invoice.balance_due)}</span></div>
+                  <div className="max-h-[70vh] overflow-auto bg-zinc-100 p-2 sm:p-4">
+                    <ClientInvoiceView invoice={previewInvoice} template={undefined} />
                   </div>
                 </div>
               </div>
