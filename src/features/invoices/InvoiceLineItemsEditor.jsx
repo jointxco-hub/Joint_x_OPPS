@@ -14,16 +14,6 @@ import {
 import { calculateInvoiceLine } from "./invoiceCalculations";
 
 
-const serviceCatalogItems = [
-  { id: "svc-dtf-printing", name: "DTF Printing", price: 149, source: "service", category: "Printing", item_type: "services", description: "Print department / DTF transfer production" },
-  { id: "svc-vinyl-printing", name: "Vinyl Printing", price: 110, source: "service", category: "Printing", item_type: "services", description: "Print department / vinyl application" },
-  { id: "svc-screen-printing", name: "Screen Printing", price: 0, source: "service", category: "Printing", item_type: "services", description: "Print department / screen print job" },
-  { id: "svc-embroidery", name: "Embroidery", price: 0, source: "service", category: "Printing", item_type: "services", description: "Embroidery department" },
-  { id: "svc-labeling", name: "Labeling", price: 0, source: "service", category: "Packaging & tagging", item_type: "services", description: "Packaging department / neck labels, tags, or relabeling" },
-  { id: "svc-packing", name: "Packing", price: 0, source: "service", category: "Packaging & tagging", item_type: "services", description: "Packing department / fold, bag, pack, and dispatch prep" },
-  { id: "svc-artwork", name: "Artwork Design", price: 99, source: "service", category: "XLAB content studio", item_type: "services", description: "Content studio / layout, artwork, or file setup" },
-  { id: "svc-product-photo", name: "Product Photography", price: 0, source: "service", category: "XLAB content studio", item_type: "services", description: "Content studio / product photo capture" },
-];
 
 const pickerModes = [
   ["all", "All"],
@@ -88,15 +78,20 @@ function lineFromPickerItem(item = {}, current = {}) {
     ...current,
     item_name: item.name || current.item_name || "Invoice item",
     item_description: item.description || describeProduct(item),
-    item_type: item.item_type || (item.source === "service" ? "services" : "goods"),
+    item_type: item.item_type || (item.source === "template" ? "services" : "goods"),
     quantity,
-    unit: current.unit || "",
+    unit: item.unit || current.unit || "",
     rate: item.price !== "" && item.price !== null && item.price !== undefined ? item.price : current.rate || 0,
+    tax_name: item.tax_name ?? current.tax_name ?? "",
+    tax_percentage: item.tax_percentage ?? current.tax_percentage ?? 0,
+    account_name: item.account_name ?? current.account_name ?? "",
+    invoice_item_template_id: item.source === "template" ? item.id : "",
     catalog_item_id: item.source === "catalog" ? item.id : "",
     inventory_item_id: item.source === "stock" ? item.id : "",
     source_metadata: {
       source: item.source,
       category: item.category || "",
+      template_id: item.source === "template" ? item.id : undefined,
       image_url: item.image_url || "",
       sizes: item.sizes || [],
       colors: item.colors || [],
@@ -108,7 +103,7 @@ function templateInputFromItem(item = {}) {
   return {
     name: item.item_name,
     item_description: item.item_description,
-    item_type: item.item_type || (item.source === "service" ? "services" : "goods"),
+    item_type: item.item_type || "goods",
     unit: item.unit || "",
     rate: item.rate || 0,
     tax_name: item.tax_name || "",
@@ -158,7 +153,24 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
   const recordTemplateUseMutation = useMutation({ mutationFn: recordInvoiceItemTemplateUse });
 
   const allPickerItems = useMemo(() => [
-    ...serviceCatalogItems,
+    ...templates
+      .filter((item) => item.is_active !== false)
+      .filter((item) => item.item_type === "services" || ["Printing", "Packaging & tagging", "XLAB content studio", "Custom work"].includes(item.category))
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.rate ?? "",
+        source: "template",
+        sourceLabel: "saved",
+        category: item.category || "Custom work",
+        image_url: "",
+        description: item.description || "",
+        item_type: item.item_type || "services",
+        unit: item.unit || "",
+        tax_name: item.tax_name || "",
+        tax_percentage: item.tax_percentage || 0,
+        account_name: item.account_name || "",
+      })),
     ...catalogItems
       .filter((item) => item.is_archived !== true)
       .filter((item) => item.store_visible !== false)
@@ -190,7 +202,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
         print_options: item.print_options || item.printOptions || [],
         addons: item.addons || item.add_ons || item.addOns || [],
       })),
-  ], [catalogItems, inventoryItems]);
+  ], [catalogItems, inventoryItems, templates]);
 
   const filteredTemplates = useMemo(() => {
     const query = savedSearch.trim().toLowerCase();
@@ -211,7 +223,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
         if (pickerMode === "content") return item.category === "XLAB content studio";
         return true;
       })
-      .filter((item) => !q || [item.name, item.category, item.source].filter(Boolean).join(" ").toLowerCase().includes(q))
+      .filter((item) => !q || [item.name, item.category, item.source, item.sourceLabel].filter(Boolean).join(" ").toLowerCase().includes(q))
       .slice(0, 8);
   };
 
@@ -364,7 +376,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-sm font-semibold text-foreground">{pickerItem.name}</span>
-                            <span className="block truncate text-xs text-muted-foreground">{[pickerItem.category, pickerItem.source].filter(Boolean).join(" / ")}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{[pickerItem.category, pickerItem.sourceLabel || pickerItem.source].filter(Boolean).join(" / ")}</span>
                           </span>
                           {pickerItem.price !== "" && <span className="text-xs font-semibold text-primary">R{Number(pickerItem.price || 0).toLocaleString()}</span>}
                         </button>
