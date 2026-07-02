@@ -2,10 +2,13 @@ import React from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 const CATEGORY_LABELS = {
+  unsorted: "Unsorted",
   production: "Production",
   raw_materials: "Raw Materials",
   packaging: "Packaging",
   shipping: "Shipping",
+  transport: "Transport",
+  petty_cash: "Petty Cash",
   marketing: "Marketing",
   software: "Software",
   rent_utilities: "Rent & Utilities",
@@ -21,7 +24,7 @@ const COLORS = [
 
 export default function ExpenseBreakdown({ expenses }) {
   const categoryTotals = expenses.reduce((acc, e) => {
-    const key = e.category || "admin";
+    const key = e.category || e.expense_category || "unsorted";
     acc[key] = (acc[key] || 0) + (e.amount || 0);
     return acc;
   }, {});
@@ -74,3 +77,4 @@ export default function ExpenseBreakdown({ expenses }) {
     </div>
   );
 }
+

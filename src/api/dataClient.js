@@ -621,6 +621,11 @@ const ENTITY_CONFIG = {
       created_date: 'created_at',
       updated_date: 'updated_at',
       date: 'expense_date',
+      submitted_by: 'submitted_by',
+      approval_status: 'approval_status',
+      status: 'status',
+      link_type: 'link_type',
+      recovery_status: 'recovery_status',
     },
     normalize(row) {
       return {
@@ -628,6 +633,8 @@ const ENTITY_CONFIG = {
         created_date: row.created_at,
         updated_date: row.updated_at,
         date: row.expense_date,
+        category: row.expense_category,
+        paid_to_name: row.paid_to_name ?? row.vendor,
       };
     },
     serialize(payload) {
@@ -635,15 +642,35 @@ const ENTITY_CONFIG = {
         type: 'expense',
         expense_date: payload.expense_date ?? payload.date,
         vendor: payload.vendor,
+        vendor_id: idOrUndefined(payload.vendor_id),
+        paid_to_name: payload.paid_to_name,
+        expense_type: payload.expense_type,
         expense_category: payload.expense_category ?? payload.category,
         vat_type: payload.vat_type,
         vat_amount: numberOrUndefined(payload.vat_amount),
         receipt_urls: payload.receipt_urls,
-        project_id: payload.project_id,
-        client_id: payload.client_id,
+        attachment_paths: payload.attachment_paths,
+        project_id: idOrUndefined(payload.project_id),
+        client_id: idOrUndefined(payload.client_id),
+        order_id: idOrUndefined(payload.order_id),
         submitted_by: payload.submitted_by,
         approval_status: payload.approval_status,
+        status: payload.status,
         payment_method: payload.payment_method,
+        paid_by: payload.paid_by,
+        link_type: payload.link_type,
+        linked_client_id: idOrUndefined(payload.linked_client_id ?? payload.client_id),
+        linked_project_id: idOrUndefined(payload.linked_project_id ?? payload.project_id),
+        linked_order_id: idOrUndefined(payload.linked_order_id ?? payload.order_id),
+        linked_invoice_id: idOrUndefined(payload.linked_invoice_id),
+        linked_production_job_id: idOrUndefined(payload.linked_production_job_id ?? payload.production_job_id),
+        is_reimbursable: payload.is_reimbursable,
+        reimbursement_status: payload.reimbursement_status,
+        is_client_recoverable: payload.is_client_recoverable,
+        recovery_status: payload.recovery_status,
+        capture_source: payload.capture_source,
+        reviewed_at: payload.reviewed_at,
+        reviewed_by: payload.reviewed_by,
         amount: numberOrUndefined(payload.amount ?? payload.total_amount),
         notes: payload.notes,
       });
@@ -2032,7 +2059,8 @@ export const dataClient = {
         } else {
           const tenantId = await getCurrentTenantId();
           if (!tenantId) throw new Error('No active tenant is selected for private upload.');
-          storagePath = `${tenantId}/${datePrefix}/${random}-${safeName}`;
+          const safeFolder = String(folder || 'uploads').replace(/^\/+|\/+$/g, '');
+          storagePath = `${tenantId}/${safeFolder}/${datePrefix}/${random}-${safeName}`;
         }
 
         const { error } = await supabase.storage
@@ -2099,3 +2127,5 @@ export const dataClient = {
 };
 
 export default dataClient;
+
+

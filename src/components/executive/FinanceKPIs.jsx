@@ -2,7 +2,7 @@ import React from "react";
 import {
   TrendingUp, TrendingDown, DollarSign, ShoppingBag,
   CreditCard, Receipt, AlertTriangle, TestTube, Archive,
-  Banknote, Clock,
+  Banknote, Clock, ClipboardCheck, RotateCcw,
 } from "lucide-react";
 
 function KPICard({ label, value, sub, icon: Icon, color, trend, warning, onClick }) {
@@ -55,7 +55,11 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData, o
   );
   const totalExpenses    = activeExpenses.reduce((s, e) => s + (e.amount || 0), 0);
   const pendingExpenses  = activeExpenses
-    .filter(e => e.approval_status === "submitted")
+    .filter(e => e.approval_status === "submitted" || e.status === "needs_review")
+    .reduce((s, e) => s + (e.amount || 0), 0);
+  const unreviewedCount = activeExpenses.filter(e => e.status === "needs_review").length;
+  const recoverableExpenses = activeExpenses
+    .filter(e => e.is_client_recoverable && !["billed", "credited", "written_off"].includes(e.recovery_status))
     .reduce((s, e) => s + (e.amount || 0), 0);
 
   // ── Profit ───────────────────────────────────────────────────
@@ -167,10 +171,30 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData, o
           <KPICard
             label="Pending Expenses"
             value={`R${pendingExpenses.toLocaleString()}`}
-            sub="Awaiting approval"
+            sub={unreviewedCount > 0 ? `${unreviewedCount} need review` : "Awaiting approval"}
             icon={Clock}
             color="amber"
             onClick={nav ? () => nav("transactions", { type: "expense", status: "pending" }) : undefined}
+          />
+        )}
+        {recoverableExpenses > 0 && (
+          <KPICard
+            label="Recoverable"
+            value={`R${recoverableExpenses.toLocaleString()}`}
+            sub="Not yet billed"
+            icon={RotateCcw}
+            color="blue"
+            onClick={nav ? () => nav("transactions", { type: "expense", recovery: "recoverable" }) : undefined}
+          />
+        )}
+        {unreviewedCount > 0 && (
+          <KPICard
+            label="Needs Review"
+            value={unreviewedCount}
+            sub="Quick captures"
+            icon={ClipboardCheck}
+            color="orange"
+            onClick={nav ? () => nav("transactions", { type: "expense", status: "needs_review" }) : undefined}
           />
         )}
         {testCount > 0 && (
@@ -197,3 +221,6 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData, o
     </div>
   );
 }
+
+
+

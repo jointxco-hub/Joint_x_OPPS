@@ -55,20 +55,25 @@ function normaliseExpense(e) {
     id: e.id,
     rawType: "expense",
     date: e.expense_date || e.date || e.created_at,
-    description: e.vendor || e.notes || "Expense",
+    description: e.vendor || e.paid_to_name || e.notes || e.expense_type || "Expense",
     category,
     subcategory: e.subcategory || "",
     amount: e.amount || 0,
-    status: e.approval_status === "approved" ? "approved"
+    status: e.status === "needs_review" ? "needs_review"
+      : e.status === "captured" ? "captured"
+      : e.approval_status === "approved" ? "approved"
       : e.approval_status === "submitted" ? "pending"
       : e.approval_status === "rejected" ? "rejected"
       : "paid",
     source: e.source || "manual_expense",
-    linkedOrderId: null,
-    linkedClient: e.client_id || null,
+    linkedOrderId: e.linked_order_id || e.order_id || null,
+    linkedClient: e.linked_client_id || e.client_id || null,
     createdBy: e.submitted_by || "",
     notes: e.notes || "",
-    vendor: e.vendor || "",
+    vendor: e.vendor || e.paid_to_name || "",
+    paidToName: e.paid_to_name || "",
+    expenseType: e.expense_type || "",
+    recoveryStatus: e.recovery_status || "",
     vatType: e.vat_type,
     vatAmount: e.vat_amount || 0,
     isTest: !!e.is_test,
@@ -720,3 +725,5 @@ function TransactionRow({ tx, user, onRefetch }) {
     </div>
   );
 }
+
+
