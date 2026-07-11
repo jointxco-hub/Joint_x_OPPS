@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Supabase auth bootstrap failed:', error);
       setAuthError({
-        type: 'unknown',
+        type: error.code === 'OPPS_ACCESS_REVOKED' ? 'access_revoked' : 'unknown',
         message: error.message || 'Unable to initialize Supabase state',
       });
       setIsAuthenticated(false);

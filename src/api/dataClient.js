@@ -1953,6 +1953,15 @@ async function getCurrentUser() {
         .maybeSingle()
     : { data: null };
 
+  if (profile && profile.is_active === false) {
+    currentUser = null;
+    writeJson(LOCAL_USER_CACHE_KEY, null);
+    await supabase.auth.signOut();
+    const error = new Error('Your OPPS access has been revoked. Contact an administrator if this is incorrect.');
+    error.code = 'OPPS_ACCESS_REVOKED';
+    throw error;
+  }
+
   currentUser = {
     id: authUser.id,
     email: authUser.email,
@@ -1967,6 +1976,7 @@ async function getCurrentUser() {
     phone: profile?.phone,
     profile_photo: profile?.avatar_url ?? authUser.user_metadata?.avatar_url ?? null,
     auth_user_id: authUser.id,
+    is_active: profile?.is_active !== false,
   };
 
   writeJson(LOCAL_USER_CACHE_KEY, currentUser);

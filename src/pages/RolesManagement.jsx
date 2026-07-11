@@ -270,12 +270,22 @@ export default function RolesManagement() {
               }
               updateUserMutation.mutate({ id: user.id, data: { role } });
             }}
-            onDeactivate={(user) => {
-              if (user.is_auth_only) {
-                createUserMutation.mutate(directoryPayloadForUser(user, { is_active: false }));
+            onDeactivate={async (user) => {
+              if (!window.confirm("Revoke OPPS access for " + (user.full_name || user.name || user.email) + "? They will be signed out and unable to sign in until restored.")) return;
+              const authUserId = user.auth_user_id || (String(user.id || "").startsWith("auth:") ? String(user.id).slice(5) : "");
+              if (authUserId) {
+                const result = await supabase.functions.invoke("manage-user-access", { body: { action: "revoke", user_id: authUserId } });
+                if (result.error) {
+                  toast.error(result.error.message || "Could not revoke login access");
+                  return;
+                }
+              } else if (user.is_auth_only) {
+                toast.error("This login has no usable auth ID.");
                 return;
               }
-              updateUserMutation.mutate({ id: user.id, data: { is_active: false } });
+              if (user.is_auth_only) createUserMutation.mutate(directoryPayloadForUser(user, { is_active: false }));
+              else updateUserMutation.mutate({ id: user.id, data: { is_active: false } });
+              toast.success("OPPS access revoked");
             }}
             onInvite={(data) => createUserMutation.mutate(data)}
             onAddToDirectory={(user) => createUserMutation.mutate(directoryPayloadForUser(user))}
