@@ -752,6 +752,7 @@ function InvoiceDefaultsEditor({ defaults, onChange }) {
           className="h-9 rounded-xl bg-card"
         />
       </label>
+      <div className="grid gap-3 md:col-span-2 md:grid-cols-[1fr_160px]"><TemplateInput label="Default shipping method" value={defaults.shippingMethod} onChange={(value) => setField("shippingMethod", value)} /><label className="space-y-1"><span className="block text-xs font-medium text-muted-foreground">Default PAXI charge</span><Input value={defaults.shippingCharge ?? 0} onChange={(event) => setField("shippingCharge", event.target.value)} type="number" min="0" step="0.01" className="h-9 rounded-xl bg-card" /></label></div>
       <label className="space-y-1 md:col-span-2">
         <span className="block text-xs font-medium text-muted-foreground">Invoice terms</span>
         <Textarea

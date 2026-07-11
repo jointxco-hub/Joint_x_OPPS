@@ -134,7 +134,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     status: initialInvoice?.status || "draft",
     reference_number: initialInvoice?.reference_number || "",
     salesperson_name: initialInvoice?.salesperson_name || "",
-    shipping_charge: initialInvoice?.shipping_charge || 0,
+    shipping_charge: initialInvoice?.shipping_charge ?? defaultInvoiceDefaults.shippingCharge,
     adjustment: initialInvoice?.adjustment || 0,
     amount_paid: initialInvoice?.amount_paid || 0,
     notes: initialInvoice?.notes || "",

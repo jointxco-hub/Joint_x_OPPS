@@ -78,7 +78,7 @@ function invoiceFromOrder(order = {}, totalPaid = 0, defaults = normalizeInvoice
     ? order.products
     : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }];
   const items = products.map(itemFromProduct);
-  const shippingCharge = numberOrZero(order.shipping_charge ?? order.delivery_fee ?? order.delivery_cost ?? order.courier_fee);
+  const shippingCharge = numberOrZero(order.shipping_charge ?? order.delivery_fee ?? order.delivery_cost ?? order.courier_fee ?? defaults.shippingCharge);
   const amountPaid = resolveOrderAmountPaid(order, totalPaid);
   const invoiceDate = new Date().toISOString().slice(0, 10);
 

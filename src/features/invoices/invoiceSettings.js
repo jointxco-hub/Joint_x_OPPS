@@ -11,6 +11,8 @@ export const INVOICE_SETTING_KEYS = {
 export const DEFAULT_INVOICE_DEFAULTS = {
   paymentTerms: "Due on receipt",
   dueDays: 0,
+  shippingMethod: "PAXI",
+  shippingCharge: 0,
   terms: "Prices are valid for the listed items and quantities. Production starts after approval and required assets are received.",
 };
 
@@ -67,6 +69,8 @@ export function normalizeInvoiceDefaultsSetting(setting = {}) {
     ...(setting || {}),
     paymentTerms: String(setting?.paymentTerms || DEFAULT_INVOICE_DEFAULTS.paymentTerms),
     dueDays: Number.isFinite(dueDays) && dueDays >= 0 ? Math.round(dueDays) : DEFAULT_INVOICE_DEFAULTS.dueDays,
+    shippingMethod: String(setting?.shippingMethod || DEFAULT_INVOICE_DEFAULTS.shippingMethod),
+    shippingCharge: Number.isFinite(Number(setting?.shippingCharge)) && Number(setting?.shippingCharge) >= 0 ? Number(setting.shippingCharge) : DEFAULT_INVOICE_DEFAULTS.shippingCharge,
     terms: String(setting?.terms || DEFAULT_INVOICE_DEFAULTS.terms),
   };
 }
