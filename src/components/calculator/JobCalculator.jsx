@@ -1,181 +1,27 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Calculator, Plus, Trash2 } from "lucide-react";
+import { calculateDtfClientPrice, DTF_CLIENT_RATE_PER_METER } from "@/lib/pricing/dtf";
 
-const PRINT_PRICES = {
-  vinyl_videoflex: { price: 110, label: "Vinyl Videoflex", unit: "per meter" },
-  vinyl_flock: { price: 150, label: "Vinyl Flock", unit: "per meter" },
-  vinyl_silicon: { price: 180, label: "Vinyl Silicon", unit: "per meter" },
-  dtf_randburg: { price: 212.75, label: "DTF (Randburg - Quality)", unit: "per meter" },
-  dtf_joburg: { price: 170, label: "DTF (Joburg)", unit: "per meter" }
-};
+const PRINT_PRICES = { vinyl_videoflex: { price: 110, label: "Vinyl Videoflex" }, vinyl_flock: { price: 150, label: "Vinyl Flock" }, vinyl_silicon: { price: 180, label: "Vinyl Silicon" } };
 
-export default function JobCalculator({ onSave }) {
-  const [printType, setPrintType] = useState("vinyl_videoflex");
-  const [meters, setMeters] = useState("1");
-  const [quantity, setQuantity] = useState("1");
-  const [blanksCost, setBlanksCost] = useState("");
-  const [transportCost, setTransportCost] = useState("");
-  const [additionalCosts, setAdditionalCosts] = useState([]);
-
-  const printCost = PRINT_PRICES[printType].price * (parseFloat(meters) || 0);
-  const totalAdditional = additionalCosts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-  const totalCost = printCost + (parseFloat(blanksCost) || 0) + (parseFloat(transportCost) || 0) + totalAdditional;
-  const qty = parseInt(quantity) || 1;
-  const costPerItem = qty > 0 ? totalCost / qty : 0;
-
-  const addAdditionalCost = () => {
-    setAdditionalCosts([...additionalCosts, { name: "", amount: 0 }]);
-  };
-
-  const updateAdditionalCost = (index, field, value) => {
-    const updated = [...additionalCosts];
-    updated[index][field] = value;
-    setAdditionalCosts(updated);
-  };
-
-  const removeAdditionalCost = (index) => {
-    setAdditionalCosts(additionalCosts.filter((_, i) => i !== index));
-  };
-
-  return (
-    <Card className="bg-white border-0 shadow-sm">
-      <CardHeader className="pb-4">
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Calculator className="w-5 h-5 text-blue-600" />
-          Job Calculator
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5">
-        {/* Print Type */}
-        <div className="space-y-2">
-          <Label>Print Type</Label>
-          <Select value={printType} onValueChange={setPrintType}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(PRINT_PRICES).map(([key, val]) => (
-                <SelectItem key={key} value={key}>
-                  {val.label} - R{val.price} {val.unit}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Meters Required</Label>
-            <Input
-              inputMode="decimal"
-              value={meters}
-              onChange={(e) => setMeters(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Quantity (items)</Label>
-            <Input
-              inputMode="numeric"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Blanks Cost (R)</Label>
-            <Input
-              inputMode="decimal"
-              value={blanksCost}
-              onChange={(e) => setBlanksCost(e.target.value)}
-              placeholder="0"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Transport/Uber (R)</Label>
-            <Input
-              inputMode="decimal"
-              value={transportCost}
-              onChange={(e) => setTransportCost(e.target.value)}
-              placeholder="0"
-            />
-          </div>
-        </div>
-
-        {/* Additional Costs */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Label>Additional Costs</Label>
-            <Button variant="outline" size="sm" onClick={addAdditionalCost}>
-              <Plus className="w-4 h-4 mr-1" /> Add
-            </Button>
-          </div>
-          {additionalCosts.map((cost, index) => (
-            <div key={index} className="flex gap-2 items-center">
-              <Input
-                placeholder="Description"
-                value={cost.name}
-                onChange={(e) => updateAdditionalCost(index, "name", e.target.value)}
-                className="flex-1"
-              />
-              <Input
-                inputMode="decimal"
-                placeholder="R"
-                value={cost.amount}
-                onChange={(e) => updateAdditionalCost(index, "amount", e.target.value)}
-                className="w-24"
-              />
-              <Button variant="ghost" size="icon" onClick={() => removeAdditionalCost(index)}>
-                <Trash2 className="w-4 h-4 text-red-500" />
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        {/* Results */}
-        <div className="bg-slate-50 rounded-xl p-4 space-y-3">
-          <h4 className="font-semibold text-slate-700">Cost Breakdown</h4>
-          
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-slate-600">Print ({PRINT_PRICES[printType].label})</span>
-              <span>R{printCost.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-600">Blanks</span>
-              <span>R{parseFloat(blanksCost || 0).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-600">Transport</span>
-              <span>R{parseFloat(transportCost || 0).toFixed(2)}</span>
-            </div>
-            {additionalCosts.map((cost, i) => (
-              <div key={i} className="flex justify-between">
-                <span className="text-slate-600">{cost.name || "Additional"}</span>
-                <span>R{parseFloat(cost.amount || 0).toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="border-t border-slate-200 pt-3 space-y-2">
-            <div className="flex justify-between font-semibold">
-              <span>Total Cost</span>
-              <span>R{totalCost.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-sm text-slate-600">
-              <span>Cost per Item</span>
-              <span>R{costPerItem.toFixed(2)}</span>
-            </div>
-          </div>
-
-        </div>
-      </CardContent>
-    </Card>
-  );
+export default function JobCalculator() {
+  const [printType, setPrintType] = useState("dtf_client");
+  const [meters, setMeters] = useState("1"); const [widthMm, setWidthMm] = useState(""); const [heightMm, setHeightMm] = useState(""); const [wastePercent, setWastePercent] = useState("0"); const [quantity, setQuantity] = useState("1");
+  const [blanksCost, setBlanksCost] = useState(""); const [transportCost, setTransportCost] = useState(""); const [additionalCosts, setAdditionalCosts] = useState([]);
+  const dtf = useMemo(() => calculateDtfClientPrice({ widthMm, heightMm, quantity, wastePercent }), [widthMm, heightMm, quantity, wastePercent]);
+  const printCost = printType === "dtf_client" ? (dtf.valid ? dtf.total : 0) : PRINT_PRICES[printType].price * (parseFloat(meters) || 0);
+  const extras = additionalCosts.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0); const total = printCost + (parseFloat(blanksCost) || 0) + (parseFloat(transportCost) || 0) + extras; const qty = parseInt(quantity) || 1;
+  const updateExtra = (index, field, value) => setAdditionalCosts(items => items.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  return <Card className="bg-white border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2 text-lg"><Calculator className="w-5 h-5 text-blue-600" /> Job Calculator</CardTitle></CardHeader><CardContent className="space-y-5">
+    <div className="space-y-2"><Label>Print Type</Label><Select value={printType} onValueChange={setPrintType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="dtf_client">DTF Client Rate (580mm roll) - R500 per metre</SelectItem>{Object.entries(PRINT_PRICES).map(([key, value]) => <SelectItem key={key} value={key}>{value.label} - R{value.price} per metre</SelectItem>)}</SelectContent></Select></div>
+    {printType === "dtf_client" ? <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-4"><p className="font-semibold text-blue-900">DTF client pricing: R500/m · 580mm roll · 1m minimum</p><div className="grid grid-cols-2 gap-3"><label className="space-y-1"><span className="text-sm">Artwork width (mm)</span><Input value={widthMm} onChange={e => setWidthMm(e.target.value)} placeholder="300" /></label><label className="space-y-1"><span className="text-sm">Artwork height (mm)</span><Input value={heightMm} onChange={e => setHeightMm(e.target.value)} placeholder="400" /></label><label className="space-y-1"><span className="text-sm">Quantity</span><Input value={quantity} onChange={e => setQuantity(e.target.value)} /></label><label className="space-y-1"><span className="text-sm">Waste allowance (%)</span><Input value={wastePercent} onChange={e => setWastePercent(e.target.value)} /></label></div>{dtf.valid ? <div className="rounded-lg bg-white p-3 text-sm text-blue-900"><p>Layout: {dtf.orientation} · {dtf.lanes} across · {dtf.rows} rows</p><p>Chargeable: {dtf.chargeableMeters.toFixed(2)} m</p><p className="text-lg font-bold">Client DTF price: R{dtf.total.toFixed(2)}</p></div> : <p className="text-xs text-blue-700">{dtf.reason}</p>}</div> : <div className="grid grid-cols-2 gap-4"><label className="space-y-1"><span className="text-sm">Meters Required</span><Input value={meters} onChange={e => setMeters(e.target.value)} /></label><label className="space-y-1"><span className="text-sm">Quantity</span><Input value={quantity} onChange={e => setQuantity(e.target.value)} /></label></div>}
+    <div className="grid grid-cols-2 gap-4"><label className="space-y-1"><span className="text-sm">Blanks Cost (R)</span><Input value={blanksCost} onChange={e => setBlanksCost(e.target.value)} placeholder="0" /></label><label className="space-y-1"><span className="text-sm">Transport (R)</span><Input value={transportCost} onChange={e => setTransportCost(e.target.value)} placeholder="0" /></label></div>
+    <div className="space-y-3"><div className="flex items-center justify-between"><Label>Additional Costs</Label><Button variant="outline" size="sm" onClick={() => setAdditionalCosts(items => [...items, { name: "", amount: 0 }])}><Plus className="w-4 h-4 mr-1" /> Add</Button></div>{additionalCosts.map((item, index) => <div key={index} className="flex gap-2"><Input placeholder="Description" value={item.name} onChange={e => updateExtra(index, "name", e.target.value)} /><Input placeholder="R" value={item.amount} onChange={e => updateExtra(index, "amount", e.target.value)} /><Button variant="ghost" size="icon" onClick={() => setAdditionalCosts(items => items.filter((_, i) => i !== index))}><Trash2 className="w-4 h-4 text-red-500" /></Button></div>)}</div>
+    <div className="rounded-xl bg-slate-50 p-4 space-y-2"><h4 className="font-semibold">Client Price Breakdown</h4><div className="flex justify-between text-sm"><span>Print</span><span>R{printCost.toFixed(2)}</span></div><div className="flex justify-between text-sm"><span>Blanks</span><span>R{Number(blanksCost || 0).toFixed(2)}</span></div><div className="flex justify-between text-sm"><span>Transport</span><span>R{Number(transportCost || 0).toFixed(2)}</span></div><div className="border-t pt-2 flex justify-between font-semibold"><span>Total Client Price</span><span>R{total.toFixed(2)}</span></div><div className="flex justify-between text-sm text-slate-600"><span>Price per Item</span><span>R{(total / qty).toFixed(2)}</span></div></div>
+  </CardContent></Card>;
 }
