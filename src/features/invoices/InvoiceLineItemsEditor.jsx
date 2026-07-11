@@ -12,6 +12,7 @@ import {
   saveInvoiceItemTemplate,
 } from "@/api/invoices";
 import { calculateInvoiceLine } from "./invoiceCalculations";
+import { calculateDtfClientPrice, DTF_CLIENT_RATE_PER_METER } from "@/lib/pricing/dtf";
 
 
 
@@ -296,6 +297,15 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
       {safeItems.map((item, index) => {
         const calculated = calculateInvoiceLine(item);
         const pickerItems = pickerItemsFor(item.item_name);
+        const isDtfLine = /dtf/i.test(`${item.item_name || ""} ${item.item_description || ""}`);
+        const dtfFields = {
+          widthMm: item.source_metadata?.dtf?.widthMm ?? "",
+          heightMm: item.source_metadata?.dtf?.heightMm ?? "",
+          quantity: item.source_metadata?.dtf?.quantity ?? item.quantity ?? 1,
+          wastePercent: item.source_metadata?.dtf?.wastePercent ?? 0,
+        };
+        const dtf = calculateDtfClientPrice({ widthMm: dtfFields.widthMm, heightMm: dtfFields.heightMm, quantity: dtfFields.quantity, wastePercent: dtfFields.wastePercent });
+        const updateDtf = (field, value) => updateItem(index, { source_metadata: { ...(item.source_metadata || {}), dtf: { ...dtfFields, [field]: value } } });
         return (
           <div key={index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -441,6 +451,21 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 placeholder="Description"
                 className="h-9 rounded-xl md:col-span-5"
               />
+              {isDtfLine && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 md:col-span-12">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m · 580mm × 1000mm roll · 1m minimum</p></div>
+                    {dtf.valid && <Button type="button" size="sm" onClick={() => updateItem(index, { rate: dtf.total, quantity: 1, unit: "job", item_description: `${item.item_description || "DTF transfer production"} | ${dtfFields.widthMm} × ${dtfFields.heightMm} mm × ${dtfFields.quantity} | ${dtf.chargeableMeters.toFixed(2)} m` })}>Apply calculated rate R{dtf.total.toFixed(2)}</Button>}
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+                    <LabeledNumber label="Width (mm)"><Input value={dtfFields.widthMm} onChange={(event) => updateDtf("widthMm", event.target.value)} type="number" min="1" placeholder="300" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                    <LabeledNumber label="Height (mm)"><Input value={dtfFields.heightMm} onChange={(event) => updateDtf("heightMm", event.target.value)} type="number" min="1" placeholder="400" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                    <LabeledNumber label="Print quantity"><Input value={dtfFields.quantity} onChange={(event) => updateDtf("quantity", event.target.value)} type="number" min="1" step="1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                    <LabeledNumber label="Waste %"><Input value={dtfFields.wastePercent} onChange={(event) => updateDtf("wastePercent", event.target.value)} type="number" min="0" step="0.1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                  </div>
+                  {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} · {dtf.lanes} across · {dtf.rows} rows · {dtf.chargeableMeters.toFixed(2)} chargeable metres · R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
+                </div>
+              )}
               <select
                 value={item.item_type || "goods"}
                 onChange={(event) => updateItem(index, { item_type: event.target.value })}
