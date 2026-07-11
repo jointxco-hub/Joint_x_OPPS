@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Calculator, Plus, Trash2, Car, Upload, FileText } from "lucide-react";
+import { calculateDtfClientPrice } from "@/lib/pricing/dtf";
 
 const GARMENT_PRICES = {
   jv1: { name: "JV1 T-Shirt (180gsm)", price: 95 },
@@ -75,6 +76,9 @@ export default function MultiPrintCalculator() {
       id: Date.now(),
       printType: "dtf_client_580x1000",
       quantity: 1,
+      widthMm: "",
+      heightMm: "",
+      wastePercent: "0",
       notes: ""
     }]);
   };
@@ -180,7 +184,8 @@ export default function MultiPrintCalculator() {
   printItems.forEach(item => {
     const print = PRINT_OPTIONS[item.printType];
     if (print) {
-      totalPrintCost += print.price * (item.quantity || 0);
+      const dtf = item.printType.startsWith("dtf_") ? calculateDtfClientPrice({ widthMm: item.widthMm, heightMm: item.heightMm, quantity: item.quantity, wastePercent: item.wastePercent }) : null;
+      totalPrintCost += dtf?.valid ? dtf.total : print.price * (item.quantity || 0);
     }
   });
 
@@ -430,6 +435,14 @@ export default function MultiPrintCalculator() {
                       />
                     </div>
                   </div>
+
+                  {printItem.printType.startsWith("dtf_") && (
+                    <div className="grid grid-cols-3 gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                      <label className="space-y-1"><span className="text-xs font-medium">Width (mm)</span><Input value={printItem.widthMm || ""} onChange={(e) => updatePrintItem(printItem.id, "widthMm", e.target.value)} placeholder="300" /></label>
+                      <label className="space-y-1"><span className="text-xs font-medium">Height (mm)</span><Input value={printItem.heightMm || ""} onChange={(e) => updatePrintItem(printItem.id, "heightMm", e.target.value)} placeholder="400" /></label>
+                      <label className="space-y-1"><span className="text-xs font-medium">Waste %</span><Input value={printItem.wastePercent || "0"} onChange={(e) => updatePrintItem(printItem.id, "wastePercent", e.target.value)} placeholder="0" /></label>
+                    </div>
+                  )
 
                   <div className="space-y-2">
                     <Label className="text-sm">Notes</Label>
