@@ -12,7 +12,7 @@ export const DEFAULT_INVOICE_DEFAULTS = {
   paymentTerms: "Due on receipt",
   dueDays: 0,
   shippingMethod: "PAXI",
-  shippingCharge: 0,
+  shippingCharge: 120,
   terms: "Prices are valid for the listed items and quantities. Production starts after approval and required assets are received.",
 };
 
