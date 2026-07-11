@@ -27,8 +27,8 @@ const GARMENT_PRICES = {
 const SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
 
 const PRINT_OPTIONS = {
-  dtf_epic_400x1000: { name: "DTF Epic Distribution (Randburg) - 400mm x 1000mm", price: 212.75 },
-  dtf_kandy_570x1000: { name: "DTF Kandy (Jozi) - 570mm x 1000mm", price: 170 },
+  dtf_client_580x1000: { name: "DTF Client Rate - 580mm x 1000mm", price: 500 },
+  dtf_client_580x1000_alt: { name: "DTF Client Rate - 580mm x 1000mm", price: 500 },
   vinyl_500x1000: { name: "Vinyl (JG Electronic Randburg) - 500mm x 1000mm", price: 120 }
 };
 
@@ -73,7 +73,7 @@ export default function MultiPrintCalculator() {
   const addPrintItem = () => {
     setPrintItems([...printItems, {
       id: Date.now(),
-      printType: "dtf_epic_400x1000",
+      printType: "dtf_client_580x1000",
       quantity: 1,
       notes: ""
     }]);
