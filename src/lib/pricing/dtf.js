@@ -6,6 +6,7 @@ export const DTF_ROLL_LENGTH_MM = PRICE_BOOK.dtf.rollLengthMm;
 export const DTF_MINIMUM_METERS = 1;
 
 function layout(widthMm, heightMm, quantity) {
+  if (widthMm > DTF_ROLL_WIDTH_MM) return null;
   const lanes = Math.max(1, Math.floor(DTF_ROLL_WIDTH_MM / widthMm));
   const rows = Math.ceil(quantity / lanes);
   return { widthMm, heightMm, lanes, rows, lengthMm: rows * heightMm };
