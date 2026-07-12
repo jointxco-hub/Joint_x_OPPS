@@ -305,7 +305,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
           wastePercent: item.source_metadata?.dtf?.wastePercent ?? 0,
         };
         const dtf = calculateDtfClientPrice({ widthMm: dtfFields.widthMm, heightMm: dtfFields.heightMm, quantity: dtfFields.quantity, wastePercent: dtfFields.wastePercent });
-        const updateDtf = (field, value) => updateItem(index, { source_metadata: { ...(item.source_metadata || {}), dtf: { ...dtfFields, [field]: value } } });
+        const updateDtf = (field, value) => { const nextFields = { ...dtfFields, [field]: value }; const nextDtf = calculateDtfClientPrice(nextFields); updateItem(index, { source_metadata: { ...(item.source_metadata || {}), dtf: nextFields }, ...(nextDtf.valid ? { rate: nextDtf.total, quantity: 1, unit: "job" } : {}) }); };
         return (
           <div key={index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -452,9 +452,10 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 className="h-9 rounded-xl md:col-span-5"
               />
               {isDtfLine && (
-                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 md:col-span-12">
+                <details className="rounded-xl border border-blue-200 bg-blue-50 p-3 md:col-span-12">
+                  <summary className="cursor-pointer text-sm font-semibold text-blue-950">DTF custom size calculator</summary>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m · 580mm × 1000mm roll · 1m minimum</p></div>
+                    <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m · 580mm × 1000mm roll</p></div>
                     {dtf.valid && <Button type="button" size="sm" onClick={() => updateItem(index, { rate: dtf.total, quantity: 1, unit: "job", item_description: `${item.item_description || "DTF transfer production"} | ${dtfFields.widthMm} × ${dtfFields.heightMm} mm × ${dtfFields.quantity} | ${dtf.chargeableMeters.toFixed(2)} m` })}>Apply calculated rate R{dtf.total.toFixed(2)}</Button>}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -464,7 +465,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                     <LabeledNumber label="Waste %"><Input value={dtfFields.wastePercent} onChange={(event) => updateDtf("wastePercent", event.target.value)} type="number" min="0" step="0.1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                   </div>
                   {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} · {dtf.lanes} across · {dtf.rows} rows · {dtf.chargeableMeters.toFixed(2)} chargeable metres · R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
-                </div>
+                </details>
               )}
               <select
                 value={item.item_type || "goods"}

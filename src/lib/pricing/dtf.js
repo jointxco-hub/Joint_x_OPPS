@@ -14,8 +14,10 @@ export function calculateDtfClientPrice({ widthMm, heightMm, quantity = 1, waste
   const height = Number(heightMm);
   const qty = Math.max(1, Math.floor(Number(quantity) || 1));
   if (!(width > 0) || !(height > 0)) return { valid: false, reason: "Enter artwork width and height in millimetres.", total: 0, chargeableMeters: 0 };
-  const best = [layout(width, height, qty), layout(height, width, qty)].sort((a, b) => a.lengthMm - b.lengthMm)[0];
+  const candidates = [layout(width, height, qty), layout(height, width, qty)].filter(Boolean);
+  if (!candidates.length) return { valid: false, reason: `Artwork width must fit within the ${DTF_ROLL_WIDTH_MM}mm roll.`, total: 0, chargeableMeters: 0 };
+  const best = candidates.sort((a, b) => a.lengthMm - b.lengthMm)[0];
   const rawMeters = best.lengthMm / DTF_ROLL_LENGTH_MM;
-  const chargeableMeters = Math.max(DTF_MINIMUM_METERS, rawMeters * (1 + Math.max(0, Number(wastePercent) || 0) / 100));
+  const chargeableMeters = rawMeters * (1 + Math.max(0, Number(wastePercent) || 0) / 100);
   return { valid: true, orientation: `${best.widthMm} × ${best.heightMm} mm`, lanes: best.lanes, rows: best.rows, rawMeters, chargeableMeters, total: chargeableMeters * DTF_CLIENT_RATE_PER_METER };
 }
