@@ -270,6 +270,17 @@ export default function RolesManagement() {
               }
               updateUserMutation.mutate({ id: user.id, data: { role } });
             }}
+            onRestore={async (user) => {
+              if (!window.confirm("Restore OPPS access for " + (user.full_name || user.name || user.email) + "?")) return;
+              const authUserId = user.auth_user_id || (String(user.id || "").startsWith("auth:") ? String(user.id).slice(5) : "");
+              if (authUserId) {
+                const result = await supabase.functions.invoke("manage-user-access", { body: { action: "restore", user_id: authUserId } });
+                if (result.error) { toast.error(result.error.message || "Could not restore login access"); return; }
+              }
+              if (user.is_auth_only) createUserMutation.mutate(directoryPayloadForUser(user, { is_active: true }));
+              else updateUserMutation.mutate({ id: user.id, data: { is_active: true } });
+              toast.success("OPPS access restored");
+            }}
             onDeactivate={async (user) => {
               if (!window.confirm("Revoke OPPS access for " + (user.full_name || user.name || user.email) + "? They will be signed out and unable to sign in until restored.")) return;
               const authUserId = user.auth_user_id || (String(user.id || "").startsWith("auth:") ? String(user.id).slice(5) : "");
@@ -850,13 +861,15 @@ Never leave a client waiting more than 4 hours without an update.
 
 // ── Team Access tab ───────────────────────────────────────────────────────────
 
-function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onInvite, onAddToDirectory, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onRestore, onInvite, onAddToDirectory, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
   const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
+  const [showInactive, setShowInactive] = useState(false);
 
   const activeUsers = users.filter(u => u.is_active !== false);
   const authOnlyCount = activeUsers.filter(u => u.is_auth_only).length;
   const directoryCount = activeUsers.length - authOnlyCount;
+  const listedUsers = showInactive ? users : activeUsers;
   const roleByKey = Object.fromEntries(roles.map(r => [r.key, r]));
 
   return (
@@ -873,10 +886,13 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUser
               {authOnlyCount ? ` · ${authOnlyCount} auth login${authOnlyCount === 1 ? "" : "s"} not added yet` : ""}
             </p>
           </div>
+          <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setShowInactive(value => !value)}>{showInactive ? "Hide inactive" : "Show inactive"}</Button>
           <Button type="button" variant="outline" size="sm" onClick={onRefreshAuthUsers} disabled={authUsersFetching}>
             <RefreshCw className={`mr-2 h-4 w-4 ${authUsersFetching ? "animate-spin" : ""}`} />
             Refresh logins
           </Button>
+        </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -918,9 +934,9 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUser
           </div>
         </div>
 
-        {activeUsers.length === 0 ? (
+        {listedUsers.length === 0 ? (
           <p className="text-sm text-slate-500">No users found yet.</p>
-        ) : activeUsers.map(user => {
+        ) : listedUsers.map(user => {
           const email = user.email || user.user_email;
           const assignments = userRoles.filter(r => r.user_email === email);
           const selected = selectedRoles[email] || "";
