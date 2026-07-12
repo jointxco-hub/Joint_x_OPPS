@@ -1,6 +1,8 @@
-export const DTF_CLIENT_RATE_PER_METER = 500;
-export const DTF_ROLL_WIDTH_MM = 580;
-export const DTF_ROLL_LENGTH_MM = 1000;
+import { PRICE_BOOK } from "./priceBook";
+
+export const DTF_CLIENT_RATE_PER_METER = PRICE_BOOK.dtf.sellingPricePerMeter;
+export const DTF_ROLL_WIDTH_MM = PRICE_BOOK.dtf.rollWidthMm;
+export const DTF_ROLL_LENGTH_MM = PRICE_BOOK.dtf.rollLengthMm;
 export const DTF_MINIMUM_METERS = 1;
 
 function layout(widthMm, heightMm, quantity) {
