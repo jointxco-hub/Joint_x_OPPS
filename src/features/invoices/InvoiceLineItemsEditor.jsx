@@ -302,9 +302,8 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
           widthMm: item.source_metadata?.dtf?.widthMm ?? "",
           heightMm: item.source_metadata?.dtf?.heightMm ?? "",
           quantity: item.source_metadata?.dtf?.quantity ?? item.quantity ?? 1,
-          wastePercent: item.source_metadata?.dtf?.wastePercent ?? 0,
         };
-        const dtf = calculateDtfClientPrice({ widthMm: dtfFields.widthMm, heightMm: dtfFields.heightMm, quantity: dtfFields.quantity, wastePercent: dtfFields.wastePercent });
+        const dtf = calculateDtfClientPrice({ widthMm: dtfFields.widthMm, heightMm: dtfFields.heightMm, quantity: dtfFields.quantity });
         const updateDtf = (field, value) => { const nextFields = { ...dtfFields, [field]: value }; const nextDtf = calculateDtfClientPrice(nextFields); updateItem(index, { source_metadata: { ...(item.source_metadata || {}), dtf: nextFields }, ...(nextDtf.valid ? { rate: nextDtf.total, quantity: 1, unit: "job" } : {}) }); };
         return (
           <div key={index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
@@ -462,7 +461,6 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                     <LabeledNumber label="Width (mm)"><Input value={dtfFields.widthMm} onChange={(event) => updateDtf("widthMm", event.target.value)} type="number" min="1" placeholder="300" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                     <LabeledNumber label="Height (mm)"><Input value={dtfFields.heightMm} onChange={(event) => updateDtf("heightMm", event.target.value)} type="number" min="1" placeholder="400" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                     <LabeledNumber label="Print quantity"><Input value={dtfFields.quantity} onChange={(event) => updateDtf("quantity", event.target.value)} type="number" min="1" step="1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
-                    <LabeledNumber label="Waste %"><Input value={dtfFields.wastePercent} onChange={(event) => updateDtf("wastePercent", event.target.value)} type="number" min="0" step="0.1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                   </div>
                   {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} · {dtf.lanes} across · {dtf.rows} rows · {dtf.chargeableMeters.toFixed(2)} chargeable metres · R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
                 </details>

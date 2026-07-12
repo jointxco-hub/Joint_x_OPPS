@@ -9,7 +9,7 @@ function layout(widthMm, heightMm, quantity) {
   return { widthMm, heightMm, lanes, rows, lengthMm: rows * heightMm };
 }
 
-export function calculateDtfClientPrice({ widthMm, heightMm, quantity = 1, wastePercent = 0 } = {}) {
+export function calculateDtfClientPrice({ widthMm, heightMm, quantity = 1 } = {}) {
   const width = Number(widthMm);
   const height = Number(heightMm);
   const qty = Math.max(1, Math.floor(Number(quantity) || 1));
@@ -18,6 +18,6 @@ export function calculateDtfClientPrice({ widthMm, heightMm, quantity = 1, waste
   if (!candidates.length) return { valid: false, reason: `Artwork width must fit within the ${DTF_ROLL_WIDTH_MM}mm roll.`, total: 0, chargeableMeters: 0 };
   const best = candidates.sort((a, b) => a.lengthMm - b.lengthMm)[0];
   const rawMeters = best.lengthMm / DTF_ROLL_LENGTH_MM;
-  const chargeableMeters = rawMeters * (1 + Math.max(0, Number(wastePercent) || 0) / 100);
+  const chargeableMeters = rawMeters;
   return { valid: true, orientation: `${best.widthMm} × ${best.heightMm} mm`, lanes: best.lanes, rows: best.rows, rawMeters, chargeableMeters, total: chargeableMeters * DTF_CLIENT_RATE_PER_METER };
 }
