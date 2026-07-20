@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ArrowLeft, Download, Printer } from "lucide-react";
+import { ArrowLeft, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ClientInvoiceView from "@/features/invoices/ClientInvoiceView";
 import { useClientInvoiceData } from "@/features/invoices/useClientInvoiceData";
+import InvoicePdfDownloadButton from "@/features/invoices/InvoicePdfDownloadButton";
 
 export default function ClientInvoicePrint() {
   const [searchParams] = useSearchParams();
@@ -13,8 +14,9 @@ export default function ClientInvoicePrint() {
 
   const printInvoice = () => window.print();
   const goBack = () => {
-    if (window.history.length > 1) {
-      window.history.back();
+    if (window.opener && !window.opener.closed) {
+      window.close();
+      window.setTimeout(() => window.location.assign("/Invoices"), 150);
       return;
     }
     window.location.assign("/Invoices");
@@ -50,9 +52,11 @@ export default function ClientInvoicePrint() {
             <Button variant="outline" onClick={printInvoice} className="min-w-0 rounded-xl px-3 text-xs sm:text-sm">
               <Printer className="h-4 w-4" /> Print client invoice
             </Button>
-            <Button onClick={printInvoice} className="min-w-0 rounded-xl px-3 text-xs sm:text-sm">
-              <Download className="h-4 w-4" /> Save as PDF
-            </Button>
+            {data?.invoice ? (
+              <InvoicePdfDownloadButton invoice={data.invoice} order={data.order} template={data.template} className="min-w-0 px-3 text-xs sm:text-sm" />
+            ) : (
+              <Button disabled className="min-w-0 rounded-xl px-3 text-xs sm:text-sm">Preparing PDF</Button>
+            )}
           </div>
         </div>
       </div>

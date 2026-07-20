@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, Download, ExternalLink, Printer, Save, Share2, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Printer, Save, Share2, Users } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { validateInvoice } from "./invoiceValidation";
 import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoiceSettings";
 import ClientInvoiceView from "./ClientInvoiceView";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
+import InvoicePdfDownloadButton from "./InvoicePdfDownloadButton";
 
 const steps = ["Customer", "Details", "Items", "Review", "Finish"];
 const defaultInvoiceDefaults = normalizeInvoiceDefaultsSetting();
@@ -28,8 +29,17 @@ const starterItem = {
   tax_name: "",
   tax_percentage: 0,
   account_name: "",
+  line_key: "",
+  image_url: "",
+  specifications: {},
+  proofs: [],
+  change_reason: "",
 };
 
+
+function uniqueLineKey() {
+  return globalThis.crypto?.randomUUID?.() || `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -44,15 +54,6 @@ function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
-function downloadTextFile(fileName, contents) {
-  const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
 
 function clientInvoiceUrl(invoiceId, options = {}) {
   if (!invoiceId || typeof window === "undefined") return "";
@@ -60,6 +61,15 @@ function clientInvoiceUrl(invoiceId, options = {}) {
   url.searchParams.set("invoice", invoiceId);
   if (options.print) url.searchParams.set("print", "1");
   return url.toString();
+}
+
+function openInvoiceUrl(url) {
+  if (!url) return;
+  if (window.matchMedia?.("(max-width: 767px)").matches) {
+    window.location.assign(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function invoicePreviewText(invoice = {}, items = []) {
@@ -143,8 +153,13 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
   });
   const [items, setItems] = useState(
     Array.isArray(initialInvoice?.items) && initialInvoice.items.length
-      ? initialInvoice.items
-      : [{ ...starterItem }]
+      ? initialInvoice.items.map((item) => ({
+          ...item,
+          line_key: item.line_key || uniqueLineKey(),
+          specifications: item.specifications || {},
+          proofs: Array.isArray(item.proofs) ? item.proofs : [],
+        }))
+      : [{ ...starterItem, line_key: uniqueLineKey() }]
   );
 
   const userQuery = useQuery({
@@ -462,7 +477,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => window.open(savedInvoiceUrl, "_blank", "noopener,noreferrer")}
+                        onClick={() => openInvoiceUrl(savedInvoiceUrl)}
                         className="h-9 rounded-xl"
                       >
                         <ExternalLink className="h-3.5 w-3.5" /> Open
@@ -473,7 +488,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => window.open(savedPrintUrl, "_blank", "noopener,noreferrer")}
+                        onClick={() => openInvoiceUrl(savedPrintUrl)}
                         className="h-9 rounded-xl"
                       >
                         <Printer className="h-3.5 w-3.5" /> Print
@@ -490,15 +505,10 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                         <Copy className="h-3.5 w-3.5" /> Copy link
                       </Button>
                     )}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => downloadTextFile(`${invoice.customer_name || "invoice"}-draft.txt`, invoicePreviewText(calculated.invoice, calculated.items))}
-                      className="h-9 rounded-xl"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Download
-                    </Button>
+                    <InvoicePdfDownloadButton
+                      invoice={previewInvoice}
+                      disabled={!validation.isValid}
+                    />
                     <Button
                       type="button"
                       variant="outline"

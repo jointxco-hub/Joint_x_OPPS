@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import InvoiceItemMediaEditor from "./InvoiceItemMediaEditor";
 import {
   archiveInvoiceItemTemplate,
   listInvoiceItemTemplates,
@@ -22,6 +24,11 @@ const emptyForm = {
   tax_percentage: "",
   account_name: "",
   category: "",
+  image_url: "",
+  specifications: {},
+  proofs: [],
+  change_reason: "",
+  client_id: "",
 };
 
 const categoryOptions = [
@@ -49,6 +56,11 @@ function templateToForm(template = {}) {
     tax_percentage: template.tax_percentage ?? "",
     account_name: template.account_name || "",
     category: template.category || "",
+    image_url: template.image_url || "",
+    specifications: template.specifications || {},
+    proofs: Array.isArray(template.proofs) ? template.proofs : [],
+    change_reason: "",
+    client_id: template.client_id || "",
   };
 }
 
@@ -64,6 +76,11 @@ function formToPayload(form = {}) {
     tax_percentage: Number(form.tax_percentage || 0),
     account_name: form.account_name.trim(),
     category: form.category.trim(),
+    image_url: form.image_url || "",
+    specifications: form.specifications || {},
+    proofs: Array.isArray(form.proofs) ? form.proofs : [],
+    change_reason: form.change_reason || "",
+    client_id: form.client_id || undefined,
   };
 }
 
@@ -201,13 +218,21 @@ export default function InvoiceItemTemplateManager({ active = true }) {
                   <option value="">Department / category</option>
                   {categories.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
-                <Input value={form.description} onChange={(event) => updateField("description", event.target.value)} placeholder="Description" className="h-10 rounded-xl md:col-span-6" />
+                <Textarea value={form.description} onChange={(event) => updateField("description", event.target.value)} placeholder="Full description" rows={3} className="min-h-20 resize-y rounded-xl md:col-span-6" />
                 <Input value={form.unit} onChange={(event) => updateField("unit", event.target.value)} placeholder="Unit" className="h-10 rounded-xl md:col-span-2" />
                 <Input value={form.account_name} onChange={(event) => updateField("account_name", event.target.value)} placeholder="Account name" className="h-10 rounded-xl md:col-span-4" />
                 <Input value={form.tax_name} onChange={(event) => updateField("tax_name", event.target.value)} placeholder="Tax name" className="h-10 rounded-xl md:col-span-3" />
                 <Input value={form.tax_percentage} onChange={(event) => updateField("tax_percentage", event.target.value)} type="number" min="0" step="0.01" placeholder="Tax %" className="h-10 rounded-xl md:col-span-3" />
               </div>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <InvoiceItemMediaEditor
+                item={{ ...form, item_name: form.name, item_description: form.description }}
+                onChange={(patch) => setForm((current) => ({
+                  ...current,
+                  ...patch,
+                  description: patch.item_description ?? current.description,
+                }))}
+              />
                 <Button type="button" variant="outline" onClick={() => { setForm(emptyForm); setFormOpen(false); }} className="rounded-xl">Cancel</Button>
                 <Button type="submit" disabled={saveMutation.isPending} className="rounded-xl">
                   <Save className="h-4 w-4" /> Save item

@@ -10,6 +10,7 @@ import {
   Truck,
 } from "lucide-react";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
+import { useSignedFileUrl } from "@/lib/privateFiles";
 import { normalizeClientTemplateSetting } from "./invoiceSettings";
 
 const BRAND = {
@@ -66,7 +67,22 @@ function deliveryRows(order) {
   ]);
 }
 
-export default function ClientInvoiceView({ invoice, order, template: rawTemplate }) {
+function specificationText(value = {}) {
+  const labels = { garment: "Garment", colour: "Colour", sizes: "Sizes", print_method: "Print", placement: "Placement", finishing: "Finishing", production_notes: "Production notes" };
+  return Object.entries(value || {}).filter(([, detail]) => detail).map(([key, detail]) => `${labels[key] || key}: ${detail}`).join("\n");
+}
+
+function SignedInvoiceImage({ value, alt = "", className = "" }) {
+  const { url } = useSignedFileUrl(value);
+  if (!url) return null;
+  return <img src={url} alt={alt} className={className} />;
+}
+
+function includedProofs(items) {
+  return items.flatMap((item) => (Array.isArray(item.proofs) ? item.proofs : []).filter((proof) => proof.include_in_pdf !== false).map((proof) => ({ ...proof, item_name: item.item_name })));
+}
+
+export default function ClientInvoiceView({ invoice, order, template: rawTemplate, documentMode = false }) {
   const template = normalizeClientTemplateSetting(rawTemplate);
   const brand = {
     name: template.businessDisplayName || BRAND.name,
@@ -81,9 +97,10 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const reference = invoice.reference_number || order?.order_number || "Not set";
   const delivery = deliveryRows(order);
+  const proofs = includedProofs(items);
 
   return (
-    <article className="client-invoice mx-auto w-full max-w-[210mm] bg-white px-4 py-5 text-slate-950 shadow-2xl sm:px-7 sm:py-7 lg:min-h-[297mm] lg:px-9 lg:py-9 print:min-h-0 print:max-w-none print:p-0 print:shadow-none">
+    <article className={`client-invoice mx-auto bg-white text-slate-950 print:min-h-0 print:max-w-none print:p-0 print:shadow-none ${documentMode ? "w-[794px] min-h-[1123px] px-9 py-9 shadow-none" : "w-full max-w-[210mm] px-4 py-5 shadow-2xl sm:px-7 sm:py-7 lg:min-h-[297mm] lg:px-9 lg:py-9"}`}>
       <header className="border-b border-slate-200 pb-6 sm:pb-7">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
           <div className="min-w-0">
@@ -191,17 +208,17 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
             {items.map((item, index) => (
               <div key={item.id || item.line_number || index} className="grid gap-3 px-4 py-4 md:grid-cols-[70px_1fr_64px_92px_105px] md:items-start md:gap-4 md:px-5 md:py-5">
                 <div className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                  {template.showProductThumbnails !== false && item.thumbnail_url ? (
-                    <img src={item.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                  {template.showProductThumbnails !== false && (item.image_url || item.thumbnail_url) ? (
+                    <SignedInvoiceImage value={item.image_url || item.thumbnail_url} alt={item.item_name || ""} className="h-full w-full object-cover" />
                   ) : (
                     <div className="grid h-full w-full place-items-center text-[10px] font-semibold uppercase tracking-wide text-slate-400">Item</div>
                   )}
                 </div>
                 <div className="min-w-0">
                   <p className="break-words text-sm font-semibold">{item.item_name}</p>
-                  {(item.item_description || item.variant_details) && (
+                  {(item.item_description || item.variant_details || specificationText(item.specifications)) && (
                     <p className="mt-1 whitespace-pre-line break-words text-sm leading-6 text-slate-500">
-                      {[item.item_description, item.variant_details].filter(Boolean).join("\n")}
+                      {[item.item_description, item.variant_details, specificationText(item.specifications)].filter(Boolean).join("\n")}
                     </p>
                   )}
                 </div>
@@ -268,6 +285,27 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
         </ol>
         {template.footerNote && <p className="mt-4 text-xs leading-5 text-slate-500">{template.footerNote}</p>}
       </section>
+
+      {proofs.length > 0 && (
+        <section className="invoice-proof-pages mt-8 border-t border-slate-200 pt-7">
+          <div className="mb-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Attached print proofs / mockups</p>
+            <p className="mt-1 text-sm text-slate-500">Use the version and status below when checking production details.</p>
+          </div>
+          {proofs.map((proof, index) => (
+            <article key={proof.id || proof.file_url || index} className="break-before-page min-h-[980px] border-t border-slate-200 pt-7 first:border-t-0">
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <span className="text-lg font-semibold">{proof.item_name || "Print proof"}</span>
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase ${proof.status === "approved" ? "bg-emerald-100 text-emerald-800" : proof.status === "rejected" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{proof.status || "draft"}</span>
+              </div>
+              <div className="grid min-h-[820px] place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <SignedInvoiceImage value={proof.file_url} alt={proof.file_name || proof.item_name || "Print proof"} className="max-h-[800px] max-w-full object-contain" />
+              </div>
+              {proof.notes && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{proof.notes}</p>}
+            </article>
+          ))}
+        </section>
+      )}
 
       <footer className="mt-7 border-t border-slate-200 pt-5 text-center text-xs text-slate-500">
         <p className="break-words">{template.thankYouMessage || `Thank you for choosing ${brand.name}.`}</p>

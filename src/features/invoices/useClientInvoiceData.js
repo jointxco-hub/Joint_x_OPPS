@@ -79,7 +79,7 @@ export function useClientInvoiceData(invoiceId) {
           const product = matchOrderProduct(item, products);
           return {
             ...item,
-            thumbnail_url: productImage(product),
+            thumbnail_url: item.image_url || productImage(product),
             variant_details: [
               product?.size,
               product?.color,

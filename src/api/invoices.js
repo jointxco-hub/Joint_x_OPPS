@@ -125,6 +125,10 @@ function invoiceItemRecord(item = {}, invoiceId, index = 0) {
     catalog_item_id: item.catalog_item_id || null,
     inventory_item_id: item.inventory_item_id || null,
     source_metadata: item.source_metadata || {},
+    line_key: item.line_key || null,
+    image_url: item.image_url || null,
+    specifications: item.specifications || {},
+    proofs: Array.isArray(item.proofs) ? item.proofs : [],
   });
 }
 
@@ -145,6 +149,10 @@ function invoiceItemTemplateRecord(item = {}, userId = null) {
     catalog_item_id: nullableField(item, "catalog_item_id"),
     inventory_item_id: nullableField(item, "inventory_item_id"),
     metadata: item.metadata || item.source_metadata || {},
+    image_url: nullableField(item, "image_url"),
+    specifications: item.specifications || {},
+    proofs: Array.isArray(item.proofs) ? item.proofs : [],
+    current_version: hasOwn(item, "current_version") ? Number(item.current_version || 1) : undefined,
     is_active: hasOwn(item, "is_active") ? item.is_active !== false : undefined,
     updated_by: userId,
   });
@@ -166,8 +174,153 @@ export function invoiceItemFromTemplate(template = {}) {
     catalog_item_id: template.catalog_item_id || "",
     inventory_item_id: template.inventory_item_id || "",
     source_metadata: template.metadata || {},
+    image_url: template.image_url || "",
+    specifications: template.specifications || {},
+    proofs: Array.isArray(template.proofs) ? template.proofs : [],
   };
 }
+
+function versionSnapshot(item = {}) {
+  return {
+    item_name: item.item_name || item.name || "",
+    item_description: item.item_description ?? item.description ?? "",
+    item_type: item.item_type || "goods",
+    unit: item.unit || "",
+    rate: Number(item.rate || 0),
+    image_url: item.image_url || "",
+    specifications: item.specifications || {},
+    proofs: Array.isArray(item.proofs) ? item.proofs : [],
+  };
+}
+
+function snapshotsEqual(left, right) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {});
+}
+
+
+async function assertInvoiceItemChangeReasons(items, tenantId) {
+  for (const item of items) {
+    if (!item.line_key) continue;
+    const { data: previous, error } = await supabase
+      .from("opps_invoice_item_versions")
+      .select("snapshot")
+      .eq("tenant_id", tenantId)
+      .eq("line_key", item.line_key)
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (previous && !snapshotsEqual(previous.snapshot, versionSnapshot(item)) && !String(item.change_reason || "").trim()) {
+      throw new Error(`Explain why ${item.item_name || "this invoice item"} changed before saving.`);
+    }
+  }
+}
+async function recordItemVersion({ tenantId, userId, clientId, invoiceId = null, templateId, lineKey, item, reason }) {
+  if (!lineKey) return;
+  const snapshot = versionSnapshot(item);
+  const { data: previous, error: previousError } = await supabase
+    .from("opps_invoice_item_versions")
+    .select("version_number,snapshot")
+    .eq("tenant_id", tenantId)
+    .eq("line_key", lineKey)
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (previousError) throw new Error(previousError.message);
+  if (previous && snapshotsEqual(previous.snapshot, snapshot)) return;
+
+  const changeReason = String(reason || "").trim();
+  if (previous && !changeReason) {
+    throw new Error(`Explain why ${snapshot.item_name || "this invoice item"} changed before saving.`);
+  }
+
+  const { error } = await supabase.from("opps_invoice_item_versions").insert({
+    tenant_id: tenantId,
+    client_id: clientId || null,
+    invoice_id: invoiceId || null,
+    invoice_item_template_id: templateId || null,
+    line_key: lineKey,
+    version_number: Number(previous?.version_number || 0) + 1,
+    change_reason: changeReason || "Initial invoice item version",
+    snapshot,
+    changed_by: userId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function syncClientItemTemplates(items, clientId, tenantId, userId) {
+  if (!clientId) return items;
+  const synced = [];
+
+  for (const item of items) {
+    const name = String(item.item_name || "").trim();
+    if (!name) {
+      synced.push(item);
+      continue;
+    }
+
+    const { data: matches, error: matchError } = await supabase
+      .from("opps_invoice_item_templates")
+      .select("*")
+      .eq("tenant_id", tenantId)
+      .eq("client_id", clientId)
+      .eq("is_active", true)
+      .ilike("name", name)
+      .limit(1);
+    if (matchError) throw new Error(matchError.message);
+    const existing = matches?.[0] || null;
+    const templateChanged = existing && !snapshotsEqual(versionSnapshot(existing), versionSnapshot(item));
+    if (templateChanged && !String(item.change_reason || "").trim()) {
+      throw new Error(`Explain why ${name} changed before updating this client's saved item.`);
+    }
+    const nextVersion = templateChanged
+      ? Number(existing.current_version || 1) + 1
+      : Number(existing?.current_version || 1);
+    const record = invoiceItemTemplateRecord({
+      ...item,
+      name,
+      client_id: clientId,
+      category: item.source_metadata?.category || item.category || "",
+      current_version: nextVersion,
+    }, userId);
+
+    const result = existing
+      ? await supabase.from("opps_invoice_item_templates").update(record).eq("id", existing.id).eq("tenant_id", tenantId).select("*").single()
+      : await supabase.from("opps_invoice_item_templates").insert({ ...record, tenant_id: tenantId, created_by: userId }).select("*").single();
+    if (result.error) throw new Error(result.error.message);
+    synced.push({ ...item, invoice_item_template_id: result.data.id });
+  }
+
+  return synced;
+}
+
+async function recordInvoiceItemVersions(items, invoice, tenantId, userId) {
+  for (const item of items) {
+    await recordItemVersion({
+      tenantId,
+      userId,
+      clientId: invoice.customer_id,
+      invoiceId: invoice.id,
+      templateId: item.invoice_item_template_id,
+      lineKey: item.line_key,
+      item,
+      reason: item.change_reason,
+    });
+    if (item.invoice_item_template_id) {
+      await recordItemVersion({
+        tenantId,
+        userId,
+        clientId: invoice.customer_id,
+        invoiceId: invoice.id,
+        templateId: item.invoice_item_template_id,
+        lineKey: `template:${item.invoice_item_template_id}`,
+        item,
+        reason: item.change_reason,
+      });
+    }
+  }
+}
+
 const ACTIVITY_LABELS = {
   invoice_created: "Invoice created",
   invoice_approved: "Invoice approved",
@@ -240,11 +393,14 @@ export async function createInvoice(input = {}) {
 
   if (error) throw new Error(error.message);
 
-  if (items.length > 0) {
-    const itemRows = items.map((item, index) => ({ ...invoiceItemRecord(item, createdInvoice.id, index), tenant_id: tenantId }));
+  const linkedItems = await syncClientItemTemplates(items, createdInvoice.customer_id, tenantId, userId);
+  if (linkedItems.length > 0) {
+    const itemRows = linkedItems.map((item, index) => ({ ...invoiceItemRecord(item, createdInvoice.id, index), tenant_id: tenantId }));
     const { error: itemError } = await supabase.from("opps_invoice_items").insert(itemRows);
     if (itemError) throw new Error(itemError.message);
   }
+
+  await recordInvoiceItemVersions(linkedItems, createdInvoice, tenantId, userId);
 
   await createInvoiceActivity(createdInvoice.id, {
     activity_type: "invoice_created",
@@ -263,6 +419,7 @@ export async function updateInvoice(id, input = {}) {
   const { invoice, items } = hasItems
     ? applyInvoiceTotals(input, rawItems)
     : { invoice: input, items: [] };
+  if (hasItems) await assertInvoiceItemChangeReasons(items, tenantId);
   const { data: currentInvoice, error: currentError } = await supabase
     .from("opps_invoices")
     .select("id,status")
@@ -301,6 +458,7 @@ export async function updateInvoice(id, input = {}) {
   }
 
   if (hasItems) {
+    const linkedItems = await syncClientItemTemplates(items, data.customer_id, tenantId, userId);
     const { error: deleteError } = await supabase
       .from("opps_invoice_items")
       .delete()
@@ -308,13 +466,14 @@ export async function updateInvoice(id, input = {}) {
       .eq("tenant_id", tenantId);
     if (deleteError) throw new Error(deleteError.message);
 
-    if (items.length > 0) {
-      const itemRows = items.map((item, index) => ({ ...invoiceItemRecord(item, id, index), tenant_id: tenantId }));
+    if (linkedItems.length > 0) {
+      const itemRows = linkedItems.map((item, index) => ({ ...invoiceItemRecord(item, id, index), tenant_id: tenantId }));
       const { error: itemError } = await supabase.from("opps_invoice_items").insert(itemRows);
       if (itemError) throw new Error(itemError.message);
     }
-  }
 
+    await recordInvoiceItemVersions(linkedItems, data, tenantId, userId);
+  }
   return hasItems ? getInvoice(id, { includeItems: true }) : data;
 }
 
@@ -762,6 +921,26 @@ export async function listInvoiceItemTemplates(options = {}) {
   if (error) throw new Error(error.message);
   return data || [];
 }
+export async function listInvoiceItemVersions(options = {}) {
+  ensureSupabase();
+  const tenantId = await getTenantId();
+  const limit = Math.min(Math.max(Number(options.limit || 100), 1), 300);
+  let query = supabase
+    .from("opps_invoice_item_versions")
+    .select("*")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (options.clientId) query = query.eq("client_id", options.clientId);
+  if (options.invoiceId) query = query.eq("invoice_id", options.invoiceId);
+  if (options.templateId) query = query.eq("invoice_item_template_id", options.templateId);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 
 export async function saveInvoiceItemTemplate(input = {}) {
   ensureSupabase();
@@ -774,14 +953,37 @@ export async function saveInvoiceItemTemplate(input = {}) {
   }
 
   if (input.id) {
+    const { data: current, error: currentError } = await supabase
+      .from("opps_invoice_item_templates")
+      .select("*")
+      .eq("id", input.id)
+      .eq("tenant_id", tenantId)
+      .single();
+    if (currentError) throw new Error(currentError.message);
+    const changed = !snapshotsEqual(versionSnapshot(current), versionSnapshot(record));
+    if (changed && !String(input.change_reason || "").trim()) {
+      throw new Error(`Explain why ${record.name || "this saved item"} changed before saving.`);
+    }
     const { data, error } = await supabase
       .from("opps_invoice_item_templates")
-      .update(record)
+      .update({
+        ...record,
+        current_version: changed ? Number(current.current_version || 1) + 1 : Number(current.current_version || 1),
+      })
       .eq("id", input.id)
       .eq("tenant_id", tenantId)
       .select("*")
       .single();
     if (error) throw new Error(error.message);
+    await recordItemVersion({
+      tenantId,
+      userId,
+      clientId: data.client_id,
+      templateId: data.id,
+      lineKey: `template:${data.id}`,
+      item: data,
+      reason: input.change_reason,
+    });
     return data;
   }
 
@@ -796,6 +998,15 @@ export async function saveInvoiceItemTemplate(input = {}) {
     .single();
 
   if (error) throw new Error(error.message);
+  await recordItemVersion({
+    tenantId,
+    userId,
+    clientId: data.client_id,
+    templateId: data.id,
+    lineKey: `template:${data.id}`,
+    item: data,
+    reason: input.change_reason,
+  });
   return data;
 }
 

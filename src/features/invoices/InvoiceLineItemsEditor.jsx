@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { dataClient } from "@/api/dataClient";
 import {
   invoiceItemFromTemplate,
@@ -12,6 +13,7 @@ import {
   saveInvoiceItemTemplate,
 } from "@/api/invoices";
 import { calculateInvoiceLine } from "./invoiceCalculations";
+import InvoiceItemMediaEditor from "./InvoiceItemMediaEditor";
 import { calculateDtfClientPrice, DTF_CLIENT_RATE_PER_METER } from "@/lib/pricing/dtf";
 
 
@@ -35,7 +37,21 @@ const emptyItem = {
   tax_name: "",
   tax_percentage: 0,
   account_name: "",
+  line_key: "",
+  image_url: "",
+  specifications: {},
+  proofs: [],
+  change_reason: "",
 };
+
+function uniqueLineKey() {
+  return globalThis.crypto?.randomUUID?.() || `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function newLineItem() {
+  return { ...emptyItem, line_key: uniqueLineKey(), specifications: {}, proofs: [] };
+}
+
 
 function numberOrZero(value) {
   const parsed = Number(value);
@@ -89,6 +105,7 @@ function lineFromPickerItem(item = {}, current = {}) {
     invoice_item_template_id: item.source === "template" ? item.id : "",
     catalog_item_id: item.source === "catalog" ? item.id : "",
     inventory_item_id: item.source === "stock" ? item.id : "",
+    image_url: item.image_url || current.image_url || "",
     source_metadata: {
       source: item.source,
       category: item.category || "",
@@ -114,12 +131,16 @@ function templateInputFromItem(item = {}) {
     catalog_item_id: item.catalog_item_id || "",
     inventory_item_id: item.inventory_item_id || "",
     source_metadata: item.source_metadata || {},
+    image_url: item.image_url || "",
+    specifications: item.specifications || {},
+    proofs: Array.isArray(item.proofs) ? item.proofs : [],
+    change_reason: item.change_reason || "",
   };
 }
 
 export default function InvoiceLineItemsEditor({ items = [], onChange, customerId = "" }) {
   const queryClient = useQueryClient();
-  const safeItems = items.length ? items : [emptyItem];
+  const safeItems = items.length ? items : [newLineItem()];
   const [pickerOpenIndex, setPickerOpenIndex] = useState(null);
   const [pickerMode, setPickerMode] = useState("all");
   const [savedSearch, setSavedSearch] = useState("");
@@ -164,7 +185,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
         source: "template",
         sourceLabel: "saved",
         category: item.category || "Custom work",
-        image_url: "",
+        image_url: item.image_url || "",
         description: item.description || "",
         item_type: item.item_type || "services",
         unit: item.unit || "",
@@ -234,14 +255,14 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
     )));
   };
 
-  const addItem = () => onChange([...safeItems, { ...emptyItem }]);
+  const addItem = () => onChange([...safeItems, newLineItem()]);
   const removeItem = (index) => {
     const next = safeItems.filter((_, itemIndex) => itemIndex !== index);
-    onChange(next.length ? next : [{ ...emptyItem }]);
+    onChange(next.length ? next : [newLineItem()]);
   };
 
   const appendTemplate = (template) => {
-    const nextItem = invoiceItemFromTemplate(template);
+    const nextItem = { ...invoiceItemFromTemplate(template), line_key: uniqueLineKey(), change_reason: "" };
     onChange([...safeItems.filter((item) => item.item_name || item.item_description || Number(item.rate || 0) > 0), nextItem]);
     recordTemplateUseMutation.mutate(template.id);
   };
@@ -251,7 +272,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
       toast.info("Name the line before saving it");
       return;
     }
-    saveTemplateMutation.mutate(templateInputFromItem(item));
+    saveTemplateMutation.mutate({ ...templateInputFromItem(item), client_id: customerId || undefined });
   };
 
   return (
@@ -303,8 +324,19 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
           heightMm: item.source_metadata?.dtf?.heightMm ?? "",
           quantity: item.source_metadata?.dtf?.quantity ?? item.quantity ?? 1,
         };
-        const dtf = calculateDtfClientPrice({ widthMm: dtfFields.widthMm, heightMm: dtfFields.heightMm, quantity: dtfFields.quantity });
-        const updateDtf = (field, value) => { const nextFields = { ...dtfFields, [field]: value }; const nextDtf = calculateDtfClientPrice(nextFields); updateItem(index, { source_metadata: { ...(item.source_metadata || {}), dtf: nextFields }, ...(nextDtf.valid ? { rate: nextDtf.total, quantity: 1, unit: "job" } : {}) }); };
+        const dtf = calculateDtfClientPrice({
+          widthMm: dtfFields.widthMm,
+          heightMm: dtfFields.heightMm,
+          quantity: dtfFields.quantity,
+        });
+        const updateDtf = (field, value) => {
+          const nextFields = { ...dtfFields, [field]: value };
+          const nextDtf = calculateDtfClientPrice(nextFields);
+          updateItem(index, {
+            source_metadata: { ...(item.source_metadata || {}), dtf: nextFields },
+            ...(nextDtf.valid ? { rate: nextDtf.total, quantity: 1, unit: "job" } : {}),
+          });
+        };
         return (
           <div key={index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -444,25 +476,26 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
                 <p className="text-sm font-semibold text-foreground">R{Number(calculated.item_total || 0).toLocaleString()}</p>
               </div>
-              <Input
+              <Textarea
                 value={item.item_description || ""}
                 onChange={(event) => updateItem(index, { item_description: event.target.value })}
-                placeholder="Description"
-                className="h-9 rounded-xl md:col-span-5"
+                placeholder="Full item description"
+                rows={3}
+                className="min-h-20 resize-y rounded-xl md:col-span-5"
               />
               {isDtfLine && (
                 <details className="rounded-xl border border-blue-200 bg-blue-50 p-3 md:col-span-12">
                   <summary className="cursor-pointer text-sm font-semibold text-blue-950">DTF custom size calculator</summary>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m · 580mm × 1000mm roll</p></div>
-                    {dtf.valid && <Button type="button" size="sm" onClick={() => updateItem(index, { rate: dtf.total, quantity: 1, unit: "job", item_description: `${item.item_description || "DTF transfer production"} | ${dtfFields.widthMm} × ${dtfFields.heightMm} mm × ${dtfFields.quantity} | ${dtf.chargeableMeters.toFixed(2)} m` })}>Apply calculated rate R{dtf.total.toFixed(2)}</Button>}
+                    <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m - 580mm x 1000mm roll</p></div>
+                    {dtf.valid && <Button type="button" size="sm" onClick={() => updateItem(index, { rate: dtf.total, quantity: 1, unit: "job", item_description: `${item.item_description || "DTF transfer production"} | ${dtfFields.widthMm} x ${dtfFields.heightMm} mm x ${dtfFields.quantity} | ${dtf.chargeableMeters.toFixed(2)} m` })}>Apply calculated rate R{dtf.total.toFixed(2)}</Button>}
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
                     <LabeledNumber label="Width (mm)"><Input value={dtfFields.widthMm} onChange={(event) => updateDtf("widthMm", event.target.value)} type="number" min="1" placeholder="300" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                     <LabeledNumber label="Height (mm)"><Input value={dtfFields.heightMm} onChange={(event) => updateDtf("heightMm", event.target.value)} type="number" min="1" placeholder="400" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                     <LabeledNumber label="Print quantity"><Input value={dtfFields.quantity} onChange={(event) => updateDtf("quantity", event.target.value)} type="number" min="1" step="1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
                   </div>
-                  {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} · {dtf.lanes} across · {dtf.rows} rows · {dtf.chargeableMeters.toFixed(2)} chargeable metres · R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
+                  {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} - {dtf.lanes} across - {dtf.rows} rows - {dtf.chargeableMeters.toFixed(2)} chargeable metres - R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
                 </details>
               )}
               <select
@@ -493,6 +526,10 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 step="0.01"
                 placeholder="Tax %"
                 className="h-9 rounded-xl md:col-span-2"
+              />
+              <InvoiceItemMediaEditor
+                item={item}
+                onChange={(patch) => updateItem(index, patch)}
               />
             </div>
           </div>

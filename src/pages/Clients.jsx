@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Archive, ExternalLink, FileText, Mail, MapPin, Phone, Plus, RefreshCw, Search, ShoppingBag, Users } from "lucide-react";
 import { toast } from "sonner";
 import SignedFileLink from "@/components/common/SignedFileLink";
+import { listInvoiceItemTemplates, listInvoiceItemVersions } from "@/api/invoices";
+import ClientInvoiceItemHistory from "@/features/invoices/ClientInvoiceItemHistory";
 
 const ACTIVE_ORDER_STATUSES = new Set(['confirmed', 'in_production', 'ready', 'shipped']);
 const DONE_ORDER_STATUSES = new Set(['delivered']);
@@ -496,6 +498,20 @@ export default function Clients() {
 }
 
 function ClientAccountDialog({ client, open, onOpenChange }) {
+
+  const clientId = client && !client.is_order_only ? client.id : "";
+  const { data: availableSavedItems = [] } = useQuery({
+    queryKey: ["invoiceItemTemplates", "client-account", clientId],
+    queryFn: () => listInvoiceItemTemplates({ clientId, limit: 300 }),
+    enabled: Boolean(open && clientId),
+  });
+  const savedItems = availableSavedItems.filter((item) => item.client_id === clientId);
+  const { data: itemHistory = [] } = useQuery({
+    queryKey: ["invoiceItemVersions", "client-account", clientId],
+    queryFn: () => listInvoiceItemVersions({ clientId, limit: 100 }),
+    enabled: Boolean(open && clientId),
+  });
+
   if (!client) return null;
 
   const files = clientFiles(client);
@@ -594,6 +610,8 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
             )}
           </section>
         </div>
+
+        <ClientInvoiceItemHistory items={savedItems} history={itemHistory} />
 
         <section className="rounded-lg border border-slate-200 p-4">
           <h3 className="font-semibold mb-3">Special Instructions</h3>
