@@ -561,7 +561,7 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
 
   const [productId, setProductId] = useState(NEW_OPTION);
   const [newProductCode, setNewProductCode] = useState("");
-  const [newProductName, setNewProductName] = useState(item?.name || "");
+  const [newProductName, setNewProductName] = useState("");
 
   const [variantId, setVariantId] = useState(NEW_OPTION);
   const [newColour, setNewColour] = useState("");
@@ -570,7 +570,7 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
   const [supplierId, setSupplierId] = useState(item?.preferred_supplier_id || "");
   const [supplierProductId, setSupplierProductId] = useState(NEW_OPTION);
   const [newSupplierProductName, setNewSupplierProductName] = useState(item?.name || "");
-  const [newSupplierProductCode, setNewSupplierProductCode] = useState(item?.sku || "");
+  const [newSupplierProductCode, setNewSupplierProductCode] = useState("");
 
   const [supplierVariantId, setSupplierVariantId] = useState(NEW_OPTION);
   const [newSupplierSku, setNewSupplierSku] = useState(item?.sku || "");
