@@ -744,6 +744,7 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
       const tenantId = await getCurrentTenantId();
 
       let finalProductId = productId;
+      let productCodeForSku = productsForTenant.find(p => p.id === productId)?.internal_code || "";
       if (productId === NEW_OPTION) {
         if (!newProductCode.trim() || !newProductName.trim()) throw new Error("Internal product code and name are required");
         const created = await dataClient.entities.InventoryProduct.create({
@@ -751,6 +752,11 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
           internal_name: newProductName.trim(),
         });
         finalProductId = created.id;
+        productCodeForSku = newProductCode.trim();
+        // Commit immediately so a later failure (or retry) never tries to
+        // create "JET" a second time and hit the unique-code constraint.
+        setProductId(finalProductId);
+        qc.invalidateQueries({ queryKey: ["inventoryProducts"] });
       }
 
       let finalVariantId = variantId;
@@ -760,9 +766,11 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
           inventory_product_id: finalProductId,
           colour_name: newColour.trim(),
           size_name: newSize.trim(),
-          internal_sku: `${newProductCode.trim() || "SKU"}-${newColour.trim()}-${newSize.trim()}`.toUpperCase().replace(/\s+/g, "-"),
+          internal_sku: `${productCodeForSku || "SKU"}-${newColour.trim()}-${newSize.trim()}`.toUpperCase().replace(/\s+/g, "-"),
         });
         finalVariantId = created.id;
+        setVariantId(finalVariantId);
+        qc.invalidateQueries({ queryKey: ["inventoryVariants"] });
       }
 
       if (!supplierId) throw new Error("Choose a supplier");
@@ -776,6 +784,8 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
           official_product_code: newSupplierProductCode.trim() || null,
         });
         finalSupplierProductId = created.id;
+        setSupplierProductId(finalSupplierProductId);
+        qc.invalidateQueries({ queryKey: ["inventorySupplierProducts"] });
       }
 
       let finalSupplierVariantId = supplierVariantId;
@@ -792,6 +802,8 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
           unit_cost: newUnitCost !== "" ? Number(newUnitCost) : undefined,
         });
         finalSupplierVariantId = created.id;
+        setSupplierVariantId(finalSupplierVariantId);
+        qc.invalidateQueries({ queryKey: ["inventorySupplierVariants"] });
       }
 
       const { data, error } = await supabase.rpc("inventory_reviewer_map_legacy_item", {
