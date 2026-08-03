@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Printer, Save, Share2, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Check, Copy, ExternalLink, Loader2, Printer, Save, Share2, Users } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoice
 import ClientInvoiceView from "./ClientInvoiceView";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
 import InvoicePdfDownloadButton from "./InvoicePdfDownloadButton";
+import { isCompleteInvoiceDetail } from "./invoiceReliability";
 
 const steps = ["Customer", "Details", "Items", "Review", "Finish"];
 const defaultInvoiceDefaults = normalizeInvoiceDefaultsSetting();
@@ -126,6 +127,7 @@ function clientInvoiceFields(client = {}) {
 
 export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, isSaving = false }) {
   const isEditing = Boolean(initialInvoice?.id);
+  const detailReady = !isEditing || isCompleteInvoiceDetail(initialInvoice);
   const initialInvoiceDate = initialInvoice?.invoice_date || todayIso();
   const topRef = useRef(null);
   const [step, setStep] = useState(0);
@@ -152,7 +154,7 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     internal_notes: initialInvoice?.internal_notes || "",
   });
   const [items, setItems] = useState(
-    Array.isArray(initialInvoice?.items) && initialInvoice.items.length
+    detailReady && Array.isArray(initialInvoice?.items) && initialInvoice.items.length
       ? initialInvoice.items.map((item) => ({
           ...item,
           line_key: item.line_key || uniqueLineKey(),
@@ -266,14 +268,40 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
   };
 
   const submit = (status) => {
+    if (isSaving || !detailReady) return;
     onSave({
       ...calculated.invoice,
       id: initialInvoice?.id,
       invoice_number: initialInvoice?.invoice_number,
       status,
       items: calculated.items,
+      items_loaded: initialInvoice?.items_loaded,
+      item_load_state: initialInvoice?.item_load_state,
+      expected_item_count: initialInvoice?.loaded_item_count,
+      expected_updated_at: initialInvoice?.updated_at,
     });
   };
+
+  if (isEditing && !detailReady) {
+    return (
+      <div className="min-h-screen bg-background px-4 py-12">
+        <div className="mx-auto max-w-xl rounded-2xl border border-destructive/30 bg-card p-6 shadow-apple-sm">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 flex-none text-destructive" />
+            <div>
+              <h1 className="font-semibold text-foreground">Invoice editor locked</h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Invoice details could not be loaded. Saving has been disabled to protect the existing invoice.
+              </p>
+            </div>
+          </div>
+          <Button type="button" variant="outline" onClick={onCancel} className="mt-5 rounded-xl">
+            <ArrowLeft className="h-4 w-4" /> Close editor
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -548,11 +576,13 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                 </Button>
               ) : (
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button variant="outline" onClick={() => submit("draft")} disabled={isSaving || !validation.isValid} className="rounded-xl">
-                    <Save className="h-4 w-4" /> Save draft
+                  <Button variant="outline" onClick={() => submit("draft")} disabled={isSaving || !validation.isValid || !detailReady} className="rounded-xl">
+                    {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    {isSaving ? "Saving..." : "Save draft"}
                   </Button>
-                  <Button onClick={() => submit("approved")} disabled={isSaving || !validation.isValid} className="rounded-xl">
-                    <Check className="h-4 w-4" /> Approve invoice
+                  <Button onClick={() => submit("approved")} disabled={isSaving || !validation.isValid || !detailReady} className="rounded-xl">
+                    {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    {isSaving ? "Saving..." : "Approve invoice"}
                   </Button>
                 </div>
               )}
