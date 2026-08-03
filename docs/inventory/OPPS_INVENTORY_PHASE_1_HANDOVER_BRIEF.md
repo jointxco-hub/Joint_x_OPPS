@@ -1008,3 +1008,35 @@ Provide:
 Do not change stock quantities during this audit.
 
 After identifying the issue, implement the smallest safe fix and prepare the physical stock-count workflow.
+
+---
+
+# 22. Status update — 2026-08-03 (Claude, continuing from this brief)
+
+This section records what changed after this brief was written, so a future session does not have to re-derive it. Everything below is live in production unless marked otherwise.
+
+## 35 vs 41 resolved — no bug
+
+Confirmed by direct read-only query: 41 total rows = 39 rows for the real Joint X tenant (`6d371f51-274c-4b49-8d59-2aeaf5e89088`) + 2 rows belonging to two other tenants (`UI`/`OO`, `jhj`/`jhj` — look like unrelated test data, not Joint X stock). Of the 39, 4 are archived (`5-Panel Cap`, `JET`, `JET 220gsm`, `JV1` — leftover manual test rows from the earlier idea of literally renaming supplier products to `JET`, since abandoned). 39 − 4 = 35. Tenant scoping and the archive filter in `src/pages/Inventory.jsx` are both working as designed. **No code change was needed for this.**
+
+## Shipped and deployed to production (git commit `bb368ca` on `fix/invoice-item-reliability`; Vercel deployment `dpl_HzkCm9Du8N4BrcwpdQZxNq6Gbtsz`, aliased to `ops.jointx.co.za`)
+
+- **Stock Count workflow**: ✓ icon on each Stock tab row opens a dialog — system stock, physical count input, live difference, location, notes, confirm. Writes the new `current_stock` and an audit row.
+- **Movement History**: clock icon on each row shows that item's full movement history (type, before→after, delta, who, when, why).
+- **New table `public.inventory_movements`**: append-only audit ledger, tenant-scoped RLS (SELECT + INSERT only, no UPDATE/DELETE by design). Columns include `related_order_id` and `related_purchase_order_id`, ready for when order-linked movements are built (see below) — not populated yet, no code writes to them today. Migration: `supabase/migrations/202608030001_inventory_movements.sql`, applied directly via Studio SQL editor and verified (row counts unchanged, column + policies confirmed).
+- **Fixed a real pre-existing bug**: the item edit form (`ItemFormModal` in `Inventory.jsx`) had always submitted a `location` field on every save, but no `location` column ever existed on `public.inventory` — every inventory item save was likely failing. Added the column as part of the same migration.
+- **Mounted the Sonner toaster** in `src/App.jsx`. It was being called (`toast.success(...)` etc.) from `Inventory.jsx` and elsewhere without a mounted renderer, so those toasts were silently invisible. Now they render.
+- New `InventoryMovement` entity added to `src/api/dataClient.js` (table `inventory_movements`, tenant-scoped, standard `list`/`filter`/`create` via the existing entity pattern).
+
+## Still true, unchanged from the rest of this brief
+
+- Orders still have **zero connection to inventory**. `orders.products` is a free-form JSON blob, no FK to any inventory/variant row. Auto-subtracting stock on order fulfillment needs the internal↔supplier variant mapping (Stage 3–4 of this brief) done first — that's still correctly staged for later, not an oversight.
+- Phase 1 identity tables (`inventory_products`, `inventory_variants`, `inventory_supplier_products`, `inventory_supplier_variants`) are still empty. Nothing has been mapped yet.
+
+## Separate, unrelated work sitting in the same worktree — do not deploy without reading this
+
+The same branch (`fix/invoice-item-reliability`) also carries an earlier, unrelated body of work: an invoice line-item reliability fix (atomic RPC-based save, prevents a failed load from silently wiping saved invoice items on next save). It is **committed** (git commit `0aebc67`) but **NOT deployed** — `src/api/invoices.js` calls a database function `save_opps_invoice_with_items` that only exists in disposable local test databases, not in production. Deploying the current `HEAD` of this branch as-is **will break invoice create/update in production immediately**. Full detail in `docs/workflow_reliability_audit/`.
+
+To ship the inventory changes above without shipping that risk, the deploy was done by temporarily checking out the pre-invoice-RPC versions of the affected files (`git checkout bb368ca -- package.json src/api/invoices.js src/features/invoices/InvoiceCreateFlow.jsx src/features/invoices/InvoiceDetailDrawer.jsx src/pages/Invoices.jsx`), building, deploying, then restoring `HEAD` (`git checkout HEAD -- <same files>`). If you need to deploy again before the invoice RPC migration is applied to production, repeat that same isolation step first — don't just run `vercel --prod` from a plain checkout of this branch.
+
+To ship the invoice-reliability work later: apply `supabase/migrations/202608020001_invoice_item_atomic_persistence.sql` to production first (same lightweight Studio-paste process used for the inventory migration is appropriate — it's already been validated against a full 66-migration reconstructed schema, see `docs/workflow_reliability_audit/11_BRANCH_1_FULL_SCHEMA_STAGING_SMOKE.md`), then deploy normally.
