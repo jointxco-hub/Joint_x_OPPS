@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
+import { getCurrentTenantId } from "@/lib/tenantContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X, ClipboardCheck, History } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X, ClipboardCheck, History, Tag, Rows3, LayoutList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -552,6 +554,329 @@ function MovementHistoryModal({ open, onClose, item, movements }) {
   );
 }
 
+const NEW_OPTION = "__new__";
+
+function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, internalVariants, supplierProducts, supplierVariants }) {
+  const qc = useQueryClient();
+
+  const [productId, setProductId] = useState(NEW_OPTION);
+  const [newProductCode, setNewProductCode] = useState("");
+  const [newProductName, setNewProductName] = useState(item?.name || "");
+
+  const [variantId, setVariantId] = useState(NEW_OPTION);
+  const [newColour, setNewColour] = useState("");
+  const [newSize, setNewSize] = useState("");
+
+  const [supplierId, setSupplierId] = useState(item?.preferred_supplier_id || "");
+  const [supplierProductId, setSupplierProductId] = useState(NEW_OPTION);
+  const [newSupplierProductName, setNewSupplierProductName] = useState(item?.name || "");
+  const [newSupplierProductCode, setNewSupplierProductCode] = useState(item?.sku || "");
+
+  const [supplierVariantId, setSupplierVariantId] = useState(NEW_OPTION);
+  const [newSupplierSku, setNewSupplierSku] = useState(item?.sku || "");
+  const [newSupplierColour, setNewSupplierColour] = useState("");
+  const [newSupplierSize, setNewSupplierSize] = useState("");
+  const [newUnitCost, setNewUnitCost] = useState(item?.cost_price ?? "");
+
+  const [notes, setNotes] = useState("");
+
+  const productsForTenant = (/** @type {any[]} */ (internalProducts));
+  const variantsForProduct = (/** @type {any[]} */ (internalVariants)).filter(v => v.inventory_product_id === productId);
+  const supplierProductsForCombo = (/** @type {any[]} */ (supplierProducts)).filter(
+    sp => sp.supplier_id === supplierId && sp.inventory_product_id === productId
+  );
+  const supplierVariantsForProduct = (/** @type {any[]} */ (supplierVariants)).filter(
+    sv => sv.inventory_supplier_product_id === supplierProductId
+  );
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const tenantId = await getCurrentTenantId();
+
+      let finalProductId = productId;
+      if (productId === NEW_OPTION) {
+        if (!newProductCode.trim() || !newProductName.trim()) throw new Error("Internal product code and name are required");
+        const created = await dataClient.entities.InventoryProduct.create({
+          internal_code: newProductCode.trim(),
+          internal_name: newProductName.trim(),
+        });
+        finalProductId = created.id;
+      }
+
+      let finalVariantId = variantId;
+      if (variantId === NEW_OPTION) {
+        if (!newColour.trim() || !newSize.trim()) throw new Error("Internal colour and size are required");
+        const created = await dataClient.entities.InventoryVariant.create({
+          inventory_product_id: finalProductId,
+          colour_name: newColour.trim(),
+          size_name: newSize.trim(),
+          internal_sku: `${newProductCode.trim() || "SKU"}-${newColour.trim()}-${newSize.trim()}`.toUpperCase().replace(/\s+/g, "-"),
+        });
+        finalVariantId = created.id;
+      }
+
+      if (!supplierId) throw new Error("Choose a supplier");
+      let finalSupplierProductId = supplierProductId;
+      if (supplierProductId === NEW_OPTION) {
+        if (!newSupplierProductName.trim()) throw new Error("Supplier product name is required");
+        const created = await dataClient.entities.InventorySupplierProduct.create({
+          inventory_product_id: finalProductId,
+          supplier_id: supplierId,
+          official_product_name: newSupplierProductName.trim(),
+          official_product_code: newSupplierProductCode.trim() || null,
+        });
+        finalSupplierProductId = created.id;
+      }
+
+      let finalSupplierVariantId = supplierVariantId;
+      if (supplierVariantId === NEW_OPTION) {
+        if (!newSupplierSku.trim() || !newSupplierColour.trim() || !newSupplierSize.trim()) {
+          throw new Error("Supplier SKU, colour, and size are required");
+        }
+        const created = await dataClient.entities.InventorySupplierVariant.create({
+          inventory_supplier_product_id: finalSupplierProductId,
+          inventory_variant_id: finalVariantId,
+          supplier_sku: newSupplierSku.trim(),
+          official_colour_name: newSupplierColour.trim(),
+          official_size_name: newSupplierSize.trim(),
+          unit_cost: newUnitCost !== "" ? Number(newUnitCost) : undefined,
+        });
+        finalSupplierVariantId = created.id;
+      }
+
+      const { data, error } = await supabase.rpc("inventory_reviewer_map_legacy_item", {
+        p_tenant_id: tenantId,
+        p_legacy_inventory_id: item.id,
+        p_inventory_product_id: finalProductId,
+        p_inventory_variant_id: finalVariantId,
+        p_inventory_supplier_product_id: finalSupplierProductId,
+        p_inventory_supplier_variant_id: finalSupplierVariantId,
+        p_review_notes: notes || null,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventoryProducts"] });
+      qc.invalidateQueries({ queryKey: ["inventoryVariants"] });
+      qc.invalidateQueries({ queryKey: ["inventorySupplierProducts"] });
+      qc.invalidateQueries({ queryKey: ["inventorySupplierVariants"] });
+      qc.invalidateQueries({ queryKey: ["inventoryLegacyCompat"] });
+      toast.success("Identity mapped");
+      onClose();
+    },
+    onError: (err) => toast.error((/** @type {any} */ (err))?.message || "Failed to map identity"),
+  });
+
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={`Map identity: ${item?.name ?? ""}`}
+      size="md"
+      footer={
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            {mutation.isPending ? "Saving…" : "Confirm mapping"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4 py-2">
+        <div className="text-xs text-muted-foreground bg-secondary/40 rounded-xl p-3">
+          Source: <span className="font-medium text-foreground">{item?.name}</span>
+          {item?.sku && <> · SKU {item.sku}</>}
+          {" "}— this stays visible forever for traceability. Mapping only adds an internal + supplier identity; it does not change stock.
+        </div>
+
+        {/* Internal product */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Internal product (Joint X identity)</label>
+          <select value={productId} onChange={e => { setProductId(e.target.value); setVariantId(NEW_OPTION); }}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+            <option value={NEW_OPTION}>+ Create new internal product</option>
+            {productsForTenant.map(p => <option key={p.id} value={p.id}>{p.internal_code} — {p.internal_name}</option>)}
+          </select>
+          {productId === NEW_OPTION && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <Input value={newProductCode} onChange={e => setNewProductCode(e.target.value)} placeholder="Code, e.g. JET" className="h-10" />
+              <Input value={newProductName} onChange={e => setNewProductName(e.target.value)} placeholder="Name, e.g. Joint X Essential Tee" className="h-10" />
+            </div>
+          )}
+        </div>
+
+        {/* Internal variant */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Internal colour / size</label>
+          <select value={variantId} onChange={e => setVariantId(e.target.value)}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+            <option value={NEW_OPTION}>+ Create new variant</option>
+            {productId !== NEW_OPTION && variantsForProduct.map(v => <option key={v.id} value={v.id}>{v.colour_name} / {v.size_name}</option>)}
+          </select>
+          {variantId === NEW_OPTION && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <Input value={newColour} onChange={e => setNewColour(e.target.value)} placeholder="Colour, e.g. Black" className="h-10" />
+              <Input value={newSize} onChange={e => setNewSize(e.target.value)} placeholder="Size, e.g. XL" className="h-10" />
+            </div>
+          )}
+        </div>
+
+        <div className="h-px bg-border" />
+
+        {/* Supplier */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Supplier</label>
+          <select value={supplierId} onChange={e => { setSupplierId(e.target.value); setSupplierProductId(NEW_OPTION); }}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+            <option value="">— Choose supplier —</option>
+            {(/** @type {any[]} */ (suppliers)).map((/** @type {any} */ s) => <option key={s.id} value={s.id}>{s.name ?? s.vendor}</option>)}
+          </select>
+        </div>
+
+        {/* Supplier product */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Exact supplier product</label>
+          <select value={supplierProductId} onChange={e => setSupplierProductId(e.target.value)} disabled={!supplierId}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm disabled:opacity-50">
+            <option value={NEW_OPTION}>+ Create new supplier product</option>
+            {supplierProductsForCombo.map(sp => <option key={sp.id} value={sp.id}>{sp.official_product_name}</option>)}
+          </select>
+          {supplierProductId === NEW_OPTION && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <Input value={newSupplierProductName} onChange={e => setNewSupplierProductName(e.target.value)} placeholder="Supplier's product name" className="h-10" />
+              <Input value={newSupplierProductCode} onChange={e => setNewSupplierProductCode(e.target.value)} placeholder="Supplier product code" className="h-10" />
+            </div>
+          )}
+        </div>
+
+        {/* Supplier variant */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Exact supplier colour / size / SKU</label>
+          <select value={supplierVariantId} onChange={e => setSupplierVariantId(e.target.value)}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+            <option value={NEW_OPTION}>+ Create new supplier variant</option>
+            {supplierProductId !== NEW_OPTION && supplierVariantsForProduct.map(sv => (
+              <option key={sv.id} value={sv.id}>{sv.official_colour_name} / {sv.official_size_name} — {sv.supplier_sku}</option>
+            ))}
+          </select>
+          {supplierVariantId === NEW_OPTION && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <Input value={newSupplierSku} onChange={e => setNewSupplierSku(e.target.value)} placeholder="Supplier SKU" className="h-10" />
+              <Input value={newUnitCost} onChange={e => setNewUnitCost(e.target.value)} type="number" placeholder="Unit cost (R)" className="h-10" />
+              <Input value={newSupplierColour} onChange={e => setNewSupplierColour(e.target.value)} placeholder="Supplier colour name" className="h-10" />
+              <Input value={newSupplierSize} onChange={e => setNewSupplierSize(e.target.value)} placeholder="Supplier size name" className="h-10" />
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Notes</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Why this mapping, any substitution caveats…"
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-16" />
+        </div>
+      </div>
+    </ResponsiveModal>
+  );
+}
+
+function StockRow({ item, supplierMap, countedToday, mapped, onCount, onHistory, onMap, onEdit, onArchive }) {
+  const i = /** @type {any} */ (item);
+  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
+  const supplierName = i.preferred_supplier_id ? supplierMap[i.preferred_supplier_id] : null;
+  const cost = Number(i.cost_price) || 0;
+  const selling = Number(i.selling_price) || 0;
+  const margin = selling > 0 ? Math.round(((selling - cost) / selling) * 100) : null;
+
+  return (
+    <div className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
+      {/* Mobile */}
+      <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-foreground">{i.name}</p>
+          {i.sku && <p className="text-xs text-muted-foreground">SKU: {i.sku}</p>}
+          {supplierName && <p className="text-xs text-primary mt-0.5">{supplierName}</p>}
+          <p className={`text-xs mt-1 font-semibold ${isLow ? "text-red-600" : "text-foreground"}`}>
+            {i.current_stock ?? 0} {i.unit}
+            {isLow && " — Low stock"}
+          </p>
+          {(cost > 0 || selling > 0) && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Cost R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
+              {margin !== null && ` / ${margin}% margin`}
+            </p>
+          )}
+          {countedToday && <p className="text-xs text-emerald-600 font-medium mt-1">✓ Counted today</p>}
+        </div>
+        <div className="flex items-center gap-2.5 mt-0.5">
+          <button onClick={() => onCount(i)} title="Count stock" className="text-muted-foreground hover:text-primary">
+            <ClipboardCheck className="w-4 h-4" />
+          </button>
+          <button onClick={() => onHistory(i)} title="Movement history" className="text-muted-foreground hover:text-foreground">
+            <History className="w-4 h-4" />
+          </button>
+          <button onClick={() => onMap(i)} title="Map identity" className={mapped ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}>
+            <Tag className="w-4 h-4" />
+          </button>
+          <button onClick={() => onEdit(i)} className="text-muted-foreground hover:text-foreground">
+            <Pencil className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Desktop */}
+      <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
+        <div className="col-span-3">
+          <p className="text-sm font-medium text-foreground">{i.name}</p>
+          {i.sku && <p className="text-xs text-muted-foreground font-mono">{i.sku}</p>}
+        </div>
+        <div className="col-span-2 text-center">
+          <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
+            {i.current_stock ?? 0} {i.unit}
+          </span>
+        </div>
+        <div className="col-span-2 text-center text-xs text-muted-foreground">
+          {(cost > 0 || selling > 0) ? `R${cost.toFixed(0)} / R${selling.toFixed(0)}${margin !== null ? ` · ${margin}%` : ""}` : "—"}
+        </div>
+        <div className="col-span-2">
+          {supplierName ? (
+            <span className="text-xs text-primary font-medium truncate block">{supplierName}</span>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
+        </div>
+        <div className="col-span-2 flex justify-center">
+          {isLow ? (
+            <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
+          )}
+        </div>
+        <div className="col-span-1 flex items-center gap-1.5 justify-end">
+          <button onClick={() => onCount(i)} title="Count stock"
+            className={`transition-all ${countedToday ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}`}>
+            <ClipboardCheck className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onHistory(i)} title="Movement history" className="text-muted-foreground hover:text-foreground transition-all">
+            <History className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onMap(i)} title="Map identity"
+            className={`transition-all ${mapped ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}`}>
+            <Tag className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onEdit(i)} className="text-muted-foreground hover:text-foreground transition-all">
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onArchive(i)} className="text-muted-foreground hover:text-foreground transition-all">
+            <Archive className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProductImage({ urls, url, name }) {
   const candidates = Array.isArray(urls) && urls.length > 0 ? urls : [url].filter(Boolean);
   const [index, setIndex] = useState(0);
@@ -685,6 +1010,8 @@ export default function Inventory() {
   const [editCatalogItem, setEditCatalogItem] = useState(/** @type {any} */ (null));
   const [countItem, setCountItem] = useState(/** @type {any} */ (null));
   const [historyItem, setHistoryItem] = useState(/** @type {any} */ (null));
+  const [mapItem, setMapItem] = useState(/** @type {any} */ (null));
+  const [stockView, setStockView] = useState("list");
   const queryClient = useQueryClient();
 
   const { data: inventory = [], isLoading } = useQuery({
@@ -707,6 +1034,27 @@ export default function Inventory() {
   const { data: movements = [] } = useQuery({
     queryKey: ["inventoryMovements"],
     queryFn: () => dataClient.entities.InventoryMovement.list("created_date", 500),
+  });
+
+  const { data: internalProducts = [] } = useQuery({
+    queryKey: ["inventoryProducts"],
+    queryFn: () => dataClient.entities.InventoryProduct.list("internal_name", 200),
+  });
+  const { data: internalVariants = [] } = useQuery({
+    queryKey: ["inventoryVariants"],
+    queryFn: () => dataClient.entities.InventoryVariant.list("internal_sku", 500),
+  });
+  const { data: supplierIdentityProducts = [] } = useQuery({
+    queryKey: ["inventorySupplierProducts"],
+    queryFn: () => dataClient.entities.InventorySupplierProduct.list("official_product_name", 500),
+  });
+  const { data: supplierIdentityVariants = [] } = useQuery({
+    queryKey: ["inventorySupplierVariants"],
+    queryFn: () => dataClient.entities.InventorySupplierVariant.list("supplier_sku", 1000),
+  });
+  const { data: legacyCompat = [] } = useQuery({
+    queryKey: ["inventoryLegacyCompat"],
+    queryFn: () => dataClient.entities.InventoryLegacyCompat.list("name", 300),
   });
 
   const { data: catalogItems = [], isLoading: catalogLoading, refetch: refetchCatalog } = useQuery({
@@ -837,6 +1185,25 @@ export default function Inventory() {
       .map(m => m.inventory_id)
   );
 
+  const compatById = Object.fromEntries((/** @type {any[]} */ (legacyCompat)).map(c => [c.id, c]));
+
+  const stockGroups = (() => {
+    const groups = new Map();
+    for (const item of filteredStock) {
+      const compat = compatById[item.id];
+      const mapped = compat && compat.mapping_state === "approved";
+      const key = mapped ? compat.internal_code : "__unmapped__";
+      const label = mapped ? `${compat.internal_code} — ${compat.internal_name}` : "Needs mapping";
+      if (!groups.has(key)) groups.set(key, { key, label, mapped, items: [] });
+      groups.get(key).items.push(item);
+    }
+    return Array.from(groups.values()).sort((a, b) => {
+      if (a.key === "__unmapped__") return -1;
+      if (b.key === "__unmapped__") return 1;
+      return a.label.localeCompare(b.label);
+    });
+  })();
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
@@ -913,15 +1280,32 @@ export default function Inventory() {
               </div>
             )}
 
-            <div className="relative mb-5">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
-                className="pl-9 bg-card rounded-xl h-10" />
+            <div className="flex gap-2 mb-5">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
+                  className="pl-9 bg-card rounded-xl h-10" />
+              </div>
+              <div className="flex bg-secondary rounded-xl p-0.5">
+                <button onClick={() => setStockView("list")} title="List view"
+                  className={`p-2 rounded-lg transition-all ${stockView === "list" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                  <LayoutList className="w-4 h-4" />
+                </button>
+                <button onClick={() => setStockView("grouped")} title="Grouped by internal identity"
+                  className={`p-2 rounded-lg transition-all ${stockView === "grouped" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                  <Rows3 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {isLoading ? (
               <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-16 bg-card rounded-2xl animate-pulse" />)}</div>
-            ) : (
+            ) : filteredStock.length === 0 ? (
+              <div className="bg-card rounded-2xl border border-border shadow-apple-sm text-center py-12">
+                <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No inventory items</p>
+              </div>
+            ) : stockView === "list" ? (
               <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
                 <div className="hidden md:grid grid-cols-12 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-5 py-3 border-b border-border bg-secondary/30">
                   <span className="col-span-3">Item</span>
@@ -931,102 +1315,32 @@ export default function Inventory() {
                   <span className="col-span-2 text-center">Status</span>
                   <span className="col-span-1" />
                 </div>
-                {filteredStock.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">No inventory items</p>
-                  </div>
-                ) : filteredStock.map(item => {
-                  const i = /** @type {any} */ (item);
-                  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
-                  const supplierName = i.preferred_supplier_id ? supplierMap[i.preferred_supplier_id] : null;
-                  const cost = Number(i.cost_price) || 0;
-                  const selling = Number(i.selling_price) || 0;
-                  const profit = selling - cost;
-                  const margin = selling > 0 ? Math.round((profit / selling) * 100) : null;
-                  return (
-                    <div key={i.id} className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
-                      {/* Mobile */}
-                      <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground">{i.name}</p>
-                          {i.sku && <p className="text-xs text-muted-foreground">SKU: {i.sku}</p>}
-                          {supplierName && <p className="text-xs text-primary mt-0.5">{supplierName}</p>}
-                          <p className={`text-xs mt-1 font-semibold ${isLow ? "text-red-600" : "text-foreground"}`}>
-                            {i.current_stock ?? 0} {i.unit}
-                            {isLow && " — Low stock"}
-                          </p>
-                          {(cost > 0 || selling > 0) && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Cost R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
-                              {margin !== null && ` / ${margin}% margin`}
-                            </p>
-                          )}
-                          {countedTodayIds.has(i.id) && (
-                            <p className="text-xs text-emerald-600 font-medium mt-1">✓ Counted today</p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2.5 mt-0.5">
-                          <button onClick={() => setCountItem(i)} title="Count stock" className="text-muted-foreground hover:text-primary">
-                            <ClipboardCheck className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => setHistoryItem(i)} title="Movement history" className="text-muted-foreground hover:text-foreground">
-                            <History className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground">
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Desktop */}
-                      <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
-                        <div className="col-span-3">
-                          <p className="text-sm font-medium text-foreground">{i.name}</p>
-                          {i.sku && <p className="text-xs text-muted-foreground font-mono">{i.sku}</p>}
-                        </div>
-                        <div className="col-span-2 text-center">
-                          <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
-                            {i.current_stock ?? 0} {i.unit}
-                          </span>
-                        </div>
-                        <div className="col-span-2 text-center text-xs text-muted-foreground">
-                          {(cost > 0 || selling > 0) ? `R${cost.toFixed(0)} / R${selling.toFixed(0)}${margin !== null ? ` · ${margin}%` : ""}` : "—"}
-                        </div>
-                        <div className="col-span-2">
-                          {supplierName ? (
-                            <span className="text-xs text-primary font-medium truncate block">{supplierName}</span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </div>
-                        <div className="col-span-2 flex justify-center">
-                          {isLow ? (
-                            <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
-                          )}
-                        </div>
-                        <div className="col-span-1 flex items-center gap-1.5 justify-end">
-                          <button onClick={() => setCountItem(i)} title="Count stock"
-                            className={`transition-all ${countedTodayIds.has(i.id) ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}`}>
-                            <ClipboardCheck className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => setHistoryItem(i)} title="Movement history" className="text-muted-foreground hover:text-foreground transition-all">
-                            <History className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground transition-all">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }}
-                            className="text-muted-foreground hover:text-foreground transition-all">
-                            <Archive className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
+                {filteredStock.map(item => (
+                  <StockRow key={item.id} item={item} supplierMap={supplierMap}
+                    countedToday={countedTodayIds.has(item.id)}
+                    mapped={compatById[item.id]?.mapping_state === "approved"}
+                    onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                    onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {stockGroups.map(group => (
+                  <div key={group.key} className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
+                    <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-secondary/30">
+                      {!group.mapped && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                      <span className="text-sm font-semibold text-foreground">{group.label}</span>
+                      <span className="text-xs text-muted-foreground">({group.items.length})</span>
                     </div>
-                  );
-                })}
+                    {group.items.map(item => (
+                      <StockRow key={item.id} item={item} supplierMap={supplierMap}
+                        countedToday={countedTodayIds.has(item.id)}
+                        mapped={compatById[item.id]?.mapping_state === "approved"}
+                        onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                        onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
+                    ))}
+                  </div>
+                ))}
               </div>
             )}
           </>
@@ -1146,6 +1460,11 @@ export default function Inventory() {
       {historyItem && (
         <MovementHistoryModal open={!!historyItem} onClose={() => setHistoryItem(null)} item={historyItem}
           movements={movementsByItem[historyItem.id] || []} />
+      )}
+      {mapItem && (
+        <MapIdentityModal open={!!mapItem} onClose={() => setMapItem(null)} item={mapItem} suppliers={suppliers}
+          internalProducts={internalProducts} internalVariants={internalVariants}
+          supplierProducts={supplierIdentityProducts} supplierVariants={supplierIdentityVariants} />
       )}
     </div>
   );

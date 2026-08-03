@@ -414,6 +414,68 @@ const ENTITY_CONFIG = {
       });
     },
   },
+  InventoryProduct: {
+    table: 'inventory_products',
+    tenantScoped: true,
+    serialize(payload) {
+      return compactObject({
+        internal_code: payload.internal_code,
+        internal_short_name: payload.internal_short_name,
+        internal_name: payload.internal_name,
+        internal_description: payload.internal_description,
+        category: payload.category,
+        garment_type: payload.garment_type,
+        weight_gsm: numberOrUndefined(payload.weight_gsm),
+        fit: payload.fit,
+        material: payload.material,
+      });
+    },
+  },
+  InventoryVariant: {
+    table: 'inventory_variants',
+    tenantScoped: true,
+    serialize(payload) {
+      return compactObject({
+        inventory_product_id: payload.inventory_product_id,
+        internal_sku: payload.internal_sku,
+        colour_code: payload.colour_code,
+        colour_name: payload.colour_name,
+        size_code: payload.size_code,
+        size_name: payload.size_name,
+      });
+    },
+  },
+  InventorySupplierProduct: {
+    table: 'inventory_supplier_products',
+    tenantScoped: true,
+    serialize(payload) {
+      return compactObject({
+        inventory_product_id: payload.inventory_product_id,
+        supplier_id: payload.supplier_id,
+        official_product_code: payload.official_product_code,
+        official_product_name: payload.official_product_name,
+        compatibility_status: payload.compatibility_status ?? 'exact',
+      });
+    },
+  },
+  InventorySupplierVariant: {
+    table: 'inventory_supplier_variants',
+    tenantScoped: true,
+    serialize(payload) {
+      return compactObject({
+        inventory_supplier_product_id: payload.inventory_supplier_product_id,
+        inventory_variant_id: payload.inventory_variant_id,
+        supplier_sku: payload.supplier_sku,
+        official_colour_name: payload.official_colour_name,
+        official_size_name: payload.official_size_name,
+        unit_cost: numberOrUndefined(payload.unit_cost),
+      });
+    },
+  },
+  InventoryLegacyCompat: {
+    table: 'inventory_legacy_compat_v',
+    tenantScoped: true,
+  },
   User: {
     table: 'users',
     sortMap: {
