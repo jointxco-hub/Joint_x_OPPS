@@ -424,6 +424,9 @@ const ENTITY_CONFIG = {
     sortMap: {
       created_date: 'created_at',
     },
+    normalize(row) {
+      return row;
+    },
     serialize(payload) {
       return compactObject({
         inventory_id: payload.inventory_id,
@@ -436,6 +439,9 @@ const ENTITY_CONFIG = {
   InventoryProduct: {
     table: 'inventory_products',
     tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
     serialize(payload) {
       return compactObject({
         internal_code: payload.internal_code,
@@ -453,6 +459,9 @@ const ENTITY_CONFIG = {
   InventoryVariant: {
     table: 'inventory_variants',
     tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
     serialize(payload) {
       return compactObject({
         inventory_product_id: payload.inventory_product_id,
@@ -467,6 +476,9 @@ const ENTITY_CONFIG = {
   InventorySupplierProduct: {
     table: 'inventory_supplier_products',
     tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
     serialize(payload) {
       return compactObject({
         inventory_product_id: payload.inventory_product_id,
@@ -480,6 +492,9 @@ const ENTITY_CONFIG = {
   InventorySupplierVariant: {
     table: 'inventory_supplier_variants',
     tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
     serialize(payload) {
       return compactObject({
         inventory_supplier_product_id: payload.inventory_supplier_product_id,
@@ -494,6 +509,9 @@ const ENTITY_CONFIG = {
   InventoryLegacyCompat: {
     table: 'inventory_legacy_compat_v',
     tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
   },
   User: {
     table: 'users',
