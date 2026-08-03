@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentTenantId } from "@/lib/tenantContext";
@@ -46,6 +46,20 @@ const CATEGORY_IMAGE_FALLBACKS = {
   hats: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=800",
   bottoms: "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=800",
   labels: "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=800",
+};
+
+// Stock items have no per-item photo of their own. This maps the inventory
+// category enum to the same representative stock photos used elsewhere, so
+// the gallery view has something visual to show. Categories without a
+// proven-working fallback show the generic package icon instead of guessing
+// at an unverified image URL.
+const INV_CATEGORY_IMAGE = {
+  tees: CATEGORY_IMAGE_FALLBACKS.tshirts,
+  hoodies: CATEGORY_IMAGE_FALLBACKS.hoodies,
+  sweaters: CATEGORY_IMAGE_FALLBACKS.sweaters,
+  headwear: CATEGORY_IMAGE_FALLBACKS.hats,
+  bottoms: CATEGORY_IMAGE_FALLBACKS.bottoms,
+  labels: CATEGORY_IMAGE_FALLBACKS.labels,
 };
 
 const getProductImageUrls = (product) => {
@@ -555,6 +569,71 @@ function MovementHistoryModal({ open, onClose, item, movements }) {
 }
 
 const NEW_OPTION = "__new__";
+const COLOUR_PRESETS = ["Black", "White", "Grey", "Navy", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Brown", "Maroon", "Olive"];
+const SIZE_PRESETS = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
+
+function SingleChoiceChips({ value, onChange, presets, placeholder }) {
+  const [customMode, setCustomMode] = useState(value !== "" && !presets.includes(value));
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {presets.map(p => (
+          <button key={p} type="button" onClick={() => { setCustomMode(false); onChange(p); }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+              !customMode && value === p ? "bg-primary text-primary-foreground border-primary" : "bg-background border-input text-muted-foreground hover:text-foreground"
+            }`}>
+            {p}
+          </button>
+        ))}
+        <button type="button" onClick={() => { setCustomMode(true); onChange(""); }}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+            customMode ? "bg-primary text-primary-foreground border-primary" : "bg-background border-input text-muted-foreground hover:text-foreground"
+          }`}>
+          Custom…
+        </button>
+      </div>
+      {customMode && (
+        <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="h-9 mt-1.5" autoFocus />
+      )}
+    </div>
+  );
+}
+
+function SearchSelect({ options, value, onChange, getLabel, placeholder, createLabel }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = options.find(o => o.id === value);
+  const filtered = !query ? options : options.filter(o => getLabel(o).toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <div className="relative">
+      <Input
+        value={open ? query : (value === NEW_OPTION ? "" : (selected ? getLabel(selected) : ""))}
+        onFocus={() => { setOpen(true); setQuery(""); }}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={value === NEW_OPTION ? createLabel : placeholder}
+        className="h-10"
+      />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-xl shadow-apple-sm max-h-56 overflow-auto">
+          <button type="button" onMouseDown={() => { onChange(NEW_OPTION); setOpen(false); }}
+            className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-secondary/50 font-medium">
+            {createLabel}
+          </button>
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-muted-foreground">No existing matches</div>
+          ) : filtered.map(o => (
+            <button key={o.id} type="button" onMouseDown={() => { onChange(o.id); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50">
+              {getLabel(o)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, internalVariants, supplierProducts, supplierVariants }) {
   const qc = useQueryClient();
@@ -588,6 +667,15 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
   const supplierVariantsForProduct = (/** @type {any[]} */ (supplierVariants)).filter(
     sv => sv.inventory_supplier_product_id === supplierProductId
   );
+
+  // Most stock reuses the same supplier product for a given internal product —
+  // prefill it automatically when there's exactly one existing match instead of
+  // making the reviewer re-pick something already established.
+  useEffect(() => {
+    if (supplierId && productId !== NEW_OPTION && supplierProductsForCombo.length === 1) {
+      setSupplierProductId(supplierProductsForCombo[0].id);
+    }
+  }, [supplierId, productId, supplierProductsForCombo.length]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -693,11 +781,14 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
         {/* Internal product */}
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Internal product (Joint X identity)</label>
-          <select value={productId} onChange={e => { setProductId(e.target.value); setVariantId(NEW_OPTION); }}
-            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
-            <option value={NEW_OPTION}>+ Create new internal product</option>
-            {productsForTenant.map(p => <option key={p.id} value={p.id}>{p.internal_code} — {p.internal_name}</option>)}
-          </select>
+          <SearchSelect
+            options={productsForTenant}
+            value={productId}
+            onChange={(id) => { setProductId(id); setVariantId(NEW_OPTION); }}
+            getLabel={p => `${p.internal_code} — ${p.internal_name}`}
+            placeholder="Search existing internal products…"
+            createLabel="+ Create new internal product"
+          />
           {productId === NEW_OPTION && (
             <div className="grid grid-cols-2 gap-2 mt-2">
               <Input value={newProductCode} onChange={e => setNewProductCode(e.target.value)} placeholder="Code, e.g. JET" className="h-10" />
@@ -709,27 +800,29 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
         {/* Internal variant */}
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Internal colour / size</label>
-          <select value={variantId} onChange={e => setVariantId(e.target.value)}
-            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
-            <option value={NEW_OPTION}>+ Create new variant</option>
-            {productId !== NEW_OPTION && variantsForProduct.map(v => <option key={v.id} value={v.id}>{v.colour_name} / {v.size_name}</option>)}
-          </select>
+          <SearchSelect
+            options={productId !== NEW_OPTION ? variantsForProduct : []}
+            value={variantId}
+            onChange={setVariantId}
+            getLabel={v => `${v.colour_name} / ${v.size_name}`}
+            placeholder={productId === NEW_OPTION ? "Save/select an internal product first" : "Search existing variants…"}
+            createLabel="+ Create new variant"
+          />
           {variantId === NEW_OPTION && (
-            <>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <Input value={newColour} onChange={e => setNewColour(e.target.value)} placeholder="One exact colour, e.g. Black" className="h-10" />
-                <Input value={newSize} onChange={e => setNewSize(e.target.value)} placeholder="One exact size, e.g. XL" className="h-10" />
+            <div className="mt-2 space-y-2">
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Colour</p>
+                <SingleChoiceChips value={newColour} onChange={setNewColour} presets={COLOUR_PRESETS} placeholder="Custom colour name" />
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Size</p>
+                <SingleChoiceChips value={newSize} onChange={setNewSize} presets={SIZE_PRESETS} placeholder="Custom size name" />
               </div>
               <button type="button" onClick={() => { setNewColour("Standard"); setNewSize("Standard"); }}
-                className="text-xs text-primary mt-1.5 hover:underline">
+                className="text-xs text-primary hover:underline">
                 Not a garment? Use "Standard" for colour and size
               </button>
-              {(newColour.includes(",") || newSize.includes(",")) && (
-                <p className="text-xs text-amber-600 mt-1.5">
-                  This looks like more than one colour/size. Each combination needs its own mapping — this field should be one exact value, not a list.
-                </p>
-              )}
-            </>
+            </div>
           )}
         </div>
 
@@ -748,15 +841,24 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
         {/* Supplier product */}
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Exact supplier product</label>
-          <select value={supplierProductId} onChange={e => setSupplierProductId(e.target.value)} disabled={!supplierId}
-            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm disabled:opacity-50">
-            <option value={NEW_OPTION}>+ Create new supplier product</option>
-            {supplierProductsForCombo.map(sp => <option key={sp.id} value={sp.id}>{sp.official_product_name}</option>)}
-          </select>
+          {supplierId ? (
+            <SearchSelect
+              options={supplierProductsForCombo}
+              value={supplierProductId}
+              onChange={setSupplierProductId}
+              getLabel={sp => sp.official_product_name}
+              placeholder="Search this supplier's products…"
+              createLabel="+ Create new supplier product"
+            />
+          ) : (
+            <div className="w-full h-10 rounded-xl border border-input bg-secondary/30 px-3 flex items-center text-sm text-muted-foreground">
+              Choose a supplier first
+            </div>
+          )}
           {supplierProductId === NEW_OPTION && (
             <div className="grid grid-cols-2 gap-2 mt-2">
               <Input value={newSupplierProductName} onChange={e => setNewSupplierProductName(e.target.value)} placeholder="Supplier's product name" className="h-10" />
-              <Input value={newSupplierProductCode} onChange={e => setNewSupplierProductCode(e.target.value)} placeholder="Supplier product code" className="h-10" />
+              <Input value={newSupplierProductCode} onChange={e => setNewSupplierProductCode(e.target.value)} placeholder="Supplier product code (optional)" className="h-10" />
             </div>
           )}
         </div>
@@ -764,31 +866,33 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
         {/* Supplier variant */}
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Exact supplier colour / size / SKU</label>
-          <select value={supplierVariantId} onChange={e => setSupplierVariantId(e.target.value)}
-            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
-            <option value={NEW_OPTION}>+ Create new supplier variant</option>
-            {supplierProductId !== NEW_OPTION && supplierVariantsForProduct.map(sv => (
-              <option key={sv.id} value={sv.id}>{sv.official_colour_name} / {sv.official_size_name} — {sv.supplier_sku}</option>
-            ))}
-          </select>
+          <SearchSelect
+            options={supplierProductId !== NEW_OPTION ? supplierVariantsForProduct : []}
+            value={supplierVariantId}
+            onChange={setSupplierVariantId}
+            getLabel={sv => `${sv.official_colour_name} / ${sv.official_size_name} — ${sv.supplier_sku}`}
+            placeholder={supplierProductId === NEW_OPTION ? "Save/select a supplier product first" : "Search existing supplier variants…"}
+            createLabel="+ Create new supplier variant"
+          />
           {supplierVariantId === NEW_OPTION && (
-            <>
-              <div className="grid grid-cols-2 gap-2 mt-2">
+            <div className="mt-2 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
                 <Input value={newSupplierSku} onChange={e => setNewSupplierSku(e.target.value)} placeholder="Supplier SKU" className="h-10" />
                 <Input value={newUnitCost} onChange={e => setNewUnitCost(e.target.value)} type="number" placeholder="Unit cost (R)" className="h-10" />
-                <Input value={newSupplierColour} onChange={e => setNewSupplierColour(e.target.value)} placeholder="One exact supplier colour" className="h-10" />
-                <Input value={newSupplierSize} onChange={e => setNewSupplierSize(e.target.value)} placeholder="One exact supplier size" className="h-10" />
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Supplier colour</p>
+                <SingleChoiceChips value={newSupplierColour} onChange={setNewSupplierColour} presets={COLOUR_PRESETS} placeholder="Custom colour name" />
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Supplier size</p>
+                <SingleChoiceChips value={newSupplierSize} onChange={setNewSupplierSize} presets={SIZE_PRESETS} placeholder="Custom size name" />
               </div>
               <button type="button" onClick={() => { setNewSupplierColour("Standard"); setNewSupplierSize("Standard"); }}
-                className="text-xs text-primary mt-1.5 hover:underline">
+                className="text-xs text-primary hover:underline">
                 Not a garment? Use "Standard" for colour and size
               </button>
-              {(newSupplierColour.includes(",") || newSupplierSize.includes(",")) && (
-                <p className="text-xs text-amber-600 mt-1.5">
-                  This looks like more than one colour/size. Each combination needs its own mapping — this field should be one exact value, not a list.
-                </p>
-              )}
-            </>
+            </div>
           )}
         </div>
 
@@ -895,6 +999,51 @@ function StockRow({ item, supplierMap, countedToday, mapped, onCount, onHistory,
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function StockGalleryCard({ item, countedToday, mapped, onCount, onHistory, onMap, onEdit }) {
+  const i = /** @type {any} */ (item);
+  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
+  const imageUrl = INV_CATEGORY_IMAGE[i.category];
+
+  return (
+    <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
+      <div className="aspect-square overflow-hidden relative bg-secondary">
+        {imageUrl ? (
+          <img src={imageUrl} alt={i.category} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Package className="w-10 h-10 text-muted-foreground/30" />
+          </div>
+        )}
+        {mapped && (
+          <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Mapped</span>
+        )}
+        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => onCount(i)} title="Count stock"
+            className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+            <ClipboardCheck className="w-3 h-3 text-foreground" />
+          </button>
+          <button onClick={() => onHistory(i)} title="History"
+            className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+            <History className="w-3 h-3 text-foreground" />
+          </button>
+          <button onClick={() => onMap(i)} title="Map identity"
+            className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+            <Tag className="w-3 h-3 text-foreground" />
+          </button>
+        </div>
+      </div>
+      <button onClick={() => onEdit(i)} className="p-3 text-left w-full">
+        <p className="text-xs font-semibold text-foreground leading-tight truncate">{i.name}</p>
+        {i.sku && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{i.sku}</p>}
+        <p className={`text-xs font-bold mt-1 ${isLow ? "text-red-600" : "text-foreground"}`}>
+          {i.current_stock ?? 0} {i.unit}{isLow && " · Low"}
+        </p>
+        {countedToday && <p className="text-[10px] text-emerald-600 font-medium mt-0.5">✓ Counted today</p>}
+      </button>
     </div>
   );
 }
@@ -1317,6 +1466,10 @@ export default function Inventory() {
                   className={`p-2 rounded-lg transition-all ${stockView === "grouped" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
                   <Rows3 className="w-4 h-4" />
                 </button>
+                <button onClick={() => setStockView("gallery")} title="Gallery"
+                  className={`p-2 rounded-lg transition-all ${stockView === "gallery" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
@@ -1345,7 +1498,7 @@ export default function Inventory() {
                     onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
                 ))}
               </div>
-            ) : (
+            ) : stockView === "grouped" ? (
               <div className="space-y-4">
                 {stockGroups.map(group => (
                   <div key={group.key} className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
@@ -1362,6 +1515,15 @@ export default function Inventory() {
                         onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
                     ))}
                   </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {filteredStock.map(item => (
+                  <StockGalleryCard key={item.id} item={item}
+                    countedToday={countedTodayIds.has(item.id)}
+                    mapped={compatById[item.id]?.mapping_state === "approved"}
+                    onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem} />
                 ))}
               </div>
             )}
