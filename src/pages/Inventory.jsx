@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentTenantId } from "@/lib/tenantContext";
+import { useSignedFileUrl } from "@/lib/privateFiles";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X, ClipboardCheck, History, Tag, Rows3, LayoutList } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X, ClipboardCheck, History, Tag, Rows3, LayoutList, Camera, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -302,10 +303,37 @@ const EMPTY_FORM = {
   cost_price: "", selling_price: "", location: "", preferred_supplier_id: "",
 };
 
-function ItemFormModal({ open, onClose, existing, suppliers }) {
+function ItemFormModal({ open, onClose, existing, suppliers, images = [] }) {
   const qc = useQueryClient();
   const [form, setForm] = useState(existing ?? EMPTY_FORM);
+  const [uploading, setUploading] = useState(false);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const handleFilesSelected = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length || !existing) return;
+    setUploading(true);
+    try {
+      let order = images.length;
+      for (const file of files) {
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file, visibility: "private", folder: "inventory" });
+        await dataClient.entities.InventoryImage.create({ inventory_id: existing.id, image_ref: file_url, sort_order: order++ });
+      }
+      qc.invalidateQueries({ queryKey: ["inventoryImages"] });
+      toast.success(files.length > 1 ? "Photos added" : "Photo added");
+    } catch (err) {
+      toast.error((/** @type {any} */ (err))?.message || "Failed to upload photo");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteImageMutation = useMutation({
+    mutationFn: (/** @type {string} */ id) => dataClient.entities.InventoryImage.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventoryImages"] }),
+    onError: (/** @type {any} */ err) => toast.error(err?.message || "Failed to remove photo"),
+  });
 
   const mutation = useMutation({
     mutationFn: (data) =>
@@ -354,6 +382,29 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
       }
     >
       <form className="space-y-3 py-2" onSubmit={handleSubmit}>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Photos</label>
+          {existing ? (
+            <div className="flex flex-wrap gap-2">
+              {images.map((/** @type {any} */ img) => (
+                <div key={img.id} className="relative w-16 h-16">
+                  <ImageThumb imageRef={img.image_ref} alt="" className="w-16 h-16 rounded-xl overflow-hidden border border-border block" />
+                  <button type="button" onClick={() => deleteImageMutation.mutate(img.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-background border border-border flex items-center justify-center shadow-sm hover:bg-red-50">
+                    <X className="w-3 h-3 text-muted-foreground hover:text-red-500" />
+                  </button>
+                </div>
+              ))}
+              <label className="w-16 h-16 rounded-xl border-2 border-dashed border-input flex flex-col items-center justify-center cursor-pointer text-muted-foreground hover:text-primary hover:border-primary transition-all">
+                {uploading ? <span className="text-[10px]">…</span> : <Camera className="w-5 h-5" />}
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handleFilesSelected} disabled={uploading} />
+              </label>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Save the item first to add photos.</p>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-foreground block mb-1">Name *</label>
@@ -438,7 +489,7 @@ const MOVEMENT_TYPE_LABEL = {
   transfer: "Transfer",
 };
 
-function StockCountModal({ open, onClose, item, currentUser }) {
+function StockCountModal({ open, onClose, item, currentUser, compat }) {
   const qc = useQueryClient();
   const [physicalQty, setPhysicalQty] = useState(String(item?.current_stock ?? 0));
   const [location, setLocation] = useState(item?.location || "");
@@ -462,6 +513,10 @@ function StockCountModal({ open, onClose, item, currentUser }) {
         quantity_delta: delta,
         location: location || null,
         reason: notes || null,
+        inventory_product_id: compat?.mapping_state === "approved" ? compat.proposed_inventory_product_id : null,
+        inventory_variant_id: compat?.mapping_state === "approved" ? compat.proposed_inventory_variant_id : null,
+        inventory_supplier_product_id: compat?.mapping_state === "approved" ? compat.proposed_supplier_product_id : null,
+        inventory_supplier_variant_id: compat?.mapping_state === "approved" ? compat.proposed_supplier_variant_id : null,
         created_by: currentUser?.id || null,
         created_by_name: currentUser?.full_name || currentUser?.email || null,
       });
@@ -494,6 +549,13 @@ function StockCountModal({ open, onClose, item, currentUser }) {
     >
       <div className="space-y-3 py-2">
         {item?.sku && <p className="text-xs text-muted-foreground font-mono">{item.sku}</p>}
+        {compat?.mapping_state === "approved" ? (
+          <p className="text-xs text-emerald-600">
+            {compat.internal_code} — {compat.internal_name} · {compat.supplier_product_name}
+          </p>
+        ) : (
+          <p className="text-xs text-amber-600">Not mapped to an identity yet — this count won't record which exact variant it was.</p>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-foreground block mb-1">System stock</label>
@@ -907,7 +969,57 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
   );
 }
 
-function StockRow({ item, supplierMap, countedToday, mapped, onCount, onHistory, onMap, onEdit, onArchive }) {
+function ImageThumb({ imageRef, alt, className, onClick }) {
+  const { url, loading } = useSignedFileUrl(imageRef || "");
+  if (!imageRef) return null;
+  return (
+    <button type="button" onClick={onClick} disabled={!onClick} className={className}>
+      {loading || !url ? (
+        <div className="w-full h-full bg-secondary animate-pulse" />
+      ) : (
+        <img src={url} alt={alt || ""} className="w-full h-full object-cover" />
+      )}
+    </button>
+  );
+}
+
+function ImageLightbox({ images, startIndex = 0, onClose }) {
+  const [index, setIndex] = useState(startIndex);
+  const current = images[index];
+  const { url, loading } = useSignedFileUrl(current?.image_ref || "");
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center px-4" onClick={onClose}>
+      <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white transition-all" title="Close">
+        <X className="w-6 h-6" />
+      </button>
+      {images.length > 1 && (
+        <button onClick={(e) => { e.stopPropagation(); setIndex(i => (i - 1 + images.length) % images.length); }}
+          className="absolute left-2 md:left-6 text-white/70 hover:text-white transition-all">
+          <ChevronLeft className="w-8 h-8" />
+        </button>
+      )}
+      <div onClick={e => e.stopPropagation()} className="max-w-3xl w-full flex flex-col items-center">
+        {loading || !url ? (
+          <div className="w-72 h-72 bg-white/10 rounded-2xl animate-pulse" />
+        ) : (
+          <img src={url} alt="" className="max-w-full max-h-[75vh] rounded-2xl object-contain" />
+        )}
+        {images.length > 1 && (
+          <p className="text-white/60 text-xs mt-3">{index + 1} / {images.length}</p>
+        )}
+      </div>
+      {images.length > 1 && (
+        <button onClick={(e) => { e.stopPropagation(); setIndex(i => (i + 1) % images.length); }}
+          className="absolute right-2 md:right-6 text-white/70 hover:text-white transition-all">
+          <ChevronRight className="w-8 h-8" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function StockRow({ item, supplierMap, countedToday, mapped, images, onCount, onHistory, onMap, onEdit, onArchive, onOpenLightbox }) {
   const i = /** @type {any} */ (item);
   const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
   const supplierName = i.preferred_supplier_id ? supplierMap[i.preferred_supplier_id] : null;
@@ -919,6 +1031,10 @@ function StockRow({ item, supplierMap, countedToday, mapped, onCount, onHistory,
     <div className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
       {/* Mobile */}
       <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
+        {images?.[0] && (
+          <ImageThumb imageRef={images[0].image_ref} alt={i.name} onClick={() => onOpenLightbox(images)}
+            className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 border border-border" />
+        )}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground">{i.name}</p>
           {i.sku && <p className="text-xs text-muted-foreground">SKU: {i.sku}</p>}
@@ -953,9 +1069,15 @@ function StockRow({ item, supplierMap, countedToday, mapped, onCount, onHistory,
 
       {/* Desktop */}
       <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
-        <div className="col-span-3">
-          <p className="text-sm font-medium text-foreground">{i.name}</p>
-          {i.sku && <p className="text-xs text-muted-foreground font-mono">{i.sku}</p>}
+        <div className="col-span-3 flex items-center gap-2.5 min-w-0">
+          {images?.[0] && (
+            <ImageThumb imageRef={images[0].image_ref} alt={i.name} onClick={() => onOpenLightbox(images)}
+              className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0 border border-border" />
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground truncate">{i.name}</p>
+            {i.sku && <p className="text-xs text-muted-foreground font-mono truncate">{i.sku}</p>}
+          </div>
         </div>
         <div className="col-span-2 text-center">
           <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
@@ -1003,16 +1125,26 @@ function StockRow({ item, supplierMap, countedToday, mapped, onCount, onHistory,
   );
 }
 
-function StockGalleryCard({ item, countedToday, mapped, onCount, onHistory, onMap, onEdit }) {
+function StockGalleryCard({ item, countedToday, mapped, images, onCount, onHistory, onMap, onEdit, onOpenLightbox }) {
   const i = /** @type {any} */ (item);
   const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
-  const imageUrl = INV_CATEGORY_IMAGE[i.category];
+  const fallbackUrl = INV_CATEGORY_IMAGE[i.category];
+  const hasRealImage = images && images.length > 0;
 
   return (
     <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
       <div className="aspect-square overflow-hidden relative bg-secondary">
-        {imageUrl ? (
-          <img src={imageUrl} alt={i.category} className="w-full h-full object-cover" />
+        {hasRealImage ? (
+          <>
+            <ImageThumb imageRef={images[0].image_ref} alt={i.name} onClick={() => onOpenLightbox(images)} className="w-full h-full block" />
+            {images.length > 1 && (
+              <span className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-black/60 text-white pointer-events-none">
+                {images.length} photos
+              </span>
+            )}
+          </>
+        ) : fallbackUrl ? (
+          <img src={fallbackUrl} alt={i.category} className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <Package className="w-10 h-10 text-muted-foreground/30" />
@@ -1183,6 +1315,7 @@ export default function Inventory() {
   const [historyItem, setHistoryItem] = useState(/** @type {any} */ (null));
   const [mapItem, setMapItem] = useState(/** @type {any} */ (null));
   const [stockView, setStockView] = useState("list");
+  const [lightbox, setLightbox] = useState(/** @type {{images: any[], startIndex: number} | null} */ (null));
   const queryClient = useQueryClient();
 
   const { data: inventory = [], isLoading } = useQuery({
@@ -1226,6 +1359,10 @@ export default function Inventory() {
   const { data: legacyCompat = [] } = useQuery({
     queryKey: ["inventoryLegacyCompat"],
     queryFn: () => dataClient.entities.InventoryLegacyCompat.list("name", 300),
+  });
+  const { data: inventoryImages = [] } = useQuery({
+    queryKey: ["inventoryImages"],
+    queryFn: () => dataClient.entities.InventoryImage.list("sort_order", 1000),
   });
 
   const { data: catalogItems = [], isLoading: catalogLoading, refetch: refetchCatalog } = useQuery({
@@ -1358,6 +1495,12 @@ export default function Inventory() {
 
   const compatById = Object.fromEntries((/** @type {any[]} */ (legacyCompat)).map(c => [c.id, c]));
 
+  const imagesByItem = {};
+  for (const img of (/** @type {any[]} */ (inventoryImages))) {
+    (imagesByItem[img.inventory_id] ??= []).push(img);
+  }
+  const openLightbox = (images) => setLightbox({ images, startIndex: 0 });
+
   const stockGroups = (() => {
     const groups = new Map();
     for (const item of filteredStock) {
@@ -1365,14 +1508,23 @@ export default function Inventory() {
       const mapped = compat && compat.mapping_state === "approved";
       const key = mapped ? compat.internal_code : "__unmapped__";
       const label = mapped ? `${compat.internal_code} — ${compat.internal_name}` : "Needs mapping";
-      if (!groups.has(key)) groups.set(key, { key, label, mapped, items: [] });
-      groups.get(key).items.push(item);
+      if (!groups.has(key)) groups.set(key, { key, label, mapped, items: [], totalStock: 0, bySupplier: new Map() });
+      const group = groups.get(key);
+      group.items.push(item);
+      const qty = Number(item.current_stock) || 0;
+      group.totalStock += qty;
+      if (mapped) {
+        const supplierLabel = compat.supplier_product_name || "Unknown supplier";
+        group.bySupplier.set(supplierLabel, (group.bySupplier.get(supplierLabel) || 0) + qty);
+      }
     }
-    return Array.from(groups.values()).sort((a, b) => {
-      if (a.key === "__unmapped__") return -1;
-      if (b.key === "__unmapped__") return 1;
-      return a.label.localeCompare(b.label);
-    });
+    return Array.from(groups.values())
+      .map(g => ({ ...g, bySupplier: Array.from(g.bySupplier.entries()).sort((a, b) => b[1] - a[1]) }))
+      .sort((a, b) => {
+        if (a.key === "__unmapped__") return -1;
+        if (b.key === "__unmapped__") return 1;
+        return a.label.localeCompare(b.label);
+      });
   })();
 
   return (
@@ -1494,7 +1646,9 @@ export default function Inventory() {
                   <StockRow key={item.id} item={item} supplierMap={supplierMap}
                     countedToday={countedTodayIds.has(item.id)}
                     mapped={compatById[item.id]?.mapping_state === "approved"}
+                    images={imagesByItem[item.id]}
                     onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                    onOpenLightbox={openLightbox}
                     onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
                 ))}
               </div>
@@ -1502,16 +1656,30 @@ export default function Inventory() {
               <div className="space-y-4">
                 {stockGroups.map(group => (
                   <div key={group.key} className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
-                    <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-secondary/30">
-                      {!group.mapped && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
-                      <span className="text-sm font-semibold text-foreground">{group.label}</span>
-                      <span className="text-xs text-muted-foreground">({group.items.length})</span>
+                    <div className="px-5 py-3 border-b border-border bg-secondary/30">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {!group.mapped && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                        <span className="text-sm font-semibold text-foreground">{group.label}</span>
+                        <span className="text-xs text-muted-foreground">({group.items.length} row{group.items.length !== 1 ? "s" : ""})</span>
+                        {group.mapped && (
+                          <span className="text-sm font-bold text-primary ml-auto">
+                            {group.totalStock} {group.items[0]?.unit || "pieces"}
+                          </span>
+                        )}
+                      </div>
+                      {group.mapped && group.bySupplier.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {group.bySupplier.map(([name, qty]) => `${name}: ${qty}`).join(" · ")}
+                        </p>
+                      )}
                     </div>
                     {group.items.map(item => (
                       <StockRow key={item.id} item={item} supplierMap={supplierMap}
                         countedToday={countedTodayIds.has(item.id)}
                         mapped={compatById[item.id]?.mapping_state === "approved"}
+                        images={imagesByItem[item.id]}
                         onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                        onOpenLightbox={openLightbox}
                         onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
                     ))}
                   </div>
@@ -1523,7 +1691,9 @@ export default function Inventory() {
                   <StockGalleryCard key={item.id} item={item}
                     countedToday={countedTodayIds.has(item.id)}
                     mapped={compatById[item.id]?.mapping_state === "approved"}
-                    onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem} />
+                    images={imagesByItem[item.id]}
+                    onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                    onOpenLightbox={openLightbox} />
                 ))}
               </div>
             )}
@@ -1630,7 +1800,8 @@ export default function Inventory() {
         <ItemFormModal open={showAdd} onClose={() => setShowAdd(false)} suppliers={suppliers} />
       )}
       {editItem && (
-        <ItemFormModal open={!!editItem} onClose={() => setEditItem(null)} existing={editItem} suppliers={suppliers} />
+        <ItemFormModal open={!!editItem} onClose={() => setEditItem(null)} existing={editItem} suppliers={suppliers}
+          images={imagesByItem[editItem?.id] || []} />
       )}
       {showAddCatalog && (
         <CatalogItemFormModal open={showAddCatalog} onClose={() => setShowAddCatalog(false)} />
@@ -1639,7 +1810,8 @@ export default function Inventory() {
         <CatalogItemFormModal open={!!editCatalogItem} onClose={() => setEditCatalogItem(null)} existing={editCatalogItem} />
       )}
       {countItem && (
-        <StockCountModal open={!!countItem} onClose={() => setCountItem(null)} item={countItem} currentUser={currentUser} />
+        <StockCountModal open={!!countItem} onClose={() => setCountItem(null)} item={countItem} currentUser={currentUser}
+          compat={compatById[countItem?.id]} />
       )}
       {historyItem && (
         <MovementHistoryModal open={!!historyItem} onClose={() => setHistoryItem(null)} item={historyItem}
@@ -1649,6 +1821,9 @@ export default function Inventory() {
         <MapIdentityModal open={!!mapItem} onClose={() => setMapItem(null)} item={mapItem} suppliers={suppliers}
           internalProducts={internalProducts} internalVariants={internalVariants}
           supplierProducts={supplierIdentityProducts} supplierVariants={supplierIdentityVariants} />
+      )}
+      {lightbox && (
+        <ImageLightbox images={lightbox.images} startIndex={lightbox.startIndex} onClose={() => setLightbox(null)} />
       )}
     </div>
   );

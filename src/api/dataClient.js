@@ -409,8 +409,27 @@ const ENTITY_CONFIG = {
         reason: payload.reason,
         related_order_id: payload.related_order_id ?? null,
         related_purchase_order_id: payload.related_purchase_order_id ?? null,
+        inventory_product_id: payload.inventory_product_id ?? null,
+        inventory_variant_id: payload.inventory_variant_id ?? null,
+        inventory_supplier_product_id: payload.inventory_supplier_product_id ?? null,
+        inventory_supplier_variant_id: payload.inventory_supplier_variant_id ?? null,
         created_by: payload.created_by,
         created_by_name: payload.created_by_name,
+      });
+    },
+  },
+  InventoryImage: {
+    table: 'inventory_images',
+    tenantScoped: true,
+    sortMap: {
+      created_date: 'created_at',
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_id: payload.inventory_id,
+        image_ref: payload.image_ref,
+        sort_order: numberOrUndefined(payload.sort_order) ?? 0,
+        created_by: payload.created_by,
       });
     },
   },
