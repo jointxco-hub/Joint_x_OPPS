@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X, ClipboardCheck, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -412,6 +412,146 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
   );
 }
 
+const MOVEMENT_TYPE_LABEL = {
+  count: "Count",
+  manual_adjust: "Manual adjustment",
+  receive: "Received",
+  order_pick: "Order pick",
+  return: "Return",
+  damage: "Damage",
+  transfer: "Transfer",
+};
+
+function StockCountModal({ open, onClose, item, currentUser }) {
+  const qc = useQueryClient();
+  const [physicalQty, setPhysicalQty] = useState(String(item?.current_stock ?? 0));
+  const [location, setLocation] = useState(item?.location || "");
+  const [notes, setNotes] = useState("");
+
+  const before = Number(item?.current_stock) || 0;
+  const after = physicalQty === "" ? before : Number(physicalQty);
+  const delta = after - before;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      await dataClient.entities.InventoryItem.update(item.id, {
+        current_stock: after,
+        location: location || null,
+      });
+      await dataClient.entities.InventoryMovement.create({
+        inventory_id: item.id,
+        movement_type: "count",
+        quantity_before: before,
+        quantity_after: after,
+        quantity_delta: delta,
+        location: location || null,
+        reason: notes || null,
+        created_by: currentUser?.id || null,
+        created_by_name: currentUser?.full_name || currentUser?.email || null,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["inventoryMovements"] });
+      toast.success(
+        delta === 0 ? "Count confirmed — no change" : `Count saved — ${delta > 0 ? "+" : ""}${delta} ${item.unit || ""}`
+      );
+      onClose();
+    },
+    onError: (err) => toast.error((/** @type {any} */ (err))?.message || "Failed to save count"),
+  });
+
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={`Count: ${item?.name ?? ""}`}
+      size="sm"
+      footer={
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            {mutation.isPending ? "Saving…" : "Confirm count"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3 py-2">
+        {item?.sku && <p className="text-xs text-muted-foreground font-mono">{item.sku}</p>}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">System stock</label>
+            <div className="h-11 md:h-10 rounded-xl border border-input bg-secondary/40 px-3 flex items-center text-sm text-muted-foreground">
+              {before} {item?.unit}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Physical count *</label>
+            <Input type="number" value={physicalQty} onChange={e => setPhysicalQty(e.target.value)}
+              autoFocus className="h-11 md:h-10" />
+          </div>
+        </div>
+        {delta !== 0 && (
+          <p className={`text-xs font-semibold ${delta > 0 ? "text-emerald-600" : "text-red-600"}`}>
+            {delta > 0 ? "+" : ""}{delta} {item?.unit} difference from system stock
+          </p>
+        )}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Location / bin</label>
+          <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="Shelf A3" className="h-11 md:h-10" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Notes</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Reason for the difference, if any…"
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-16" />
+        </div>
+      </div>
+    </ResponsiveModal>
+  );
+}
+
+function MovementHistoryModal({ open, onClose, item, movements }) {
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={`History: ${item?.name ?? ""}`}
+      size="sm"
+      footer={<div className="flex justify-end"><Button variant="outline" onClick={onClose}>Close</Button></div>}
+    >
+      <div className="py-2">
+        {movements.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">No recorded movements yet for this item.</p>
+        ) : (
+          <div className="space-y-3">
+            {movements.map((/** @type {any} */ m) => (
+              <div key={m.id} className="border-b border-border last:border-0 pb-3 last:pb-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-foreground">
+                    {MOVEMENT_TYPE_LABEL[m.movement_type] || m.movement_type}
+                  </span>
+                  <span className={`text-sm font-semibold ${m.quantity_delta > 0 ? "text-emerald-600" : m.quantity_delta < 0 ? "text-red-600" : "text-muted-foreground"}`}>
+                    {m.quantity_delta > 0 ? "+" : ""}{m.quantity_delta}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {m.quantity_before} → {m.quantity_after}
+                  {m.location && ` · ${m.location}`}
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {m.created_by_name || "Unknown"} · {m.created_at ? new Date(m.created_at).toLocaleString() : ""}
+                </p>
+                {m.reason && <p className="text-xs text-foreground mt-1">{m.reason}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </ResponsiveModal>
+  );
+}
+
 function ProductImage({ urls, url, name }) {
   const candidates = Array.isArray(urls) && urls.length > 0 ? urls : [url].filter(Boolean);
   const [index, setIndex] = useState(0);
@@ -543,6 +683,8 @@ export default function Inventory() {
   const [addingId, setAddingId] = useState(null);
   const [showAddCatalog, setShowAddCatalog] = useState(false);
   const [editCatalogItem, setEditCatalogItem] = useState(/** @type {any} */ (null));
+  const [countItem, setCountItem] = useState(/** @type {any} */ (null));
+  const [historyItem, setHistoryItem] = useState(/** @type {any} */ (null));
   const queryClient = useQueryClient();
 
   const { data: inventory = [], isLoading } = useQuery({
@@ -554,6 +696,17 @@ export default function Inventory() {
     queryKey: ["suppliers"],
     queryFn: () => dataClient.entities.Supplier.list("name", 100),
     staleTime: 300_000,
+  });
+
+  const { data: currentUser } = useQuery({
+    queryKey: ["currentUser", "inventory"],
+    queryFn: () => dataClient.auth.me(),
+    staleTime: 300_000,
+  });
+
+  const { data: movements = [] } = useQuery({
+    queryKey: ["inventoryMovements"],
+    queryFn: () => dataClient.entities.InventoryMovement.list("created_date", 500),
   });
 
   const { data: catalogItems = [], isLoading: catalogLoading, refetch: refetchCatalog } = useQuery({
@@ -672,6 +825,17 @@ export default function Inventory() {
   const lowStock = inventory.filter(i => !i.is_archived && i.reorder_point != null && i.current_stock <= i.reorder_point);
 
   const inStockNames = new Set(inventory.filter(i => !i.is_archived).map(i => (/** @type {any} */ (i)).name?.toLowerCase()));
+
+  const movementsByItem = {};
+  for (const m of (/** @type {any[]} */ (movements))) {
+    (movementsByItem[m.inventory_id] ??= []).push(m);
+  }
+  const todayStr = new Date().toDateString();
+  const countedTodayIds = new Set(
+    (/** @type {any[]} */ (movements))
+      .filter(m => m.movement_type === "count" && m.created_at && new Date(m.created_at).toDateString() === todayStr)
+      .map(m => m.inventory_id)
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -798,10 +962,21 @@ export default function Inventory() {
                               {margin !== null && ` / ${margin}% margin`}
                             </p>
                           )}
+                          {countedTodayIds.has(i.id) && (
+                            <p className="text-xs text-emerald-600 font-medium mt-1">✓ Counted today</p>
+                          )}
                         </div>
-                        <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground mt-0.5">
-                          <Pencil className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-2.5 mt-0.5">
+                          <button onClick={() => setCountItem(i)} title="Count stock" className="text-muted-foreground hover:text-primary">
+                            <ClipboardCheck className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => setHistoryItem(i)} title="Movement history" className="text-muted-foreground hover:text-foreground">
+                            <History className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground">
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Desktop */}
@@ -833,6 +1008,13 @@ export default function Inventory() {
                           )}
                         </div>
                         <div className="col-span-1 flex items-center gap-1.5 justify-end">
+                          <button onClick={() => setCountItem(i)} title="Count stock"
+                            className={`transition-all ${countedTodayIds.has(i.id) ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}`}>
+                            <ClipboardCheck className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => setHistoryItem(i)} title="Movement history" className="text-muted-foreground hover:text-foreground transition-all">
+                            <History className="w-3.5 h-3.5" />
+                          </button>
                           <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground transition-all">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
@@ -957,6 +1139,13 @@ export default function Inventory() {
       )}
       {editCatalogItem && (
         <CatalogItemFormModal open={!!editCatalogItem} onClose={() => setEditCatalogItem(null)} existing={editCatalogItem} />
+      )}
+      {countItem && (
+        <StockCountModal open={!!countItem} onClose={() => setCountItem(null)} item={countItem} currentUser={currentUser} />
+      )}
+      {historyItem && (
+        <MovementHistoryModal open={!!historyItem} onClose={() => setHistoryItem(null)} item={historyItem}
+          movements={movementsByItem[historyItem.id] || []} />
       )}
     </div>
   );

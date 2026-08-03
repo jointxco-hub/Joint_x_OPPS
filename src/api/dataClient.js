@@ -383,6 +383,37 @@ const ENTITY_CONFIG = {
       });
     },
   },
+  InventoryMovement: {
+    table: 'inventory_movements',
+    tenantScoped: true,
+    sortMap: {
+      created_date: 'created_at',
+    },
+    filterMap: {
+      created_date: 'created_at',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        created_date: row.created_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_id: payload.inventory_id,
+        movement_type: payload.movement_type,
+        quantity_before: numberOrUndefined(payload.quantity_before),
+        quantity_after: numberOrUndefined(payload.quantity_after),
+        quantity_delta: numberOrUndefined(payload.quantity_delta),
+        location: payload.location,
+        reason: payload.reason,
+        related_order_id: payload.related_order_id ?? null,
+        related_purchase_order_id: payload.related_purchase_order_id ?? null,
+        created_by: payload.created_by,
+        created_by_name: payload.created_by_name,
+      });
+    },
+  },
   User: {
     table: 'users',
     sortMap: {
