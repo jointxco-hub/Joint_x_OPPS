@@ -715,10 +715,21 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
             {productId !== NEW_OPTION && variantsForProduct.map(v => <option key={v.id} value={v.id}>{v.colour_name} / {v.size_name}</option>)}
           </select>
           {variantId === NEW_OPTION && (
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <Input value={newColour} onChange={e => setNewColour(e.target.value)} placeholder="Colour, e.g. Black" className="h-10" />
-              <Input value={newSize} onChange={e => setNewSize(e.target.value)} placeholder="Size, e.g. XL" className="h-10" />
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <Input value={newColour} onChange={e => setNewColour(e.target.value)} placeholder="One exact colour, e.g. Black" className="h-10" />
+                <Input value={newSize} onChange={e => setNewSize(e.target.value)} placeholder="One exact size, e.g. XL" className="h-10" />
+              </div>
+              <button type="button" onClick={() => { setNewColour("Standard"); setNewSize("Standard"); }}
+                className="text-xs text-primary mt-1.5 hover:underline">
+                Not a garment? Use "Standard" for colour and size
+              </button>
+              {(newColour.includes(",") || newSize.includes(",")) && (
+                <p className="text-xs text-amber-600 mt-1.5">
+                  This looks like more than one colour/size. Each combination needs its own mapping — this field should be one exact value, not a list.
+                </p>
+              )}
+            </>
           )}
         </div>
 
@@ -761,12 +772,23 @@ function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, in
             ))}
           </select>
           {supplierVariantId === NEW_OPTION && (
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <Input value={newSupplierSku} onChange={e => setNewSupplierSku(e.target.value)} placeholder="Supplier SKU" className="h-10" />
-              <Input value={newUnitCost} onChange={e => setNewUnitCost(e.target.value)} type="number" placeholder="Unit cost (R)" className="h-10" />
-              <Input value={newSupplierColour} onChange={e => setNewSupplierColour(e.target.value)} placeholder="Supplier colour name" className="h-10" />
-              <Input value={newSupplierSize} onChange={e => setNewSupplierSize(e.target.value)} placeholder="Supplier size name" className="h-10" />
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <Input value={newSupplierSku} onChange={e => setNewSupplierSku(e.target.value)} placeholder="Supplier SKU" className="h-10" />
+                <Input value={newUnitCost} onChange={e => setNewUnitCost(e.target.value)} type="number" placeholder="Unit cost (R)" className="h-10" />
+                <Input value={newSupplierColour} onChange={e => setNewSupplierColour(e.target.value)} placeholder="One exact supplier colour" className="h-10" />
+                <Input value={newSupplierSize} onChange={e => setNewSupplierSize(e.target.value)} placeholder="One exact supplier size" className="h-10" />
+              </div>
+              <button type="button" onClick={() => { setNewSupplierColour("Standard"); setNewSupplierSize("Standard"); }}
+                className="text-xs text-primary mt-1.5 hover:underline">
+                Not a garment? Use "Standard" for colour and size
+              </button>
+              {(newSupplierColour.includes(",") || newSupplierSize.includes(",")) && (
+                <p className="text-xs text-amber-600 mt-1.5">
+                  This looks like more than one colour/size. Each combination needs its own mapping — this field should be one exact value, not a list.
+                </p>
+              )}
+            </>
           )}
         </div>
 
