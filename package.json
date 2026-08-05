@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test:invoice-reliability": "node --test tests/invoice-reliability.test.mjs",
+    "test:order-invoice-sync": "node --test tests/order-invoice-sync.test.mjs",
     "typecheck": "tsc -p ./jsconfig.json",
     "preview": "vite preview"
   },

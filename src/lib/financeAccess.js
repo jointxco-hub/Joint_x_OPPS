@@ -69,6 +69,17 @@ export const canSeeOperationalOnly = (u) => getFinanceLevel(u) >= 3;
 /** Buying items list — approved items only for ops/production */
 export const canSeeBuyingItems = (u) => getFinanceLevel(u) >= 4;
 
+/**
+ * OPPS invoicing UI — must match the database's actual gate exactly
+ * (is_app_admin() OR user_finance_level() in (1, 2), see
+ * supabase/migrations/20260523_finance_rls_tighten.sql). Levels 3/4
+ * (ops/team) must not see invoice controls they cannot actually save.
+ */
+export const canAccessInvoices = (u) => {
+  const level = getFinanceLevel(u);
+  return level === 1 || level === 2;
+};
+
 // ── Action checks ─────────────────────────────────────────────
 // NOTE: These are frontend guards. Sensitive write actions are also
 // enforced by Supabase RLS on the finance tables.

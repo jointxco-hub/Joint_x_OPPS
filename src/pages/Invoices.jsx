@@ -12,6 +12,7 @@ import {
   createInvoiceExportRecord,
   duplicateInvoiceAsDraft,
   getInvoice,
+  linkInvoiceToOrder,
   listInvoiceActivity,
   listSiblingInvoicesForOrder,
   listInvoices,
@@ -20,9 +21,11 @@ import {
   markInvoicePaid,
   markInvoicePartiallyPaid,
   markInvoiceVoid,
+  syncInvoiceItemsFromOrder,
+  unlinkInvoiceFromOrder,
   updateInvoice,
 } from "@/api/invoices";
-import { getFinanceLevel } from "@/lib/financeAccess";
+import { canAccessInvoices } from "@/lib/financeAccess";
 import InvoiceList from "@/features/invoices/InvoiceList";
 import InvoiceCreateFlow from "@/features/invoices/InvoiceCreateFlow";
 import InvoiceDetailDrawer from "@/features/invoices/InvoiceDetailDrawer";
@@ -59,7 +62,7 @@ export default function Invoices() {
     staleTime: 300_000,
   });
 
-  const canAccess = getFinanceLevel(userQuery.data) > 0;
+  const canAccess = canAccessInvoices(userQuery.data);
   const linkedInvoiceId = searchParams.get("invoice");
 
   useEffect(() => {
@@ -246,6 +249,42 @@ export default function Invoices() {
     onError: (error) => toast.error(error?.message || "Could not duplicate invoice"),
   });
 
+  const invalidateAfterOrderLinkChange = (invoice) => {
+    queryClient.invalidateQueries({ queryKey: ["invoice", invoice.id] });
+    queryClient.invalidateQueries({ queryKey: ["invoiceActivity", invoice.id] });
+    queryClient.invalidateQueries({ queryKey: ["invoices"] });
+    if (invoice.source_order_id) {
+      queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", invoice.source_order_id] });
+    }
+  };
+
+  const linkOrderMutation = useMutation({
+    mutationFn: ({ invoice, order }) => linkInvoiceToOrder(invoice, order),
+    onSuccess: (saved, { order }) => {
+      toast.success(`Linked to order ${order.order_number || order.id}`);
+      invalidateAfterOrderLinkChange(saved);
+    },
+    onError: (error) => toast.error(error?.message || "Could not link this order"),
+  });
+
+  const unlinkOrderMutation = useMutation({
+    mutationFn: (invoice) => unlinkInvoiceFromOrder(invoice),
+    onSuccess: (saved) => {
+      toast.success("Invoice unlinked from order");
+      invalidateAfterOrderLinkChange(saved);
+    },
+    onError: (error) => toast.error(error?.message || "Could not unlink this order"),
+  });
+
+  const syncOrderMutation = useMutation({
+    mutationFn: ({ invoice, order }) => syncInvoiceItemsFromOrder(invoice, order),
+    onSuccess: (saved) => {
+      toast.success("Invoice items synced from order");
+      invalidateAfterOrderLinkChange(saved);
+    },
+    onError: (error) => toast.error(error?.message || "Could not sync from this order"),
+  });
+
   if (userQuery.isLoading) {
     return <div className="min-h-screen bg-background p-8 text-sm text-muted-foreground">Checking invoice access...</div>;
   }
@@ -359,6 +398,10 @@ export default function Invoices() {
         onMarkVoid={(invoice) => voidMutation.mutate(invoice)}
         onVoidDuplicate={(invoice) => voidMutation.mutate(invoice)}
         onDuplicateDraft={(invoice) => duplicateMutation.mutate(invoice)}
+        onLinkOrder={(invoice, order) => linkOrderMutation.mutate({ invoice, order })}
+        onUnlinkOrder={(invoice) => unlinkOrderMutation.mutate(invoice)}
+        onSyncFromOrder={(invoice, order) => syncOrderMutation.mutate({ invoice, order })}
+        isOrderLinkPending={linkOrderMutation.isPending || unlinkOrderMutation.isPending || syncOrderMutation.isPending}
       />
     </div>
   );

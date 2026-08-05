@@ -11,7 +11,7 @@ import {
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
 import { isAdmin } from "@/lib/admin";
-import { getFinanceLevel } from "@/lib/financeAccess";
+import { canAccessInvoices } from "@/lib/financeAccess";
 import NotificationsPanel from "@/components/common/NotificationsPanel";
 
 const primaryNav = [
@@ -68,7 +68,7 @@ export default function Layout({ children, currentPageName }) {
 
   const visibleMoreNav = moreNav.filter(item => {
     if (item.adminOnly && !isAdmin(user)) return false;
-    if (item.financeOnly && getFinanceLevel(user) <= 0) return false;
+    if (item.financeOnly && !canAccessInvoices(user)) return false;
     return true;
   });
   const initials = (user?.full_name || user?.email || "U").charAt(0).toUpperCase();

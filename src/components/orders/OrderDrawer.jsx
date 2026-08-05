@@ -58,6 +58,7 @@ import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import OrderFilesTab from "@/components/orders/drawer/OrderFilesTab";
 import { normalizeOrderFileFolders } from "@/components/orders/drawer/OrderDrawerShared";
 import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
+import { canAccessInvoices } from "@/lib/financeAccess";
 
 const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
 
@@ -222,6 +223,34 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
   const [newTaskDeadline, setNewTaskDeadline] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState("_none");
   const queryClient = useQueryClient();
+
+  const currentUserQuery = useQuery({
+    queryKey: ["currentUser", "orderDrawer"],
+    queryFn: () => dataClient.auth.me(),
+    staleTime: 300_000,
+  });
+  const canManageProductsLock = canAccessInvoices(currentUserQuery.data);
+  const isPastConfirmed = order.status && order.status !== "confirmed";
+  const isManuallyLocked = Boolean(order.products_locked_at);
+  const isProductsLocked = isPastConfirmed || isManuallyLocked;
+  const productsLockReason = isManuallyLocked
+    ? `Locked${order.products_locked_by ? ` by ${order.products_locked_by}` : ""} before production.`
+    : isPastConfirmed
+      ? "Locked automatically — this order has moved into production."
+      : "";
+
+  const toggleProductsLock = () => {
+    if (isManuallyLocked) {
+      onUpdate(order.id, { products_locked_at: null, products_locked_by: null });
+      toast.success("Products unlocked");
+    } else {
+      onUpdate(order.id, {
+        products_locked_at: new Date().toISOString(),
+        products_locked_by: currentUserQuery.data?.full_name || currentUserQuery.data?.email || "Unknown",
+      });
+      toast.success("Products locked");
+    }
+  };
 
   const drawerData = useOrderDrawerData(order, tab);
   const {
@@ -850,10 +879,21 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                 </Select>
               </div>
 
-              {/* Products - fully editable */}
+              {/* Products - fully editable, unless locked */}
+              {canManageProductsLock && !isPastConfirmed && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={toggleProductsLock}
+                    className="text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    {isManuallyLocked ? "Unlock products" : "Lock products early"}
+                  </button>
+                </div>
+              )}
               <DrawerSectionBoundary label="Products" resetKey={`${order.id}-products`}>
                 <React.Suspense fallback={<TabSectionFallback label="Products" />}>
-                  <ProductsEditor order={order} onUpdate={onUpdate} />
+                  <ProductsEditor order={order} onUpdate={onUpdate} locked={isProductsLocked} lockReason={productsLockReason} />
                 </React.Suspense>
               </DrawerSectionBoundary>
 
