@@ -49,12 +49,15 @@ function openClientInvoice(invoice, print = false) {
 
 export default function InvoiceDetailDrawer({
   invoice,
+  summaryInvoice,
   activity = [],
   duplicateInvoices = [],
   isActivityLoading = false,
   open,
   isLoading,
+  loadError,
   onOpenChange,
+  onRetry,
   onApprove,
   onEditDraft,
   onMarkExported,
@@ -130,6 +133,12 @@ export default function InvoiceDetailDrawer({
         <div className="overflow-y-auto px-3 py-4 md:px-6 md:py-5">
           {isLoading ? (
             <div className="rounded-2xl border border-border bg-secondary/30 p-6 text-sm text-muted-foreground">Loading invoice details...</div>
+          ) : loadError ? (
+            <InvoiceLoadFailure
+              summary={summaryInvoice}
+              onRetry={onRetry}
+              onClose={() => onOpenChange?.(false)}
+            />
           ) : invoice ? (
             <div className="space-y-3 md:space-y-5">
               {invoice.status === "exported" || invoice.status === "imported_to_zoho" ? (
@@ -355,6 +364,45 @@ export default function InvoiceDetailDrawer({
       }}
     />
     </>
+  );
+}
+
+function InvoiceLoadFailure({ summary, onRetry, onClose }) {
+  const [showSummary, setShowSummary] = useState(false);
+  const reference = summary?.id ? String(summary.id).slice(-8) : "unavailable";
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-5">
+        <p className="flex items-center gap-2 font-semibold text-foreground">
+          <AlertTriangle className="h-4 w-4 text-destructive" /> Invoice details could not be loaded
+        </p>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Invoice details could not be loaded. Saving has been disabled to protect the existing invoice.
+        </p>
+        <p className="mt-2 text-xs text-muted-foreground">Error reference: INVOICE_DETAIL_LOAD_FAILED-{reference}</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button type="button" onClick={onRetry} className="rounded-xl">Retry</Button>
+          <Button type="button" variant="outline" onClick={() => setShowSummary((value) => !value)} className="rounded-xl">
+            {showSummary ? "Hide read-only summary" : "Open read-only summary"}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onClose} className="rounded-xl">Close</Button>
+        </div>
+      </div>
+
+      {showSummary && (
+        <div className="rounded-2xl border border-border bg-card p-4" aria-label="Read-only invoice summary">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Read-only summary</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <Info label="Invoice" value={summary?.invoice_number || "Unavailable"} />
+            <Info label="Customer" value={summary?.customer_name || "Unavailable"} />
+            <Info label="Status" value={summary?.status || "Unavailable"} />
+            <Info label="Total" value={summary?.total != null ? money(summary.total) : "Unavailable"} />
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">Line items and edit actions are intentionally unavailable until Retry succeeds.</p>
+        </div>
+      )}
+    </div>
   );
 }
 

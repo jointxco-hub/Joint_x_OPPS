@@ -3,6 +3,12 @@ import { getCurrentTenantId } from "@/lib/tenantContext";
 import { applyInvoiceTotals, calculateInvoiceLine } from "@/features/invoices/invoiceCalculations";
 import { validateInvoice } from "@/features/invoices/invoiceValidation";
 import {
+  assertInvoiceItemsReadyForSave,
+  completeInvoiceDetail,
+  invoiceJsonValuesEqual,
+  invoiceDiagnostic,
+} from "@/features/invoices/invoiceReliability";
+import {
   ZOHO_INVOICE_EXPORT_TYPE,
   ZOHO_INVOICE_TEMPLATE_VERSION,
 } from "@/features/invoices/zohoInvoiceExportConfig";
@@ -132,6 +138,82 @@ function invoiceItemRecord(item = {}, invoiceId, index = 0) {
   });
 }
 
+function invoiceItemRpcRecord(item = {}, index = 0) {
+  const { invoice_id, tenant_id, id, created_at, ...record } = invoiceItemRecord(item, null, index);
+  return record;
+}
+
+const ATOMIC_SAVE_ERROR_MESSAGES = {
+  INVOICE_AUTH_REQUIRED: "Sign in again before saving this invoice.",
+  INVOICE_ACCESS_DENIED: "This invoice is not available in the active tenant or you do not have permission to change it.",
+  INVOICE_ITEMS_INVALID: "Invoice line items are invalid. Reload the invoice before saving.",
+  INVOICE_EMPTY_ITEMS_BLOCKED: "Add at least one line item before saving.",
+  INVOICE_ITEM_OWNERSHIP_MISMATCH: "One or more line items do not belong to this invoice or tenant.",
+  INVOICE_ITEM_TEMPLATE_TENANT_MISMATCH: "An invoice item template belongs to another tenant. Reload before saving.",
+  INVOICE_CATALOG_ITEM_TENANT_MISMATCH: "A catalog item belongs to another tenant. Reload before saving.",
+  INVOICE_INVENTORY_ITEM_TENANT_MISMATCH: "An inventory item belongs to another tenant. Reload before saving.",
+  INVOICE_NOT_EDITABLE: "Only draft invoices can be edited.",
+  INVOICE_STALE_VERSION: "This invoice changed after you opened it. Reload it before saving.",
+  INVOICE_ITEM_COUNT_CHANGED: "The saved invoice items changed after you opened the editor. Reload before saving.",
+  INVOICE_FALSE_EMPTY_BLOCKED: "Saved invoice items are missing from the editor. Reload before saving.",
+};
+
+const POSTGRES_SAVE_ERROR_MESSAGES = {
+  "22P02": "One or more invoice values has an invalid format. Review the line items and try again.",
+  "23502": "A required invoice item value is missing. Review the highlighted line and try again.",
+  "23503": "A linked invoice item is no longer available. Reload the invoice before saving.",
+  "23514": "An invoice item contains an invalid quantity or amount. Review the line items and try again.",
+};
+
+function atomicSaveError(error) {
+  const rawMessage = String(error?.message || "");
+  const code = Object.keys(ATOMIC_SAVE_ERROR_MESSAGES).find((candidate) => rawMessage.includes(candidate));
+  const postgresMessage = POSTGRES_SAVE_ERROR_MESSAGES[error?.code];
+  return Object.assign(
+    new Error(code ? ATOMIC_SAVE_ERROR_MESSAGES[code] : postgresMessage || rawMessage || "Invoice transaction failed."),
+    {
+      code: code || error?.code || "INVOICE_TRANSACTION_FAILED",
+      cause: error,
+    }
+  );
+}
+
+async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null }) {
+  const itemRows = items.map((item, index) => invoiceItemRpcRecord(item, index));
+  const { data, error } = await supabase.rpc("save_opps_invoice_with_items", {
+    p_tenant_id: tenantId,
+    p_invoice_id: invoiceId,
+    p_invoice: invoice,
+    p_items: itemRows,
+    p_expected_updated_at: expectedUpdatedAt,
+    p_expected_item_count: expectedItemCount,
+  });
+
+  if (error) {
+    const mapped = atomicSaveError(error);
+    invoiceDiagnostic("transactional-save-failed", { invoiceId, code: mapped.code, error: mapped });
+    throw mapped;
+  }
+  if (!data?.ok || !data?.invoice || !Array.isArray(data?.items)) {
+    const malformed = Object.assign(
+      new Error("Invoice transaction returned an incomplete result."),
+      { code: "INVOICE_TRANSACTION_RESULT_INVALID" }
+    );
+    invoiceDiagnostic("transactional-save-failed", { invoiceId, error: malformed });
+    throw malformed;
+  }
+
+  return completeInvoiceDetail(data.invoice, data.items);
+}
+
+async function recordInvoiceItemVersionsSafely(items, invoice, tenantId, userId) {
+  try {
+    await recordInvoiceItemVersions(items, invoice, tenantId, userId);
+  } catch (error) {
+    invoiceDiagnostic("item-version-history-failed", { invoiceId: invoice?.id, error });
+  }
+}
+
 
 function invoiceItemTemplateRecord(item = {}, userId = null) {
   const calculated = calculateInvoiceLine(item);
@@ -194,7 +276,7 @@ function versionSnapshot(item = {}) {
 }
 
 function snapshotsEqual(left, right) {
-  return JSON.stringify(left || {}) === JSON.stringify(right || {});
+  return invoiceJsonValuesEqual(left || {}, right || {});
 }
 
 
@@ -381,33 +463,15 @@ export async function createInvoice(input = {}) {
     throw Object.assign(new Error("Invoice validation failed."), { validation });
   }
 
-  const { data: createdInvoice, error } = await supabase
-    .from("opps_invoices")
-    .insert({
-      ...invoiceRecord(invoice, userId),
-      tenant_id: tenantId,
-      created_by: userId,
-    })
-    .select("*")
-    .single();
-
-  if (error) throw new Error(error.message);
-
-  const linkedItems = await syncClientItemTemplates(items, createdInvoice.customer_id, tenantId, userId);
-  if (linkedItems.length > 0) {
-    const itemRows = linkedItems.map((item, index) => ({ ...invoiceItemRecord(item, createdInvoice.id, index), tenant_id: tenantId }));
-    const { error: itemError } = await supabase.from("opps_invoice_items").insert(itemRows);
-    if (itemError) throw new Error(itemError.message);
-  }
-
-  await recordInvoiceItemVersions(linkedItems, createdInvoice, tenantId, userId);
-
-  await createInvoiceActivity(createdInvoice.id, {
-    activity_type: "invoice_created",
-    to_status: createdInvoice.status,
+  const linkedItems = await syncClientItemTemplates(items, input.customer_id, tenantId, userId);
+  const createdInvoice = await saveInvoiceWithItemsTransaction({
+    tenantId,
+    invoice: invoiceRecord(invoice, userId),
+    items: linkedItems,
+    expectedItemCount: 0,
   });
-
-  return getInvoice(createdInvoice.id, { includeItems: true });
+  await recordInvoiceItemVersionsSafely(linkedItems, createdInvoice, tenantId, userId);
+  return createdInvoice;
 }
 
 export async function updateInvoice(id, input = {}) {
@@ -419,10 +483,24 @@ export async function updateInvoice(id, input = {}) {
   const { invoice, items } = hasItems
     ? applyInvoiceTotals(input, rawItems)
     : { invoice: input, items: [] };
-  if (hasItems) await assertInvoiceItemChangeReasons(items, tenantId);
+  if (hasItems) {
+    try {
+      assertInvoiceItemsReadyForSave(input);
+    } catch (error) {
+      invoiceDiagnostic("blocked-false-empty-save", {
+        invoiceId: id,
+        code: error?.code,
+        error,
+        expectedCount: input.expected_item_count,
+        actualCount: rawItems.length,
+      });
+      throw error;
+    }
+    await assertInvoiceItemChangeReasons(items, tenantId);
+  }
   const { data: currentInvoice, error: currentError } = await supabase
     .from("opps_invoices")
-    .select("id,status")
+    .select("id,status,updated_at,customer_id")
     .eq("id", id)
     .eq("tenant_id", tenantId)
     .single();
@@ -436,6 +514,20 @@ export async function updateInvoice(id, input = {}) {
 
   if (currentInvoice.status !== "draft" && !isStatusOnlyApproval) {
     throw new Error("Only draft invoices can be edited.");
+  }
+
+  if (hasItems) {
+    const linkedItems = await syncClientItemTemplates(items, input.customer_id, tenantId, userId);
+    const savedInvoice = await saveInvoiceWithItemsTransaction({
+      tenantId,
+      invoiceId: id,
+      invoice: invoiceRecord(invoice, userId),
+      items: linkedItems,
+      expectedUpdatedAt: input.expected_updated_at || currentInvoice.updated_at,
+      expectedItemCount: Number(input.expected_item_count),
+    });
+    await recordInvoiceItemVersionsSafely(linkedItems, savedInvoice, tenantId, userId);
+    return savedInvoice;
   }
 
   const { data, error } = await supabase
@@ -457,24 +549,7 @@ export async function updateInvoice(id, input = {}) {
     });
   }
 
-  if (hasItems) {
-    const linkedItems = await syncClientItemTemplates(items, data.customer_id, tenantId, userId);
-    const { error: deleteError } = await supabase
-      .from("opps_invoice_items")
-      .delete()
-      .eq("invoice_id", id)
-      .eq("tenant_id", tenantId);
-    if (deleteError) throw new Error(deleteError.message);
-
-    if (linkedItems.length > 0) {
-      const itemRows = linkedItems.map((item, index) => ({ ...invoiceItemRecord(item, id, index), tenant_id: tenantId }));
-      const { error: itemError } = await supabase.from("opps_invoice_items").insert(itemRows);
-      if (itemError) throw new Error(itemError.message);
-    }
-
-    await recordInvoiceItemVersions(linkedItems, data, tenantId, userId);
-  }
-  return hasItems ? getInvoice(id, { includeItems: true }) : data;
+  return data;
 }
 
 export async function getInvoice(id, options = {}) {
@@ -487,11 +562,14 @@ export async function getInvoice(id, options = {}) {
     .eq("tenant_id", tenantId)
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    invoiceDiagnostic("invoice-detail-query-failed", { invoiceId: id, error });
+    throw new Error(`Invoice detail query failed: ${error.message}`);
+  }
   if (!options.includeItems) return data;
 
   const items = await listInvoiceItems(id);
-  return { ...data, items };
+  return completeInvoiceDetail(data, items);
 }
 
 export async function listInvoices(options = {}) {
@@ -537,7 +615,13 @@ export async function listInvoiceItems(invoiceId) {
     .eq("tenant_id", tenantId)
     .order("line_number", { ascending: true });
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    invoiceDiagnostic("invoice-item-query-failed", { invoiceId, error });
+    throw Object.assign(
+      new Error(`Invoice item query failed: ${error.message}`),
+      { code: "INVOICE_ITEM_QUERY_FAILED" }
+    );
+  }
   return data || [];
 }
 

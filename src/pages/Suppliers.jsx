@@ -66,6 +66,25 @@ export default function Suppliers() {
     queryFn: () => dataClient.entities.Supplier.list('name', 100)
   });
 
+  // Dynamic — reflects Phase 1 inventory identity mapping (Inventory page
+  // "Map identity"), not the manually-entered products list below.
+  const { data: linkedSupplierProducts = [] } = useQuery({
+    queryKey: ['inventorySupplierProducts'],
+    queryFn: () => dataClient.entities.InventorySupplierProduct.list('official_product_name', 500)
+  });
+  const { data: linkedSupplierVariants = [] } = useQuery({
+    queryKey: ['inventorySupplierVariants'],
+    queryFn: () => dataClient.entities.InventorySupplierVariant.list('supplier_sku', 1000)
+  });
+  const variantCountByProduct = linkedSupplierVariants.reduce((acc, v) => {
+    acc[v.inventory_supplier_product_id] = (acc[v.inventory_supplier_product_id] || 0) + 1;
+    return acc;
+  }, {});
+  const linkedProductsBySupplier = linkedSupplierProducts.reduce((acc, p) => {
+    (acc[p.supplier_id] ??= []).push(p);
+    return acc;
+  }, {});
+
   const createMutation = useMutation({
     mutationFn: (data) => dataClient.entities.Supplier.create(data),
     onSuccess: () => {
@@ -622,6 +641,26 @@ export default function Suppliers() {
                           <p className="text-sm text-muted-foreground bg-secondary/40 p-3 rounded-xl mb-4 line-clamp-2">
                             {supplier.notes}
                           </p>
+                        )}
+                        {(linkedProductsBySupplier[supplier.id] || []).length > 0 && (
+                          <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 p-3">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary">
+                              Mapped stock items ({linkedProductsBySupplier[supplier.id].length})
+                            </p>
+                            <div className="space-y-1.5">
+                              {linkedProductsBySupplier[supplier.id].slice(0, 4).map((product) => (
+                                <div key={product.id} className="flex items-center justify-between gap-3 text-sm">
+                                  <span className="min-w-0 truncate text-foreground">{product.official_product_name}</span>
+                                  <span className="shrink-0 text-xs text-muted-foreground">
+                                    {variantCountByProduct[product.id] || 0} variant{variantCountByProduct[product.id] === 1 ? "" : "s"}
+                                  </span>
+                                </div>
+                              ))}
+                              {linkedProductsBySupplier[supplier.id].length > 4 && (
+                                <p className="text-xs text-muted-foreground">+{linkedProductsBySupplier[supplier.id].length - 4} more</p>
+                              )}
+                            </div>
+                          </div>
                         )}
                         {Array.isArray(supplier.products) && supplier.products.length > 0 && (
                           <div className="mb-4 rounded-xl border border-border bg-secondary/30 p-3">

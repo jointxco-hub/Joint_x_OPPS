@@ -383,6 +383,136 @@ const ENTITY_CONFIG = {
       });
     },
   },
+  InventoryMovement: {
+    table: 'inventory_movements',
+    tenantScoped: true,
+    sortMap: {
+      created_date: 'created_at',
+    },
+    filterMap: {
+      created_date: 'created_at',
+    },
+    normalize(row) {
+      return {
+        ...row,
+        created_date: row.created_at,
+      };
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_id: payload.inventory_id,
+        movement_type: payload.movement_type,
+        quantity_before: numberOrUndefined(payload.quantity_before),
+        quantity_after: numberOrUndefined(payload.quantity_after),
+        quantity_delta: numberOrUndefined(payload.quantity_delta),
+        location: payload.location,
+        reason: payload.reason,
+        related_order_id: payload.related_order_id ?? null,
+        related_purchase_order_id: payload.related_purchase_order_id ?? null,
+        inventory_product_id: payload.inventory_product_id ?? null,
+        inventory_variant_id: payload.inventory_variant_id ?? null,
+        inventory_supplier_product_id: payload.inventory_supplier_product_id ?? null,
+        inventory_supplier_variant_id: payload.inventory_supplier_variant_id ?? null,
+        created_by: payload.created_by,
+        created_by_name: payload.created_by_name,
+      });
+    },
+  },
+  InventoryImage: {
+    table: 'inventory_images',
+    tenantScoped: true,
+    sortMap: {
+      created_date: 'created_at',
+    },
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_id: payload.inventory_id,
+        image_ref: payload.image_ref,
+        sort_order: numberOrUndefined(payload.sort_order) ?? 0,
+        created_by: payload.created_by,
+      });
+    },
+  },
+  InventoryProduct: {
+    table: 'inventory_products',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        internal_code: payload.internal_code,
+        internal_short_name: payload.internal_short_name,
+        internal_name: payload.internal_name,
+        internal_description: payload.internal_description,
+        category: payload.category,
+        garment_type: payload.garment_type,
+        weight_gsm: numberOrUndefined(payload.weight_gsm),
+        fit: payload.fit,
+        material: payload.material,
+      });
+    },
+  },
+  InventoryVariant: {
+    table: 'inventory_variants',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_product_id: payload.inventory_product_id,
+        internal_sku: payload.internal_sku,
+        colour_code: payload.colour_code,
+        colour_name: payload.colour_name,
+        size_code: payload.size_code,
+        size_name: payload.size_name,
+      });
+    },
+  },
+  InventorySupplierProduct: {
+    table: 'inventory_supplier_products',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_product_id: payload.inventory_product_id,
+        supplier_id: payload.supplier_id,
+        official_product_code: payload.official_product_code,
+        official_product_name: payload.official_product_name,
+        compatibility_status: payload.compatibility_status ?? 'exact',
+      });
+    },
+  },
+  InventorySupplierVariant: {
+    table: 'inventory_supplier_variants',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        inventory_supplier_product_id: payload.inventory_supplier_product_id,
+        inventory_variant_id: payload.inventory_variant_id,
+        supplier_sku: payload.supplier_sku,
+        official_colour_name: payload.official_colour_name,
+        official_size_name: payload.official_size_name,
+        unit_cost: numberOrUndefined(payload.unit_cost),
+      });
+    },
+  },
+  InventoryLegacyCompat: {
+    table: 'inventory_legacy_compat_v',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+  },
   User: {
     table: 'users',
     sortMap: {

@@ -1,7 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
+import { getCurrentTenantId } from "@/lib/tenantContext";
+import { useSignedFileUrl } from "@/lib/privateFiles";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X } from "lucide-react";
+import { Plus, Search, Boxes, AlertTriangle, Archive, Pencil, LayoutGrid, List, Package, RefreshCw, Download, Trash2, X, ClipboardCheck, History, Tag, Rows3, LayoutList, Camera, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +47,20 @@ const CATEGORY_IMAGE_FALLBACKS = {
   hats: "https://images.unsplash.com/photo-1588850561407-ed78c282e89b?w=800",
   bottoms: "https://images.unsplash.com/photo-1594938298603-c8148c4dae35?w=800",
   labels: "https://images.unsplash.com/photo-1607344645866-009c320b63e0?w=800",
+};
+
+// Stock items have no per-item photo of their own. This maps the inventory
+// category enum to the same representative stock photos used elsewhere, so
+// the gallery view has something visual to show. Categories without a
+// proven-working fallback show the generic package icon instead of guessing
+// at an unverified image URL.
+const INV_CATEGORY_IMAGE = {
+  tees: CATEGORY_IMAGE_FALLBACKS.tshirts,
+  hoodies: CATEGORY_IMAGE_FALLBACKS.hoodies,
+  sweaters: CATEGORY_IMAGE_FALLBACKS.sweaters,
+  headwear: CATEGORY_IMAGE_FALLBACKS.hats,
+  bottoms: CATEGORY_IMAGE_FALLBACKS.bottoms,
+  labels: CATEGORY_IMAGE_FALLBACKS.labels,
 };
 
 const getProductImageUrls = (product) => {
@@ -286,10 +303,37 @@ const EMPTY_FORM = {
   cost_price: "", selling_price: "", location: "", preferred_supplier_id: "",
 };
 
-function ItemFormModal({ open, onClose, existing, suppliers }) {
+function ItemFormModal({ open, onClose, existing, suppliers, images = [] }) {
   const qc = useQueryClient();
   const [form, setForm] = useState(existing ?? EMPTY_FORM);
+  const [uploading, setUploading] = useState(false);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const handleFilesSelected = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length || !existing) return;
+    setUploading(true);
+    try {
+      let order = images.length;
+      for (const file of files) {
+        const { file_url } = await dataClient.integrations.Core.UploadFile({ file, visibility: "private", folder: "inventory" });
+        await dataClient.entities.InventoryImage.create({ inventory_id: existing.id, image_ref: file_url, sort_order: order++ });
+      }
+      qc.invalidateQueries({ queryKey: ["inventoryImages"] });
+      toast.success(files.length > 1 ? "Photos added" : "Photo added");
+    } catch (err) {
+      toast.error((/** @type {any} */ (err))?.message || "Failed to upload photo");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteImageMutation = useMutation({
+    mutationFn: (/** @type {string} */ id) => dataClient.entities.InventoryImage.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventoryImages"] }),
+    onError: (/** @type {any} */ err) => toast.error(err?.message || "Failed to remove photo"),
+  });
 
   const mutation = useMutation({
     mutationFn: (data) =>
@@ -338,6 +382,29 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
       }
     >
       <form className="space-y-3 py-2" onSubmit={handleSubmit}>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Photos</label>
+          {existing ? (
+            <div className="flex flex-wrap gap-2">
+              {images.map((/** @type {any} */ img) => (
+                <div key={img.id} className="relative w-16 h-16">
+                  <ImageThumb imageRef={img.image_ref} alt="" className="w-16 h-16 rounded-xl overflow-hidden border border-border block" />
+                  <button type="button" onClick={() => deleteImageMutation.mutate(img.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-background border border-border flex items-center justify-center shadow-sm hover:bg-red-50">
+                    <X className="w-3 h-3 text-muted-foreground hover:text-red-500" />
+                  </button>
+                </div>
+              ))}
+              <label className="w-16 h-16 rounded-xl border-2 border-dashed border-input flex flex-col items-center justify-center cursor-pointer text-muted-foreground hover:text-primary hover:border-primary transition-all">
+                {uploading ? <span className="text-[10px]">…</span> : <Camera className="w-5 h-5" />}
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handleFilesSelected} disabled={uploading} />
+              </label>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Save the item first to add photos.</p>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-foreground block mb-1">Name *</label>
@@ -409,6 +476,719 @@ function ItemFormModal({ open, onClose, existing, suppliers }) {
         </div>
       </form>
     </ResponsiveModal>
+  );
+}
+
+const MOVEMENT_TYPE_LABEL = {
+  count: "Count",
+  manual_adjust: "Manual adjustment",
+  receive: "Received",
+  order_pick: "Order pick",
+  return: "Return",
+  damage: "Damage",
+  transfer: "Transfer",
+};
+
+function StockCountModal({ open, onClose, item, currentUser, compat }) {
+  const qc = useQueryClient();
+  const [physicalQty, setPhysicalQty] = useState(String(item?.current_stock ?? 0));
+  const [location, setLocation] = useState(item?.location || "");
+  const [notes, setNotes] = useState("");
+
+  const before = Number(item?.current_stock) || 0;
+  const after = physicalQty === "" ? before : Number(physicalQty);
+  const delta = after - before;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      await dataClient.entities.InventoryItem.update(item.id, {
+        current_stock: after,
+        location: location || null,
+      });
+      await dataClient.entities.InventoryMovement.create({
+        inventory_id: item.id,
+        movement_type: "count",
+        quantity_before: before,
+        quantity_after: after,
+        quantity_delta: delta,
+        location: location || null,
+        reason: notes || null,
+        inventory_product_id: compat?.mapping_state === "approved" ? compat.proposed_inventory_product_id : null,
+        inventory_variant_id: compat?.mapping_state === "approved" ? compat.proposed_inventory_variant_id : null,
+        inventory_supplier_product_id: compat?.mapping_state === "approved" ? compat.proposed_supplier_product_id : null,
+        inventory_supplier_variant_id: compat?.mapping_state === "approved" ? compat.proposed_supplier_variant_id : null,
+        created_by: currentUser?.id || null,
+        created_by_name: currentUser?.full_name || currentUser?.email || null,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["inventoryMovements"] });
+      toast.success(
+        delta === 0 ? "Count confirmed — no change" : `Count saved — ${delta > 0 ? "+" : ""}${delta} ${item.unit || ""}`
+      );
+      onClose();
+    },
+    onError: (err) => toast.error((/** @type {any} */ (err))?.message || "Failed to save count"),
+  });
+
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={`Count: ${item?.name ?? ""}`}
+      size="sm"
+      footer={
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            {mutation.isPending ? "Saving…" : "Confirm count"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3 py-2">
+        {item?.sku && <p className="text-xs text-muted-foreground font-mono">{item.sku}</p>}
+        {compat?.mapping_state === "approved" ? (
+          <p className="text-xs text-emerald-600">
+            {compat.internal_code} — {compat.internal_name} · {compat.supplier_product_name}
+          </p>
+        ) : (
+          <p className="text-xs text-amber-600">Not mapped to an identity yet — this count won't record which exact variant it was.</p>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">System stock</label>
+            <div className="h-11 md:h-10 rounded-xl border border-input bg-secondary/40 px-3 flex items-center text-sm text-muted-foreground">
+              {before} {item?.unit}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-foreground block mb-1">Physical count *</label>
+            <Input type="number" value={physicalQty} onChange={e => setPhysicalQty(e.target.value)}
+              autoFocus className="h-11 md:h-10" />
+          </div>
+        </div>
+        {delta !== 0 && (
+          <p className={`text-xs font-semibold ${delta > 0 ? "text-emerald-600" : "text-red-600"}`}>
+            {delta > 0 ? "+" : ""}{delta} {item?.unit} difference from system stock
+          </p>
+        )}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Location / bin</label>
+          <Input value={location} onChange={e => setLocation(e.target.value)} placeholder="Shelf A3" className="h-11 md:h-10" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Notes</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Reason for the difference, if any…"
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-16" />
+        </div>
+      </div>
+    </ResponsiveModal>
+  );
+}
+
+function MovementHistoryModal({ open, onClose, item, movements }) {
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={`History: ${item?.name ?? ""}`}
+      size="sm"
+      footer={<div className="flex justify-end"><Button variant="outline" onClick={onClose}>Close</Button></div>}
+    >
+      <div className="py-2">
+        {movements.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">No recorded movements yet for this item.</p>
+        ) : (
+          <div className="space-y-3">
+            {movements.map((/** @type {any} */ m) => (
+              <div key={m.id} className="border-b border-border last:border-0 pb-3 last:pb-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-foreground">
+                    {MOVEMENT_TYPE_LABEL[m.movement_type] || m.movement_type}
+                  </span>
+                  <span className={`text-sm font-semibold ${m.quantity_delta > 0 ? "text-emerald-600" : m.quantity_delta < 0 ? "text-red-600" : "text-muted-foreground"}`}>
+                    {m.quantity_delta > 0 ? "+" : ""}{m.quantity_delta}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {m.quantity_before} → {m.quantity_after}
+                  {m.location && ` · ${m.location}`}
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {m.created_by_name || "Unknown"} · {m.created_at ? new Date(m.created_at).toLocaleString() : ""}
+                </p>
+                {m.reason && <p className="text-xs text-foreground mt-1">{m.reason}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </ResponsiveModal>
+  );
+}
+
+const NEW_OPTION = "__new__";
+const COLOUR_PRESETS = ["Black", "White", "Grey", "Navy", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Brown", "Maroon", "Olive"];
+const SIZE_PRESETS = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
+
+function SingleChoiceChips({ value, onChange, presets, placeholder }) {
+  const [customMode, setCustomMode] = useState(value !== "" && !presets.includes(value));
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {presets.map(p => (
+          <button key={p} type="button" onClick={() => { setCustomMode(false); onChange(p); }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+              !customMode && value === p ? "bg-primary text-primary-foreground border-primary" : "bg-background border-input text-muted-foreground hover:text-foreground"
+            }`}>
+            {p}
+          </button>
+        ))}
+        <button type="button" onClick={() => { setCustomMode(true); onChange(""); }}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+            customMode ? "bg-primary text-primary-foreground border-primary" : "bg-background border-input text-muted-foreground hover:text-foreground"
+          }`}>
+          Custom…
+        </button>
+      </div>
+      {customMode && (
+        <Input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="h-9 mt-1.5" autoFocus />
+      )}
+    </div>
+  );
+}
+
+function SearchSelect({ options, value, onChange, getLabel, placeholder, createLabel }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = options.find(o => o.id === value);
+  const filtered = !query ? options : options.filter(o => getLabel(o).toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <div className="relative">
+      <Input
+        value={open ? query : (value === NEW_OPTION ? "" : (selected ? getLabel(selected) : ""))}
+        onFocus={() => { setOpen(true); setQuery(""); }}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={value === NEW_OPTION ? createLabel : placeholder}
+        className="h-10"
+      />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-xl shadow-apple-sm max-h-56 overflow-auto">
+          <button type="button" onMouseDown={() => { onChange(NEW_OPTION); setOpen(false); }}
+            className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-secondary/50 font-medium">
+            {createLabel}
+          </button>
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-muted-foreground">No existing matches</div>
+          ) : filtered.map(o => (
+            <button key={o.id} type="button" onMouseDown={() => { onChange(o.id); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-secondary/50">
+              {getLabel(o)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MapIdentityModal({ open, onClose, item, suppliers, internalProducts, internalVariants, supplierProducts, supplierVariants }) {
+  const qc = useQueryClient();
+
+  const [productId, setProductId] = useState(NEW_OPTION);
+  const [newProductCode, setNewProductCode] = useState("");
+  const [newProductName, setNewProductName] = useState("");
+
+  const [variantId, setVariantId] = useState(NEW_OPTION);
+  const [newColour, setNewColour] = useState("");
+  const [newSize, setNewSize] = useState("");
+
+  const [supplierId, setSupplierId] = useState(item?.preferred_supplier_id || "");
+  const [supplierProductId, setSupplierProductId] = useState(NEW_OPTION);
+  const [newSupplierProductName, setNewSupplierProductName] = useState(item?.name || "");
+  const [newSupplierProductCode, setNewSupplierProductCode] = useState("");
+
+  const [supplierVariantId, setSupplierVariantId] = useState(NEW_OPTION);
+  const [newSupplierSku, setNewSupplierSku] = useState(item?.sku || "");
+  const [newSupplierColour, setNewSupplierColour] = useState("");
+  const [newSupplierSize, setNewSupplierSize] = useState("");
+  const [newUnitCost, setNewUnitCost] = useState(item?.cost_price ?? "");
+
+  const [notes, setNotes] = useState("");
+
+  const productsForTenant = (/** @type {any[]} */ (internalProducts));
+  const variantsForProduct = (/** @type {any[]} */ (internalVariants)).filter(v => v.inventory_product_id === productId);
+  const supplierProductsForCombo = (/** @type {any[]} */ (supplierProducts)).filter(
+    sp => sp.supplier_id === supplierId && sp.inventory_product_id === productId
+  );
+  const supplierVariantsForProduct = (/** @type {any[]} */ (supplierVariants)).filter(
+    sv => sv.inventory_supplier_product_id === supplierProductId
+  );
+
+  // Most stock reuses the same supplier product for a given internal product —
+  // prefill it automatically when there's exactly one existing match instead of
+  // making the reviewer re-pick something already established.
+  useEffect(() => {
+    if (supplierId && productId !== NEW_OPTION && supplierProductsForCombo.length === 1) {
+      setSupplierProductId(supplierProductsForCombo[0].id);
+    }
+  }, [supplierId, productId, supplierProductsForCombo.length]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const tenantId = await getCurrentTenantId();
+
+      let finalProductId = productId;
+      let productCodeForSku = productsForTenant.find(p => p.id === productId)?.internal_code || "";
+      if (productId === NEW_OPTION) {
+        if (!newProductCode.trim() || !newProductName.trim()) throw new Error("Internal product code and name are required");
+        const created = await dataClient.entities.InventoryProduct.create({
+          internal_code: newProductCode.trim(),
+          internal_name: newProductName.trim(),
+        });
+        finalProductId = created.id;
+        productCodeForSku = newProductCode.trim();
+        // Commit immediately so a later failure (or retry) never tries to
+        // create "JET" a second time and hit the unique-code constraint.
+        setProductId(finalProductId);
+        qc.invalidateQueries({ queryKey: ["inventoryProducts"] });
+      }
+
+      let finalVariantId = variantId;
+      if (variantId === NEW_OPTION) {
+        if (!newColour.trim() || !newSize.trim()) throw new Error("Internal colour and size are required");
+        const created = await dataClient.entities.InventoryVariant.create({
+          inventory_product_id: finalProductId,
+          colour_name: newColour.trim(),
+          size_name: newSize.trim(),
+          internal_sku: `${productCodeForSku || "SKU"}-${newColour.trim()}-${newSize.trim()}`.toUpperCase().replace(/\s+/g, "-"),
+        });
+        finalVariantId = created.id;
+        setVariantId(finalVariantId);
+        qc.invalidateQueries({ queryKey: ["inventoryVariants"] });
+      }
+
+      if (!supplierId) throw new Error("Choose a supplier");
+      let finalSupplierProductId = supplierProductId;
+      if (supplierProductId === NEW_OPTION) {
+        if (!newSupplierProductName.trim()) throw new Error("Supplier product name is required");
+        const created = await dataClient.entities.InventorySupplierProduct.create({
+          inventory_product_id: finalProductId,
+          supplier_id: supplierId,
+          official_product_name: newSupplierProductName.trim(),
+          official_product_code: newSupplierProductCode.trim() || null,
+        });
+        finalSupplierProductId = created.id;
+        setSupplierProductId(finalSupplierProductId);
+        qc.invalidateQueries({ queryKey: ["inventorySupplierProducts"] });
+      }
+
+      let finalSupplierVariantId = supplierVariantId;
+      if (supplierVariantId === NEW_OPTION) {
+        if (!newSupplierSku.trim() || !newSupplierColour.trim() || !newSupplierSize.trim()) {
+          throw new Error("Supplier SKU, colour, and size are required");
+        }
+        const created = await dataClient.entities.InventorySupplierVariant.create({
+          inventory_supplier_product_id: finalSupplierProductId,
+          inventory_variant_id: finalVariantId,
+          supplier_sku: newSupplierSku.trim(),
+          official_colour_name: newSupplierColour.trim(),
+          official_size_name: newSupplierSize.trim(),
+          unit_cost: newUnitCost !== "" ? Number(newUnitCost) : undefined,
+        });
+        finalSupplierVariantId = created.id;
+        setSupplierVariantId(finalSupplierVariantId);
+        qc.invalidateQueries({ queryKey: ["inventorySupplierVariants"] });
+      }
+
+      const { data, error } = await supabase.rpc("inventory_reviewer_map_legacy_item", {
+        p_tenant_id: tenantId,
+        p_legacy_inventory_id: item.id,
+        p_inventory_product_id: finalProductId,
+        p_inventory_variant_id: finalVariantId,
+        p_inventory_supplier_product_id: finalSupplierProductId,
+        p_inventory_supplier_variant_id: finalSupplierVariantId,
+        p_review_notes: notes || null,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventoryProducts"] });
+      qc.invalidateQueries({ queryKey: ["inventoryVariants"] });
+      qc.invalidateQueries({ queryKey: ["inventorySupplierProducts"] });
+      qc.invalidateQueries({ queryKey: ["inventorySupplierVariants"] });
+      qc.invalidateQueries({ queryKey: ["inventoryLegacyCompat"] });
+      toast.success("Identity mapped");
+      onClose();
+    },
+    onError: (err) => toast.error((/** @type {any} */ (err))?.message || "Failed to map identity"),
+  });
+
+  return (
+    <ResponsiveModal
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={`Map identity: ${item?.name ?? ""}`}
+      size="md"
+      footer={
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} type="button">Cancel</Button>
+          <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            {mutation.isPending ? "Saving…" : "Confirm mapping"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-4 py-2">
+        <div className="text-xs text-muted-foreground bg-secondary/40 rounded-xl p-3">
+          Source: <span className="font-medium text-foreground">{item?.name}</span>
+          {item?.sku && <> · SKU {item.sku}</>}
+          {" "}— this stays visible forever for traceability. Mapping only adds an internal + supplier identity; it does not change stock.
+        </div>
+
+        {/* Internal product */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Internal product (Joint X identity)</label>
+          <SearchSelect
+            options={productsForTenant}
+            value={productId}
+            onChange={(id) => { setProductId(id); setVariantId(NEW_OPTION); }}
+            getLabel={p => `${p.internal_code} — ${p.internal_name}`}
+            placeholder="Search existing internal products…"
+            createLabel="+ Create new internal product"
+          />
+          {productId === NEW_OPTION && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <Input value={newProductCode} onChange={e => setNewProductCode(e.target.value)} placeholder="Code, e.g. JET" className="h-10" />
+              <Input value={newProductName} onChange={e => setNewProductName(e.target.value)} placeholder="Name, e.g. Joint X Essential Tee" className="h-10" />
+            </div>
+          )}
+        </div>
+
+        {/* Internal variant */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Internal colour / size</label>
+          <SearchSelect
+            options={productId !== NEW_OPTION ? variantsForProduct : []}
+            value={variantId}
+            onChange={setVariantId}
+            getLabel={v => `${v.colour_name} / ${v.size_name}`}
+            placeholder={productId === NEW_OPTION ? "Save/select an internal product first" : "Search existing variants…"}
+            createLabel="+ Create new variant"
+          />
+          {variantId === NEW_OPTION && (
+            <div className="mt-2 space-y-2">
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Colour</p>
+                <SingleChoiceChips value={newColour} onChange={setNewColour} presets={COLOUR_PRESETS} placeholder="Custom colour name" />
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Size</p>
+                <SingleChoiceChips value={newSize} onChange={setNewSize} presets={SIZE_PRESETS} placeholder="Custom size name" />
+              </div>
+              <button type="button" onClick={() => { setNewColour("Standard"); setNewSize("Standard"); }}
+                className="text-xs text-primary hover:underline">
+                Not a garment? Use "Standard" for colour and size
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="h-px bg-border" />
+
+        {/* Supplier */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Supplier</label>
+          <select value={supplierId} onChange={e => { setSupplierId(e.target.value); setSupplierProductId(NEW_OPTION); }}
+            className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
+            <option value="">— Choose supplier —</option>
+            {(/** @type {any[]} */ (suppliers)).map((/** @type {any} */ s) => <option key={s.id} value={s.id}>{s.name ?? s.vendor}</option>)}
+          </select>
+        </div>
+
+        {/* Supplier product */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Exact supplier product</label>
+          {supplierId ? (
+            <SearchSelect
+              options={supplierProductsForCombo}
+              value={supplierProductId}
+              onChange={setSupplierProductId}
+              getLabel={sp => sp.official_product_name}
+              placeholder="Search this supplier's products…"
+              createLabel="+ Create new supplier product"
+            />
+          ) : (
+            <div className="w-full h-10 rounded-xl border border-input bg-secondary/30 px-3 flex items-center text-sm text-muted-foreground">
+              Choose a supplier first
+            </div>
+          )}
+          {supplierProductId === NEW_OPTION && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <Input value={newSupplierProductName} onChange={e => setNewSupplierProductName(e.target.value)} placeholder="Supplier's product name" className="h-10" />
+              <Input value={newSupplierProductCode} onChange={e => setNewSupplierProductCode(e.target.value)} placeholder="Supplier product code (optional)" className="h-10" />
+            </div>
+          )}
+        </div>
+
+        {/* Supplier variant */}
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Exact supplier colour / size / SKU</label>
+          <SearchSelect
+            options={supplierProductId !== NEW_OPTION ? supplierVariantsForProduct : []}
+            value={supplierVariantId}
+            onChange={setSupplierVariantId}
+            getLabel={sv => `${sv.official_colour_name} / ${sv.official_size_name} — ${sv.supplier_sku}`}
+            placeholder={supplierProductId === NEW_OPTION ? "Save/select a supplier product first" : "Search existing supplier variants…"}
+            createLabel="+ Create new supplier variant"
+          />
+          {supplierVariantId === NEW_OPTION && (
+            <div className="mt-2 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Input value={newSupplierSku} onChange={e => setNewSupplierSku(e.target.value)} placeholder="Supplier SKU" className="h-10" />
+                <Input value={newUnitCost} onChange={e => setNewUnitCost(e.target.value)} type="number" placeholder="Unit cost (R)" className="h-10" />
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Supplier colour</p>
+                <SingleChoiceChips value={newSupplierColour} onChange={setNewSupplierColour} presets={COLOUR_PRESETS} placeholder="Custom colour name" />
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1">Supplier size</p>
+                <SingleChoiceChips value={newSupplierSize} onChange={setNewSupplierSize} presets={SIZE_PRESETS} placeholder="Custom size name" />
+              </div>
+              <button type="button" onClick={() => { setNewSupplierColour("Standard"); setNewSupplierSize("Standard"); }}
+                className="text-xs text-primary hover:underline">
+                Not a garment? Use "Standard" for colour and size
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-foreground block mb-1">Notes</label>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)}
+            placeholder="Why this mapping, any substitution caveats…"
+            className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm resize-none h-16" />
+        </div>
+      </div>
+    </ResponsiveModal>
+  );
+}
+
+function ImageThumb({ imageRef, alt, className, onClick }) {
+  const { url, loading } = useSignedFileUrl(imageRef || "");
+  if (!imageRef) return null;
+  return (
+    <button type="button" onClick={onClick} disabled={!onClick} className={className}>
+      {loading || !url ? (
+        <div className="w-full h-full bg-secondary animate-pulse" />
+      ) : (
+        <img src={url} alt={alt || ""} className="w-full h-full object-cover" />
+      )}
+    </button>
+  );
+}
+
+function ImageLightbox({ images, startIndex = 0, onClose }) {
+  const [index, setIndex] = useState(startIndex);
+  const current = images[index];
+  const { url, loading } = useSignedFileUrl(current?.image_ref || "");
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center px-4" onClick={onClose}>
+      <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white transition-all" title="Close">
+        <X className="w-6 h-6" />
+      </button>
+      {images.length > 1 && (
+        <button onClick={(e) => { e.stopPropagation(); setIndex(i => (i - 1 + images.length) % images.length); }}
+          className="absolute left-2 md:left-6 text-white/70 hover:text-white transition-all">
+          <ChevronLeft className="w-8 h-8" />
+        </button>
+      )}
+      <div onClick={e => e.stopPropagation()} className="max-w-3xl w-full flex flex-col items-center">
+        {loading || !url ? (
+          <div className="w-72 h-72 bg-white/10 rounded-2xl animate-pulse" />
+        ) : (
+          <img src={url} alt="" className="max-w-full max-h-[75vh] rounded-2xl object-contain" />
+        )}
+        {images.length > 1 && (
+          <p className="text-white/60 text-xs mt-3">{index + 1} / {images.length}</p>
+        )}
+      </div>
+      {images.length > 1 && (
+        <button onClick={(e) => { e.stopPropagation(); setIndex(i => (i + 1) % images.length); }}
+          className="absolute right-2 md:right-6 text-white/70 hover:text-white transition-all">
+          <ChevronRight className="w-8 h-8" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function StockRow({ item, supplierMap, countedToday, mapped, images, onCount, onHistory, onMap, onEdit, onArchive, onOpenLightbox }) {
+  const i = /** @type {any} */ (item);
+  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
+  const supplierName = i.preferred_supplier_id ? supplierMap[i.preferred_supplier_id] : null;
+  const cost = Number(i.cost_price) || 0;
+  const selling = Number(i.selling_price) || 0;
+  const margin = selling > 0 ? Math.round(((selling - cost) / selling) * 100) : null;
+
+  return (
+    <div className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
+      {/* Mobile */}
+      <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
+        {images?.[0] && (
+          <ImageThumb imageRef={images[0].image_ref} alt={i.name} onClick={() => onOpenLightbox(images)}
+            className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 border border-border" />
+        )}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-foreground">{i.name}</p>
+          {i.sku && <p className="text-xs text-muted-foreground">SKU: {i.sku}</p>}
+          {supplierName && <p className="text-xs text-primary mt-0.5">{supplierName}</p>}
+          <p className={`text-xs mt-1 font-semibold ${isLow ? "text-red-600" : "text-foreground"}`}>
+            {i.current_stock ?? 0} {i.unit}
+            {isLow && " — Low stock"}
+          </p>
+          {(cost > 0 || selling > 0) && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Cost R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
+              {margin !== null && ` / ${margin}% margin`}
+            </p>
+          )}
+          {countedToday && <p className="text-xs text-emerald-600 font-medium mt-1">✓ Counted today</p>}
+        </div>
+        <div className="flex items-center gap-2.5 mt-0.5">
+          <button onClick={() => onCount(i)} title="Count stock" className="text-muted-foreground hover:text-primary">
+            <ClipboardCheck className="w-4 h-4" />
+          </button>
+          <button onClick={() => onHistory(i)} title="Movement history" className="text-muted-foreground hover:text-foreground">
+            <History className="w-4 h-4" />
+          </button>
+          <button onClick={() => onMap(i)} title="Map identity" className={mapped ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}>
+            <Tag className="w-4 h-4" />
+          </button>
+          <button onClick={() => onEdit(i)} className="text-muted-foreground hover:text-foreground">
+            <Pencil className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Desktop */}
+      <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
+        <div className="col-span-3 flex items-center gap-2.5 min-w-0">
+          {images?.[0] && (
+            <ImageThumb imageRef={images[0].image_ref} alt={i.name} onClick={() => onOpenLightbox(images)}
+              className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0 border border-border" />
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground truncate">{i.name}</p>
+            {i.sku && <p className="text-xs text-muted-foreground font-mono truncate">{i.sku}</p>}
+          </div>
+        </div>
+        <div className="col-span-2 text-center">
+          <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
+            {i.current_stock ?? 0} {i.unit}
+          </span>
+        </div>
+        <div className="col-span-2 text-center text-xs text-muted-foreground">
+          {(cost > 0 || selling > 0) ? `R${cost.toFixed(0)} / R${selling.toFixed(0)}${margin !== null ? ` · ${margin}%` : ""}` : "—"}
+        </div>
+        <div className="col-span-2">
+          {supplierName ? (
+            <span className="text-xs text-primary font-medium truncate block">{supplierName}</span>
+          ) : (
+            <span className="text-xs text-muted-foreground">—</span>
+          )}
+        </div>
+        <div className="col-span-2 flex justify-center">
+          {isLow ? (
+            <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
+          )}
+        </div>
+        <div className="col-span-1 flex items-center gap-1.5 justify-end">
+          <button onClick={() => onCount(i)} title="Count stock"
+            className={`transition-all ${countedToday ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}`}>
+            <ClipboardCheck className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onHistory(i)} title="Movement history" className="text-muted-foreground hover:text-foreground transition-all">
+            <History className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onMap(i)} title="Map identity"
+            className={`transition-all ${mapped ? "text-emerald-600" : "text-muted-foreground hover:text-primary"}`}>
+            <Tag className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onEdit(i)} className="text-muted-foreground hover:text-foreground transition-all">
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={() => onArchive(i)} className="text-muted-foreground hover:text-foreground transition-all">
+            <Archive className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StockGalleryCard({ item, countedToday, mapped, images, onCount, onHistory, onMap, onEdit, onOpenLightbox }) {
+  const i = /** @type {any} */ (item);
+  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
+  const fallbackUrl = INV_CATEGORY_IMAGE[i.category];
+  const hasRealImage = images && images.length > 0;
+
+  return (
+    <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm hover:shadow-apple-sm transition-all group">
+      <div className="aspect-square overflow-hidden relative bg-secondary">
+        {hasRealImage ? (
+          <>
+            <ImageThumb imageRef={images[0].image_ref} alt={i.name} onClick={() => onOpenLightbox(images)} className="w-full h-full block" />
+            {images.length > 1 && (
+              <span className="absolute bottom-2 right-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-black/60 text-white pointer-events-none">
+                {images.length} photos
+              </span>
+            )}
+          </>
+        ) : fallbackUrl ? (
+          <img src={fallbackUrl} alt={i.category} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Package className="w-10 h-10 text-muted-foreground/30" />
+          </div>
+        )}
+        {mapped && (
+          <span className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-700">Mapped</span>
+        )}
+        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => onCount(i)} title="Count stock"
+            className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+            <ClipboardCheck className="w-3 h-3 text-foreground" />
+          </button>
+          <button onClick={() => onHistory(i)} title="History"
+            className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+            <History className="w-3 h-3 text-foreground" />
+          </button>
+          <button onClick={() => onMap(i)} title="Map identity"
+            className="w-6 h-6 rounded-lg bg-background/90 backdrop-blur flex items-center justify-center shadow-sm hover:bg-background transition-all">
+            <Tag className="w-3 h-3 text-foreground" />
+          </button>
+        </div>
+      </div>
+      <button onClick={() => onEdit(i)} className="p-3 text-left w-full">
+        <p className="text-xs font-semibold text-foreground leading-tight truncate">{i.name}</p>
+        {i.sku && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{i.sku}</p>}
+        <p className={`text-xs font-bold mt-1 ${isLow ? "text-red-600" : "text-foreground"}`}>
+          {i.current_stock ?? 0} {i.unit}{isLow && " · Low"}
+        </p>
+        {countedToday && <p className="text-[10px] text-emerald-600 font-medium mt-0.5">✓ Counted today</p>}
+      </button>
+    </div>
   );
 }
 
@@ -543,6 +1323,11 @@ export default function Inventory() {
   const [addingId, setAddingId] = useState(null);
   const [showAddCatalog, setShowAddCatalog] = useState(false);
   const [editCatalogItem, setEditCatalogItem] = useState(/** @type {any} */ (null));
+  const [countItem, setCountItem] = useState(/** @type {any} */ (null));
+  const [historyItem, setHistoryItem] = useState(/** @type {any} */ (null));
+  const [mapItem, setMapItem] = useState(/** @type {any} */ (null));
+  const [stockView, setStockView] = useState("list");
+  const [lightbox, setLightbox] = useState(/** @type {{images: any[], startIndex: number} | null} */ (null));
   const queryClient = useQueryClient();
 
   const { data: inventory = [], isLoading } = useQuery({
@@ -554,6 +1339,42 @@ export default function Inventory() {
     queryKey: ["suppliers"],
     queryFn: () => dataClient.entities.Supplier.list("name", 100),
     staleTime: 300_000,
+  });
+
+  const { data: currentUser } = useQuery({
+    queryKey: ["currentUser", "inventory"],
+    queryFn: () => dataClient.auth.me(),
+    staleTime: 300_000,
+  });
+
+  const { data: movements = [] } = useQuery({
+    queryKey: ["inventoryMovements"],
+    queryFn: () => dataClient.entities.InventoryMovement.list("created_date", 500),
+  });
+
+  const { data: internalProducts = [] } = useQuery({
+    queryKey: ["inventoryProducts"],
+    queryFn: () => dataClient.entities.InventoryProduct.list("internal_name", 200),
+  });
+  const { data: internalVariants = [] } = useQuery({
+    queryKey: ["inventoryVariants"],
+    queryFn: () => dataClient.entities.InventoryVariant.list("internal_sku", 500),
+  });
+  const { data: supplierIdentityProducts = [] } = useQuery({
+    queryKey: ["inventorySupplierProducts"],
+    queryFn: () => dataClient.entities.InventorySupplierProduct.list("official_product_name", 500),
+  });
+  const { data: supplierIdentityVariants = [] } = useQuery({
+    queryKey: ["inventorySupplierVariants"],
+    queryFn: () => dataClient.entities.InventorySupplierVariant.list("supplier_sku", 1000),
+  });
+  const { data: legacyCompat = [] } = useQuery({
+    queryKey: ["inventoryLegacyCompat"],
+    queryFn: () => dataClient.entities.InventoryLegacyCompat.list("name", 300),
+  });
+  const { data: inventoryImages = [] } = useQuery({
+    queryKey: ["inventoryImages"],
+    queryFn: () => dataClient.entities.InventoryImage.list("sort_order", 1000),
   });
 
   const { data: catalogItems = [], isLoading: catalogLoading, refetch: refetchCatalog } = useQuery({
@@ -673,6 +1494,51 @@ export default function Inventory() {
 
   const inStockNames = new Set(inventory.filter(i => !i.is_archived).map(i => (/** @type {any} */ (i)).name?.toLowerCase()));
 
+  const movementsByItem = {};
+  for (const m of (/** @type {any[]} */ (movements))) {
+    (movementsByItem[m.inventory_id] ??= []).push(m);
+  }
+  const todayStr = new Date().toDateString();
+  const countedTodayIds = new Set(
+    (/** @type {any[]} */ (movements))
+      .filter(m => m.movement_type === "count" && m.created_at && new Date(m.created_at).toDateString() === todayStr)
+      .map(m => m.inventory_id)
+  );
+
+  const compatById = Object.fromEntries((/** @type {any[]} */ (legacyCompat)).map(c => [c.id, c]));
+
+  const imagesByItem = {};
+  for (const img of (/** @type {any[]} */ (inventoryImages))) {
+    (imagesByItem[img.inventory_id] ??= []).push(img);
+  }
+  const openLightbox = (images) => setLightbox({ images, startIndex: 0 });
+
+  const stockGroups = (() => {
+    const groups = new Map();
+    for (const item of filteredStock) {
+      const compat = compatById[item.id];
+      const mapped = compat && compat.mapping_state === "approved";
+      const key = mapped ? compat.internal_code : "__unmapped__";
+      const label = mapped ? `${compat.internal_code} — ${compat.internal_name}` : "Needs mapping";
+      if (!groups.has(key)) groups.set(key, { key, label, mapped, items: [], totalStock: 0, bySupplier: new Map() });
+      const group = groups.get(key);
+      group.items.push(item);
+      const qty = Number(item.current_stock) || 0;
+      group.totalStock += qty;
+      if (mapped) {
+        const supplierLabel = compat.supplier_product_name || "Unknown supplier";
+        group.bySupplier.set(supplierLabel, (group.bySupplier.get(supplierLabel) || 0) + qty);
+      }
+    }
+    return Array.from(groups.values())
+      .map(g => ({ ...g, bySupplier: Array.from(g.bySupplier.entries()).sort((a, b) => b[1] - a[1]) }))
+      .sort((a, b) => {
+        if (a.key === "__unmapped__") return -1;
+        if (b.key === "__unmapped__") return 1;
+        return a.label.localeCompare(b.label);
+      });
+  })();
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 md:py-8">
@@ -749,15 +1615,36 @@ export default function Inventory() {
               </div>
             )}
 
-            <div className="relative mb-5">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
-                className="pl-9 bg-card rounded-xl h-10" />
+            <div className="flex gap-2 mb-5">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input placeholder="Search inventory..." value={search} onChange={e => setSearch(e.target.value)}
+                  className="pl-9 bg-card rounded-xl h-10" />
+              </div>
+              <div className="flex bg-secondary rounded-xl p-0.5">
+                <button onClick={() => setStockView("list")} title="List view"
+                  className={`p-2 rounded-lg transition-all ${stockView === "list" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                  <LayoutList className="w-4 h-4" />
+                </button>
+                <button onClick={() => setStockView("grouped")} title="Grouped by internal identity"
+                  className={`p-2 rounded-lg transition-all ${stockView === "grouped" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                  <Rows3 className="w-4 h-4" />
+                </button>
+                <button onClick={() => setStockView("gallery")} title="Gallery"
+                  className={`p-2 rounded-lg transition-all ${stockView === "gallery" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}>
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {isLoading ? (
               <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-16 bg-card rounded-2xl animate-pulse" />)}</div>
-            ) : (
+            ) : filteredStock.length === 0 ? (
+              <div className="bg-card rounded-2xl border border-border shadow-apple-sm text-center py-12">
+                <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No inventory items</p>
+              </div>
+            ) : stockView === "list" ? (
               <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
                 <div className="hidden md:grid grid-cols-12 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-5 py-3 border-b border-border bg-secondary/30">
                   <span className="col-span-3">Item</span>
@@ -767,84 +1654,59 @@ export default function Inventory() {
                   <span className="col-span-2 text-center">Status</span>
                   <span className="col-span-1" />
                 </div>
-                {filteredStock.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Boxes className="w-10 h-10 text-muted-foreground/30 mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">No inventory items</p>
-                  </div>
-                ) : filteredStock.map(item => {
-                  const i = /** @type {any} */ (item);
-                  const isLow = i.reorder_point != null && i.current_stock <= i.reorder_point;
-                  const supplierName = i.preferred_supplier_id ? supplierMap[i.preferred_supplier_id] : null;
-                  const cost = Number(i.cost_price) || 0;
-                  const selling = Number(i.selling_price) || 0;
-                  const profit = selling - cost;
-                  const margin = selling > 0 ? Math.round((profit / selling) * 100) : null;
-                  return (
-                    <div key={i.id} className={`border-b border-border last:border-0 hover:bg-secondary/30 transition-all ${isLow ? "bg-red-50/30" : ""}`}>
-                      {/* Mobile */}
-                      <div className="md:hidden px-5 py-4 flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground">{i.name}</p>
-                          {i.sku && <p className="text-xs text-muted-foreground">SKU: {i.sku}</p>}
-                          {supplierName && <p className="text-xs text-primary mt-0.5">{supplierName}</p>}
-                          <p className={`text-xs mt-1 font-semibold ${isLow ? "text-red-600" : "text-foreground"}`}>
-                            {i.current_stock ?? 0} {i.unit}
-                            {isLow && " — Low stock"}
-                          </p>
-                          {(cost > 0 || selling > 0) && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Cost R{cost.toFixed(2)} / Sell R{selling.toFixed(2)}
-                              {margin !== null && ` / ${margin}% margin`}
-                            </p>
-                          )}
-                        </div>
-                        <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground mt-0.5">
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      {/* Desktop */}
-                      <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
-                        <div className="col-span-3">
-                          <p className="text-sm font-medium text-foreground">{i.name}</p>
-                          {i.sku && <p className="text-xs text-muted-foreground font-mono">{i.sku}</p>}
-                        </div>
-                        <div className="col-span-2 text-center">
-                          <span className={`text-sm font-bold ${isLow ? "text-red-600" : "text-foreground"}`}>
-                            {i.current_stock ?? 0} {i.unit}
+                {filteredStock.map(item => (
+                  <StockRow key={item.id} item={item} supplierMap={supplierMap}
+                    countedToday={countedTodayIds.has(item.id)}
+                    mapped={compatById[item.id]?.mapping_state === "approved"}
+                    images={imagesByItem[item.id]}
+                    onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                    onOpenLightbox={openLightbox}
+                    onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
+                ))}
+              </div>
+            ) : stockView === "grouped" ? (
+              <div className="space-y-4">
+                {stockGroups.map(group => (
+                  <div key={group.key} className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
+                    <div className="px-5 py-3 border-b border-border bg-secondary/30">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {!group.mapped && <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                        <span className="text-sm font-semibold text-foreground">{group.label}</span>
+                        <span className="text-xs text-muted-foreground">({group.items.length} row{group.items.length !== 1 ? "s" : ""})</span>
+                        {group.mapped && (
+                          <span className="text-sm font-bold text-primary ml-auto">
+                            {group.totalStock} {group.items[0]?.unit || "pieces"}
                           </span>
-                        </div>
-                        <div className="col-span-2 text-center text-xs text-muted-foreground">
-                          {(cost > 0 || selling > 0) ? `R${cost.toFixed(0)} / R${selling.toFixed(0)}${margin !== null ? ` · ${margin}%` : ""}` : "—"}
-                        </div>
-                        <div className="col-span-2">
-                          {supplierName ? (
-                            <span className="text-xs text-primary font-medium truncate block">{supplierName}</span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                        </div>
-                        <div className="col-span-2 flex justify-center">
-                          {isLow ? (
-                            <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">Low Stock</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">OK</Badge>
-                          )}
-                        </div>
-                        <div className="col-span-1 flex items-center gap-1.5 justify-end">
-                          <button onClick={() => setEditItem(i)} className="text-muted-foreground hover:text-foreground transition-all">
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }}
-                            className="text-muted-foreground hover:text-foreground transition-all">
-                            <Archive className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        )}
                       </div>
+                      {group.mapped && group.bySupplier.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {group.bySupplier.map(([name, qty]) => `${name}: ${qty}`).join(" · ")}
+                        </p>
+                      )}
                     </div>
-                  );
-                })}
+                    {group.items.map(item => (
+                      <StockRow key={item.id} item={item} supplierMap={supplierMap}
+                        countedToday={countedTodayIds.has(item.id)}
+                        mapped={compatById[item.id]?.mapping_state === "approved"}
+                        images={imagesByItem[item.id]}
+                        onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                        onOpenLightbox={openLightbox}
+                        onArchive={(i) => { if (confirm(`Archive ${i.name}?`)) archiveMutation.mutate(i.id); }} />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {filteredStock.map(item => (
+                  <StockGalleryCard key={item.id} item={item}
+                    countedToday={countedTodayIds.has(item.id)}
+                    mapped={compatById[item.id]?.mapping_state === "approved"}
+                    images={imagesByItem[item.id]}
+                    onCount={setCountItem} onHistory={setHistoryItem} onMap={setMapItem} onEdit={setEditItem}
+                    onOpenLightbox={openLightbox} />
+                ))}
               </div>
             )}
           </>
@@ -950,13 +1812,30 @@ export default function Inventory() {
         <ItemFormModal open={showAdd} onClose={() => setShowAdd(false)} suppliers={suppliers} />
       )}
       {editItem && (
-        <ItemFormModal open={!!editItem} onClose={() => setEditItem(null)} existing={editItem} suppliers={suppliers} />
+        <ItemFormModal open={!!editItem} onClose={() => setEditItem(null)} existing={editItem} suppliers={suppliers}
+          images={imagesByItem[editItem?.id] || []} />
       )}
       {showAddCatalog && (
         <CatalogItemFormModal open={showAddCatalog} onClose={() => setShowAddCatalog(false)} />
       )}
       {editCatalogItem && (
         <CatalogItemFormModal open={!!editCatalogItem} onClose={() => setEditCatalogItem(null)} existing={editCatalogItem} />
+      )}
+      {countItem && (
+        <StockCountModal open={!!countItem} onClose={() => setCountItem(null)} item={countItem} currentUser={currentUser}
+          compat={compatById[countItem?.id]} />
+      )}
+      {historyItem && (
+        <MovementHistoryModal open={!!historyItem} onClose={() => setHistoryItem(null)} item={historyItem}
+          movements={movementsByItem[historyItem.id] || []} />
+      )}
+      {mapItem && (
+        <MapIdentityModal open={!!mapItem} onClose={() => setMapItem(null)} item={mapItem} suppliers={suppliers}
+          internalProducts={internalProducts} internalVariants={internalVariants}
+          supplierProducts={supplierIdentityProducts} supplierVariants={supplierIdentityVariants} />
+      )}
+      {lightbox && (
+        <ImageLightbox images={lightbox.images} startIndex={lightbox.startIndex} onClose={() => setLightbox(null)} />
       )}
     </div>
   );

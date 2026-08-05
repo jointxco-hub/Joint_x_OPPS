@@ -28,6 +28,11 @@ import InvoiceCreateFlow from "@/features/invoices/InvoiceCreateFlow";
 import InvoiceDetailDrawer from "@/features/invoices/InvoiceDetailDrawer";
 import InvoiceExportCenter from "@/features/invoices/InvoiceExportCenter";
 import InvoiceItemTemplateManager from "@/features/invoices/InvoiceItemTemplateManager";
+import {
+  assertConfirmedItemCount,
+  invoiceDiagnostic,
+  isCompleteInvoiceDetail,
+} from "@/features/invoices/invoiceReliability";
 
 function emptyFilters() {
   return {
@@ -97,14 +102,51 @@ export default function Invoices() {
     enabled: canAccess && Boolean(detailQuery.data?.source_order_id),
   });
 
+  useEffect(() => {
+    if (!detailQuery.error || !selectedInvoice?.id) return;
+    invoiceDiagnostic("invoice-detail-view-failed", {
+      invoiceId: selectedInvoice.id,
+      error: detailQuery.error,
+    });
+    toast.error("Invoice details could not be loaded. Retry before editing or saving.");
+  }, [detailQuery.error, selectedInvoice?.id]);
+
   const saveMutation = useMutation({
-    mutationFn: (invoice) => invoice.id
-      ? updateInvoice(invoice.id, invoice)
-      : createInvoice(invoice),
+    mutationFn: async (invoice) => {
+      const saved = invoice.id
+        ? await updateInvoice(invoice.id, invoice)
+        : await createInvoice(invoice);
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["invoice", saved.id] }),
+        queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] }),
+        saved.source_order_id
+          ? queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", saved.source_order_id] })
+          : Promise.resolve(),
+      ]);
+
+      const confirmed = await queryClient.fetchQuery({
+        queryKey: ["invoice", saved.id],
+        queryFn: () => getInvoice(saved.id, { includeItems: true }),
+        staleTime: 0,
+      });
+
+      try {
+        return assertConfirmedItemCount(saved, confirmed);
+      } catch (error) {
+        invoiceDiagnostic("item-count-mismatch-after-save", {
+          invoiceId: saved.id,
+          error,
+          expectedCount: saved.items?.length,
+          actualCount: confirmed?.items?.length,
+        });
+        throw error;
+      }
+    },
     onSuccess: (invoice) => {
       toast.success(invoice.status === "approved" ? "Invoice approved" : "Invoice saved");
-      queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] });
+      queryClient.setQueryData(["invoice", invoice.id], invoice);
       setEditingInvoice(null);
       setActiveTab("list");
       setSelectedInvoice(invoice);
@@ -280,11 +322,17 @@ export default function Invoices() {
 
       <InvoiceDetailDrawer
         open={Boolean(selectedInvoice)}
-        invoice={detailQuery.data || selectedInvoice}
+        invoice={detailQuery.data || null}
+        summaryInvoice={selectedInvoice}
         activity={activityQuery.data || []}
         duplicateInvoices={(duplicateQuery.data || []).filter((invoice) => invoice.id !== selectedInvoice?.id)}
         isActivityLoading={activityQuery.isLoading}
-        isLoading={detailQuery.isLoading}
+        isLoading={detailQuery.isLoading || (detailQuery.isFetching && !detailQuery.data)}
+        loadError={detailQuery.error}
+        onRetry={async () => {
+          const result = await detailQuery.refetch();
+          if (result.isSuccess) toast.success("Invoice details reloaded");
+        }}
         onOpenChange={(open) => {
           if (open) return;
           setSelectedInvoice(null);
@@ -295,7 +343,15 @@ export default function Invoices() {
           }
         }}
         onApprove={(invoice) => approveMutation.mutate(invoice)}
-        onEditDraft={(invoice) => { setEditingInvoice(detailQuery.data || invoice); setSelectedInvoice(null); setActiveTab("create"); }}
+        onEditDraft={(invoice) => {
+          if (!isCompleteInvoiceDetail(detailQuery.data || invoice)) {
+            toast.error("Invoice details must load completely before editing.");
+            return;
+          }
+          setEditingInvoice(detailQuery.data);
+          setSelectedInvoice(null);
+          setActiveTab("create");
+        }}
         onMarkExported={(invoice, result) => markExportedMutation.mutate({ invoice, result })}
         onMarkImported={(invoice) => importedMutation.mutate(invoice)}
         onMarkPaid={(invoice) => paidMutation.mutate(invoice)}
