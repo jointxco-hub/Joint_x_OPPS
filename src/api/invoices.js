@@ -12,6 +12,7 @@ import {
   ZOHO_INVOICE_EXPORT_TYPE,
   ZOHO_INVOICE_TEMPLATE_VERSION,
 } from "@/features/invoices/zohoInvoiceExportConfig";
+import { buildOrderInvoiceSyncPlan } from "@/features/invoices/orderToInvoiceItems";
 import {
   INVOICE_SETTING_KEYS,
   defaultCustomerMappingSetting,
@@ -412,6 +413,9 @@ const ACTIVITY_LABELS = {
   invoice_marked_paid: "Invoice marked paid",
   invoice_voided: "Invoice voided",
   invoice_duplicated: "Invoice duplicated",
+  invoice_linked_to_order: "Linked to order",
+  invoice_unlinked_from_order: "Unlinked from order",
+  invoice_synced_from_order: "Synced from order",
 };
 
 async function createInvoiceActivity(invoiceId, input = {}) {
@@ -550,6 +554,61 @@ export async function updateInvoice(id, input = {}) {
   }
 
   return data;
+}
+
+// Links a draft invoice to an order and, in the same save, pulls in the
+// order's current products as line items. Order-sourced lines are matched
+// to any existing invoice lines by source_order_item_id (see
+// buildOrderInvoiceSyncPlan); lines already on the invoice with no order
+// counterpart are left untouched. Reuses updateInvoice's atomic RPC and
+// draft-only lock, so this fails the same way a normal edit would once the
+// invoice is no longer a draft.
+export async function linkInvoiceToOrder(invoice, order) {
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || []);
+  const saved = await updateInvoice(invoice.id, {
+    ...invoice,
+    source_order_id: order.id,
+    items: plan.items,
+    expected_updated_at: invoice.updated_at,
+    expected_item_count: (invoice.items || []).length,
+  });
+  await createInvoiceActivity(invoice.id, {
+    activity_type: "invoice_linked_to_order",
+    activity_note: `Linked to order ${order.order_number || order.id}`,
+    metadata: { order_id: order.id, order_number: order.order_number || null, ...plan.diff },
+  });
+  return saved;
+}
+
+// Removes the order link only. Line items are left exactly as they are -
+// unlinking does not delete or revert any item.
+export async function unlinkInvoiceFromOrder(invoice) {
+  const previousOrderId = invoice?.source_order_id || null;
+  const saved = await updateInvoice(invoice.id, { source_order_id: null });
+  await createInvoiceActivity(invoice.id, {
+    activity_type: "invoice_unlinked_from_order",
+    activity_note: previousOrderId ? `Unlinked from order ${previousOrderId}` : undefined,
+    metadata: { previous_order_id: previousOrderId },
+  });
+  return saved;
+}
+
+// Re-pulls an already-linked invoice's order-sourced lines from the order's
+// current products. Same matching/preservation rules as linkInvoiceToOrder.
+export async function syncInvoiceItemsFromOrder(invoice, order) {
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || []);
+  const saved = await updateInvoice(invoice.id, {
+    ...invoice,
+    items: plan.items,
+    expected_updated_at: invoice.updated_at,
+    expected_item_count: (invoice.items || []).length,
+  });
+  await createInvoiceActivity(invoice.id, {
+    activity_type: "invoice_synced_from_order",
+    activity_note: `Synced from order ${order.order_number || order.id}`,
+    metadata: { order_id: order.id, ...plan.diff },
+  });
+  return saved;
 }
 
 export async function getInvoice(id, options = {}) {

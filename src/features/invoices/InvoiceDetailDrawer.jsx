@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import InvoiceStatusBadge from "./InvoiceStatusBadge";
+import OrderLinkPanel from "./OrderLinkPanel";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
 import { printIminReceipt } from "@/lib/pos/iminPrinter";
@@ -67,6 +68,10 @@ export default function InvoiceDetailDrawer({
   onMarkVoid,
   onVoidDuplicate,
   onDuplicateDraft,
+  onLinkOrder,
+  onUnlinkOrder,
+  onSyncFromOrder,
+  isOrderLinkPending,
 }) {
   const [partialPaymentOpen, setPartialPaymentOpen] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
@@ -187,9 +192,18 @@ export default function InvoiceDetailDrawer({
                   <DetailRow label="Email" value={invoice.customer_email || "Missing"} />
                   <DetailRow label="Invoice date" value={String(invoice.invoice_date || "").slice(0, 10)} />
                   <DetailRow label="Due date" value={invoice.due_date ? String(invoice.due_date).slice(0, 10) : "Missing"} />
-                  {invoice.source_order_id && <DetailRow label="Source" value={invoice.source_order_id} compact />}
                 </div>
               </div>
+
+              <OrderLinkPanel
+                invoice={invoice}
+                isDraft={isDraft}
+                isPending={isOrderLinkPending}
+                onLink={(order) => onLinkOrder?.(invoice, order)}
+                onUnlink={() => onUnlinkOrder?.(invoice)}
+                onSync={(order) => onSyncFromOrder?.(invoice, order)}
+              />
+
               <div className="overflow-hidden rounded-xl border border-border bg-card">
                 <div className="border-b border-border px-3 py-2.5 md:px-4 md:py-3">
                   <p className="text-sm font-semibold text-foreground">Line items</p>

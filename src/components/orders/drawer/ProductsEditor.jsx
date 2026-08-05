@@ -1,12 +1,18 @@
 import { useState } from "react";
-import { Copy, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { Copy, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export default function ProductsEditor({ order = {}, onUpdate }) {
+function newLineId() {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `line-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "" }) {
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
@@ -94,7 +100,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
   };
 
   const saveRow = () => {
-    if (!editRow.name.trim()) return;
+    if (locked || !editRow.name.trim()) return;
     const updated = products.map((raw, i) => {
       const p = cleanProduct(raw);
       return (
@@ -106,13 +112,14 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
   };
 
   const removeRow = (/** @type {number} */ idx) => {
+    if (locked) return;
     const updated = products.filter((_, i) => i !== idx);
     onUpdate(order.id, { products: updated });
   };
 
   const addRow = () => {
-    if (!newRow.name.trim()) return;
-    const updated = [...products, { ...newRow, quantity: Number(newRow.quantity) || 1 }];
+    if (locked || !newRow.name.trim()) return;
+    const updated = [...products, { ...newRow, quantity: Number(newRow.quantity) || 1, line_id: newLineId() }];
     onUpdate(order.id, { products: updated });
     setNewRow(emptyRow);
     setSizeRun({});
@@ -124,7 +131,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
   };
 
   const addSizeRun = () => {
-    if (!newRow.name.trim()) return;
+    if (locked || !newRow.name.trim()) return;
     const selectedSizes = Object.entries(sizeRun)
       .map(([size, quantity]) => ({ size, quantity: Number(quantity || 0) }))
       .filter((item) => item.quantity > 0);
@@ -140,6 +147,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
         ...newRow,
         size,
         quantity,
+        line_id: newLineId(),
       })),
     ];
     onUpdate(order.id, { products: updated });
@@ -154,8 +162,9 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
   };
 
   const duplicateRow = (/** @type {any} */ rawProduct) => {
+    if (locked) return;
     const p = cleanProduct(rawProduct);
-    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1 }] });
+    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1, line_id: newLineId() }] });
     toast.success("Product copied on this order");
   };
 
@@ -216,6 +225,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
   const canApplyProductTotal = productLineTotal > 0 && Math.abs(productLineTotal - orderTotal) > 0.009;
 
   const updateQuantity = (idx, delta) => {
+    if (locked) return;
     const updated = products.map((item, i) => {
       const clean = cleanProduct(item);
       return i === idx
@@ -227,6 +237,12 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
 
   return (
     <div className="bg-secondary/30 rounded-xl p-4">
+      {locked && (
+        <div className="mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+          <Lock className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>{lockReason || "Products are locked and can no longer be edited."}</span>
+        </div>
+      )}
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Products</h3>
@@ -244,6 +260,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
             )}
           </div>
         </div>
+        {!locked && (
         <div className="flex flex-wrap gap-2">
           {canApplyProductTotal && (
             <button
@@ -260,6 +277,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
             </button>
           )}
         </div>
+        )}
       </div>
 
       {/* Existing rows */}
@@ -348,31 +366,43 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
               {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
               </div>
               <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-                <button type="button" onClick={() => updateQuantity(i, -1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
-                  <Minus className="h-3 w-3" />
-                </button>
-                <span className="min-w-5 text-center text-xs font-semibold">{p.quantity || 1}</span>
-                <button type="button" onClick={() => updateQuantity(i, 1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
-                  <Plus className="h-3 w-3" />
-                </button>
+                {locked ? (
+                  <span className="min-w-5 text-center text-xs font-semibold">{p.quantity || 1}</span>
+                ) : (
+                  <>
+                    <button type="button" onClick={() => updateQuantity(i, -1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
+                      <Minus className="h-3 w-3" />
+                    </button>
+                    <span className="min-w-5 text-center text-xs font-semibold">{p.quantity || 1}</span>
+                    <button type="button" onClick={() => updateQuantity(i, 1)} className="grid h-6 w-6 place-items-center rounded-full border border-border bg-background hover:bg-secondary">
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
                 {p.price && (
                   <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
                     {formatMoney(Number(p.price) * Number(p.quantity || 1))}
                   </span>
                 )}
+                {!locked && (
                 <button type="button" onClick={() => duplicateRow(p)}
                   className="opacity-100 text-muted-foreground hover:text-primary transition-all sm:opacity-0 sm:group-hover:opacity-100"
                   title="Copy product">
                   <Copy className="w-3 h-3" />
                 </button>
+                )}
+                {!locked && (
                 <button type="button" onClick={() => { setEditingIdx(i); setEditRow({ name: p.name, quantity: p.quantity || 1, price: p.price || "", size: p.size || "", color: p.color || "", notes: p.notes || "", catalog_item_id: p.catalog_item_id || "", inventory_item_id: p.inventory_item_id || "", image_url: p.image_url || "", category: p.category || "", source: p.source || "", selected_print_options: p.selected_print_options || [], selected_addons: p.selected_addons || [] }); }}
                   className="opacity-100 text-muted-foreground hover:text-foreground transition-all sm:opacity-0 sm:group-hover:opacity-100">
                   <Pencil className="w-3 h-3" />
                 </button>
+                )}
+                {!locked && (
                 <button type="button" onClick={() => removeRow(i)}
                   className="opacity-100 text-muted-foreground hover:text-destructive transition-all sm:opacity-0 sm:group-hover:opacity-100">
                   <Trash2 className="w-3 h-3" />
                 </button>
+                )}
               </div>
             </div>
           );
@@ -380,7 +410,7 @@ export default function ProductsEditor({ order = {}, onUpdate }) {
       </div>
 
       {/* Add new row */}
-      {addMode && (
+      {addMode && !locked && (
         <div className="bg-card rounded-xl border border-border p-3 space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div>
