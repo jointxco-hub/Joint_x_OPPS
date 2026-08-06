@@ -2,23 +2,34 @@ import React, { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  BadgeCheck,
   CheckCircle2,
   ChevronDown,
   ClipboardCheck,
+  CreditCard,
   ExternalLink,
   FileSignature,
   FileText,
   Inbox,
   MessageSquare,
   Paperclip,
+  Plus,
   RefreshCw,
   Search,
   ShieldAlert,
   SlidersHorizontal,
+  Trash2,
   UserRoundPen,
 } from "lucide-react";
 import { toast } from "sonner";
-import { addInternalClientMessageReply, getInternalClientFileLibrary, listClientRequests, updateClientRequestStatus } from "@/api/clientRequests";
+import {
+  addInternalClientMessageReply,
+  approveClientQuoteRequest,
+  getInternalClientFileLibrary,
+  listClientOrdersAwaitingPayment,
+  listClientRequests,
+  updateClientRequestStatus,
+} from "@/api/clientRequests";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -365,6 +376,16 @@ export default function ClientRequests() {
     productionRisk: requests.filter((item) => ["tech_pack", "special_instruction"].includes(item.request_type)).length,
   }), [requests]);
 
+  const { data: awaitingPayment = [], isLoading: awaitingPaymentLoading } = useQuery({
+    queryKey: ["clientOrdersAwaitingPayment"],
+    queryFn: async () => {
+      const result = await listClientOrdersAwaitingPayment({ limit: 50 });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    staleTime: 30_000,
+  });
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-6xl mx-auto px-4 py-6 md:py-8">
@@ -387,6 +408,8 @@ export default function ClientRequests() {
           <Metric label="Needs review" value={counts.new} tone="primary" />
           <Metric label="Production-sensitive" value={counts.productionRisk} tone="risk" />
         </div>
+
+        <AwaitingPaymentSection orders={awaitingPayment} loading={awaitingPaymentLoading} />
 
         <div className="mb-5 rounded-2xl border border-border bg-card p-4 shadow-apple-sm">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -466,6 +489,12 @@ export default function ClientRequests() {
           );
         }}
         isUpdating={updateMutation.isPending}
+        onApproved={(order) => {
+          queryClient.invalidateQueries({ queryKey: ["clientRequests"] });
+          queryClient.invalidateQueries({ queryKey: ["clientOrdersAwaitingPayment"] });
+          toast.success(`Order ${order.order_number} created - awaiting payment`);
+          setSelected((prev) => prev ? { ...prev, status: "actioned" } : prev);
+        }}
       />
     </div>
   );
@@ -478,6 +507,201 @@ function Metric({ label, value, tone }) {
       <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
       <p className={`mt-2 text-2xl font-bold ${color}`}>{value}</p>
     </div>
+  );
+}
+
+function AwaitingPaymentSection({ orders, loading }) {
+  if (loading) {
+    return (
+      <div className="mb-5 h-20 animate-pulse rounded-2xl bg-card" />
+    );
+  }
+
+  if (!orders.length) return null;
+
+  return (
+    <section className="mb-5 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-apple-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+          <CreditCard className="h-4 w-4" />
+          Awaiting payment
+        </div>
+        <Badge variant="outline" className="rounded-full border-amber-300 bg-white text-amber-800">
+          {orders.length} order{orders.length === 1 ? "" : "s"}
+        </Badge>
+      </div>
+      <p className="mb-3 text-xs text-amber-800">
+        Approved X LAB orders sitting in pending_payment. They stay here until the client pays and sync-to-opps
+        promotes them into the normal Orders workflow.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {orders.map((order) => (
+          <div key={order.id} className="rounded-xl border border-amber-200 bg-white p-3">
+            <p className="text-sm font-semibold text-foreground">{order.order_number}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.customer_name || order.customer_email}</p>
+            <div className="mt-2 flex items-center justify-between">
+              <span className="text-sm font-semibold text-amber-800">
+                {order.total_amount != null ? `R${Number(order.total_amount).toLocaleString()}` : ""}
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                {order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function QuoteApprovalSection({ request, onApproved }) {
+  const payload = request.payload || {};
+  const details = parseDetailLines(payload.details);
+  const specs = payload.specs || {};
+  const merged = { ...payload, ...details, ...specs };
+  const alreadyActioned = ["actioned", "closed"].includes(request.status);
+
+  const defaultItem = () => ({
+    product_name: pickFirst(merged, ["selected_product_name", "product_name", "product", "custom_item_name", "custom_item"]) || request.preview || "Item",
+    quantity: Number(pickFirst(merged, ["quantity"])) || 1,
+    unit_price: "",
+  });
+
+  const [items, setItems] = useState([defaultItem()]);
+  const [note, setNote] = useState("");
+
+  React.useEffect(() => {
+    setItems([defaultItem()]);
+    setNote("");
+  }, [request.id]);
+
+  const total = items.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unit_price) || 0), 0);
+
+  const approveMutation = useMutation({
+    mutationFn: approveClientQuoteRequest,
+    onSuccess: (result) => {
+      if (result?.order_number) {
+        onApproved?.(result);
+      } else {
+        toast.success("Quote request approved");
+      }
+    },
+    onError: (err) => toast.error(err?.message || "Could not approve this quote request"),
+  });
+
+  const updateItem = (index, patch) => {
+    setItems((current) => current.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const removeItem = (index) => {
+    setItems((current) => current.filter((_, i) => i !== index));
+  };
+
+  const canApprove = items.length > 0
+    && items.every((item) => item.product_name.trim() && Number(item.quantity) > 0 && Number(item.unit_price) >= 0)
+    && total > 0;
+
+  if (alreadyActioned) {
+    return (
+      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+        <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+          <BadgeCheck className="h-4 w-4" /> This request has already been actioned
+        </p>
+        <p className="mt-1 text-xs text-emerald-700">
+          If it was approved, the resulting order is on the Awaiting Payment list above until the client pays.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <p className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <BadgeCheck className="h-4 w-4 text-primary" /> Approve &amp; create payable order
+      </p>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Review and price the line items, then approve. This creates an X LAB order in pending_payment and messages
+        the client a payment link - it does not touch PayFast or OPPS directly.
+      </p>
+
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <div key={index} className="grid grid-cols-[1fr_70px_90px_auto] items-center gap-2">
+            <Input
+              value={item.product_name}
+              onChange={(event) => updateItem(index, { product_name: event.target.value })}
+              placeholder="Item name"
+              className="h-9"
+            />
+            <Input
+              value={item.quantity}
+              onChange={(event) => updateItem(index, { quantity: event.target.value })}
+              type="number"
+              min="1"
+              placeholder="Qty"
+              className="h-9"
+            />
+            <Input
+              value={item.unit_price}
+              onChange={(event) => updateItem(index, { unit_price: event.target.value })}
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Price"
+              className="h-9"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              disabled={items.length === 1}
+              onClick={() => removeItem(index)}
+              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setItems((current) => [...current, { product_name: "", quantity: 1, unit_price: "" }])}
+        className="mt-2 rounded-xl"
+      >
+        <Plus className="mr-1 h-3.5 w-3.5" /> Add item
+      </Button>
+
+      <Textarea
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        placeholder="Optional note to the client"
+        className="mt-3"
+      />
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-foreground">Total: R{total.toLocaleString()}</p>
+        <Button
+          type="button"
+          disabled={!canApprove || approveMutation.isPending}
+          onClick={() => approveMutation.mutate({
+            requestId: request.id,
+            items: items.map((item) => ({
+              product_name: item.product_name.trim(),
+              quantity: Number(item.quantity),
+              unit_price: Number(item.unit_price),
+              line_total: Number(item.quantity) * Number(item.unit_price),
+            })),
+            totalAmount: total,
+            note: note.trim() || null,
+          })}
+        >
+          {approveMutation.isPending ? "Approving..." : "Approve & create order"}
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -530,7 +754,7 @@ function RequestCard({ request, onOpen }) {
   );
 }
 
-function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onReplySent, isUpdating }) {
+function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onReplySent, isUpdating, onApproved }) {
   const [note, setNote] = useState("");
   const [reply, setReply] = useState("");
   const [previewFile, setPreviewFile] = useState(null);
@@ -593,6 +817,10 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onRe
         </section>
 
         <PayloadView request={request} onPreview={setPreviewFile} />
+
+        {["quote_request", "reorder_request"].includes(request.request_type) && (
+          <QuoteApprovalSection request={request} onApproved={onApproved} />
+        )}
 
         {request.request_type === "message" && (
           <section className="rounded-xl border border-border p-4">

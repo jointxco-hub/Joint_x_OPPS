@@ -13,6 +13,8 @@ function friendlyMissingMessage(message = "") {
     lower.includes("copy_internal_client_file_link") ||
     lower.includes("delete_internal_client_file_link") ||
     lower.includes("add_internal_client_message_reply") ||
+    lower.includes("approve_client_quote_request") ||
+    lower.includes("get_client_orders_awaiting_payment") ||
     lower.includes("could not find the function") ||
     lower.includes("does not exist")
   );
@@ -203,6 +205,63 @@ export async function getInternalClientFileLibrary({ clientEmail, limit = 80 } =
     return { data: data || { folders: [], files: [] }, error: null };
   } catch {
     return { data: { folders: [], files: [] }, error: null };
+  }
+}
+
+// Approves a quote/reorder request and activates it as a payable X LAB order
+// (public.xlab_orders, status 'pending_payment'). Backed by
+// approve_client_quote_request, which wraps the shared
+// _activate_client_quote_request_order used by the client-facing repeat-order
+// flow. Tenant-scoped and staff-authorised at the database layer - this is
+// only a thin RPC wrapper, no client-side authorization logic.
+export async function approveClientQuoteRequest({
+  requestId,
+  items,
+  totalAmount,
+  note = null,
+} = {}) {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+
+  try {
+    const { data, error } = await supabase.rpc("approve_client_quote_request", {
+      p_request_id: requestId,
+      p_items: items,
+      p_total_amount: totalAmount,
+      p_note: note || null,
+    });
+
+    if (error) {
+      if (friendlyMissingMessage(error.message)) {
+        return { data: null, error: "Quote approval database function is not applied yet." };
+      }
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch {
+    return { data: null, error: "Could not approve this quote request." };
+  }
+}
+
+// Persistent list of X LAB orders sitting in 'pending_payment' - these live in
+// public.xlab_orders and are otherwise invisible on OPPS's Orders screen until
+// the client pays and sync-to-opps promotes them into public.orders.
+export async function listClientOrdersAwaitingPayment({ limit = 50 } = {}) {
+  if (!supabase) return { data: [], error: "Supabase not configured" };
+
+  try {
+    const { data, error } = await supabase.rpc("get_client_orders_awaiting_payment", {
+      p_limit: limit,
+    });
+
+    if (error) {
+      if (friendlyMissingMessage(error.message)) return EMPTY_RESULT;
+      return { data: [], error: error.message };
+    }
+
+    return { data: data ?? [], error: null };
+  } catch {
+    return EMPTY_RESULT;
   }
 }
 
