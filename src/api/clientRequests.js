@@ -1,24 +1,9 @@
 import { supabase } from "@/lib/supabaseClient";
+import { describeApprovalError, friendlyMissingMessage } from "@/features/clientRequests/quoteApprovalCalculations";
 
 const EMPTY_RESULT = { data: [], error: null };
 
-function friendlyMissingMessage(message = "") {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("get_internal_client_requests") ||
-    lower.includes("update_internal_client_request_status") ||
-    lower.includes("get_internal_client_file_library") ||
-    lower.includes("upsert_internal_client_file_folder") ||
-    lower.includes("upsert_internal_client_file_link") ||
-    lower.includes("copy_internal_client_file_link") ||
-    lower.includes("delete_internal_client_file_link") ||
-    lower.includes("add_internal_client_message_reply") ||
-    lower.includes("approve_client_quote_request") ||
-    lower.includes("get_client_orders_awaiting_payment") ||
-    lower.includes("could not find the function") ||
-    lower.includes("does not exist")
-  );
-}
+export { friendlyMissingMessage };
 
 export async function saveInternalClientFileFolder({
   clientEmail,
@@ -234,7 +219,7 @@ export async function approveClientQuoteRequest({
       if (friendlyMissingMessage(error.message)) {
         return { data: null, error: "Quote approval database function is not applied yet." };
       }
-      return { data: null, error: error.message };
+      return { data: null, error: describeApprovalError(error.message) };
     }
 
     return { data, error: null };

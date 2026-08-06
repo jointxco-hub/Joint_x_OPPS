@@ -30,6 +30,14 @@ import {
   listClientRequests,
   updateClientRequestStatus,
 } from "@/api/clientRequests";
+import {
+  MAX_QUANTITY,
+  MAX_UNIT_PRICE,
+  buildApprovalPayload,
+  computeApprovalTotal,
+  formatAwaitingPaymentOrder,
+  validateApprovalItems,
+} from "@/features/clientRequests/quoteApprovalCalculations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -376,7 +384,11 @@ export default function ClientRequests() {
     productionRisk: requests.filter((item) => ["tech_pack", "special_instruction"].includes(item.request_type)).length,
   }), [requests]);
 
-  const { data: awaitingPayment = [], isLoading: awaitingPaymentLoading } = useQuery({
+  const {
+    data: awaitingPayment = [],
+    isLoading: awaitingPaymentLoading,
+    error: awaitingPaymentError,
+  } = useQuery({
     queryKey: ["clientOrdersAwaitingPayment"],
     queryFn: async () => {
       const result = await listClientOrdersAwaitingPayment({ limit: 50 });
@@ -409,7 +421,7 @@ export default function ClientRequests() {
           <Metric label="Production-sensitive" value={counts.productionRisk} tone="risk" />
         </div>
 
-        <AwaitingPaymentSection orders={awaitingPayment} loading={awaitingPaymentLoading} />
+        <AwaitingPaymentSection orders={awaitingPayment} loading={awaitingPaymentLoading} error={awaitingPaymentError} />
 
         <div className="mb-5 rounded-2xl border border-border bg-card p-4 shadow-apple-sm">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -510,10 +522,18 @@ function Metric({ label, value, tone }) {
   );
 }
 
-function AwaitingPaymentSection({ orders, loading }) {
+function AwaitingPaymentSection({ orders, loading, error }) {
   if (loading) {
     return (
       <div className="mb-5 h-20 animate-pulse rounded-2xl bg-card" />
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mb-5 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        Could not load orders awaiting payment: {error.message || "Unknown error"}
+      </div>
     );
   }
 
@@ -535,20 +555,21 @@ function AwaitingPaymentSection({ orders, loading }) {
         promotes them into the normal Orders workflow.
       </p>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {orders.map((order) => (
-          <div key={order.id} className="rounded-xl border border-amber-200 bg-white p-3">
-            <p className="text-sm font-semibold text-foreground">{order.order_number}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.customer_name || order.customer_email}</p>
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-sm font-semibold text-amber-800">
-                {order.total_amount != null ? `R${Number(order.total_amount).toLocaleString()}` : ""}
-              </span>
-              <span className="text-[11px] text-muted-foreground">
-                {order.created_at ? new Date(order.created_at).toLocaleDateString() : ""}
-              </span>
+        {orders.map((rawOrder) => {
+          const order = formatAwaitingPaymentOrder(rawOrder);
+          return (
+            <div key={order.id} className="rounded-xl border border-amber-200 bg-white p-3">
+              <p className="text-sm font-semibold text-foreground">{order.orderNumber}</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.customerLabel}</p>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-sm font-semibold text-amber-800">{order.amountLabel}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {order.createdAt ? order.createdAt.toLocaleDateString() : ""}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -569,13 +590,16 @@ function QuoteApprovalSection({ request, onApproved }) {
 
   const [items, setItems] = useState([defaultItem()]);
   const [note, setNote] = useState("");
+  const [touched, setTouched] = useState(false);
 
   React.useEffect(() => {
     setItems([defaultItem()]);
     setNote("");
+    setTouched(false);
   }, [request.id]);
 
-  const total = items.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unit_price) || 0), 0);
+  const total = computeApprovalTotal(items);
+  const validation = validateApprovalItems(items);
 
   const approveMutation = useMutation({
     mutationFn: approveClientQuoteRequest,
@@ -597,9 +621,12 @@ function QuoteApprovalSection({ request, onApproved }) {
     setItems((current) => current.filter((_, i) => i !== index));
   };
 
-  const canApprove = items.length > 0
-    && items.every((item) => item.product_name.trim() && Number(item.quantity) > 0 && Number(item.unit_price) >= 0)
-    && total > 0;
+  const submitApproval = () => {
+    setTouched(true);
+    if (!validation.valid) return;
+    const payload = buildApprovalPayload({ requestId: request.id, items, note });
+    approveMutation.mutate(payload);
+  };
 
   if (alreadyActioned) {
     return (
@@ -625,43 +652,51 @@ function QuoteApprovalSection({ request, onApproved }) {
       </p>
 
       <div className="space-y-2">
-        {items.map((item, index) => (
-          <div key={index} className="grid grid-cols-[1fr_70px_90px_auto] items-center gap-2">
-            <Input
-              value={item.product_name}
-              onChange={(event) => updateItem(index, { product_name: event.target.value })}
-              placeholder="Item name"
-              className="h-9"
-            />
-            <Input
-              value={item.quantity}
-              onChange={(event) => updateItem(index, { quantity: event.target.value })}
-              type="number"
-              min="1"
-              placeholder="Qty"
-              className="h-9"
-            />
-            <Input
-              value={item.unit_price}
-              onChange={(event) => updateItem(index, { unit_price: event.target.value })}
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="Price"
-              className="h-9"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              disabled={items.length === 1}
-              onClick={() => removeItem(index)}
-              className="h-9 w-9 text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          </div>
-        ))}
+        {items.map((item, index) => {
+          const rowError = touched ? validation.itemErrors[index] : null;
+          return (
+            <div key={index}>
+              <div className="grid grid-cols-[1fr_70px_90px_auto] items-center gap-2">
+                <Input
+                  value={item.product_name}
+                  onChange={(event) => updateItem(index, { product_name: event.target.value })}
+                  placeholder="Item name"
+                  className={`h-9 ${rowError ? "border-destructive" : ""}`}
+                />
+                <Input
+                  value={item.quantity}
+                  onChange={(event) => updateItem(index, { quantity: event.target.value })}
+                  type="number"
+                  min="1"
+                  max={MAX_QUANTITY}
+                  placeholder="Qty"
+                  className={`h-9 ${rowError ? "border-destructive" : ""}`}
+                />
+                <Input
+                  value={item.unit_price}
+                  onChange={(event) => updateItem(index, { unit_price: event.target.value })}
+                  type="number"
+                  min="0"
+                  max={MAX_UNIT_PRICE}
+                  step="0.01"
+                  placeholder="Price"
+                  className={`h-9 ${rowError ? "border-destructive" : ""}`}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  disabled={items.length === 1}
+                  onClick={() => removeItem(index)}
+                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+              {rowError && <p className="mt-1 text-xs text-destructive">{rowError}</p>}
+            </div>
+          );
+        })}
       </div>
 
       <Button
@@ -681,22 +716,21 @@ function QuoteApprovalSection({ request, onApproved }) {
         className="mt-3"
       />
 
+      {touched && !validation.valid && (
+        <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          <p className="font-semibold">Fix before approving:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {validation.errors.map((message) => <li key={message}>{message}</li>)}
+          </ul>
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-sm font-semibold text-foreground">Total: R{total.toLocaleString()}</p>
         <Button
           type="button"
-          disabled={!canApprove || approveMutation.isPending}
-          onClick={() => approveMutation.mutate({
-            requestId: request.id,
-            items: items.map((item) => ({
-              product_name: item.product_name.trim(),
-              quantity: Number(item.quantity),
-              unit_price: Number(item.unit_price),
-              line_total: Number(item.quantity) * Number(item.unit_price),
-            })),
-            totalAmount: total,
-            note: note.trim() || null,
-          })}
+          disabled={(touched && !validation.valid) || approveMutation.isPending}
+          onClick={submitApproval}
         >
           {approveMutation.isPending ? "Approving..." : "Approve & create order"}
         </Button>
