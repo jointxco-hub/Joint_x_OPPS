@@ -17,37 +17,94 @@ hosted project).
 
 ## Setup
 
-- [ ] `recovery/xlab-quote-approval` checked out
-- [ ] Docker running, local Supabase stack started:
+- [ ] `recovery/xlab-quote-approval` checked out — in a dedicated worktree,
+      not your main working directory, so unrelated local WIP elsewhere is
+      never disturbed:
   ```
-  # if the disposable containers already exist (created in this recovery session):
-  docker start supabase_db_codex_invoice_full_schema_20260802 supabase_rest_codex_invoice_full_schema_20260802 supabase_auth_codex_invoice_full_schema_20260802 supabase_kong_codex_invoice_full_schema_20260802
-
-  # verify:
-  docker ps
+  git worktree add /c/wt/opps-recovery recovery/xlab-quote-approval
   ```
-  If those containers no longer exist, a fresh disposable stack needs to be
-  built and the full migration chain re-applied — see the "Root cause"
-  sections of `docs/QUOTE_APPROVAL_TENANT_ARCHITECTURE_LIMITATION.md` for
-  what depends on what, and the recovery branch's commit messages
-  (`git log recovery/xlab-quote-approval`) for the exact migration list and
-  order that was applied.
-- [ ] Migrations re-applied if this is a fresh stack (local-only scaffold,
-      then X LAB's 202608050001/202608050004/202608060001, then this
-      repo's 202608050001/202608050002/202608050004, then — only if you've
-      confirmed X LAB's archive UI has since been committed —
-      202608060001)
+- [ ] Local disposable Supabase stack running — reuse an existing one, or
+      build a fresh one from scratch (see the dedicated section below)
+- [ ] Full local schema in place via the reproducible runner script (this
+      replaces manually re-applying migrations one at a time — it runs the
+      disposable test scaffold, the X LAB and OPPS migrations in the
+      required order, and the SQL integration test, stopping on the first
+      error):
+  ```
+  XLAB_MIGRATIONS_DIR="/c/path/to/X LAB/supabase/migrations" \
+  RECOVERY_CHECKOUT="/c/wt/opps-recovery" \
+    /c/wt/opps-recovery/supabase/tests/fixtures/run_quote_approval_local_integration.sh \
+    supabase_db_<your-local-project-id>
+  ```
+  A clean finish prints `ALL STEPS COMPLETED SUCCESSFULLY`. If it instead
+  fails with `trigger "trg_xlab_resource_files_upd" ... already exists`,
+  see the script's own header comment (KNOWN LIMITATION) for the one-line
+  fix, then rerun.
 - [ ] `.env.local` temporarily points `VITE_SUPABASE_URL` to
       `http://127.0.0.1:54321` and `VITE_SUPABASE_ANON_KEY` to the local
-      stack's anon key, not production (append to `.env.local`, don't
-      overwrite it — it may already contain unrelated Vercel CLI content;
-      remove the two lines again when done)
+      stack's anon key (from `supabase status`, run inside the disposable
+      stack's own project directory — not production; append to
+      `.env.local`, don't overwrite it — it may already contain unrelated
+      Vercel CLI content; remove the two lines again when done)
 - [ ] `npm run dev`, signed in as a seeded local staff user
 - [ ] Test data present: at minimum one draft quote request, one submitted
-      (non-draft) quote request, both from a test client —
-      `supabase/tests/quote_approval_local_integration.sql` seeds exactly
-      this and is safe to rerun (it cleans up and reseeds its own fixed
-      test IDs)
+      (non-draft) quote request, both from a test client — the runner
+      script's step 5 (`quote_approval_local_integration.sql`) seeds
+      exactly this and is safe to rerun (it cleans up and reseeds its own
+      fixed test IDs)
+
+### Recreate the local stack from scratch
+
+Use this whenever no disposable Supabase containers exist yet, or the old
+ones were removed. This builds a brand-new local Supabase stack in an
+isolated directory — deliberately **not** this repo's own `supabase/`
+folder, whose `supabase/.temp/project-ref` is linked to the real hosted
+project and must not be touched by this process.
+
+1. Create an isolated project directory for the disposable stack (anywhere
+   outside both the OPPS and X LAB repos) and initialize a fresh local
+   Supabase CLI project in it:
+   ```
+   mkdir -p /c/wt/disposable-supabase-stack
+   cd /c/wt/disposable-supabase-stack
+   supabase init
+   ```
+2. Start it (pulls and starts local Postgres/REST/Auth/Kong containers;
+   first run downloads images and can take a few minutes):
+   ```
+   supabase start
+   ```
+   Note the printed `API URL`, `anon key`, and `service_role key` — the
+   anon key is what goes into `.env.local` above. Re-print them any time
+   with `supabase status` from this same directory.
+3. Find the generated container names (they follow
+   `supabase_db_<project_id>`, `supabase_rest_<project_id>`, etc. — the
+   `<project_id>` is whatever `supabase init` generated for this
+   directory, visible in `supabase/config.toml`'s `project_id` key inside
+   `/c/wt/disposable-supabase-stack`):
+   ```
+   docker ps --format "{{.Names}}"
+   ```
+4. Set up a worktree of the recovery branch if you haven't already, then
+   run the reproducible runner script against the new container name —
+   this single command applies the disposable test scaffold, the required
+   X LAB and OPPS migrations in order, and the integration test:
+   ```
+   git worktree add /c/wt/opps-recovery recovery/xlab-quote-approval
+   XLAB_MIGRATIONS_DIR="/c/path/to/X LAB/supabase/migrations" \
+   RECOVERY_CHECKOUT="/c/wt/opps-recovery" \
+     /c/wt/opps-recovery/supabase/tests/fixtures/run_quote_approval_local_integration.sh \
+     supabase_db_<project_id>
+   ```
+5. Point `.env.local` at this stack's `API URL`/`anon key` from step 2 and
+   continue with `npm run dev` as above.
+6. When finished, tear the disposable stack down from the same directory
+   (this stops and removes its containers; it has no effect on production
+   or on this repo's own `supabase/.temp` link):
+   ```
+   cd /c/wt/disposable-supabase-stack
+   supabase stop
+   ```
 
 ## Checklist
 
