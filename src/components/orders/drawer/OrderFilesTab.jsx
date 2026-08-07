@@ -9,12 +9,14 @@ import {
   Paperclip,
   Pencil,
   Printer,
+  Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getInternalClientFileLibrary, saveInternalClientFileLink } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
 import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
+import { thumbnailPatchOnRemove } from "@/lib/orderThumbnail";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
@@ -376,6 +378,11 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         fileLabels: nextLabels,
         fileCopies: (metadata.fileCopies || []).filter((copy) => copy.url !== entry.url),
       },
+      // Unlinking the pinned thumbnail clears the pin in the same mutation,
+      // so the order never keeps a dangling reference to a file it no
+      // longer has. entry.url is the raw stored reference (never a signed
+      // display URL), matching how thumbnailUrl itself is stored.
+      ...thumbnailPatchOnRemove(entry.url, thumbnailUrl),
     });
   };
 
@@ -395,6 +402,14 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   };
 
   const isImageUrl = (url) => !isPrivateFileReference(url) && /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
+  // Unlike isImageUrl above (used for unsigned in-app folder previews), this
+  // doesn't exclude private-bucket files — production_thumbnail_url is
+  // rendered through a signed URL wherever it's displayed.
+  const isImageFile = (url) => /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
+
+  const thumbnailUrl = safeOrder.production_thumbnail_url || "";
+  const setAsThumbnail = (url) => onUpdate(safeOrder.id, { production_thumbnail_url: url });
+  const clearThumbnail = () => onUpdate(safeOrder.id, { production_thumbnail_url: null });
 
   const FolderPreview = ({ urls = [], tone = "primary" }) => {
     const previewUrls = urls.filter(isImageUrl).slice(0, 4);
@@ -493,6 +508,20 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         </div>
         {entry.isCopy && (
           <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder. No duplicate binary was created.</p>
+        )}
+        {isImageFile(entry.url) && (
+          <button
+            type="button"
+            onClick={() => thumbnailUrl === entry.url ? clearThumbnail() : setAsThumbnail(entry.url)}
+            className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium ${
+              thumbnailUrl === entry.url
+                ? "border-amber-300 bg-amber-50 text-amber-800"
+                : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            }`}
+          >
+            <Star className={`h-3.5 w-3.5 ${thumbnailUrl === entry.url ? "fill-amber-500 text-amber-500" : ""}`} />
+            {thumbnailUrl === entry.url ? "Order thumbnail" : "Set as thumbnail"}
+          </button>
         )}
         <button
           type="button"

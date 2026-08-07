@@ -231,6 +231,7 @@ const ENTITY_CONFIG = {
         production_client_update: payload.production_client_update,
         production_internal_note: payload.production_internal_note,
         production_hold_reason: payload.production_hold_reason,
+        production_thumbnail_url: payload.production_thumbnail_url,
         print_type: normalizePrintType(payload.print_type),
         linked_po_id: payload.linked_po_id,
         invoice_files: payload.invoice_files,

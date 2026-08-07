@@ -2,7 +2,7 @@ import { Component, Suspense, lazy, useState, useEffect, useMemo, useCallback } 
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer } from "lucide-react";
+import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
@@ -13,6 +13,8 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
+import { useSignedFileUrl } from "@/lib/privateFiles";
+import { getOrderGalleryEntries, getOrderOtherFiles, getOrderThumbnail } from "@/lib/orderThumbnail";
 
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
@@ -888,8 +890,84 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
   );
 }
 
+function ProductionSummaryThumbnail({ url }) {
+  const { url: signedUrl } = useSignedFileUrl(url);
+  const displayUrl = signedUrl || url;
+  return <img src={displayUrl} alt="" className="h-full w-full object-cover" loading="lazy" />;
+}
+
+function ProductionSummaryOtherFileLink({ url }) {
+  const { url: signedUrl } = useSignedFileUrl(url);
+  const displayUrl = signedUrl || url;
+  return (
+    <a href={displayUrl} target="_blank" rel="noreferrer" className="block truncate text-[11px] text-zinc-500 underline hover:text-zinc-700">
+      {fileNameFromUrl(url)}
+    </a>
+  );
+}
+
+function ProductionSummaryLightbox({ images, index, onIndexChange, onClose }) {
+  const url = images[index];
+  const { url: signedUrl } = useSignedFileUrl(url);
+  const displayUrl = signedUrl || url;
+  const hasMultiple = images.length > 1;
+
+  useEffect(() => {
+    const handleKey = (event) => {
+      if (event.key === "Escape") onClose();
+      if (hasMultiple && event.key === "ArrowRight") onIndexChange((index + 1) % images.length);
+      if (hasMultiple && event.key === "ArrowLeft") onIndexChange((index - 1 + images.length) % images.length);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [index, images.length, hasMultiple, onClose, onIndexChange]);
+
+  return (
+    <div className="no-print fixed inset-0 z-[120] flex items-center justify-center bg-black/85 p-4" onClick={onClose}>
+      <button type="button" onClick={onClose} className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20" aria-label="Close preview">
+        <X className="h-5 w-5" />
+      </button>
+      {hasMultiple && (
+        <>
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onIndexChange((index - 1 + images.length) % images.length); }}
+            className="absolute left-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            aria-label="Previous image"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onIndexChange((index + 1) % images.length); }}
+            className="absolute right-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+            aria-label="Next image"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </>
+      )}
+      <div className="max-h-[85vh] max-w-4xl" onClick={(event) => event.stopPropagation()}>
+        <img src={displayUrl} alt="" className="max-h-[85vh] max-w-full rounded-2xl object-contain" />
+        {hasMultiple && (
+          <p className="mt-2 text-center text-xs font-medium text-white/70">{index + 1} / {images.length}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProductionSummaryOrderCard({ order, stageLabel }) {
   const thumb = getOrderThumbnail(order);
+  const galleryEntries = getOrderGalleryEntries(order);
+  const otherFiles = getOrderOtherFiles(order);
+  const orderedGallery = thumb
+    ? [{ url: thumb, label: "Thumbnail" }, ...galleryEntries.filter((entry) => entry.url !== thumb)]
+    : galleryEntries;
+  const extraImages = orderedGallery.slice(1);
+  const extraCount = extraImages.length + otherFiles.length;
+  const [showMore, setShowMore] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
   const products = getOrderProducts(order);
   const statusLabel = statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
   const dueLabel = order.due_date ? format(new Date(order.due_date), "d MMM yyyy") : "No due date";
@@ -904,7 +982,9 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
       <div className="flex gap-3">
         <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 print:h-20 print:w-20">
           {thumb ? (
-            <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+            <button type="button" onClick={() => setLightboxIndex(0)} className="block h-full w-full">
+              <ProductionSummaryThumbnail url={thumb} />
+            </button>
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>
           )}
@@ -930,6 +1010,51 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
           </dl>
         </div>
       </div>
+
+      {extraCount > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setShowMore((value) => !value)}
+            className="no-print inline-flex items-center gap-1.5 rounded-full border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-600 hover:border-zinc-300"
+          >
+            {showMore ? "Hide extra files" : `Show ${extraCount} more file${extraCount === 1 ? "" : "s"}`}
+          </button>
+          {showMore && (
+            <div className="mt-2 space-y-2">
+              {extraImages.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {extraImages.map((entry, index) => (
+                    <button
+                      key={entry.url}
+                      type="button"
+                      onClick={() => setLightboxIndex(index + 1)}
+                      className="h-14 w-14 overflow-hidden rounded-lg border border-zinc-200"
+                      title={entry.label}
+                    >
+                      <ProductionSummaryThumbnail url={entry.url} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              {otherFiles.length > 0 && (
+                <div className="space-y-1">
+                  {otherFiles.map((url) => <ProductionSummaryOtherFileLink key={url} url={url} />)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {lightboxIndex !== null && (
+        <ProductionSummaryLightbox
+          images={orderedGallery.map((entry) => entry.url)}
+          index={lightboxIndex}
+          onIndexChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
 
       <div className="mt-3 rounded-xl bg-zinc-50 p-2 print:mt-2">
         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">Products / Work</p>
@@ -1082,25 +1207,13 @@ function getOrderProducts(order) {
   return [];
 }
 
-function getOrderThumbnail(order) {
-  const candidates = [
-    ...extractUrls(order.portal_visible_file_urls),
-    ...extractUrls(order.file_urls),
-    ...extractUrls(order.mockup_urls),
-    ...getOrderProducts(order).flatMap(product => extractUrls([product.image_url, product.image, product.thumbnail_url, product.thumbnail])),
-  ];
-  return candidates.find(isImageUrl) || "";
-}
-
-function extractUrls(value) {
-  if (!value) return [];
-  if (Array.isArray(value)) return value.filter(Boolean).map(String);
-  if (typeof value === "string") return [value];
-  return [];
-}
-
-function isImageUrl(url) {
-  return /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
+function fileNameFromUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    return decodeURIComponent(pathname.split("/").filter(Boolean).pop() || url);
+  } catch {
+    return decodeURIComponent(String(url).split("/").filter(Boolean).pop() || String(url));
+  }
 }
 
 function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isException }) {
