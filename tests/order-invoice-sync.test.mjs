@@ -1,10 +1,22 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   backfillOrderProductLineIds,
   buildOrderInvoiceSyncPlan,
   orderProductKey,
 } from "../src/features/invoices/orderToInvoiceItems.js";
+
+// src/api/invoices.js talks to Supabase directly (no test double exists for
+// it anywhere in this repo - see the source-pattern tests already at the
+// bottom of invoice-reliability.test.mjs for the same constraint) so these
+// regression tests pin the exact control flow in source rather than
+// executing it. They exist to catch the JET T-Shirt production bug: creating
+// or syncing an invoice from an order must not touch the client's reusable
+// saved item template.
+async function readInvoicesApiSource() {
+  return readFile(new URL("../src/api/invoices.js", import.meta.url), "utf8");
+}
 
 test("a fresh link adds every order product with no existing invoice items", () => {
   const products = [
@@ -124,4 +136,124 @@ test("line_number is always renumbered sequentially after a merge, regardless of
   const currentItems = [{ id: "x", source_order_item_id: "b", item_name: "Second", quantity: 1, rate: 10, line_number: 99 }];
   const plan = buildOrderInvoiceSyncPlan(products, currentItems);
   assert.deepEqual(plan.items.map((item) => item.line_number), [1, 2, 3]);
+});
+
+// ── Regression: order-driven saves must not fight the client saved-item
+// change_reason guard (production bug: "Explain why JET T-Shirt changed
+// before updating this client's saved item." on Create OPPS invoice from
+// order) ──────────────────────────────────────────────────────────────────
+
+test("createInvoice skips syncClientItemTemplates entirely in preserve mode (JET T-Shirt reproduction: create-from-order must not touch the client's saved item)", async () => {
+  const source = await readInvoicesApiSource();
+  assert.match(
+    source,
+    /const linkedItems = templateSyncMode === "preserve"\s*\?\s*withOrderSyncChangeReason\(items\)\s*:\s*await syncClientItemTemplates\(items, input\.customer_id, tenantId, userId\);/,
+    "createInvoice must route order-driven saves (templateSyncMode: 'preserve') away from syncClientItemTemplates, the function that matches by name and rewrites the client's reusable saved item"
+  );
+});
+
+test("updateInvoice (used by linkInvoiceToOrder and syncInvoiceItemsFromOrder) also skips syncClientItemTemplates in preserve mode", async () => {
+  const source = await readInvoicesApiSource();
+  assert.match(
+    source,
+    /const linkedItems = templateSyncMode === "preserve"\s*\?\s*items\s*:\s*await syncClientItemTemplates\(items, input\.customer_id, tenantId, userId\);/,
+    "updateInvoice must not call syncClientItemTemplates when linking/syncing an invoice from an order"
+  );
+});
+
+test("preserve mode supplies an automatic change reason before assertInvoiceItemChangeReasons runs, so link/sync cannot hit a second, different change_reason throw", async () => {
+  const source = await readInvoicesApiSource();
+  assert.match(
+    source,
+    /if \(hasItems && templateSyncMode === "preserve"\) \{\s*items = withOrderSyncChangeReason\(items\);\s*\}\s*if \(hasItems\) \{\s*try \{\s*assertInvoiceItemsReadyForSave/,
+    "the order-driven change reason must be applied before the invoice's own item change-reason guard, not after"
+  );
+});
+
+test("withOrderSyncChangeReason never overwrites a change_reason the caller already supplied", async () => {
+  const source = await readInvoicesApiSource();
+  assert.match(
+    source,
+    /function withOrderSyncChangeReason\(items\) \{\s*return items\.map\(\(item\) => \(\s*item\.source_order_item_id && !String\(item\.change_reason \|\| ""\)\.trim\(\)\s*\? \{ \.\.\.item, change_reason: ORDER_SYNC_CHANGE_REASON \}\s*: item/,
+    "an item that already carries an explicit reason must be left alone, not silently relabelled 'Synced from linked order'"
+  );
+});
+
+test("withOrderSyncChangeReason only applies to order-derived lines (source_order_item_id boundary) - invoice-only/manual lines must never inherit the automatic reason", async () => {
+  const source = await readInvoicesApiSource();
+  assert.match(
+    source,
+    /function withOrderSyncChangeReason\(items\) \{\s*return items\.map\(\(item\) => \(\s*item\.source_order_item_id && !String\(item\.change_reason \|\| ""\)\.trim\(\)/,
+    "the automatic reason must be gated on item.source_order_item_id, not applied to every item in the save - an invoice-only line (no source_order_item_id) must fall through to the existing manual change-reason guard, unaffected by Link/Sync running at the same time"
+  );
+});
+
+// withOrderSyncChangeReason has no Supabase dependency of its own, so unlike
+// the rest of this file it can be extracted from source and actually
+// executed, proving the boundary scenario behaviorally rather than only
+// structurally: a mixed Link/Sync save containing both an order-derived line
+// and an untouched invoice-only line.
+test("boundary scenario: order-derived JET T-Shirt gets the automatic reason, invoice-only Rush fee does not", async () => {
+  const source = await readInvoicesApiSource();
+  const fnSource = source.match(/const ORDER_SYNC_CHANGE_REASON = "[^"]+";\s*function withOrderSyncChangeReason\(items\) \{[\s\S]*?\r?\n\}\r?\n/)?.[0];
+  assert.ok(fnSource, "withOrderSyncChangeReason must be present and extractable");
+
+  // eslint-disable-next-line no-new-func
+  const withOrderSyncChangeReason = new Function(`${fnSource}\nreturn withOrderSyncChangeReason;`)();
+
+  const items = [
+    { item_name: "JET T-Shirt", source_order_item_id: "order-line-1", rate: 155 },
+    { item_name: "Rush fee", source_order_item_id: null, rate: 500 },
+  ];
+  const result = withOrderSyncChangeReason(items);
+
+  const jetShirt = result.find((item) => item.item_name === "JET T-Shirt");
+  const rushFee = result.find((item) => item.item_name === "Rush fee");
+
+  assert.equal(jetShirt.change_reason, "Synced from linked order", "the order-derived line (has source_order_item_id) must receive the automatic reason");
+  assert.equal(rushFee.change_reason, undefined, "the invoice-only line (no source_order_item_id) must NOT receive an automatic reason - if it actually changed since its previous version, the existing manual change-reason guard must still be free to reject it");
+});
+
+test("manual saved-item template protection is untouched: syncClientItemTemplates still guards every non-order-driven save with the original message", async () => {
+  const source = await readInvoicesApiSource();
+  assert.match(
+    source,
+    /async function syncClientItemTemplates\(items, clientId, tenantId, userId\) \{/,
+    "syncClientItemTemplates must still run unconditionally for normal (non-preserve) saves"
+  );
+  assert.match(
+    source,
+    /throw new Error\(`Explain why \$\{name\} changed before updating this client's saved item\.`\);/,
+    "the manual-edit guard message must be unchanged - normal invoice creation/editing must still require a reason for a real saved-item change"
+  );
+});
+
+test("all three order-driven entry points opt into preserve mode", async () => {
+  const invoicesSource = await readInvoicesApiSource();
+  const buttonSource = await readFile(new URL("../src/features/invoices/CreateInvoiceFromOrderButton.jsx", import.meta.url), "utf8");
+
+  assert.match(
+    buttonSource,
+    /createInvoice\(invoiceFromOrder\(order, totalPaid, defaults\), \{ templateSyncMode: "preserve" \}\)/,
+    "Create OPPS invoice from order must request preserve mode"
+  );
+
+  const linkBody = invoicesSource.match(/export async function linkInvoiceToOrder\([\s\S]*?\n\}/)?.[0];
+  assert.ok(linkBody, "linkInvoiceToOrder must exist");
+  assert.match(linkBody, /\}, \{ templateSyncMode: "preserve" \}\);/, "linkInvoiceToOrder must request preserve mode");
+
+  const syncBody = invoicesSource.match(/export async function syncInvoiceItemsFromOrder\([\s\S]*?\n\}/)?.[0];
+  assert.ok(syncBody, "syncInvoiceItemsFromOrder must exist");
+  assert.match(syncBody, /\}, \{ templateSyncMode: "preserve" \}\);/, "syncInvoiceItemsFromOrder must request preserve mode");
+});
+
+test("ordinary manual invoice save/edit (Invoices.jsx save handler) does not opt into preserve mode", async () => {
+  const pageSource = await readFile(new URL("../src/pages/Invoices.jsx", import.meta.url), "utf8");
+  assert.match(pageSource, /await updateInvoice\(invoice\.id, invoice\)/, "manual edit must keep calling updateInvoice with no options (default 'normal' mode)");
+  assert.match(pageSource, /await createInvoice\(invoice\)/, "manual create must keep calling createInvoice with no options (default 'normal' mode)");
+  assert.doesNotMatch(
+    pageSource,
+    /templateSyncMode/,
+    "the manual save handler must stay untouched by this fix - it must keep requiring change_reason for real saved-item edits"
+  );
 });
