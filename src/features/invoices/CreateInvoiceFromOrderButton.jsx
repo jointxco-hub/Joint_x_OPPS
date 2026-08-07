@@ -26,7 +26,7 @@ export default function CreateInvoiceFromOrderButton({
     }
 
     const defaults = normalizeInvoiceDefaultsSetting(await getInvoiceSetting(INVOICE_SETTING_KEYS.invoiceDefaults));
-    return createInvoice(invoiceFromOrder(order, totalPaid, defaults));
+    return createInvoice(invoiceFromOrder(order, totalPaid, defaults), { templateSyncMode: "preserve" });
   };
 
   const mutation = useMutation({

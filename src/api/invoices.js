@@ -280,6 +280,30 @@ function snapshotsEqual(left, right) {
   return invoiceJsonValuesEqual(left || {}, right || {});
 }
 
+// An order-derived invoice line is a snapshot of what was actually ordered
+// (negotiated price, custom spec, etc.) and is expected to differ from the
+// client's reusable saved item. templateSyncMode: "preserve" (used by
+// createInvoice-from-order, linkInvoiceToOrder, syncInvoiceItemsFromOrder)
+// carries that snapshot into the invoice's own item-version history under an
+// automatic reason instead of demanding a manual one, and skips
+// syncClientItemTemplates entirely so the order sync never rewrites or
+// versions the reusable client template just because a name matches.
+//
+// The automatic reason applies only to order-derived lines (identified by
+// source_order_item_id). An invoice-only/manual line carried through the
+// same preserve-mode save (e.g. a kept line during Link/Sync) must not
+// inherit it - that would bypass the manual change-reason guard for a line
+// the order sync never touched.
+const ORDER_SYNC_CHANGE_REASON = "Synced from linked order";
+
+function withOrderSyncChangeReason(items) {
+  return items.map((item) => (
+    item.source_order_item_id && !String(item.change_reason || "").trim()
+      ? { ...item, change_reason: ORDER_SYNC_CHANGE_REASON }
+      : item
+  ));
+}
+
 
 async function assertInvoiceItemChangeReasons(items, tenantId) {
   for (const item of items) {
@@ -451,8 +475,9 @@ export async function nextInvoiceNumber(tenantId) {
   return data;
 }
 
-export async function createInvoice(input = {}) {
+export async function createInvoice(input = {}, options = {}) {
   ensureSupabase();
+  const templateSyncMode = options.templateSyncMode === "preserve" ? "preserve" : "normal";
   const userId = await getAuthUserId();
   const tenantId = await getTenantId();
   const invoiceNumber = input.invoice_number || await nextInvoiceNumber(tenantId);
@@ -467,7 +492,9 @@ export async function createInvoice(input = {}) {
     throw Object.assign(new Error("Invoice validation failed."), { validation });
   }
 
-  const linkedItems = await syncClientItemTemplates(items, input.customer_id, tenantId, userId);
+  const linkedItems = templateSyncMode === "preserve"
+    ? withOrderSyncChangeReason(items)
+    : await syncClientItemTemplates(items, input.customer_id, tenantId, userId);
   const createdInvoice = await saveInvoiceWithItemsTransaction({
     tenantId,
     invoice: invoiceRecord(invoice, userId),
@@ -478,15 +505,19 @@ export async function createInvoice(input = {}) {
   return createdInvoice;
 }
 
-export async function updateInvoice(id, input = {}) {
+export async function updateInvoice(id, input = {}, options = {}) {
   ensureSupabase();
+  const templateSyncMode = options.templateSyncMode === "preserve" ? "preserve" : "normal";
   const userId = await getAuthUserId();
   const tenantId = await getTenantId();
   const hasItems = Array.isArray(input.items);
   const rawItems = hasItems ? input.items : [];
-  const { invoice, items } = hasItems
+  let { invoice, items } = hasItems
     ? applyInvoiceTotals(input, rawItems)
     : { invoice: input, items: [] };
+  if (hasItems && templateSyncMode === "preserve") {
+    items = withOrderSyncChangeReason(items);
+  }
   if (hasItems) {
     try {
       assertInvoiceItemsReadyForSave(input);
@@ -521,7 +552,9 @@ export async function updateInvoice(id, input = {}) {
   }
 
   if (hasItems) {
-    const linkedItems = await syncClientItemTemplates(items, input.customer_id, tenantId, userId);
+    const linkedItems = templateSyncMode === "preserve"
+      ? items
+      : await syncClientItemTemplates(items, input.customer_id, tenantId, userId);
     const savedInvoice = await saveInvoiceWithItemsTransaction({
       tenantId,
       invoiceId: id,
@@ -571,7 +604,7 @@ export async function linkInvoiceToOrder(invoice, order) {
     items: plan.items,
     expected_updated_at: invoice.updated_at,
     expected_item_count: (invoice.items || []).length,
-  });
+  }, { templateSyncMode: "preserve" });
   await createInvoiceActivity(invoice.id, {
     activity_type: "invoice_linked_to_order",
     activity_note: `Linked to order ${order.order_number || order.id}`,
@@ -602,7 +635,7 @@ export async function syncInvoiceItemsFromOrder(invoice, order) {
     items: plan.items,
     expected_updated_at: invoice.updated_at,
     expected_item_count: (invoice.items || []).length,
-  });
+  }, { templateSyncMode: "preserve" });
   await createInvoiceActivity(invoice.id, {
     activity_type: "invoice_synced_from_order",
     activity_note: `Synced from order ${order.order_number || order.id}`,
