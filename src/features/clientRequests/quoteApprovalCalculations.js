@@ -196,6 +196,9 @@ export function resolveApprovalMutationResult({ data, error } = {}) {
   if (error) {
     throw new Error(error);
   }
+  if (!data) {
+    throw new Error("Quote approval returned no order.");
+  }
   return data;
 }
 
@@ -269,4 +272,21 @@ export function formatLinkedOrder(order = {}) {
     status: order.status || "pending_payment",
     createdAt,
   };
+}
+
+const LOCKED_WORKFLOW_STATUSES = ["actioned", "closed"];
+const STATUS_REGRESSION_PROTECTED_TYPES = ["quote_request", "reorder_request"];
+
+// Once a quote_request/reorder_request is linked to a payable X LAB order
+// (status actioned/closed), the request becomes fully read-only in the UI -
+// no Status selector at all, not even narrowed to actioned/closed. The
+// order's own lifecycle (payment, fulfilment) belongs to the order/payment
+// workflow, not to moving the source request around. This is UI-side
+// defence in depth: update_internal_client_request_status_unscoped (see
+// 202608060003_quote_approval_regression_guard_and_order_lookup.sql)
+// independently rejects any attempt to move a linked request back to
+// new/reviewing at the database layer, whether or not the UI offers the
+// control. Other request types (message, tech_pack, etc.) are unaffected.
+export function isApprovedStatusLocked(type, status) {
+  return STATUS_REGRESSION_PROTECTED_TYPES.includes(type) && LOCKED_WORKFLOW_STATUSES.includes(status);
 }

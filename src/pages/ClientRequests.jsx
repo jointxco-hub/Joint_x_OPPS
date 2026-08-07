@@ -41,6 +41,7 @@ import {
   formatAwaitingPaymentOrder,
   formatLinkedOrder,
   invalidateAfterApproval,
+  isApprovedStatusLocked,
   refreshAllSections,
   resolveApprovalMutationResult,
   validateApprovalItems,
@@ -350,21 +351,22 @@ function riskBadges(request) {
   return badges.slice(0, 6);
 }
 
-// Once a quote_request/reorder_request is linked to a payable X LAB order
-// (status actioned/closed - see the DB-side guard in
-// 202608060003_quote_approval_regression_guard_and_order_lookup.sql), the
-// status dropdown must not offer new/reviewing: selecting either would be
-// rejected by that guard, and offering them at all invites staff to try a
-// transition that always fails. This mirrors the DB guard on the client
-// side as defence in depth, not a replacement for it.
+// Once a quote_request/reorder_request is actioned/closed, it is fully
+// read-only: no Status selector at all (see isApprovedStatusLocked). The
+// resulting order's lifecycle belongs to the order/payment workflow, not to
+// moving the source request around manually. This mirrors the DB-side guard
+// in 202608060003_quote_approval_regression_guard_and_order_lookup.sql
+// (update_internal_client_request_status_unscoped independently rejects a
+// linked request moving back to new/reviewing) as defence in depth, not a
+// replacement for it - the database still enforces this even if some other
+// caller bypasses this UI.
 function statusOptionsFor(type, request) {
   if (type === "tech_pack") return TECH_PACK_STATUSES;
   if (type === "special_instruction") return INSTRUCTION_STATUSES;
   if (type === "profile_update") return PROFILE_STATUSES;
   if (type === "message") return WORKFLOW_STATUSES;
   if (["quote_request", "reorder_request"].includes(type)) {
-    const isLinkedAndActioned = ["actioned", "closed"].includes(request?.status);
-    return isLinkedAndActioned ? ["actioned", "closed"] : WORKFLOW_STATUSES;
+    return isApprovedStatusLocked(type, request?.status) ? [] : WORKFLOW_STATUSES;
   }
   return [];
 }

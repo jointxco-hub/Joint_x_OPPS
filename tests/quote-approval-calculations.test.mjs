@@ -13,6 +13,7 @@ import {
   formatLinkedOrder,
   friendlyMissingMessage,
   invalidateAfterApproval,
+  isApprovedStatusLocked,
   refreshAllSections,
   resolveApprovalMutationResult,
   roundMoney,
@@ -289,8 +290,10 @@ test("resolveApprovalMutationResult throws (not resolves) when the API layer rep
   );
 });
 
-test("resolveApprovalMutationResult treats a missing/empty argument as no data, no error", () => {
-  assert.equal(resolveApprovalMutationResult(undefined), undefined);
+test("resolveApprovalMutationResult throws a clear error instead of resolving undefined when there is no error and no data", () => {
+  assert.throws(() => resolveApprovalMutationResult(undefined), /no order/i);
+  assert.throws(() => resolveApprovalMutationResult({ data: null, error: null }), /no order/i);
+  assert.throws(() => resolveApprovalMutationResult({}), /no order/i);
 });
 
 // ---- invalidateAfterApproval / refreshAllSections (both-sections refresh) ----
@@ -404,4 +407,36 @@ test("formatLinkedOrder falls back per-field within a malformed item instead of 
   assert.equal(formatted.items[0].quantity, null);
   assert.equal(formatted.items[0].unitPrice, 50);
   assert.equal(formatted.items[0].lineTotal, null);
+});
+
+// ---- isApprovedStatusLocked (approved quote/reorder requests are fully read-only) ----
+// Browser acceptance found the Status selector still rendered (narrowed to
+// actioned/closed, but not hidden) for an already-approved request. The
+// requirement is stronger: once linked to a payable order, the request must
+// be fully read-only in the UI - no selector at all. The DB-level guard in
+// 202608060003_quote_approval_regression_guard_and_order_lookup.sql stays
+// as defence in depth regardless of what the UI offers.
+
+test("quote_request + actioned is locked", () => {
+  assert.equal(isApprovedStatusLocked("quote_request", "actioned"), true);
+});
+
+test("quote_request + closed is locked", () => {
+  assert.equal(isApprovedStatusLocked("quote_request", "closed"), true);
+});
+
+test("reorder_request + actioned is locked", () => {
+  assert.equal(isApprovedStatusLocked("reorder_request", "actioned"), true);
+});
+
+test("reorder_request + closed is locked", () => {
+  assert.equal(isApprovedStatusLocked("reorder_request", "closed"), true);
+});
+
+test("quote_request + reviewing is not locked", () => {
+  assert.equal(isApprovedStatusLocked("quote_request", "reviewing"), false);
+});
+
+test("message + actioned is not locked (only quote_request/reorder_request are regression-protected)", () => {
+  assert.equal(isApprovedStatusLocked("message", "actioned"), false);
 });
