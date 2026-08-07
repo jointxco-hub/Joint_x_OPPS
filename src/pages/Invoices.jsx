@@ -258,8 +258,18 @@ export default function Invoices() {
     }
   };
 
+  /**
+   * @typedef {{
+   *   invoice: any,
+   *   order: any
+   * }} OrderInvoiceMutationVariables
+   */
+
   const linkOrderMutation = useMutation({
-    mutationFn: ({ invoice, order }) => linkInvoiceToOrder(invoice, order),
+    mutationFn: (
+      /** @type {OrderInvoiceMutationVariables} */
+      { invoice, order }
+    ) => linkInvoiceToOrder(invoice, order),
     onSuccess: (saved, { order }) => {
       toast.success(`Linked to order ${order.order_number || order.id}`);
       invalidateAfterOrderLinkChange(saved);
@@ -277,7 +287,10 @@ export default function Invoices() {
   });
 
   const syncOrderMutation = useMutation({
-    mutationFn: ({ invoice, order }) => syncInvoiceItemsFromOrder(invoice, order),
+    mutationFn: (
+      /** @type {OrderInvoiceMutationVariables} */
+      { invoice, order }
+    ) => syncInvoiceItemsFromOrder(invoice, order),
     onSuccess: (saved) => {
       toast.success("Invoice items synced from order");
       invalidateAfterOrderLinkChange(saved);

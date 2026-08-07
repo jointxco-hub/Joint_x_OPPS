@@ -14,6 +14,18 @@ import {
 import { dataClient } from "@/api/dataClient";
 import { buildOrderInvoiceSyncPlan } from "./orderToInvoiceItems";
 
+// Legacy/untyped boundaries, isolated locally so the rest of this file stays
+// checked. dataClient.entities has no static shape under checkJs, and the
+// shared shadcn wrappers below don't publish prop types.
+const orderEntity = /** @type {any} */ (dataClient.entities).Order;
+const UIButton = /** @type {any} */ (Button);
+const UIInput = /** @type {any} */ (Input);
+const UIDialogContent = /** @type {any} */ (DialogContent);
+const UIDialogHeader = /** @type {any} */ (DialogHeader);
+const UIDialogTitle = /** @type {any} */ (DialogTitle);
+const UIDialogDescription = /** @type {any} */ (DialogDescription);
+const UIDialogFooter = /** @type {any} */ (DialogFooter);
+
 function DiffSummary({ diff }) {
   const rows = [
     ["Will be added from the order", diff.added],
@@ -47,7 +59,7 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
 
   const linkedOrderQuery = useQuery({
     queryKey: ["invoiceLinkedOrder", invoice?.source_order_id],
-    queryFn: () => dataClient.entities.Order.filter({ id: invoice.source_order_id }, "-created_date", 1).then((rows) => rows?.[0] || null),
+    queryFn: () => orderEntity.filter({ id: invoice.source_order_id }, "-created_date", 1).then((rows) => rows?.[0] || null),
     enabled: Boolean(invoice?.source_order_id),
   });
 
@@ -55,8 +67,8 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
     queryKey: ["invoiceLinkCandidateOrders", invoice?.customer_id],
     queryFn: () => (
       invoice.customer_id
-        ? dataClient.entities.Order.filter({ client_id: invoice.customer_id }, "-created_date", 50)
-        : dataClient.entities.Order.list("-created_date", 50)
+        ? orderEntity.filter({ client_id: invoice.customer_id }, "-created_date", 50)
+        : orderEntity.list("-created_date", 50)
     ),
     enabled: pickerOpen,
   });
@@ -114,32 +126,32 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
         <div className="flex flex-wrap gap-2">
           {invoice.source_order_id ? (
             <>
-              <Button type="button" variant="outline" size="sm" onClick={openSyncPreview} disabled={isPending || !linkedOrderQuery.data} className="h-8 rounded-xl text-xs">
+              <UIButton type="button" variant="outline" size="sm" onClick={openSyncPreview} disabled={isPending || !linkedOrderQuery.data} className="h-8 rounded-xl text-xs">
                 <RefreshCw className="h-3.5 w-3.5" /> Sync from order
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => onUnlink?.()} disabled={isPending} className="h-8 rounded-xl text-xs text-destructive hover:text-destructive">
+              </UIButton>
+              <UIButton type="button" variant="outline" size="sm" onClick={() => onUnlink?.()} disabled={isPending} className="h-8 rounded-xl text-xs text-destructive hover:text-destructive">
                 <Unlink className="h-3.5 w-3.5" /> Unlink
-              </Button>
+              </UIButton>
             </>
           ) : (
-            <Button type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
+            <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
               <Link2 className="h-3.5 w-3.5" /> Link to order
-            </Button>
+            </UIButton>
           )}
         </div>
       </div>
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>Link to an order</DialogTitle>
-            <DialogDescription>
+        <UIDialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
+          <UIDialogHeader>
+            <UIDialogTitle>Link to an order</UIDialogTitle>
+            <UIDialogDescription>
               {invoice.customer_id
                 ? "Showing this client's recent orders."
                 : "This invoice has no linked client, so showing recent orders across all clients."}
-            </DialogDescription>
-          </DialogHeader>
-          <Input
+            </UIDialogDescription>
+          </UIDialogHeader>
+          <UIInput
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search order number or client..."
@@ -167,27 +179,27 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
               ))
             )}
           </div>
-        </DialogContent>
+        </UIDialogContent>
       </Dialog>
 
       <Dialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && setConfirmAction(null)}>
-        <DialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>{confirmAction?.mode === "link" ? "Link and pull in items?" : "Sync from order?"}</DialogTitle>
-            <DialogDescription>
+        <UIDialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
+          <UIDialogHeader>
+            <UIDialogTitle>{confirmAction?.mode === "link" ? "Link and pull in items?" : "Sync from order?"}</UIDialogTitle>
+            <UIDialogDescription>
               {confirmAction?.mode === "link"
                 ? `Linking to order ${confirmAction?.order?.order_number} will update this invoice's line items as shown below.`
                 : `Pulling the latest items from order ${confirmAction?.order?.order_number}.`}
-            </DialogDescription>
-          </DialogHeader>
+            </UIDialogDescription>
+          </UIDialogHeader>
           {confirmAction && <DiffSummary diff={confirmAction.diff} />}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmAction(null)} className="rounded-xl">Cancel</Button>
-            <Button onClick={confirmApply} disabled={isPending} className="rounded-xl">
+          <UIDialogFooter>
+            <UIButton variant="outline" onClick={() => setConfirmAction(null)} className="rounded-xl">Cancel</UIButton>
+            <UIButton onClick={confirmApply} disabled={isPending} className="rounded-xl">
               {confirmAction?.mode === "link" ? "Link and apply" : "Apply sync"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
+            </UIButton>
+          </UIDialogFooter>
+        </UIDialogContent>
       </Dialog>
     </div>
   );
