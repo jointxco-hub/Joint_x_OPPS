@@ -7,12 +7,19 @@
 --     never committed - see that file's header for why it's needed)
 --   X LAB: 202608050001_quote_approval_and_resource_files.sql
 --   X LAB: 202608050004_quote_request_drafts.sql
---   X LAB: 202608060001_client_quote_request_archive_delete.sql
 --   OPPS:  202608050001_xlab_quote_approval.sql
 --   OPPS:  202608050002_xlab_orders_awaiting_payment.sql
 --   OPPS:  202608050004_hide_draft_quote_requests.sql
---   OPPS:  202608060001_hide_archived_quote_requests.sql
 --   OPPS:  202608060003_quote_approval_regression_guard_and_order_lookup.sql
+--
+-- Deliberately does NOT require or exercise the client-side archive/delete
+-- RPC (update_client_quote_request) or its OPPS-side counterpart
+-- (get_internal_client_requests hiding archived requests). Both migrations
+-- for that feature (X LAB: 202608060001_client_quote_request_archive_delete.sql,
+-- OPPS: 202608060001_hide_archived_quote_requests.sql) are uncommitted in
+-- their respective repos and unrelated to this recovery work's actual
+-- scope (approval mutation contract, refresh, status locking, read-only
+-- linked-order display) - shipping them is a separate cross-repo decision.
 --
 -- Unlike other *_smoke.sql fixtures in this repo, this one COMMITS its seed
 -- data on success (fake/test data only) so it can also be used as a fixture
@@ -153,7 +160,7 @@ begin
   where client_email = 'client-a@quote-approval-local-test.invalid';
 
   if v_visible_count <> 1 then
-    raise exception 'TEST_FAILED: staff A should see exactly 1 visible request from client A (draft + archived excluded), saw %', v_visible_count;
+    raise exception 'TEST_FAILED: staff A should see exactly 1 visible request from client A (draft excluded), saw %', v_visible_count;
   end if;
 
   select exists (
@@ -439,89 +446,6 @@ end
 $$;
 
 reset role;
-commit;
-
--- ── Client-side archive/delete (202608060001 in both repos), still no auth
---    context needed - these are the same email/order-number gated RPCs. ──
-begin;
-
-select public.submit_client_portal_item(
-  'client-a@quote-approval-local-test.invalid',
-  'ANY-ORDER-NUMBER',
-  'quote_request',
-  jsonb_build_object('details', 'Archive-test request: 3 x local test cap', 'project_name', 'Local test archive check', 'quantity', '3'),
-  'new'
-);
-
-do $$
-declare v_id uuid; v_visible_before boolean; v_visible_after boolean;
-begin
-  select id into v_id from public.client_quote_requests
-    where client_email = 'client-a@quote-approval-local-test.invalid' and details like 'Archive-test request%';
-
-  set local role authenticated;
-  set local request.jwt.claims = '{"sub":"9a000000-0000-0000-0000-000000000001","email":"staff-a@quote-approval-local-test.invalid","role":"authenticated"}';
-  select exists (select 1 from public.get_internal_client_requests(null,null,null,null,100) where id = v_id) into v_visible_before;
-  reset role;
-
-  if not v_visible_before then
-    raise exception 'TEST_FAILED: newly submitted request should be visible to staff before archiving';
-  end if;
-
-  perform public.update_client_quote_request('client-a@quote-approval-local-test.invalid', 'ANY-ORDER-NUMBER', v_id, 'archive');
-
-  if (select status from public.client_quote_requests where id = v_id) <> 'archived' then
-    raise exception 'TEST_FAILED: request status was not set to archived';
-  end if;
-
-  set local role authenticated;
-  set local request.jwt.claims = '{"sub":"9a000000-0000-0000-0000-000000000001","email":"staff-a@quote-approval-local-test.invalid","role":"authenticated"}';
-  select exists (select 1 from public.get_internal_client_requests(null,null,null,null,100) where id = v_id) into v_visible_after;
-  reset role;
-
-  if v_visible_after then
-    raise exception 'TEST_FAILED: archived request is still visible to staff';
-  end if;
-
-  raise notice 'PASS: request was visible before archiving, and hidden from staff immediately after';
-end
-$$;
-
--- The earlier draft (already visible-before-archive test doesn't touch it)
--- is hard-deleted; a non-draft cannot be deleted, only archived.
-do $$
-declare v_draft_id uuid; v_count_before integer; v_count_after integer;
-begin
-  select id into v_draft_id from public.client_quote_requests
-    where client_email = 'client-a@quote-approval-local-test.invalid' and details like 'Draft: 50 x local test hoodie%';
-  select count(*) into v_count_before from public.client_quote_requests where id = v_draft_id;
-
-  perform public.update_client_quote_request('client-a@quote-approval-local-test.invalid', 'ANY-ORDER-NUMBER', v_draft_id, 'delete');
-
-  select count(*) into v_count_after from public.client_quote_requests where id = v_draft_id;
-  if v_count_before <> 1 or v_count_after <> 0 then
-    raise exception 'TEST_FAILED: draft delete did not remove the row (before=%, after=%)', v_count_before, v_count_after;
-  end if;
-  raise notice 'PASS: draft was hard-deleted (%->%)', v_count_before, v_count_after;
-end
-$$;
-
-do $$
-declare v_real_id uuid; v_code text;
-begin
-  select id into v_real_id from public.client_quote_requests
-    where client_email = 'client-a@quote-approval-local-test.invalid' and details like 'Real request: 20 x local test t-shirt%';
-  begin
-    perform public.update_client_quote_request('client-a@quote-approval-local-test.invalid', 'ANY-ORDER-NUMBER', v_real_id, 'delete');
-    raise exception 'TEST_FAILED: a non-draft (already-actioned) request was deleted';
-  exception when others then
-    get stacked diagnostics v_code = message_text;
-    if v_code !~ 'Only drafts can be deleted' then raise; end if;
-    raise notice 'PASS: deleting a non-draft is blocked (%)', v_code;
-  end;
-end
-$$;
-
 commit;
 
 select 'ALL_QUOTE_APPROVAL_LOCAL_INTEGRATION_CHECKS_PASSED' as result;
