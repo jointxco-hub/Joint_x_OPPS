@@ -243,6 +243,8 @@ const ENTITY_CONFIG = {
         archived_at: payload.archived_at,
         archived_by: payload.archived_by,
         source: payload.source,
+        products_locked_at: payload.products_locked_at,
+        products_locked_by: payload.products_locked_by,
       });
     },
   },
