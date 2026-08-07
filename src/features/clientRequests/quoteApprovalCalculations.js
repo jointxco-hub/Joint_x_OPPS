@@ -182,3 +182,91 @@ export function describeApprovalError(rawMessage = "") {
   }
   return message;
 }
+
+// Turns api/clientRequests.js's { data, error } convention into the
+// react-query mutationFn contract QuoteApprovalSection's approve mutation
+// needs: resolve with the unwrapped RPC data object on success (so
+// onSuccess/onApproved see order_number/order_id/total_amount directly,
+// not nested under .data), or throw so onError actually runs. Without this,
+// { data: null, error: "..." } was treated as a "successful" mutation with
+// an undefined order_number, and onApproved was never called - the bug the
+// manual browser test found. Extracted as a pure function (no supabase/
+// react-query import) so the contract itself is directly unit-testable.
+export function resolveApprovalMutationResult({ data, error } = {}) {
+  if (error) {
+    throw new Error(error);
+  }
+  return data;
+}
+
+// Query keys shared between QuoteApprovalSection's approve mutation and the
+// page-level Refresh button (ClientRequests.jsx), so both always target the
+// exact same two sections instead of drifting apart.
+export const CLIENT_REQUESTS_QUERY_KEY = ["clientRequests"];
+export const CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY = ["clientOrdersAwaitingPayment"];
+
+// Called from the approve mutation's onSuccess. Takes a minimal
+// { invalidateQueries } duck-typed client (react-query's QueryClient
+// satisfies this) so it's testable without rendering React.
+export function invalidateAfterApproval(queryClient) {
+  queryClient.invalidateQueries({ queryKey: CLIENT_REQUESTS_QUERY_KEY });
+  queryClient.invalidateQueries({ queryKey: CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY });
+}
+
+// Called from the page-level Refresh button. Refreshes both sections in
+// parallel and reports whether either failed, so the caller can surface one
+// combined error instead of the button silently refreshing only the first
+// section (the bug: the old Refresh button only ever called the
+// clientRequests query's refetch()).
+export async function refreshAllSections({ refetchRequests, refetchAwaitingPayment }) {
+  const [requestsResult, awaitingPaymentResult] = await Promise.all([
+    refetchRequests(),
+    refetchAwaitingPayment(),
+  ]);
+  return {
+    requestsResult,
+    awaitingPaymentResult,
+    hasError: Boolean(requestsResult?.isError || awaitingPaymentResult?.isError),
+  };
+}
+
+// Number(null)/Number(undefined) are 0 in JS, which would otherwise make a
+// genuinely missing field render as "R0" (a real, misleadingly-free price)
+// instead of "-" (unknown) - same isBlank guard validateApprovalItems uses.
+function numberOrNull(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+// Maps a raw get_client_quote_request_order row into the read-only display
+// shape QuoteApprovalSection shows once a request is already approved -
+// order number, saved line items (with per-line quantity/unit price/line
+// total), and the grand total, tolerating missing/malformed values the same
+// way formatAwaitingPaymentOrder does.
+export function formatLinkedOrder(order = {}) {
+  const rawItems = Array.isArray(order?.items) ? order.items : [];
+  const items = rawItems.map((item) => {
+    return {
+      productName: item?.product_name ? String(item.product_name) : "Item",
+      quantity: numberOrNull(item?.quantity),
+      unitPrice: numberOrNull(item?.unit_price),
+      lineTotal: numberOrNull(item?.line_total),
+    };
+  });
+
+  const totalAmount = order.total_amount != null && Number.isFinite(Number(order.total_amount))
+    ? Number(order.total_amount)
+    : null;
+  const parsedDate = order.created_at ? new Date(order.created_at) : null;
+  const createdAt = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : null;
+
+  return {
+    orderNumber: order.order_number || "Unknown order",
+    items,
+    totalAmount,
+    totalAmountLabel: totalAmount != null ? `R${totalAmount.toLocaleString()}` : "",
+    status: order.status || "pending_payment",
+    createdAt,
+  };
+}

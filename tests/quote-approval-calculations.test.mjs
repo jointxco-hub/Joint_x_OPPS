@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY,
+  CLIENT_REQUESTS_QUERY_KEY,
   MAX_QUANTITY,
   MAX_UNIT_PRICE,
   buildApprovalPayload,
@@ -8,7 +10,11 @@ import {
   computeLineTotal,
   describeApprovalError,
   formatAwaitingPaymentOrder,
+  formatLinkedOrder,
   friendlyMissingMessage,
+  invalidateAfterApproval,
+  refreshAllSections,
+  resolveApprovalMutationResult,
   roundMoney,
   validateApprovalItems,
 } from "../src/features/clientRequests/quoteApprovalCalculations.js";
@@ -259,4 +265,143 @@ test("formatAwaitingPaymentOrder handles a completely empty row", () => {
   assert.equal(formatted.orderNumber, "Unknown order");
   assert.equal(formatted.amountLabel, "");
   assert.equal(formatted.createdAt, null);
+});
+
+// ---- resolveApprovalMutationResult (the approval mutation contract fix) ----
+// The manual browser test found that approveClientQuoteRequest's
+// { data, error } return value was passed straight into react-query's
+// onSuccess, so result.order_number was always undefined (it was nested at
+// result.data.order_number instead) and onApproved was never called. These
+// tests cover the exact success/failure shapes api/clientRequests.js
+// produces.
+
+test("resolveApprovalMutationResult returns the unwrapped RPC data object on success", () => {
+  const rpcData = { ok: true, order_id: "order-1", order_number: "XL-2026-000123", total_amount: 1500 };
+  const result = resolveApprovalMutationResult({ data: rpcData, error: null });
+  assert.equal(result, rpcData);
+  assert.equal(result.order_number, "XL-2026-000123");
+});
+
+test("resolveApprovalMutationResult throws (not resolves) when the API layer reports an error", () => {
+  assert.throws(
+    () => resolveApprovalMutationResult({ data: null, error: "This request has already been activated for payment." }),
+    (error) => error instanceof Error && error.message === "This request has already been activated for payment."
+  );
+});
+
+test("resolveApprovalMutationResult treats a missing/empty argument as no data, no error", () => {
+  assert.equal(resolveApprovalMutationResult(undefined), undefined);
+});
+
+// ---- invalidateAfterApproval / refreshAllSections (both-sections refresh) ----
+// The Refresh button only ever refetched clientRequests, leaving Awaiting
+// Payment stale; onApproved had the same one-sided problem via
+// invalidateQueries. Both are exercised here against a minimal fake
+// queryClient/refetch pair so the "both keys, every time" contract is
+// covered without rendering React.
+
+test("invalidateAfterApproval invalidates both the requests and awaiting-payment query keys", () => {
+  const calls = [];
+  const fakeQueryClient = { invalidateQueries: (arg) => calls.push(arg.queryKey) };
+
+  invalidateAfterApproval(fakeQueryClient);
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], CLIENT_REQUESTS_QUERY_KEY);
+  assert.deepEqual(calls[1], CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY);
+});
+
+test("refreshAllSections calls both refetchers and reports no error when both succeed", async () => {
+  let requestsCalled = false;
+  let awaitingPaymentCalled = false;
+
+  const result = await refreshAllSections({
+    refetchRequests: async () => { requestsCalled = true; return { isError: false }; },
+    refetchAwaitingPayment: async () => { awaitingPaymentCalled = true; return { isError: false }; },
+  });
+
+  assert.equal(requestsCalled, true);
+  assert.equal(awaitingPaymentCalled, true);
+  assert.equal(result.hasError, false);
+});
+
+test("refreshAllSections reports an error if either section fails to refresh", async () => {
+  const bothCalled = await refreshAllSections({
+    refetchRequests: async () => ({ isError: true }),
+    refetchAwaitingPayment: async () => ({ isError: false }),
+  });
+  assert.equal(bothCalled.hasError, true);
+
+  const otherWayRound = await refreshAllSections({
+    refetchRequests: async () => ({ isError: false }),
+    refetchAwaitingPayment: async () => ({ isError: true }),
+  });
+  assert.equal(otherWayRound.hasError, true);
+});
+
+// ---- formatLinkedOrder (read-only saved-order display) ----
+// When an approved request is reopened, staff must still see the price that
+// was set at approval time (the original client request payload never had
+// one). These tests cover the shape get_client_quote_request_order returns
+// and formatLinkedOrder's tolerance of missing/malformed fields, mirroring
+// the formatAwaitingPaymentOrder tests above.
+
+test("formatLinkedOrder maps a well-formed order with line items", () => {
+  const formatted = formatLinkedOrder({
+    order_number: "XL-2026-000123",
+    items: [
+      { product_name: "Local test t-shirt", quantity: 20, unit_price: 120, line_total: 2400 },
+    ],
+    total_amount: 2400,
+    status: "pending_payment",
+    created_at: "2026-08-05T10:00:00Z",
+  });
+
+  assert.equal(formatted.orderNumber, "XL-2026-000123");
+  assert.equal(formatted.items.length, 1);
+  assert.equal(formatted.items[0].productName, "Local test t-shirt");
+  assert.equal(formatted.items[0].quantity, 20);
+  assert.equal(formatted.items[0].unitPrice, 120);
+  assert.equal(formatted.items[0].lineTotal, 2400);
+  assert.equal(formatted.totalAmount, 2400);
+  assert.equal(formatted.totalAmountLabel, "R2,400");
+  assert.equal(formatted.status, "pending_payment");
+  assert.ok(formatted.createdAt instanceof Date);
+});
+
+test("formatLinkedOrder tolerates missing/malformed fields without throwing", () => {
+  const formatted = formatLinkedOrder({
+    order_number: null,
+    items: null,
+    total_amount: "not-a-number",
+    status: null,
+    created_at: "not-a-date",
+  });
+
+  assert.equal(formatted.orderNumber, "Unknown order");
+  assert.deepEqual(formatted.items, []);
+  assert.equal(formatted.totalAmount, null);
+  assert.equal(formatted.totalAmountLabel, "");
+  assert.equal(formatted.status, "pending_payment");
+  assert.equal(formatted.createdAt, null);
+});
+
+test("formatLinkedOrder handles a completely empty row", () => {
+  const formatted = formatLinkedOrder({});
+  assert.equal(formatted.orderNumber, "Unknown order");
+  assert.deepEqual(formatted.items, []);
+  assert.equal(formatted.totalAmountLabel, "");
+});
+
+test("formatLinkedOrder falls back per-field within a malformed item instead of dropping the whole row", () => {
+  const formatted = formatLinkedOrder({
+    order_number: "XL-2026-000999",
+    items: [{ product_name: null, quantity: "abc", unit_price: 50, line_total: null }],
+    total_amount: 50,
+  });
+
+  assert.equal(formatted.items[0].productName, "Item");
+  assert.equal(formatted.items[0].quantity, null);
+  assert.equal(formatted.items[0].unitPrice, 50);
+  assert.equal(formatted.items[0].lineTotal, null);
 });

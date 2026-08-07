@@ -250,6 +250,31 @@ export async function listClientOrdersAwaitingPayment({ limit = 50 } = {}) {
   }
 }
 
+// Read-only lookup of the payable X LAB order created for an
+// already-approved quote/reorder request (source_quote_request_id link),
+// so the UI can show the saved order number, line items, and prices as a
+// read-only result instead of losing that information once the approval
+// form is replaced by the "already actioned" message.
+export async function getClientQuoteRequestOrder({ requestId } = {}) {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+  if (!requestId) return { data: null, error: null };
+
+  try {
+    const { data, error } = await supabase.rpc("get_client_quote_request_order", {
+      p_request_id: requestId,
+    });
+
+    if (error) {
+      if (friendlyMissingMessage(error.message)) return { data: null, error: null };
+      return { data: null, error: error.message };
+    }
+
+    return { data: data?.[0] ?? null, error: null };
+  } catch {
+    return { data: null, error: "Could not load the saved order for this request." };
+  }
+}
+
 export async function addInternalClientMessageReply({
   clientEmail,
   subject,

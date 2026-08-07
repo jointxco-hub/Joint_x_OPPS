@@ -25,17 +25,24 @@ import { toast } from "sonner";
 import {
   addInternalClientMessageReply,
   approveClientQuoteRequest,
+  getClientQuoteRequestOrder,
   getInternalClientFileLibrary,
   listClientOrdersAwaitingPayment,
   listClientRequests,
   updateClientRequestStatus,
 } from "@/api/clientRequests";
 import {
+  CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY,
+  CLIENT_REQUESTS_QUERY_KEY,
   MAX_QUANTITY,
   MAX_UNIT_PRICE,
   buildApprovalPayload,
   computeApprovalTotal,
   formatAwaitingPaymentOrder,
+  formatLinkedOrder,
+  invalidateAfterApproval,
+  refreshAllSections,
+  resolveApprovalMutationResult,
   validateApprovalItems,
 } from "@/features/clientRequests/quoteApprovalCalculations";
 import { Badge } from "@/components/ui/badge";
@@ -343,11 +350,22 @@ function riskBadges(request) {
   return badges.slice(0, 6);
 }
 
-function statusOptionsFor(type) {
+// Once a quote_request/reorder_request is linked to a payable X LAB order
+// (status actioned/closed - see the DB-side guard in
+// 202608060003_quote_approval_regression_guard_and_order_lookup.sql), the
+// status dropdown must not offer new/reviewing: selecting either would be
+// rejected by that guard, and offering them at all invites staff to try a
+// transition that always fails. This mirrors the DB guard on the client
+// side as defence in depth, not a replacement for it.
+function statusOptionsFor(type, request) {
   if (type === "tech_pack") return TECH_PACK_STATUSES;
   if (type === "special_instruction") return INSTRUCTION_STATUSES;
   if (type === "profile_update") return PROFILE_STATUSES;
-  if (["quote_request", "reorder_request", "message"].includes(type)) return WORKFLOW_STATUSES;
+  if (type === "message") return WORKFLOW_STATUSES;
+  if (["quote_request", "reorder_request"].includes(type)) {
+    const isLinkedAndActioned = ["actioned", "closed"].includes(request?.status);
+    return isLinkedAndActioned ? ["actioned", "closed"] : WORKFLOW_STATUSES;
+  }
   return [];
 }
 
@@ -359,8 +377,8 @@ export default function ClientRequests() {
   const [selected, setSelected] = useState(null);
   const queryClient = useQueryClient();
 
-  const { data: requests = [], isLoading, error, refetch } = useQuery({
-    queryKey: ["clientRequests", type, status, sourceApp, search],
+  const { data: requests = [], isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: [...CLIENT_REQUESTS_QUERY_KEY, type, status, sourceApp, search],
     queryFn: async () => {
       const result = await listClientRequests({ type, status, sourceApp, search, limit: 50 });
       if (result.error) throw new Error(result.error);
@@ -372,7 +390,7 @@ export default function ClientRequests() {
   const updateMutation = useMutation({
     mutationFn: updateClientRequestStatus,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["clientRequests"] });
+      queryClient.invalidateQueries({ queryKey: CLIENT_REQUESTS_QUERY_KEY });
       toast.success("Request status updated");
     },
     onError: (err) => toast.error(err?.message || "Could not update request"),
@@ -388,8 +406,10 @@ export default function ClientRequests() {
     data: awaitingPayment = [],
     isLoading: awaitingPaymentLoading,
     error: awaitingPaymentError,
+    refetch: refetchAwaitingPayment,
+    isFetching: awaitingPaymentFetching,
   } = useQuery({
-    queryKey: ["clientOrdersAwaitingPayment"],
+    queryKey: CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY,
     queryFn: async () => {
       const result = await listClientOrdersAwaitingPayment({ limit: 50 });
       if (result.error) throw new Error(result.error);
@@ -397,6 +417,18 @@ export default function ClientRequests() {
     },
     staleTime: 30_000,
   });
+
+  const isRefreshing = isFetching || awaitingPaymentFetching;
+
+  const handleRefresh = async () => {
+    const { hasError } = await refreshAllSections({
+      refetchRequests: refetch,
+      refetchAwaitingPayment,
+    });
+    if (hasError) {
+      toast.error("Could not refresh all sections. Check your connection and try again.");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -409,9 +441,9 @@ export default function ClientRequests() {
               X LAB account submissions that need review before production relies on them.
             </p>
           </div>
-          <Button variant="outline" onClick={() => refetch()} className="rounded-xl">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
+          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing} className="rounded-xl">
+            <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+            {isRefreshing ? "Refreshing..." : "Refresh"}
           </Button>
         </div>
 
@@ -502,8 +534,7 @@ export default function ClientRequests() {
         }}
         isUpdating={updateMutation.isPending}
         onApproved={(order) => {
-          queryClient.invalidateQueries({ queryKey: ["clientRequests"] });
-          queryClient.invalidateQueries({ queryKey: ["clientOrdersAwaitingPayment"] });
+          invalidateAfterApproval(queryClient);
           toast.success(`Order ${order.order_number} created - awaiting payment`);
           setSelected((prev) => prev ? { ...prev, status: "actioned" } : prev);
         }}
@@ -601,15 +632,20 @@ function QuoteApprovalSection({ request, onApproved }) {
   const total = computeApprovalTotal(items);
   const validation = validateApprovalItems(items);
 
-  const approveMutation = useMutation({
-    mutationFn: approveClientQuoteRequest,
-    onSuccess: (result) => {
-      if (result?.order_number) {
-        onApproved?.(result);
-      } else {
-        toast.success("Quote request approved");
-      }
+  const { data: linkedOrder, isLoading: linkedOrderLoading } = useQuery({
+    queryKey: ["clientQuoteRequestOrder", request.id],
+    queryFn: async () => {
+      const result = await getClientQuoteRequestOrder({ requestId: request.id });
+      if (result.error) throw new Error(result.error);
+      return result.data;
     },
+    enabled: alreadyActioned,
+    staleTime: 30_000,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: async (payload) => resolveApprovalMutationResult(await approveClientQuoteRequest(payload)),
+    onSuccess: (result) => onApproved?.(result),
     onError: (err) => toast.error(err?.message || "Could not approve this quote request"),
   });
 
@@ -629,14 +665,49 @@ function QuoteApprovalSection({ request, onApproved }) {
   };
 
   if (alreadyActioned) {
+    if (linkedOrderLoading) {
+      return <section className="h-24 animate-pulse rounded-xl border border-emerald-200 bg-emerald-50" />;
+    }
+
+    if (!linkedOrder) {
+      return (
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+            <BadgeCheck className="h-4 w-4" /> This request has already been actioned
+          </p>
+          <p className="mt-1 text-xs text-emerald-700">
+            No linked order was found - it may have been closed without approval, or approved before this order
+            lookup was added.
+          </p>
+        </section>
+      );
+    }
+
+    const order = formatLinkedOrder(linkedOrder);
     return (
       <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
         <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
-          <BadgeCheck className="h-4 w-4" /> This request has already been actioned
+          <BadgeCheck className="h-4 w-4" /> Approved - order {order.orderNumber} ({readable(order.status)})
         </p>
         <p className="mt-1 text-xs text-emerald-700">
-          If it was approved, the resulting order is on the Awaiting Payment list above until the client pays.
+          This request was already approved. The saved pricing below is read-only - it stays here on the Awaiting
+          Payment list above until the client pays.
         </p>
+
+        <div className="mt-3 space-y-2">
+          {order.items.map((item, index) => (
+            <div key={index} className="grid grid-cols-[1fr_70px_90px_90px] gap-2 rounded-lg bg-white px-3 py-2 text-sm">
+              <span className="truncate text-foreground">{item.productName}</span>
+              <span className="text-muted-foreground">{item.quantity ?? "-"}</span>
+              <span className="text-muted-foreground">{item.unitPrice != null ? `R${item.unitPrice.toLocaleString()}` : "-"}</span>
+              <span className="text-right font-medium text-foreground">
+                {item.lineTotal != null ? `R${item.lineTotal.toLocaleString()}` : "-"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <p className="mt-3 text-right text-sm font-semibold text-emerald-800">Total: {order.totalAmountLabel}</p>
       </section>
     );
   }
@@ -793,7 +864,7 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onRe
   const [reply, setReply] = useState("");
   const [previewFile, setPreviewFile] = useState(null);
   const queryClient = useQueryClient();
-  const statusOptions = request ? statusOptionsFor(request.request_type) : [];
+  const statusOptions = request ? statusOptionsFor(request.request_type, request) : [];
   const meta = request ? (TYPE_META[request.request_type] || TYPE_META.message) : TYPE_META.message;
   const Icon = meta.icon;
   const { data: fileLibrary = { folders: [], files: [] }, isLoading: filesLoading } = useQuery({

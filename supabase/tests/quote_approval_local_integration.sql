@@ -12,6 +12,7 @@
 --   OPPS:  202608050002_xlab_orders_awaiting_payment.sql
 --   OPPS:  202608050004_hide_draft_quote_requests.sql
 --   OPPS:  202608060001_hide_archived_quote_requests.sql
+--   OPPS:  202608060003_quote_approval_regression_guard_and_order_lookup.sql
 --
 -- Unlike other *_smoke.sql fixtures in this repo, this one COMMITS its seed
 -- data on success (fake/test data only) so it can also be used as a fixture
@@ -283,6 +284,72 @@ begin
     raise exception 'TEST_FAILED: an order was created despite the rejected total';
   end if;
   raise notice 'PASS: zero total rejected, no order created (orders count unchanged at %)', v_orders_after;
+end
+$$;
+
+-- Approved/linked request must not be able to regress to new/reviewing via
+-- update_internal_client_request_status (the manual browser test for this
+-- branch found exactly this - see 202608060003_quote_approval_regression_
+-- guard_and_order_lookup.sql for the root cause and fix).
+do $$
+declare v_real_id uuid; v_code text;
+begin
+  select id into v_real_id from public.client_quote_requests where client_email = 'client-a@quote-approval-local-test.invalid' and details like 'Real request: 20 x local test t-shirt%';
+
+  if (select status from public.client_quote_requests where id = v_real_id) <> 'actioned' then
+    raise exception 'TEST_SETUP_FAILED: expected the approved request to already be actioned before the regression test';
+  end if;
+
+  begin
+    perform public.update_internal_client_request_status('quote_request', v_real_id, 'reviewing');
+    raise exception 'TEST_FAILED: an approved/linked request was moved back to reviewing';
+  exception when others then
+    get stacked diagnostics v_code = message_text;
+    if v_code !~ 'already has a payable order' then raise; end if;
+    raise notice 'PASS: approved/linked request cannot regress to reviewing (%)', v_code;
+  end;
+
+  begin
+    perform public.update_internal_client_request_status('quote_request', v_real_id, 'new');
+    raise exception 'TEST_FAILED: an approved/linked request was moved back to new';
+  exception when others then
+    get stacked diagnostics v_code = message_text;
+    if v_code !~ 'already has a payable order' then raise; end if;
+    raise notice 'PASS: approved/linked request cannot regress to new (%)', v_code;
+  end;
+
+  -- The other intentional terminal state must still be reachable.
+  perform public.update_internal_client_request_status('quote_request', v_real_id, 'closed');
+  if (select status from public.client_quote_requests where id = v_real_id) <> 'closed' then
+    raise exception 'TEST_FAILED: approved/linked request could not be moved to closed';
+  end if;
+  raise notice 'PASS: approved/linked request can still be moved to closed';
+
+  -- Restore to actioned so the rest of this fixture, and any manual browser
+  -- pass reusing this seed data, sees the expected default state.
+  update public.client_quote_requests set status = 'actioned' where id = v_real_id;
+end
+$$;
+
+-- get_client_quote_request_order must return the saved order so staff can
+-- see read-only pricing when an approved request is reopened (the request's
+-- own payload never contained a price - only the approval did).
+do $$
+declare v_real_id uuid; v_order_number text; v_items jsonb;
+begin
+  select id into v_real_id from public.client_quote_requests where client_email = 'client-a@quote-approval-local-test.invalid' and details like 'Real request: 20 x local test t-shirt%';
+
+  select order_number, items into v_order_number, v_items
+  from public.get_client_quote_request_order(v_real_id);
+
+  if v_order_number is null then
+    raise exception 'TEST_FAILED: get_client_quote_request_order returned no linked order for an approved request';
+  end if;
+  if jsonb_array_length(v_items) <> 1 or (v_items->0->>'product_name') <> 'Local test t-shirt' then
+    raise exception 'TEST_FAILED: get_client_quote_request_order returned unexpected items: %', v_items;
+  end if;
+
+  raise notice 'PASS: get_client_quote_request_order returns order % with saved line items', v_order_number;
 end
 $$;
 
