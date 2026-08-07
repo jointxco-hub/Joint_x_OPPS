@@ -2,23 +2,50 @@ import React, { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  BadgeCheck,
   CheckCircle2,
   ChevronDown,
   ClipboardCheck,
+  CreditCard,
   ExternalLink,
   FileSignature,
   FileText,
   Inbox,
   MessageSquare,
   Paperclip,
+  Plus,
   RefreshCw,
   Search,
   ShieldAlert,
   SlidersHorizontal,
+  Trash2,
   UserRoundPen,
 } from "lucide-react";
 import { toast } from "sonner";
-import { addInternalClientMessageReply, getInternalClientFileLibrary, listClientRequests, updateClientRequestStatus } from "@/api/clientRequests";
+import {
+  addInternalClientMessageReply,
+  approveClientQuoteRequest,
+  getClientQuoteRequestOrder,
+  getInternalClientFileLibrary,
+  listClientOrdersAwaitingPayment,
+  listClientRequests,
+  updateClientRequestStatus,
+} from "@/api/clientRequests";
+import {
+  CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY,
+  CLIENT_REQUESTS_QUERY_KEY,
+  MAX_QUANTITY,
+  MAX_UNIT_PRICE,
+  buildApprovalPayload,
+  computeApprovalTotal,
+  formatAwaitingPaymentOrder,
+  formatLinkedOrder,
+  invalidateAfterApproval,
+  isApprovedStatusLocked,
+  refreshAllSections,
+  resolveApprovalMutationResult,
+  validateApprovalItems,
+} from "@/features/clientRequests/quoteApprovalCalculations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -324,11 +351,23 @@ function riskBadges(request) {
   return badges.slice(0, 6);
 }
 
-function statusOptionsFor(type) {
+// Once a quote_request/reorder_request is actioned/closed, it is fully
+// read-only: no Status selector at all (see isApprovedStatusLocked). The
+// resulting order's lifecycle belongs to the order/payment workflow, not to
+// moving the source request around manually. This mirrors the DB-side guard
+// in 202608060003_quote_approval_regression_guard_and_order_lookup.sql
+// (update_internal_client_request_status_unscoped independently rejects a
+// linked request moving back to new/reviewing) as defence in depth, not a
+// replacement for it - the database still enforces this even if some other
+// caller bypasses this UI.
+function statusOptionsFor(type, request) {
   if (type === "tech_pack") return TECH_PACK_STATUSES;
   if (type === "special_instruction") return INSTRUCTION_STATUSES;
   if (type === "profile_update") return PROFILE_STATUSES;
-  if (["quote_request", "reorder_request", "message"].includes(type)) return WORKFLOW_STATUSES;
+  if (type === "message") return WORKFLOW_STATUSES;
+  if (["quote_request", "reorder_request"].includes(type)) {
+    return isApprovedStatusLocked(type, request?.status) ? [] : WORKFLOW_STATUSES;
+  }
   return [];
 }
 
@@ -340,8 +379,8 @@ export default function ClientRequests() {
   const [selected, setSelected] = useState(null);
   const queryClient = useQueryClient();
 
-  const { data: requests = [], isLoading, error, refetch } = useQuery({
-    queryKey: ["clientRequests", type, status, sourceApp, search],
+  const { data: requests = [], isLoading, error, refetch, isFetching } = useQuery({
+    queryKey: [...CLIENT_REQUESTS_QUERY_KEY, type, status, sourceApp, search],
     queryFn: async () => {
       const result = await listClientRequests({ type, status, sourceApp, search, limit: 50 });
       if (result.error) throw new Error(result.error);
@@ -353,7 +392,7 @@ export default function ClientRequests() {
   const updateMutation = useMutation({
     mutationFn: updateClientRequestStatus,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["clientRequests"] });
+      queryClient.invalidateQueries({ queryKey: CLIENT_REQUESTS_QUERY_KEY });
       toast.success("Request status updated");
     },
     onError: (err) => toast.error(err?.message || "Could not update request"),
@@ -364,6 +403,34 @@ export default function ClientRequests() {
     new: requests.filter((item) => ["new", "pending_review", "needs_client_approval"].includes(item.status)).length,
     productionRisk: requests.filter((item) => ["tech_pack", "special_instruction"].includes(item.request_type)).length,
   }), [requests]);
+
+  const {
+    data: awaitingPayment = [],
+    isLoading: awaitingPaymentLoading,
+    error: awaitingPaymentError,
+    refetch: refetchAwaitingPayment,
+    isFetching: awaitingPaymentFetching,
+  } = useQuery({
+    queryKey: CLIENT_ORDERS_AWAITING_PAYMENT_QUERY_KEY,
+    queryFn: async () => {
+      const result = await listClientOrdersAwaitingPayment({ limit: 50 });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    staleTime: 30_000,
+  });
+
+  const isRefreshing = isFetching || awaitingPaymentFetching;
+
+  const handleRefresh = async () => {
+    const { hasError } = await refreshAllSections({
+      refetchRequests: refetch,
+      refetchAwaitingPayment,
+    });
+    if (hasError) {
+      toast.error("Could not refresh all sections. Check your connection and try again.");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -376,9 +443,9 @@ export default function ClientRequests() {
               X LAB account submissions that need review before production relies on them.
             </p>
           </div>
-          <Button variant="outline" onClick={() => refetch()} className="rounded-xl">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
+          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing} className="rounded-xl">
+            <RefreshCw className={`mr-2 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+            {isRefreshing ? "Refreshing..." : "Refresh"}
           </Button>
         </div>
 
@@ -387,6 +454,8 @@ export default function ClientRequests() {
           <Metric label="Needs review" value={counts.new} tone="primary" />
           <Metric label="Production-sensitive" value={counts.productionRisk} tone="risk" />
         </div>
+
+        <AwaitingPaymentSection orders={awaitingPayment} loading={awaitingPaymentLoading} error={awaitingPaymentError} />
 
         <div className="mb-5 rounded-2xl border border-border bg-card p-4 shadow-apple-sm">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -466,6 +535,11 @@ export default function ClientRequests() {
           );
         }}
         isUpdating={updateMutation.isPending}
+        onApproved={(order) => {
+          invalidateAfterApproval(queryClient);
+          toast.success(`Order ${order.order_number} created - awaiting payment`);
+          setSelected((prev) => prev ? { ...prev, status: "actioned" } : prev);
+        }}
       />
     </div>
   );
@@ -478,6 +552,263 @@ function Metric({ label, value, tone }) {
       <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
       <p className={`mt-2 text-2xl font-bold ${color}`}>{value}</p>
     </div>
+  );
+}
+
+function AwaitingPaymentSection({ orders, loading, error }) {
+  if (loading) {
+    return (
+      <div className="mb-5 h-20 animate-pulse rounded-2xl bg-card" />
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mb-5 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+        Could not load orders awaiting payment: {error.message || "Unknown error"}
+      </div>
+    );
+  }
+
+  if (!orders.length) return null;
+
+  return (
+    <section className="mb-5 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-apple-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+          <CreditCard className="h-4 w-4" />
+          Awaiting payment
+        </div>
+        <Badge variant="outline" className="rounded-full border-amber-300 bg-white text-amber-800">
+          {orders.length} order{orders.length === 1 ? "" : "s"}
+        </Badge>
+      </div>
+      <p className="mb-3 text-xs text-amber-800">
+        Approved X LAB orders sitting in pending_payment. They stay here until the client pays and sync-to-opps
+        promotes them into the normal Orders workflow.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {orders.map((rawOrder) => {
+          const order = formatAwaitingPaymentOrder(rawOrder);
+          return (
+            <div key={order.id} className="rounded-xl border border-amber-200 bg-white p-3">
+              <p className="text-sm font-semibold text-foreground">{order.orderNumber}</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{order.customerLabel}</p>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-sm font-semibold text-amber-800">{order.amountLabel}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {order.createdAt ? order.createdAt.toLocaleDateString() : ""}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function QuoteApprovalSection({ request, onApproved }) {
+  const payload = request.payload || {};
+  const details = parseDetailLines(payload.details);
+  const specs = payload.specs || {};
+  const merged = { ...payload, ...details, ...specs };
+  const alreadyActioned = ["actioned", "closed"].includes(request.status);
+
+  const defaultItem = () => ({
+    product_name: pickFirst(merged, ["selected_product_name", "product_name", "product", "custom_item_name", "custom_item"]) || request.preview || "Item",
+    quantity: Number(pickFirst(merged, ["quantity"])) || 1,
+    unit_price: "",
+  });
+
+  const [items, setItems] = useState([defaultItem()]);
+  const [note, setNote] = useState("");
+  const [touched, setTouched] = useState(false);
+
+  React.useEffect(() => {
+    setItems([defaultItem()]);
+    setNote("");
+    setTouched(false);
+  }, [request.id]);
+
+  const total = computeApprovalTotal(items);
+  const validation = validateApprovalItems(items);
+
+  const { data: linkedOrder, isLoading: linkedOrderLoading } = useQuery({
+    queryKey: ["clientQuoteRequestOrder", request.id],
+    queryFn: async () => {
+      const result = await getClientQuoteRequestOrder({ requestId: request.id });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: alreadyActioned,
+    staleTime: 30_000,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: async (payload) => resolveApprovalMutationResult(await approveClientQuoteRequest(payload)),
+    onSuccess: (result) => onApproved?.(result),
+    onError: (err) => toast.error(err?.message || "Could not approve this quote request"),
+  });
+
+  const updateItem = (index, patch) => {
+    setItems((current) => current.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const removeItem = (index) => {
+    setItems((current) => current.filter((_, i) => i !== index));
+  };
+
+  const submitApproval = () => {
+    setTouched(true);
+    if (!validation.valid) return;
+    const payload = buildApprovalPayload({ requestId: request.id, items, note });
+    approveMutation.mutate(payload);
+  };
+
+  if (alreadyActioned) {
+    if (linkedOrderLoading) {
+      return <section className="h-24 animate-pulse rounded-xl border border-emerald-200 bg-emerald-50" />;
+    }
+
+    if (!linkedOrder) {
+      return (
+        <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+            <BadgeCheck className="h-4 w-4" /> This request has already been actioned
+          </p>
+          <p className="mt-1 text-xs text-emerald-700">
+            No linked order was found - it may have been closed without approval, or approved before this order
+            lookup was added.
+          </p>
+        </section>
+      );
+    }
+
+    const order = formatLinkedOrder(linkedOrder);
+    return (
+      <section className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+        <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+          <BadgeCheck className="h-4 w-4" /> Approved - order {order.orderNumber} ({readable(order.status)})
+        </p>
+        <p className="mt-1 text-xs text-emerald-700">
+          This request was already approved. The saved pricing below is read-only - it stays here on the Awaiting
+          Payment list above until the client pays.
+        </p>
+
+        <div className="mt-3 space-y-2">
+          {order.items.map((item, index) => (
+            <div key={index} className="grid grid-cols-[1fr_70px_90px_90px] gap-2 rounded-lg bg-white px-3 py-2 text-sm">
+              <span className="truncate text-foreground">{item.productName}</span>
+              <span className="text-muted-foreground">{item.quantity ?? "-"}</span>
+              <span className="text-muted-foreground">{item.unitPrice != null ? `R${item.unitPrice.toLocaleString()}` : "-"}</span>
+              <span className="text-right font-medium text-foreground">
+                {item.lineTotal != null ? `R${item.lineTotal.toLocaleString()}` : "-"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <p className="mt-3 text-right text-sm font-semibold text-emerald-800">Total: {order.totalAmountLabel}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+      <p className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <BadgeCheck className="h-4 w-4 text-primary" /> Approve &amp; create payable order
+      </p>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Review and price the line items, then approve. This creates an X LAB order in pending_payment and messages
+        the client a payment link - it does not touch PayFast or OPPS directly.
+      </p>
+
+      <div className="space-y-2">
+        {items.map((item, index) => {
+          const rowError = touched ? validation.itemErrors[index] : null;
+          return (
+            <div key={index}>
+              <div className="grid grid-cols-[1fr_70px_90px_auto] items-center gap-2">
+                <Input
+                  value={item.product_name}
+                  onChange={(event) => updateItem(index, { product_name: event.target.value })}
+                  placeholder="Item name"
+                  className={`h-9 ${rowError ? "border-destructive" : ""}`}
+                />
+                <Input
+                  value={item.quantity}
+                  onChange={(event) => updateItem(index, { quantity: event.target.value })}
+                  type="number"
+                  min="1"
+                  max={MAX_QUANTITY}
+                  placeholder="Qty"
+                  className={`h-9 ${rowError ? "border-destructive" : ""}`}
+                />
+                <Input
+                  value={item.unit_price}
+                  onChange={(event) => updateItem(index, { unit_price: event.target.value })}
+                  type="number"
+                  min="0"
+                  max={MAX_UNIT_PRICE}
+                  step="0.01"
+                  placeholder="Price"
+                  className={`h-9 ${rowError ? "border-destructive" : ""}`}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  disabled={items.length === 1}
+                  onClick={() => removeItem(index)}
+                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+              {rowError && <p className="mt-1 text-xs text-destructive">{rowError}</p>}
+            </div>
+          );
+        })}
+      </div>
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setItems((current) => [...current, { product_name: "", quantity: 1, unit_price: "" }])}
+        className="mt-2 rounded-xl"
+      >
+        <Plus className="mr-1 h-3.5 w-3.5" /> Add item
+      </Button>
+
+      <Textarea
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        placeholder="Optional note to the client"
+        className="mt-3"
+      />
+
+      {touched && !validation.valid && (
+        <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+          <p className="font-semibold">Fix before approving:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {validation.errors.map((message) => <li key={message}>{message}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-foreground">Total: R{total.toLocaleString()}</p>
+        <Button
+          type="button"
+          disabled={(touched && !validation.valid) || approveMutation.isPending}
+          onClick={submitApproval}
+        >
+          {approveMutation.isPending ? "Approving..." : "Approve & create order"}
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -530,12 +861,12 @@ function RequestCard({ request, onOpen }) {
   );
 }
 
-function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onReplySent, isUpdating }) {
+function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onReplySent, isUpdating, onApproved }) {
   const [note, setNote] = useState("");
   const [reply, setReply] = useState("");
   const [previewFile, setPreviewFile] = useState(null);
   const queryClient = useQueryClient();
-  const statusOptions = request ? statusOptionsFor(request.request_type) : [];
+  const statusOptions = request ? statusOptionsFor(request.request_type, request) : [];
   const meta = request ? (TYPE_META[request.request_type] || TYPE_META.message) : TYPE_META.message;
   const Icon = meta.icon;
   const { data: fileLibrary = { folders: [], files: [] }, isLoading: filesLoading } = useQuery({
@@ -593,6 +924,10 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onRe
         </section>
 
         <PayloadView request={request} onPreview={setPreviewFile} />
+
+        {["quote_request", "reorder_request"].includes(request.request_type) && (
+          <QuoteApprovalSection request={request} onApproved={onApproved} />
+        )}
 
         {request.request_type === "message" && (
           <section className="rounded-xl border border-border p-4">
