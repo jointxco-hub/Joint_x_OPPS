@@ -13,6 +13,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
+import SecureImage from "@/components/common/SecureImage";
 
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
@@ -904,7 +905,12 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
       <div className="flex gap-3">
         <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 print:h-20 print:w-20">
           {thumb ? (
-            <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+            <SecureImage
+              value={thumb}
+              alt=""
+              className="h-full w-full object-cover"
+              fallback={<div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>}
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>
           )}
