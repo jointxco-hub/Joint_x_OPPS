@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
 import SecureImage from "@/components/common/SecureImage";
 import { computeImageReadiness } from "@/lib/printReadiness";
+import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, provisionOrderAssetFolders } from "@/components/orders/drawer/OrderDrawerShared";
 
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
@@ -704,9 +705,24 @@ export default function Orders() {
           <NewOrderDrawer
             onClose={() => setShowNew(false)}
             onCreate={async (orderData) => {
-              await dataClient.entities.Order.create(orderData);
+              const createdOrder = await dataClient.entities.Order.create(orderData);
               queryClient.invalidateQueries({ queryKey: ["orders"] });
               setShowNew(false);
+              if (createdOrder?.id && createdOrder?.client_id) {
+                provisionOrderAssetFolders(createdOrder);
+                const createdFolderMetadata = normalizeOrderFileFolders(createdOrder.order_file_folders);
+                const createdFileUrls = Array.isArray(createdOrder.file_urls) ? createdOrder.file_urls.filter(Boolean) : [];
+                createdFileUrls.forEach((url) => {
+                  mirrorOrderFileToClientAssetFolder({
+                    order: createdOrder,
+                    fileUrl: url,
+                    fileName: url,
+                    fileType: "",
+                    fileSize: undefined,
+                    folderId: createdFolderMetadata.fileFolders?.[url] || "",
+                  });
+                });
+              }
             }}
           />
         </Suspense>

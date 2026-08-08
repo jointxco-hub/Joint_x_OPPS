@@ -2260,6 +2260,33 @@ export const dataClient = {
       },
     },
   },
+  files: {
+    // Get-or-create "<Client Root>/Orders/<order_number>" (and, if a
+    // category is given, a subfolder under that order folder) in File
+    // Manager's folders table. Backed by the get_or_create_order_asset_folder
+    // RPC, which resolves the order's own client/tenant server-side — the
+    // caller only ever supplies an order_id, never a client_id.
+    async getOrCreateOrderAssetFolder({ orderId = '', category = '' } = {}) {
+      if (!supabase || !orderId) return null;
+      const { data, error } = await supabase.rpc('get_or_create_order_asset_folder', {
+        p_order_id: orderId,
+        p_category: category || null,
+      });
+      if (error) throw error;
+      return data || null;
+    },
+    // Ensures the full standard order subfolder set (Mockups, Artwork,
+    // Production, QC / Finished, Invoices & Quotes, Delivery, General)
+    // exists for an order, even before any file is attached to it.
+    async provisionOrderAssetFolders(orderId) {
+      if (!supabase || !orderId) return null;
+      const { data, error } = await supabase.rpc('provision_order_asset_folders', {
+        p_order_id: orderId,
+      });
+      if (error) throw error;
+      return data || null;
+    },
+  },
   agents: {
     getWhatsAppConnectURL() {
       return '#';

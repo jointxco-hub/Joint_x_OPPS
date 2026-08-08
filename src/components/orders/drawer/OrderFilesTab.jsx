@@ -15,7 +15,7 @@ import { getInternalClientFileLibrary, saveInternalClientFileLink } from "@/api/
 import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
 import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
-import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
+import { INVOICE_FOLDER_ID, normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder } from "./OrderDrawerShared";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
 
@@ -271,6 +271,16 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       file_urls: nextUrls,
       order_file_folders: { ...metadata, fileFolders: nextFolders, fileCopies: nextCopies },
     });
+    if (!existing) {
+      mirrorOrderFileToClientAssetFolder({
+        order: safeOrder,
+        fileUrl: url,
+        fileName: displayFileName({ id: `file:${url}`, url }),
+        fileType: "",
+        fileSize: undefined,
+        folderId: folderId && folderId !== INVOICE_FOLDER_ID ? folderId : "",
+      });
+    }
     if (clientEmail) {
       const result = await saveInternalClientFileLink({
         clientEmail,
@@ -320,6 +330,16 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         fileCopies: nextCopies,
       },
     });
+    if (!exists) {
+      mirrorOrderFileToClientAssetFolder({
+        order: safeOrder,
+        fileUrl: url,
+        fileName: label,
+        fileType: file.file_type || "",
+        fileSize: undefined,
+        folderId: targetFolderId,
+      });
+    }
     toast.success(targetFolderId ? "Client file linked to this folder" : "Client file linked to this order");
   };
 
@@ -615,37 +635,47 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block cursor-pointer">
-          <div className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border p-4 transition-all hover:border-primary/40">
-            <Paperclip className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">{uploading ? "Uploading..." : "Upload files"}</span>
+      {isInvoiceFolder ? (
+        <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+          Invoice and quote files are managed from the invoice/quote workflow, not added here. Upload, paste-link,
+          and client-account linking are unavailable while viewing this folder so a file can never look like it was
+          added to Invoices &amp; Quotes when it wasn't.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block cursor-pointer">
+              <div className="flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-border p-4 transition-all hover:border-primary/40">
+                <Paperclip className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">{uploading ? "Uploading..." : "Upload files"}</span>
+              </div>
+              <input type="file" className="hidden" multiple onChange={(e) => uploadFile(e, uploadTargetFolderId)} disabled={uploading} />
+            </label>
+            <button
+              type="button"
+              onClick={() => pasteFileLink(openFolderId)}
+              className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-card p-4 text-sm font-medium text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
+            >
+              <Copy className="h-4 w-4" />
+              Paste file link
+            </button>
           </div>
-          <input type="file" className="hidden" multiple onChange={(e) => uploadFile(e, uploadTargetFolderId)} disabled={uploading} />
-        </label>
-        <button
-          type="button"
-          onClick={() => pasteFileLink(openFolderId)}
-          className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-card p-4 text-sm font-medium text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground"
-        >
-          <Copy className="h-4 w-4" />
-          Paste file link
-        </button>
-      </div>
 
-      <ClientAccountFilesPanel
-        library={clientFileLibrary}
-        loading={clientFilesLoading}
-        currentOrderUrls={fileUrls}
-        folders={folders}
-        onLink={linkClientFileToOrder}
-        onPreview={(file) => setPreviewFile({
-          title: file.file_name || "Client file",
-          file_url: file.file_url,
-          url: file.file_url,
-          file_type: file.file_type,
-        })}
-      />
+          <ClientAccountFilesPanel
+            library={clientFileLibrary}
+            loading={clientFilesLoading}
+            currentOrderUrls={fileUrls}
+            folders={folders}
+            onLink={linkClientFileToOrder}
+            onPreview={(file) => setPreviewFile({
+              title: file.file_name || "Client file",
+              file_url: file.file_url,
+              url: file.file_url,
+              file_type: file.file_type,
+            })}
+          />
+        </>
+      )}
 
       {!openFolderId ? (
         <>

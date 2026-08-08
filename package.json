@@ -13,6 +13,7 @@
     "test:quote-approval-calculations": "node --test tests/quote-approval-calculations.test.mjs",
     "test:order-invoice-sync": "node --test tests/order-invoice-sync.test.mjs",
     "test:order-private-image-display": "node --test tests/order-private-image-display.test.mjs",
+    "test:order-asset-folder-provisioning": "node --test tests/order-asset-folder-provisioning.test.mjs",
     "typecheck": "tsc -p ./jsconfig.json",
     "preview": "vite preview"
   },
