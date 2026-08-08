@@ -56,7 +56,7 @@ import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
 import OrderFilesTab from "@/components/orders/drawer/OrderFilesTab";
-import { normalizeOrderFileFolders } from "@/components/orders/drawer/OrderDrawerShared";
+import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder } from "@/components/orders/drawer/OrderDrawerShared";
 import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
 import { canAccessInvoices } from "@/lib/financeAccess";
 
@@ -356,6 +356,14 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
               toast.info("File uploaded, but client library link was not saved yet.");
             }
           }
+          mirrorOrderFileToClientAssetFolder({
+            order,
+            fileUrl: file_url,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+            folderId,
+          });
         }
       }
       const folderMetadata = normalizeOrderFileFolders(order.order_file_folders);

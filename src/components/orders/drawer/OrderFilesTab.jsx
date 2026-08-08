@@ -15,7 +15,7 @@ import { getInternalClientFileLibrary, saveInternalClientFileLink } from "@/api/
 import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
 import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
-import { INVOICE_FOLDER_ID, normalizeOrderFileFolders } from "./OrderDrawerShared";
+import { INVOICE_FOLDER_ID, normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder } from "./OrderDrawerShared";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
 
@@ -271,6 +271,16 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       file_urls: nextUrls,
       order_file_folders: { ...metadata, fileFolders: nextFolders, fileCopies: nextCopies },
     });
+    if (!existing) {
+      mirrorOrderFileToClientAssetFolder({
+        order: safeOrder,
+        fileUrl: url,
+        fileName: displayFileName({ id: `file:${url}`, url }),
+        fileType: "",
+        fileSize: undefined,
+        folderId: folderId && folderId !== INVOICE_FOLDER_ID ? folderId : "",
+      });
+    }
     if (clientEmail) {
       const result = await saveInternalClientFileLink({
         clientEmail,
@@ -320,6 +330,16 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         fileCopies: nextCopies,
       },
     });
+    if (!exists) {
+      mirrorOrderFileToClientAssetFolder({
+        order: safeOrder,
+        fileUrl: url,
+        fileName: label,
+        fileType: file.file_type || "",
+        fileSize: undefined,
+        folderId: targetFolderId,
+      });
+    }
     toast.success(targetFolderId ? "Client file linked to this folder" : "Client file linked to this order");
   };
 
