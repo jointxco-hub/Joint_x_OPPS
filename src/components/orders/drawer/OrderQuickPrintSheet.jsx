@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { normalizeOrderFileFolders } from "./OrderDrawerShared";
 import { getSignedFileUrl } from "@/lib/privateFiles";
 import { isImageReference } from "@/lib/imageReference";
+import { computeImageReadiness } from "@/lib/printReadiness";
 
 const PRINT_SIGNED_URL_TTL_SECONDS = 1800;
 
@@ -41,7 +42,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
     setResolvedImages((prev) => {
       const next = {};
       targets.forEach((ref) => {
-        next[ref] = prev[ref]?.status === "ready" ? prev[ref] : { status: "loading", url: "" };
+        next[ref] = prev[ref] || { status: "loading", url: "" };
       });
       return next;
     });
@@ -49,7 +50,9 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
       getSignedFileUrl(ref, { expiresIn: PRINT_SIGNED_URL_TTL_SECONDS })
         .then((url) => {
           if (cancelled) return;
-          setResolvedImages((prev) => ({ ...prev, [ref]: { status: "ready", url } }));
+          // The signed URL is browser-loadable, but not yet proven loaded -
+          // the <img> below still has to fire onLoad before this is "ready".
+          setResolvedImages((prev) => (prev[ref]?.status === "ready" ? prev : { ...prev, [ref]: { status: "loading", url } }));
         })
         .catch(() => {
           if (cancelled) return;
@@ -59,9 +62,17 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
     return () => { cancelled = true; };
   }, [imageTargetsKey]);
 
-  const pendingImageCount = imageTargets.filter((ref) => resolvedImages[ref]?.status !== "ready" && resolvedImages[ref]?.status !== "error").length;
-  const failedImageCount = imageTargets.filter((ref) => resolvedImages[ref]?.status === "error").length;
-  const printReady = pendingImageCount === 0;
+  const handleImageLoaded = (ref, url) => {
+    setResolvedImages((prev) => ({ ...prev, [ref]: { status: "ready", url } }));
+  };
+  const handleImageFailed = (ref) => {
+    setResolvedImages((prev) => ({ ...prev, [ref]: { status: "error", url: "" } }));
+  };
+
+  const { pendingCount: pendingImageCount, failedCount: failedImageCount, ready: printReady } = computeImageReadiness(
+    imageTargets.map((ref) => ({ key: ref, ref })),
+    Object.fromEntries(imageTargets.map((ref) => [ref, resolvedImages[ref] ? { ref, status: resolvedImages[ref].status } : null]))
+  );
 
   const title = type === "invoices"
     ? "Invoice Printout"
@@ -218,16 +229,24 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
                     return (
                       <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3 print:p-2.5">
                         {isImageReference(url) ? (
-                          resolved?.status === "ready" ? (
-                            <img
-                              src={resolved.url}
-                              alt=""
-                              className="h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm]"
-                              onError={() => setResolvedImages((prev) => ({ ...prev, [url]: { status: "error", url: "" } }))}
-                            />
-                          ) : resolved?.status === "error" ? (
+                          resolved?.status === "error" ? (
                             <div className="flex h-64 w-full items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
                               Image unavailable
+                            </div>
+                          ) : resolved?.url ? (
+                            <div className="relative h-64 w-full print:h-auto">
+                              <img
+                                src={resolved.url}
+                                alt=""
+                                className={`h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm] ${resolved.status === "ready" ? "" : "opacity-0 absolute inset-0"}`}
+                                onLoad={() => handleImageLoaded(url, resolved.url)}
+                                onError={() => handleImageFailed(url)}
+                              />
+                              {resolved.status !== "ready" && (
+                                <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                                  Preparing...
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
