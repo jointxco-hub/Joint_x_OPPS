@@ -7,33 +7,67 @@ const DEFAULT_ORDER_FILE_FOLDERS = [
   { id: "brand_assets", name: "Brand Assets" },
   { id: "references", name: "References" },
   { id: "production", name: "Production Documents" },
+  { id: "qc_finished", name: "QC / Finished" },
+  { id: "delivery", name: "Delivery" },
+  { id: "general", name: "General" },
 ];
 
 export const INVOICE_FOLDER_ID = "__invoices";
 
-// Mirrors a file just attached to an order into
-// "<Client Root>/Orders/<order_number>/<category>" in File Manager
-// (folders/client_assets), so order files become visible and organized in
+// dataClient.entities is built dynamically (see src/api/dataClient.js), so
+// TS can't statically resolve its keys — same local `any` boundary already
+// used for this elsewhere (e.g. OrderLinkPanel.jsx's orderEntity,
+// Dashboard.jsx's ents).
+function clientAssetEntity() {
+  return /** @type {any} */ (dataClient.entities).ClientAsset;
+}
+
+// Mirrors a file just attached to an order into the client's canonical
+// File Manager category (folders/client_assets: All Files -> Clients ->
+// <Client> -> <category>), so order files become visible and organized in
 // one client-wide place instead of only living on the order record. Never
 // re-uploads the binary — file_url is the same storage reference either
-// way (dataClient.integrations.Core.UploadFile is never called here). Best-
-// effort and non-blocking: any failure (including the expected "already
-// mirrored" case, from idx_client_assets_order_file_url_unique) is
-// swallowed here so it can never fail the order upload/link/save that
-// triggered it.
+// way (dataClient.integrations.Core.UploadFile is never called here).
+//
+// Canonical per Phase 1A.1: one client_assets row exists per
+// (client_id, file_url), reused across every order that links the same
+// file rather than one row per order. If a canonical row already exists,
+// it's reused as-is — its file_url, origin order_id, and category are left
+// alone, except that an uncategorized existing row (no folder_id at all)
+// is upgraded to the new, more specific category. client_assets.order_id
+// on a newly-created row is origin/first-linked metadata only — it is
+// never read to determine which orders currently use the asset; that's
+// always orders.file_urls.
+//
+// Best-effort and non-blocking throughout: any failure (including the
+// expected "already mirrored" case — either idx_client_assets_order_file_url_unique,
+// kept for backward compatibility, or the new canonical
+// idx_client_assets_client_file_url_unique) is swallowed here so it can
+// never fail the order upload/link/save that triggered it.
 export async function mirrorOrderFileToClientAssetFolder({ order, fileUrl, fileName = "", fileType = "", fileSize = undefined, folderId = "" }) {
   if (!order?.id || !order?.client_id || !fileUrl) return;
   try {
+    const category = resolveOrderAssetCategory(folderId);
     const folderRowId = await dataClient.files.getOrCreateOrderAssetFolder({
       orderId: order.id,
-      category: resolveOrderAssetCategory(folderId),
+      category,
     });
-    // dataClient.entities is built dynamically (see src/api/dataClient.js),
-    // so TS can't statically resolve its keys — same local `any` boundary
-    // already used for this elsewhere (e.g. OrderLinkPanel.jsx's
-    // orderEntity, Dashboard.jsx's ents).
-    const clientAssetEntity = /** @type {any} */ (dataClient.entities).ClientAsset;
-    await clientAssetEntity.create({
+    const assets = clientAssetEntity();
+
+    const existing = await assets.filter({ client_id: order.client_id, file_url: fileUrl }, undefined, 1);
+    const existingAsset = Array.isArray(existing) ? existing[0] : null;
+    if (existingAsset) {
+      if (folderRowId && !existingAsset.folder_id) {
+        try {
+          await assets.update(existingAsset.id, { folder_id: folderRowId });
+        } catch (updateError) {
+          console.warn("[order-files] client asset category upgrade failed", updateError);
+        }
+      }
+      return;
+    }
+
+    await assets.create({
       title: fileName || fileUrl,
       file_url: fileUrl,
       file_type: fileType ? String(fileType).split("/").pop() : (String(fileName || "").split(".").pop()?.toLowerCase() || "file"),
@@ -45,6 +79,31 @@ export async function mirrorOrderFileToClientAssetFolder({ order, fileUrl, fileN
   } catch (error) {
     if (isAlreadyMirroredAssetError(error)) return;
     console.warn("[order-files] client asset mirror failed", error);
+  }
+}
+
+// When a canonical order file is moved between order-local folders (e.g.
+// General -> Mockups), keeps the client library's categorization of that
+// same file in sync. Only a real category move of the canonical order file
+// should do this — never for a fileCopies/"linked into another order
+// folder" placement, which is order-local organization only and must not
+// move the shared client-library asset.
+export async function syncOrderFileCategoryToClientAsset({ order, fileUrl, folderId }) {
+  if (!order?.id || !order?.client_id || !fileUrl) return;
+  try {
+    const category = resolveOrderAssetCategory(folderId);
+    const folderRowId = await dataClient.files.getOrCreateOrderAssetFolder({
+      orderId: order.id,
+      category,
+    });
+    if (!folderRowId) return;
+    const assets = clientAssetEntity();
+    const existing = await assets.filter({ client_id: order.client_id, file_url: fileUrl }, undefined, 1);
+    const existingAsset = Array.isArray(existing) ? existing[0] : null;
+    if (!existingAsset || existingAsset.folder_id === folderRowId) return;
+    await assets.update(existingAsset.id, { folder_id: folderRowId });
+  } catch (error) {
+    console.warn("[order-files] client asset category sync failed", error);
   }
 }
 

@@ -35,17 +35,26 @@ test("INVOICE_FOLDER_ID maps to 'Invoices & Quotes' as a mapping primitive only 
 });
 
 test("unrecognized or absent folders fall back to General, not an invented category", () => {
-  assert.equal(resolveOrderAssetCategory("brand_assets"), "General");
-  assert.equal(resolveOrderAssetCategory("references"), "General");
+  // brand_assets/references gained real mappings in Phase 1A.1 — see
+  // tests/client-file-library-refinement.test.mjs — so they're no longer
+  // examples of the General fallback; only genuinely unknown/absent ids
+  // are, exercised here.
   assert.equal(resolveOrderAssetCategory("folder-abc123"), "General");
   assert.equal(resolveOrderAssetCategory(""), "General");
   assert.equal(resolveOrderAssetCategory(undefined), "General");
 });
 
-test("ORDER_ASSET_CATEGORIES lists exactly the 7 standard subfolders the DB RPC provisions", () => {
+// As of Phase 1A.1 (202608080002), this is the canonical CLIENT category
+// set — 9 categories, up from Phase 1A's 7 (added Brand Assets and
+// References). See tests/client-file-library-refinement.test.mjs for the
+// Phase 1A.1-specific coverage (client-first hierarchy, canonical
+// same-client-file dedup, bulk reuse).
+test("ORDER_ASSET_CATEGORIES lists exactly the 9 standard client categories the DB RPC provisions", () => {
   assert.deepEqual(ORDER_ASSET_CATEGORIES, [
     "Mockups",
     "Artwork",
+    "Brand Assets",
+    "References",
     "Production",
     "QC / Finished",
     "Invoices & Quotes",
@@ -54,10 +63,16 @@ test("ORDER_ASSET_CATEGORIES lists exactly the 7 standard subfolders the DB RPC 
   ]);
 });
 
-test("isAlreadyMirroredAssetError recognizes the unique-constraint message, nothing else", () => {
+test("isAlreadyMirroredAssetError recognizes either unique-constraint message, nothing else", () => {
   assert.equal(
     isAlreadyMirroredAssetError(new Error('duplicate key value violates unique constraint "idx_client_assets_order_file_url_unique"')),
-    true
+    true,
+    "the Phase 1A order/file signal, kept for backward compatibility"
+  );
+  assert.equal(
+    isAlreadyMirroredAssetError(new Error('duplicate key value violates unique constraint "idx_client_assets_client_file_url_unique"')),
+    true,
+    "the Phase 1A.1 canonical client/file signal"
   );
   assert.equal(isAlreadyMirroredAssetError(new Error("network timeout")), false);
   assert.equal(isAlreadyMirroredAssetError(null), false);

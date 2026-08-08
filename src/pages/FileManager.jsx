@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,25 @@ import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { useSignedFileUrl } from "@/lib/privateFiles";
+
+// Walks a folder's parent_id chain to find the client this folder belongs
+// to, if any — a client_root or client_category folder (Phase 1A.1) always
+// carries client_id directly, but a file might be uploaded while browsing a
+// deeper/renamed folder under one, so ancestry is checked, not just the
+// immediate folder. Returns null for any folder outside a client's tree
+// (a normal internal folder, Design Assets, X LAB Studio, Supply, etc.) —
+// uploads there must never be tagged with a client_id.
+function resolveClientIdFromFolderAncestry(folder, allFolders) {
+  let current = folder;
+  let hops = 0;
+  while (current && hops < 20) {
+    if (current.client_id) return current.client_id;
+    if (!current.parent_id) return null;
+    current = allFolders.find((f) => f.id === current.parent_id) || null;
+    hops += 1;
+  }
+  return null;
+}
 
 const FOLDER_COLORS = {
   blue:   { bg: "bg-blue-50",   icon: "text-blue-500",   hex: "#dbeafe" },
@@ -97,12 +116,32 @@ export default function FileManager() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [longPressFolder, setLongPressFolder] = useState(null);
+  const [orderFilter, setOrderFilter] = useState("");
   const longPressTimer = useRef(null);
   const qc = useQueryClient();
 
   const { data: folders = [] } = useQuery({
     queryKey: ["folders"],
     queryFn: () => dataClient.entities.Folder.list("-created_date", 500),
+  });
+
+  // The client this folder view belongs to, if any (Phase 1A.1) — drives
+  // both the direct-upload client_id fix and the order filter below. Null
+  // for any normal internal folder.
+  const currentClientId = useMemo(
+    () => (currentFolder ? resolveClientIdFromFolderAncestry(currentFolder, folders) : null),
+    [currentFolder, folders]
+  );
+
+  // dataClient.entities is built dynamically (see src/api/dataClient.js),
+  // so TS can't statically resolve its keys — same local `any` boundary
+  // used throughout this codebase (e.g. OrderLinkPanel.jsx's orderEntity).
+  const orderEntity = /** @type {any} */ (dataClient.entities).Order;
+  const { data: clientOrders = [] } = useQuery({
+    queryKey: ["fileManagerClientOrders", currentClientId],
+    queryFn: () => orderEntity.filter({ client_id: currentClientId }, "-created_date", 500),
+    enabled: Boolean(currentClientId),
+    staleTime: 30_000,
   });
 
   const { data: assets = [] } = useQuery({
@@ -208,6 +247,10 @@ export default function FileManager() {
           title: file.name,
           file_url,
           folder_id: currentFolder?.id ?? null,
+          // Tags the asset to its client when uploading directly inside a
+          // client root/category (Phase 1A.1) — never set for a normal
+          // internal folder, where currentClientId resolves to null.
+          client_id: currentClientId || undefined,
           file_type: file.name.split(".").pop()?.toLowerCase() || "file",
         });
       }
@@ -232,11 +275,22 @@ export default function FileManager() {
     (f) => !f.is_archived && f.parent_id === (currentFolder?.id ?? null)
   );
 
+  // Order filter (Phase 1A.1): a canonical client asset can be reused
+  // across many orders, so filtering "by order" never touches
+  // client_assets.order_id (that's only ever origin/first-linked
+  // metadata) — it checks whether the asset's file_url is present in the
+  // selected order's own file_urls. The folder/category the file lives in
+  // never changes because of this filter; it only changes which files are
+  // shown.
+  const selectedOrder = orderFilter ? clientOrders.find((order) => order.id === orderFilter) : null;
+  const selectedOrderUrls = selectedOrder ? new Set(selectedOrder.file_urls || []) : null;
+
   const visibleFiles = assets.filter(
     (a) =>
       !a.is_archived &&
       a.folder_id === (currentFolder?.id ?? null) &&
-      (!search || a.title?.toLowerCase().includes(search.toLowerCase()))
+      (!search || a.title?.toLowerCase().includes(search.toLowerCase())) &&
+      (!selectedOrderUrls || selectedOrderUrls.has(a.file_url))
   );
 
   const breadcrumbs = [];
@@ -266,6 +320,11 @@ export default function FileManager() {
   const handleCopyFile = (folderId) => {
     if (!fileCopy?.id) return;
     copyFile.mutate({ file: fileCopy, folderId });
+  };
+
+  const navigateToFolder = (folder) => {
+    setCurrentFolder(folder);
+    setOrderFilter("");
   };
 
   return (
@@ -300,7 +359,7 @@ export default function FileManager() {
         {/* Breadcrumb */}
         <div className="flex items-center gap-1 mb-5 flex-wrap">
           <button
-            onClick={() => setCurrentFolder(null)}
+            onClick={() => navigateToFolder(null)}
             className={`px-2 py-1 rounded-lg text-sm transition-all ${
               !currentFolder ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
             }`}
@@ -311,7 +370,7 @@ export default function FileManager() {
             <React.Fragment key={b.id}>
               <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
               <button
-                onClick={() => setCurrentFolder(b)}
+                onClick={() => navigateToFolder(b)}
                 className={`px-2 py-1 rounded-lg text-sm transition-all ${
                   i === breadcrumbs.length - 1
                     ? "text-foreground font-semibold"
@@ -324,15 +383,30 @@ export default function FileManager() {
           ))}
         </div>
 
-        {/* Search */}
-        <div className="relative mb-6">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search files…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 rounded-xl bg-card h-9"
-          />
+        {/* Search + order filter (order filter only inside a client's own folders) */}
+        <div className="mb-6 flex flex-col gap-2 sm:flex-row">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search files…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 rounded-xl bg-card h-9"
+            />
+          </div>
+          {currentClientId && (
+            <select
+              value={orderFilter}
+              onChange={(e) => setOrderFilter(e.target.value)}
+              className="h-9 rounded-xl border border-input bg-card px-3 text-sm sm:w-56"
+              title="The folder doesn't change — this only filters which files are shown"
+            >
+              <option value="">Order: All orders</option>
+              {clientOrders.map((order) => (
+                <option key={order.id} value={order.id}>Order: {order.order_number || order.id}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Folders */}
@@ -352,7 +426,7 @@ export default function FileManager() {
                   >
                     <button
                       className={`w-full p-4 flex items-center gap-3 ${col.bg} border-b border-border hover:opacity-80 transition-opacity`}
-                      onClick={() => setCurrentFolder(folder)}
+                      onClick={() => navigateToFolder(folder)}
                     >
                       <FolderOpen className={`w-6 h-6 ${col.icon} flex-shrink-0`} />
                       <span className="text-sm font-semibold text-foreground truncate text-left flex-1">
@@ -427,10 +501,18 @@ export default function FileManager() {
                       >
                         <MoveRight className="w-3.5 h-3.5" />
                       </button>
+                      {/* A client-owned canonical asset (client_id set, Phase 1A.1) is
+                          unique per (client_id, file_url) — copying it into another
+                          folder would try to create a second row for the same file
+                          and violate that constraint. Move still works (it repoints
+                          the same row); Copy stays available only for internal,
+                          non-client-owned files, where duplicating a folder link is
+                          still a useful, non-conflicting action. */}
                       <button
-                        onClick={() => setFileCopy(file)}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-                        title="Copy link"
+                        onClick={() => !file.client_id && setFileCopy(file)}
+                        disabled={Boolean(file.client_id)}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+                        title={file.client_id ? "Client library files are unique per client — use Move instead" : "Copy link"}
                       >
                         <Copy className="w-3.5 h-3.5" />
                       </button>
