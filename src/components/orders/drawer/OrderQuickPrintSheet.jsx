@@ -1,7 +1,12 @@
+import { useEffect, useState } from "react";
 import { Printer, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { normalizeOrderFileFolders } from "./OrderDrawerShared";
-import { isPrivateFileReference } from "@/lib/privateFiles";
+import { getSignedFileUrl } from "@/lib/privateFiles";
+import { isImageReference } from "@/lib/imageReference";
+import { computeImageReadiness } from "@/lib/printReadiness";
+
+const PRINT_SIGNED_URL_TTL_SECONDS = 1800;
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
@@ -20,8 +25,55 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   const printedAt = new Date().toLocaleString();
   const completedPayments = (Array.isArray(payments) ? payments : []).filter((payment) => payment.status === "completed");
   const mockupFiles = allFiles.filter((url) => metadata.fileFolders?.[url] === "mockups");
-  const imageFiles = allFiles.filter(isPrintableImage);
+  const imageFiles = allFiles.filter(isImageReference);
   const filesForMockups = mockupFiles.length ? mockupFiles : imageFiles;
+  const showMockups = type !== "invoices";
+  const imageTargets = showMockups ? filesForMockups.filter(isImageReference) : [];
+  const imageTargetsKey = imageTargets.join("\n");
+  const [resolvedImages, setResolvedImages] = useState({});
+
+  useEffect(() => {
+    if (!imageTargetsKey) {
+      setResolvedImages({});
+      return undefined;
+    }
+    const targets = imageTargetsKey.split("\n");
+    let cancelled = false;
+    setResolvedImages((prev) => {
+      const next = {};
+      targets.forEach((ref) => {
+        next[ref] = prev[ref] || { status: "loading", url: "" };
+      });
+      return next;
+    });
+    targets.forEach((ref) => {
+      getSignedFileUrl(ref, { expiresIn: PRINT_SIGNED_URL_TTL_SECONDS })
+        .then((url) => {
+          if (cancelled) return;
+          // The signed URL is browser-loadable, but not yet proven loaded -
+          // the <img> below still has to fire onLoad before this is "ready".
+          setResolvedImages((prev) => (prev[ref]?.status === "ready" ? prev : { ...prev, [ref]: { status: "loading", url } }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setResolvedImages((prev) => ({ ...prev, [ref]: { status: "error", url: "" } }));
+        });
+    });
+    return () => { cancelled = true; };
+  }, [imageTargetsKey]);
+
+  const handleImageLoaded = (ref, url) => {
+    setResolvedImages((prev) => ({ ...prev, [ref]: { status: "ready", url } }));
+  };
+  const handleImageFailed = (ref) => {
+    setResolvedImages((prev) => ({ ...prev, [ref]: { status: "error", url: "" } }));
+  };
+
+  const { pendingCount: pendingImageCount, failedCount: failedImageCount, ready: printReady } = computeImageReadiness(
+    imageTargets.map((ref) => ({ key: ref, ref })),
+    Object.fromEntries(imageTargets.map((ref) => [ref, resolvedImages[ref] ? { ref, status: resolvedImages[ref].status } : null]))
+  );
+
   const title = type === "invoices"
     ? "Invoice Printout"
     : type === "mockups"
@@ -71,9 +123,9 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
             <p className="text-xs text-muted-foreground">A4-friendly browser print for production use.</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button type="button" onClick={() => window.print()} className="rounded-xl">
+            <Button type="button" onClick={() => window.print()} disabled={!printReady} className="rounded-xl">
               <Printer className="mr-2 h-4 w-4" />
-              Print
+              {printReady ? "Print" : "Preparing images..."}
             </Button>
             <button
               type="button"
@@ -163,20 +215,51 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
             </OrderPrintSection>
           )}
 
-          {type !== "invoices" && (
+          {showMockups && (
             <OrderPrintSection title="Mockups / Production Images">
+              {failedImageCount > 0 && (
+                <p className="mb-3 text-xs font-medium text-amber-700">
+                  {failedImageCount} image{failedImageCount > 1 ? "s" : ""} could not be loaded.
+                </p>
+              )}
               {filesForMockups.length ? (
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {filesForMockups.map((url, index) => (
-                    <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3 print:p-2.5">
-                      {isPrintableImage(url) ? (
-                        <img src={url} alt="" className="h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm]" />
-                      ) : (
-                        <p className="break-words text-sm text-zinc-700">{printFileName(url)}</p>
-                      )}
-                      <p className="mt-2 break-words text-xs text-zinc-500">{index + 1}. {printFileName(url)}</p>
-                    </div>
-                  ))}
+                  {filesForMockups.map((url, index) => {
+                    const resolved = resolvedImages[url];
+                    return (
+                      <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3 print:p-2.5">
+                        {isImageReference(url) ? (
+                          resolved?.status === "error" ? (
+                            <div className="flex h-64 w-full items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                              Image unavailable
+                            </div>
+                          ) : resolved?.url ? (
+                            <div className="relative h-64 w-full print:h-auto">
+                              <img
+                                src={resolved.url}
+                                alt=""
+                                className={`h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm] ${resolved.status === "ready" ? "" : "opacity-0 absolute inset-0"}`}
+                                onLoad={() => handleImageLoaded(url, resolved.url)}
+                                onError={() => handleImageFailed(url)}
+                              />
+                              {resolved.status !== "ready" && (
+                                <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                                  Preparing...
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                              Preparing...
+                            </div>
+                          )
+                        ) : (
+                          <p className="break-words text-sm text-zinc-700">{printFileName(url)}</p>
+                        )}
+                        <p className="mt-2 break-words text-xs text-zinc-500">{index + 1}. {printFileName(url)}</p>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <p className="text-sm text-zinc-600">No mockup/image files attached yet.</p>
@@ -247,10 +330,6 @@ function OrderPrintMetric({ label, value, tone }) {
       <p className="mt-1 text-lg font-bold text-zinc-950">{value}</p>
     </div>
   );
-}
-
-function isPrintableImage(url = "") {
-  return !isPrivateFileReference(url) && /\.(png|jpe?g|webp|gif|avif)(\?.*)?$/i.test(String(url));
 }
 
 function printFileName(url = "") {

@@ -13,6 +13,8 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
+import SecureImage from "@/components/common/SecureImage";
+import { computeImageReadiness } from "@/lib/printReadiness";
 
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
@@ -764,6 +766,19 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
   const groups = groupProductionSummaryOrders(summaryOrders, stageLabelByKey, type, groupBy);
   const printedAt = format(new Date(), "d MMM yyyy HH:mm");
 
+  const [thumbnailStatus, setThumbnailStatus] = useState({});
+  const handleThumbnailStatusChange = useCallback((key, ref, status) => {
+    setThumbnailStatus((prev) => {
+      const existing = prev[key];
+      if (existing && existing.ref === ref && existing.status === status) return prev;
+      return { ...prev, [key]: { ref, status } };
+    });
+  }, []);
+  const thumbnailTargets = summaryOrders
+    .map(order => ({ key: String(order.id || order.order_number), ref: getOrderThumbnail(order) }))
+    .filter(target => target.ref);
+  const { ready: printReady } = computeImageReadiness(thumbnailTargets, thumbnailStatus);
+
   return (
     <div className="fixed inset-0 z-[80] bg-background/95 p-4 print:static print:bg-white print:p-0">
       <style>{`
@@ -836,8 +851,8 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
             </select>
           </label>
           <Button type="button" variant="outline" onClick={onClose} className="rounded-xl">Close</Button>
-          <Button type="button" onClick={() => window.print()} className="rounded-xl gap-2">
-            <Printer className="h-4 w-4" /> Print
+          <Button type="button" onClick={() => window.print()} disabled={!printReady} className="rounded-xl gap-2">
+            <Printer className="h-4 w-4" /> {printReady ? "Print" : "Preparing images..."}
           </Button>
         </div>
       </div>
@@ -876,7 +891,12 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
                 </div>
                 <div className="grid gap-3 md:grid-cols-2 print:grid-cols-2">
                   {group.orders.map(order => (
-                    <ProductionSummaryOrderCard key={order.id} order={order} stageLabel={stageLabelByKey.get(order.pipeline_stage)} />
+                    <ProductionSummaryOrderCard
+                      key={order.id}
+                      order={order}
+                      stageLabel={stageLabelByKey.get(order.pipeline_stage)}
+                      onThumbnailStatusChange={handleThumbnailStatusChange}
+                    />
                   ))}
                 </div>
               </section>
@@ -888,8 +908,9 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
   );
 }
 
-function ProductionSummaryOrderCard({ order, stageLabel }) {
+function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange }) {
   const thumb = getOrderThumbnail(order);
+  const thumbKey = String(order.id || order.order_number);
   const products = getOrderProducts(order);
   const statusLabel = statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
   const dueLabel = order.due_date ? format(new Date(order.due_date), "d MMM yyyy") : "No due date";
@@ -904,7 +925,14 @@ function ProductionSummaryOrderCard({ order, stageLabel }) {
       <div className="flex gap-3">
         <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 print:h-20 print:w-20">
           {thumb ? (
-            <img src={thumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+            <SecureImage
+              value={thumb}
+              alt=""
+              className="h-full w-full object-cover"
+              loadingMode="eager"
+              onStatusChange={(status) => onThumbnailStatusChange?.(thumbKey, thumb, status)}
+              fallback={<div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>}
+            />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>
           )}
