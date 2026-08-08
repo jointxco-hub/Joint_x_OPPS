@@ -223,5 +223,104 @@ begin
 end
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════
+-- Legacy-adoption amendment: get_or_create_clients_root must reuse a
+-- pre-existing manually-created "Clients" folder (folder_kind still null
+-- because it predates this migration), never create a competing second
+-- one, and must raise an explicit, distinct error rather than guess when
+-- more than one compatible candidate exists. Mirrors the real production
+-- shape: a "Clients" folder built by hand ~1-2 days before this
+-- migration ever ran, with a "Lazi" child folder and 6 loose private
+-- files, all client_id/folder_kind still null throughout.
+-- ═══════════════════════════════════════════════════════════════════
+
+insert into public.tenants (id, slug, name) values
+  ('83000000-0000-0000-0000-000000000001', 'lib-refine-smoke-legacy', 'Lib Refine Smoke Legacy'),
+  ('84000000-0000-0000-0000-000000000001', 'lib-refine-smoke-ambiguous', 'Lib Refine Smoke Ambiguous');
+
+insert into auth.users (id, aud, role, email, raw_app_meta_data, raw_user_meta_data) values
+  ('83a00000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'staff-legacy@lib-refine-smoke.invalid', '{}'::jsonb, '{}'::jsonb),
+  ('84a00000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'staff-ambiguous@lib-refine-smoke.invalid', '{}'::jsonb, '{}'::jsonb);
+
+insert into public.users (id, auth_user_id, user_email, full_name, role) values
+  ('83100000-0000-0000-0000-000000000001', '83a00000-0000-0000-0000-000000000001', 'staff-legacy@lib-refine-smoke.invalid', 'Staff Legacy', 'staff'),
+  ('84100000-0000-0000-0000-000000000001', '84a00000-0000-0000-0000-000000000001', 'staff-ambiguous@lib-refine-smoke.invalid', 'Staff Ambiguous', 'staff');
+
+insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role) values
+  ('83000000-0000-0000-0000-000000000001', '83a00000-0000-0000-0000-000000000001', 'member'),
+  ('84000000-0000-0000-0000-000000000001', '84a00000-0000-0000-0000-000000000001', 'member');
+
+insert into public.clients (id, name, email, tenant_id) values
+  ('83300000-0000-0000-0000-000000000001', 'Lazi', 'lazi@lib-refine-smoke.invalid', '83000000-0000-0000-0000-000000000001');
+
+-- A manually-created "Clients" folder predating this migration:
+-- parent_id null, client_id null, name = 'Clients', folder_kind null —
+-- exactly the production shape.
+insert into public.folders (id, name, client_id, parent_id, tenant_id, color, created_at) values
+  ('83900000-0000-0000-0000-000000000001', 'Clients', null, null, '83000000-0000-0000-0000-000000000001', 'blue', now() - interval '2 days');
+
+set local role authenticated;
+set local request.jwt.claim.sub = '83a00000-0000-0000-0000-000000000001';
+set local request.jwt.claim.email = 'staff-legacy@lib-refine-smoke.invalid';
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"sub":"83a00000-0000-0000-0000-000000000001","email":"staff-legacy@lib-refine-smoke.invalid","role":"authenticated"}';
+
+-- 1/2. Legacy root-level Clients (folder_kind null) is reused, not
+-- duplicated.
+do $$
+declare v_result uuid; v_count integer; v_created_at timestamptz;
+begin
+  v_result := public.get_or_create_clients_root('83000000-0000-0000-0000-000000000001');
+  if v_result <> '83900000-0000-0000-0000-000000000001' then
+    raise exception 'LEGACY_CLIENTS_ROOT_NOT_REUSED: got %', v_result;
+  end if;
+  select count(*) into v_count
+  from public.folders
+  where tenant_id = '83000000-0000-0000-0000-000000000001' and lower(btrim(name)) = 'clients';
+  if v_count <> 1 then raise exception 'SECOND_CLIENTS_ROOT_WAS_CREATED: got % rows named Clients', v_count; end if;
+
+  -- 4. The migration RPC never modifies the reused row — it's read-only
+  -- reuse; even folder_kind stays null (the manual restructure script,
+  -- not this RPC, is what ever tags it canonical).
+  select created_at into v_created_at from public.folders where id = '83900000-0000-0000-0000-000000000001';
+  if v_created_at <> (now() - interval '2 days')::timestamptz and abs(extract(epoch from (v_created_at - (now() - interval '2 days')))) > 1 then
+    raise exception 'MIGRATION_RPC_MODIFIED_EXISTING_ROW_CREATED_AT';
+  end if;
+  if (select folder_kind from public.folders where id = '83900000-0000-0000-0000-000000000001') is not null then
+    raise exception 'MIGRATION_RPC_TAGGED_FOLDER_KIND_ON_EXISTING_ROW: reuse must stay read-only, tagging is the manual restructure script''s job';
+  end if;
+end
+$$;
+reset role;
+set local request.jwt.claim.sub = '';
+set local request.jwt.claim.email = '';
+set local request.jwt.claim.role = '';
+set local request.jwt.claims = '';
+
+-- 3. Two equally-compatible legacy "Clients" candidates in the same
+-- tenant: explicit ambiguity error, never a silent pick.
+insert into public.folders (id, name, client_id, parent_id, tenant_id, color) values
+  ('84900000-0000-0000-0000-000000000001', 'Clients', null, null, '84000000-0000-0000-0000-000000000001', 'blue'),
+  ('84900000-0000-0000-0000-000000000002', 'CLIENTS', null, null, '84000000-0000-0000-0000-000000000001', 'blue');
+
+set local role authenticated;
+set local request.jwt.claim.sub = '84a00000-0000-0000-0000-000000000001';
+set local request.jwt.claim.email = 'staff-ambiguous@lib-refine-smoke.invalid';
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"sub":"84a00000-0000-0000-0000-000000000001","email":"staff-ambiguous@lib-refine-smoke.invalid","role":"authenticated"}';
+do $$
+declare v_code text;
+begin
+  begin
+    perform public.get_or_create_clients_root('84000000-0000-0000-0000-000000000001');
+    raise exception 'AMBIGUOUS_CLIENTS_ROOT_SILENTLY_ACCEPTED';
+  exception when others then
+    get stacked diagnostics v_code = message_text;
+    if v_code <> 'FOLDER_CLIENTS_ROOT_AMBIGUOUS' then raise; end if;
+  end;
+end
+$$;
+reset role;
+
 select 'ALL_CLIENT_FILE_LIBRARY_REFINEMENT_SMOKE_TESTS_PASSED' as result;
 rollback;

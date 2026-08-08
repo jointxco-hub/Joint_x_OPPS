@@ -27,6 +27,16 @@
 --     manual, non-automatic supabase/backfills/client_file_library_restructure.sql
 --     moves them under Clients. This migration does not touch a single
 --     existing folders/client_assets row.
+--   - get_or_create_clients_root() also reuses, read-only, a pre-existing
+--     manually-created "Clients" folder at true File Manager root
+--     (parent_id is null, client_id is null, name = 'Clients', not
+--     archived, folder_kind still null because it predates this
+--     migration) instead of creating a competing second one — this covers
+--     the case where staff already built a Clients folder by hand before
+--     Phase 1A.1 shipped. Exactly one such candidate is required to
+--     auto-reuse; more than one raises FOLDER_CLIENTS_ROOT_AMBIGUOUS
+--     rather than guessing. The row itself is never written to by this
+--     function — read-only reuse only, same as the client-root case above.
 --   - The email-keyed client_file_folders/client_file_links system is
 --     untouched.
 --
@@ -121,11 +131,53 @@ begin
     raise exception using errcode = 'P0001', message = 'FOLDER_ACCESS_DENIED';
   end if;
 
+  -- 1. Prefer an already-canonical root.
   select id into v_root_id
   from public.folders
   where tenant_id = p_tenant_id and folder_kind = 'clients_root'
   limit 1;
 
+  -- 2. No canonical root yet — this migration ships into a tenant that may
+  -- already have a manually-created "Clients" folder at true File Manager
+  -- root (folder_kind is still null for every pre-1A.1 row, including one
+  -- a staff member built by hand days before this migration ever ran).
+  -- Reuse it rather than creating a silent duplicate. Exactly one
+  -- compatible candidate is required — zero means create fresh, more than
+  -- one is a genuine ambiguity this function refuses to guess through.
+  if v_root_id is null then
+    declare
+      v_candidate_count int;
+    begin
+      select count(*) into v_candidate_count
+      from public.folders
+      where tenant_id = p_tenant_id
+        and parent_id is null
+        and client_id is null
+        and lower(btrim(name)) = 'clients'
+        and coalesce(is_archived, false) = false
+        and coalesce(folder_kind, '') <> 'clients_root';
+
+      if v_candidate_count > 1 then
+        raise exception using errcode = 'P0001', message = 'FOLDER_CLIENTS_ROOT_AMBIGUOUS';
+      elsif v_candidate_count = 1 then
+        select id into v_root_id
+        from public.folders
+        where tenant_id = p_tenant_id
+          and parent_id is null
+          and client_id is null
+          and lower(btrim(name)) = 'clients'
+          and coalesce(is_archived, false) = false
+          and coalesce(folder_kind, '') <> 'clients_root';
+        -- Reused as-is: this function never writes to a legacy row it
+        -- didn't create. It stays additive/read-only against existing
+        -- production data; the separate, manual, non-automatic restructure
+        -- script is the only thing that ever tags a reused legacy root
+        -- with folder_kind = 'clients_root'.
+      end if;
+    end;
+  end if;
+
+  -- 3. Nothing to reuse — create a new canonical root.
   if v_root_id is null then
     begin
       insert into public.folders (name, parent_id, tenant_id, folder_kind, color, created_by)
