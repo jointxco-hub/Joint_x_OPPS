@@ -1,22 +1,37 @@
--- One-time backfill: mirror existing orders.file_urls into the NEW nested
--- Client Root -> Orders -> ORD-XXXXX -> category structure introduced by
--- 202608080001_client_order_asset_folder_provisioning.sql.
+-- ═══════════════════════════════════════════════════════════════════
+--  MANUAL BACKFILL — NOT A MIGRATION. DO NOT MOVE THIS FILE INTO
+--  supabase/migrations/. Anything under supabase/migrations is eligible
+--  to run automatically via normal migration replay / db push; this
+--  script is one-time, historical-data-touching, and must only ever be
+--  run deliberately, by a human, against a specific target database,
+--  after the impact estimate below has been reviewed for that target.
+--
+--  How to run (controlled, not automatic):
+--    psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 \
+--      -f supabase/backfills/client_order_asset_folder_backfill.sql
+-- ═══════════════════════════════════════════════════════════════════
+--
+-- Mirrors existing orders.file_urls into the nested Client Root -> Orders
+-- -> ORD-XXXXX -> category structure provisioned by the RPCs in
+-- supabase/migrations/202608080001_client_order_asset_folder_provisioning.sql
+-- (the only automatic migration in this feature).
 --
 -- Supersedes 202608050002_client_asset_folder_backfill.sql from the earlier
 -- local-only feature/client-file-manager-auto-folders branch, which mirrored
 -- into a flatter "client root -> category" structure. That flat shape does
--- not match the nested Orders/ORD-XXXXX hierarchy this migration targets, so
+-- not match the nested Orders/ORD-XXXXX hierarchy this script targets, so
 -- that old backfill must not be run against any database that also gets
 -- this one — it would create a second, competing set of category folders
 -- directly under the client root instead of under Orders/<order_number>.
 --
 -- Unlike the RPCs in 202608080001, this runs with database-owner privileges
--- (a migration run has no auth.uid()/authenticated session to call
--- get_or_create_order_asset_folder with), so it duplicates that function's
--- get-or-create logic directly against folders/client_assets, matching the
--- same idx_folders_client_root_unique / idx_folders_client_subfolder_unique
--- / idx_folders_order_folder_unique / idx_client_assets_order_file_url_unique
--- constraints for idempotency and re-run safety.
+-- (there is no auth.uid()/authenticated session to call
+-- get_or_create_order_asset_folder with outside a real request), so it
+-- duplicates that function's get-or-create logic directly against
+-- folders/client_assets, matching the same idx_folders_client_root_unique /
+-- idx_folders_client_subfolder_unique / idx_folders_order_folder_unique /
+-- idx_client_assets_order_file_url_unique constraints for idempotency and
+-- re-run safety.
 --
 -- Category mapping is by the order's own built-in folder id (stable, from
 -- OrderDrawerShared.jsx's DEFAULT_ORDER_FILE_FOLDERS), not by folder display
@@ -29,9 +44,8 @@
 -- =====================================================================
 -- REQUIRED BEFORE RUNNING THIS AGAINST STAGING OR PRODUCTION:
 -- Run the read-only impact estimate below first and have it reviewed.
--- This migration file must not be applied to any shared database until
--- that estimate has been produced and reviewed. For this PR it has only
--- been exercised against a disposable local stack (see Phase 1A report).
+-- This script must not be run against any shared database until that
+-- estimate has been produced and reviewed for that specific target.
 --
 --   select
 --     count(distinct o.id)                                as affected_orders,
@@ -60,10 +74,30 @@
 -- run existing_order_client_assets_rows before and after on a disposable
 -- copy to see the real delta, since this query cannot know in advance
 -- which specific file_urls already have a placement).
+--
+-- PRODUCTION READ-ONLY IMPACT REVIEW (results, this target, as reviewed
+-- pre-merge — re-run the query above again immediately before actually
+-- executing this script, since order/client counts drift over time):
+--   affected orders:                              33
+--   affected clients:                              27
+--   total existing file_url refs:                 140
+--   already mirrored refs:                          0
+--   refs still requiring backfill:                140
+--   clients needing root folders:                  27
+--   clients needing "Orders" grouping folder:       27
+--   orders needing an order folder:                 33
+--   distinct order/category pairs for missing refs: 39
+--   => approximately 126 new folder rows
+--     (27 client roots + 27 Orders grouping folders + 33 order folders + 39 category folders)
+--   => approximately 140 new client_assets rows
+-- This is controlled and manageable, but it is exactly why this script
+-- does not run automatically: apply 202608080001 and let it bake, run a
+-- production smoke check, THEN separately approve and manually execute
+-- this backfill, then verify the counts above against reality.
 -- =====================================================================
 --
 -- Rollback: delete from public.client_assets where order_id is not null
---           and created_at >= <time this migration ran>;
+--           and created_at >= <time this script ran>;
 --           (folders created by this backfill can be identified the same
 --           way; delete deepest-first: category folders, then order
 --           folders, then "Orders" grouping folders, then any client root

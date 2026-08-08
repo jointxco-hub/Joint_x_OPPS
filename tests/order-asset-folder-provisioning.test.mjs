@@ -21,6 +21,16 @@ test("known built-in order folders map to their canonical category", () => {
   assert.equal(resolveOrderAssetCategory("mockups"), "Mockups");
   assert.equal(resolveOrderAssetCategory("artwork"), "Artwork");
   assert.equal(resolveOrderAssetCategory("production"), "Production");
+});
+
+// A. The INVOICE_FOLDER_ID -> "Invoices & Quotes" mapping primitive exists
+// and is exercised here purely as a pure-function fact, for later invoice
+// integration work. It is NOT evidence that anything today actually
+// routes a file into it — see "B" below and the OrderFilesTab.jsx tests
+// further down, which confirm the opposite: every add-file entry point is
+// disabled while viewing that folder, specifically so this mapping can't
+// silently be reached by accident.
+test("INVOICE_FOLDER_ID maps to 'Invoices & Quotes' as a mapping primitive only — not a wired attachment path", () => {
   assert.equal(resolveOrderAssetCategory(INVOICE_FOLDER_ID), "Invoices & Quotes");
 });
 
@@ -141,4 +151,50 @@ test("no call site bypasses the shared mirror helper with an ad hoc client_asset
       `${file} must go through mirrorOrderFileToClientAssetFolder, not call ClientAsset.create directly`
     );
   }
+});
+
+// B. The Invoices & Quotes folder view is backed by order.invoice_files, not
+// order.file_urls/fileFolders — it is a read-only summary of a workflow this
+// PR does not touch. These tests confirm every add-file entry point
+// (upload, paste-link, client-library-to-order link) is disabled while
+// viewing it, so a staff member can never be shown a "success" state for a
+// file that actually landed as a plain General-category order file instead
+// of in Invoices & Quotes.
+test("Invoices & Quotes folder view hides every add-file action and shows a read-only explanation", async () => {
+  const source = await readSource("src/components/orders/drawer/OrderFilesTab.jsx");
+  const returnStart = source.indexOf('<div className="space-y-4">');
+  assert.notEqual(returnStart, -1, "component render body must exist");
+  const gateStart = source.indexOf("isInvoiceFolder ? (", returnStart);
+  assert.notEqual(gateStart, -1, "the top action row must branch on isInvoiceFolder");
+  const gateEnd = source.indexOf("{!openFolderId ? (", gateStart);
+  const gateBlock = source.slice(gateStart, gateEnd);
+  // The ternary's source necessarily contains both branches' text; what
+  // matters is that the add-file actions live strictly in the ") : (" arm
+  // (rendered when isInvoiceFolder is false), not the "isInvoiceFolder ? ("
+  // arm (rendered when true).
+  const branchSplit = gateBlock.indexOf(") : (");
+  assert.notEqual(branchSplit, -1, "must be a genuine if/else ternary, not a single unconditional block");
+  const invoiceFolderBranch = gateBlock.slice(0, branchSplit);
+  const otherFoldersBranch = gateBlock.slice(branchSplit);
+  assert.ok(
+    /managed from the invoice\/quote workflow/i.test(invoiceFolderBranch),
+    "the isInvoiceFolder-true branch must explain that invoice/quote files are managed elsewhere, not added here"
+  );
+  assert.ok(!invoiceFolderBranch.includes("Upload files"), "upload must not be offered while viewing Invoices & Quotes");
+  assert.ok(!invoiceFolderBranch.includes("Paste file link"), "paste-link must not be offered while viewing Invoices & Quotes");
+  assert.ok(!invoiceFolderBranch.includes("<ClientAccountFilesPanel"), "client-library-to-order linking must not be offered while viewing Invoices & Quotes");
+  assert.ok(otherFoldersBranch.includes("Upload files"), "upload must still be offered for every other folder view");
+  assert.ok(otherFoldersBranch.includes("Paste file link"), "paste-link must still be offered for every other folder view");
+  assert.ok(otherFoldersBranch.includes("<ClientAccountFilesPanel"), "client-library-to-order linking must still be offered for every other folder view");
+});
+
+test("pasteFileLinkUrl's INVOICE_FOLDER_ID exclusion is a defensive fallback, not the primary safeguard — the UI gate above is", async () => {
+  const source = await readSource("src/components/orders/drawer/OrderFilesTab.jsx");
+  const start = source.indexOf("const pasteFileLinkUrl = async");
+  const end = source.indexOf("\n  };", start);
+  const body = source.slice(start, end);
+  assert.ok(
+    body.includes('folderId !== INVOICE_FOLDER_ID'),
+    "even if ever reached, pasteFileLinkUrl must still never file a link under the invoice category id"
+  );
 });

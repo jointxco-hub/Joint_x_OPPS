@@ -297,12 +297,13 @@ end
 $$;
 reset role;
 
--- Backfill (202608080002_client_order_asset_folder_backfill.sql):
--- exercises the migration's own DO block logic against a freshly seeded
--- order that has file_urls but no prior client_assets rows, proving it
--- lands each file under the correct nested category and is idempotent on
--- rerun (no duplicate rows). Run as database owner (no set local role),
--- matching how a migration actually executes.
+-- Backfill (supabase/backfills/client_order_asset_folder_backfill.sql —
+-- a manual script, not a migration; see that file's own header):
+-- exercises its DO block logic against a freshly seeded order that has
+-- file_urls but no prior client_assets rows, proving it lands each file
+-- under the correct nested category and is idempotent on rerun (no
+-- duplicate rows). Run as database owner (no set local role), matching
+-- how the real script is actually executed.
 reset role;
 set local request.jwt.claims = '';
 
