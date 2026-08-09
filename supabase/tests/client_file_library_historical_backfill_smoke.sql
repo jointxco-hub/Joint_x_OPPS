@@ -210,6 +210,74 @@ end
 $$;
 
 -- ═══════════════════════════════════════════════════════════════════
+-- affected_clients / affected_orders must report ACTUAL WRITE SCOPE, not
+-- the raw nonblank-source population. Dedicated tenant, read-only check,
+-- independent of the rest of this fixture:
+--   Client A — one valid file needing backfill.
+--   Client B — blob-only (must be excluded from affected_clients/orders
+--     even though it has a nonblank historical ref).
+--   Client C — a valid file that is ALREADY canonical before this run
+--     (must be excluded from affected_clients/orders — this run adds
+--     nothing for it).
+-- Expected: affected_clients = 1 (A only), affected_orders = 1 (A's
+-- order only), while source_clients_with_nonblank_refs /
+-- source_orders_with_nonblank_refs (diagnostic only) both read 3, since
+-- all three clients/orders do have a nonblank historical ref.
+-- ═══════════════════════════════════════════════════════════════════
+insert into public.tenants (id, slug, name) values
+  ('96000000-0000-0000-0000-000000000001', 'backfill-impact-scope', 'Backfill Impact Scope');
+insert into public.clients (id, name, email, tenant_id) values
+  ('96300000-0000-0000-0000-000000000001', 'ImpactScope Client A', 'impact-a@backfill-safety.invalid', '96000000-0000-0000-0000-000000000001'),
+  ('96300000-0000-0000-0000-000000000002', 'ImpactScope Client B', 'impact-b@backfill-safety.invalid', '96000000-0000-0000-0000-000000000001'),
+  ('96300000-0000-0000-0000-000000000003', 'ImpactScope Client C', 'impact-c@backfill-safety.invalid', '96000000-0000-0000-0000-000000000001');
+insert into public.orders (id, order_number, client_name, client_id, tenant_id, file_urls, created_at) values
+  ('96700000-0000-0000-0000-000000000001', 'ORD-IMPACT-A', 'ImpactScope Client A', '96300000-0000-0000-0000-000000000001',
+   '96000000-0000-0000-0000-000000000001', array['private-upload://uploads/impact/a-needs-backfill.png'], now()),
+  ('96700000-0000-0000-0000-000000000002', 'ORD-IMPACT-B', 'ImpactScope Client B', '96300000-0000-0000-0000-000000000002',
+   '96000000-0000-0000-0000-000000000001', array['blob:https://ops.jointx.co.za/impact-b'], now()),
+  ('96700000-0000-0000-0000-000000000003', 'ORD-IMPACT-C', 'ImpactScope Client C', '96300000-0000-0000-0000-000000000003',
+   '96000000-0000-0000-0000-000000000001', array['private-upload://uploads/impact/c-already-canonical.png'], now());
+-- Client C's pair is already canonical BEFORE the backfill ever runs.
+insert into public.client_assets (id, title, file_url, file_type, folder_id, client_id, order_id) values
+  ('96a10000-0000-0000-0000-000000000001', 'c-already-canonical.png', 'private-upload://uploads/impact/c-already-canonical.png', 'png',
+   null, '96300000-0000-0000-0000-000000000003', null);
+
+do $$
+declare
+  v_affected_clients int;
+  v_affected_orders int;
+  v_source_clients int;
+  v_source_orders int;
+begin
+  with candidate_refs as (
+    select o.id as order_id, o.client_id, o.tenant_id, url as file_url,
+      (lower(btrim(coalesce(url, ''))) like 'blob:%') as is_blob
+    from public.orders o
+    cross join lateral unnest(o.file_urls) as url
+    where o.client_id is not null and o.file_urls is not null and array_length(o.file_urls, 1) > 0
+      and url is not null and btrim(url) <> '' and o.tenant_id = '96000000-0000-0000-0000-000000000001'
+  ),
+  valid_refs as (select * from candidate_refs where not is_blob),
+  pairs as (select distinct client_id, file_url from valid_refs),
+  needing_backfill as (
+    select p.client_id, p.file_url from pairs p
+    where not exists (select 1 from public.client_assets ca where ca.client_id = p.client_id and ca.file_url = p.file_url)
+  )
+  select
+    (select count(distinct client_id) from needing_backfill),
+    (select count(distinct vr.order_id) from valid_refs vr join needing_backfill nb on nb.client_id = vr.client_id and nb.file_url = vr.file_url),
+    (select count(distinct client_id) from candidate_refs),
+    (select count(distinct order_id) from candidate_refs)
+  into v_affected_clients, v_affected_orders, v_source_clients, v_source_orders;
+
+  if v_affected_clients <> 1 then raise exception 'IMPACT_SCOPE_AFFECTED_CLIENTS_WRONG: got %, expected 1 (Client A only)', v_affected_clients; end if;
+  if v_affected_orders <> 1 then raise exception 'IMPACT_SCOPE_AFFECTED_ORDERS_WRONG: got %, expected 1 (Client A''s order only)', v_affected_orders; end if;
+  if v_source_clients <> 3 then raise exception 'IMPACT_SCOPE_SOURCE_CLIENTS_WRONG: got %, expected 3 (diagnostic, includes blob-only and already-canonical)', v_source_clients; end if;
+  if v_source_orders <> 3 then raise exception 'IMPACT_SCOPE_SOURCE_ORDERS_WRONG: got %, expected 3', v_source_orders; end if;
+end
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════
 -- RUN 1: the actual backfill script.
 -- ═══════════════════════════════════════════════════════════════════
 \i supabase/backfills/client_file_library_historical_backfill.sql
@@ -337,6 +405,23 @@ begin
     where client_id in ('95300000-0000-0000-0000-000000000021', '95300000-0000-0000-0000-000000000022') and name ~ '·'
   ) then
     raise exception 'SCENARIO_20_SUFFIX_DISAMBIGUATION_MISSING';
+  end if;
+
+  -- Impact-scope fixture: the actual backfill behavior must match the
+  -- query semantics asserted above — Client A gets its one asset, Client
+  -- B (blob-only) gets none, Client C's pre-existing canonical row is
+  -- untouched (still exactly one, unchanged).
+  if (select count(*) from public.client_assets where client_id = '96300000-0000-0000-0000-000000000001') <> 1 then
+    raise exception 'IMPACT_SCOPE_CLIENT_A_ASSET_COUNT_WRONG';
+  end if;
+  if exists (select 1 from public.client_assets where client_id = '96300000-0000-0000-0000-000000000002') then
+    raise exception 'IMPACT_SCOPE_BLOB_ONLY_CLIENT_B_GOT_AN_ASSET';
+  end if;
+  if (select count(*) from public.client_assets where client_id = '96300000-0000-0000-0000-000000000003') <> 1 then
+    raise exception 'IMPACT_SCOPE_CLIENT_C_CANONICAL_ROW_DUPLICATED_OR_LOST';
+  end if;
+  if (select id from public.client_assets where client_id = '96300000-0000-0000-0000-000000000003') <> '96a10000-0000-0000-0000-000000000001' then
+    raise exception 'IMPACT_SCOPE_CLIENT_C_ROW_WAS_REPLACED';
   end if;
 end
 $$;

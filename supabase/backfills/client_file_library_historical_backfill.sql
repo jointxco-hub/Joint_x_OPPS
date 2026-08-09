@@ -153,8 +153,24 @@
 --     from valid_refs where occurrence_category <> 'General' group by client_id, file_url
 --   )
 --   select
---     (select count(distinct client_id) from candidate_refs)                    as affected_clients,
---     (select count(distinct order_id) from candidate_refs)                     as affected_orders,
+--     -- affected_clients / affected_orders report the ACTUAL WRITE SCOPE of
+--     -- this run: only clients/orders that contribute at least one pair this
+--     -- run will genuinely insert. A client whose only historical refs are
+--     -- blob: URLs, or whose only ref is already canonical, contributes
+--     -- nothing and must NOT inflate these counts — that's why they're
+--     -- computed from needing_backfill / valid_refs-joined-to-needing_backfill,
+--     -- never from the raw candidate_refs population.
+--     (select count(distinct client_id) from needing_backfill)                  as affected_clients,
+--     (select count(distinct vr.order_id) from valid_refs vr
+--       join needing_backfill nb on nb.client_id = vr.client_id and nb.file_url = vr.file_url)
+--                                                                                as affected_orders,
+--     -- Diagnostic only — the full nonblank source population, BEFORE blob
+--     -- exclusion or already-canonical exclusion. Never use these two for
+--     -- affected_clients/affected_orders; they intentionally include
+--     -- blob-only clients/orders and already-covered pairs, so they will
+--     -- normally read higher than the write-scope counts above.
+--     (select count(distinct client_id) from candidate_refs)                    as source_clients_with_nonblank_refs,
+--     (select count(distinct order_id) from candidate_refs)                     as source_orders_with_nonblank_refs,
 --     (select count(*) from candidate_refs)                                     as total_nonblank_refs,
 --     (select count(*) from candidate_refs where is_blob)                       as blob_refs_skipped,
 --     (select count(*) from pairs)                                              as distinct_client_file_pairs,
@@ -181,11 +197,24 @@
 --   reusing any existing legacy or new-style root first) + 1 Clients root
 --   per newly-touched tenant + up to 9 category folders per newly-touched
 --   client (only the categories actually used, after preferred-category
---   resolution).
+--   resolution). This is an upper-bound estimate from the query above, not
+--   a hardcoded value — the query is what must be run and reviewed against
+--   the actual target before this script is ever executed there.
 -- Expected new client_assets rows = valid_pairs_needing_backfill exactly
 --   (one per genuinely new (client_id, file_url) pair; already-canonical
 --   pairs are skipped; blob: refs are excluded before they are ever
 --   counted as a pair at all).
+--
+-- Reviewed current-production expectation (documented here for traceability
+-- only — never hardcoded into the executable logic below, which always
+-- derives every count live from the target database at run time):
+--   affected_clients = 24, affected_orders = 28, blob_refs_skipped = 10,
+--   valid_pairs_needing_backfill = 112, clients_needing_new_root = 22,
+--   category totals General=86 / Mockups=20 / Artwork=2 / Production=4,
+--   multi_specific_category_conflicts = 0.
+--   Expected structural delta: 22 new client roots + 30 new category
+--   folders = 52 new folder rows total (current production folders = 29,
+--   projected = 81); client_assets 36 -> 148 (112 new rows).
 -- ═══════════════════════════════════════════════════════════════════
 
 do $$
