@@ -37,6 +37,20 @@
 --     auto-reuse; more than one raises FOLDER_CLIENTS_ROOT_AMBIGUOUS
 --     rather than guessing. The row itself is never written to by this
 --     function — read-only reuse only, same as the client-root case above.
+--   - get_or_create_client_asset_folder() closes the sequencing window
+--     between this migration deploying and the manual restructure script
+--     actually running: if an order RPC call lands on a client with an
+--     existing manually-built, still-unowned folder under Clients (e.g.
+--     Clients/Lazi, client_id null, folder_kind null) before restructure
+--     adopts it, that folder is reused READ-ONLY rather than shadowed by
+--     a freshly created "<Name> · <suffix>" root. Matching is against the
+--     client's own name/whatsapp_name/saved_contact_name row, exact,
+--     case-insensitive, never fuzzy; more than one candidate raises
+--     FOLDER_CLIENT_ROOT_AMBIGUOUS; a candidate whose subtree already
+--     carries a different client's asset raises FOLDER_CLIENT_ROOT_CONFLICT
+--     instead of silently creating a duplicate root. This function still
+--     never sets client_id/folder_kind on the reused row and never moves a
+--     file — only the manual restructure script performs adoption.
 --   - The email-keyed client_file_folders/client_file_links system is
 --     untouched.
 --
@@ -220,6 +234,9 @@ as $$
 declare
   v_user_id uuid := auth.uid();
   v_client_tenant uuid;
+  v_client_name_db text;
+  v_client_whatsapp text;
+  v_client_saved_contact text;
   v_clients_root_id uuid;
   v_root_id uuid;
   v_sub_id uuid;
@@ -228,6 +245,8 @@ declare
   v_label text;
   v_suffix text;
   v_attempt int := 0;
+  v_legacy_candidate_count int;
+  v_legacy_candidate_id uuid;
 begin
   if v_user_id is null then
     raise exception using errcode = 'P0001', message = 'FOLDER_AUTH_REQUIRED';
@@ -236,7 +255,9 @@ begin
     return null;
   end if;
 
-  select tenant_id into v_client_tenant from public.clients where id = p_client_id;
+  select tenant_id, name, whatsapp_name, saved_contact_name
+  into v_client_tenant, v_client_name_db, v_client_whatsapp, v_client_saved_contact
+  from public.clients where id = p_client_id;
   if v_client_tenant is null or not public.can_access_tenant(v_client_tenant) then
     raise exception using errcode = 'P0001', message = 'FOLDER_ACCESS_DENIED';
   end if;
@@ -257,43 +278,111 @@ begin
   if v_root_id is null then
     v_clients_root_id := public.get_or_create_clients_root(v_client_tenant);
 
-    -- Disambiguate a colliding display name against existing siblings
-    -- under the same Clients root (idx_folders_client_subfolder_unique
-    -- covers parent_id + lower(name)) with a short, human-readable
-    -- client-id suffix — only when actually needed.
-    v_label := v_name;
-    if exists (
-      select 1 from public.folders
-      where parent_id = v_clients_root_id and lower(name) = lower(v_label)
-    ) then
-      v_suffix := lower(substr(replace(p_client_id::text, '-', ''), 1, 4));
-      v_label := v_name || ' · ' || v_suffix;
+    -- Sequencing-window fix: between this migration deploying and the
+    -- separate manual restructure script actually running, an existing
+    -- manually-built, still-unowned client folder (client_id null,
+    -- folder_kind null — e.g. Clients/Lazi in production) must NOT be
+    -- shadowed by a freshly created "Lazi · c767" root. Reuse it
+    -- READ-ONLY: this branch never sets client_id/folder_kind and never
+    -- moves a file — only the manual restructure script ever adopts the
+    -- row. Matching is against the client's own row (name, whatsapp_name,
+    -- saved_contact_name — case-insensitive, trimmed, never fuzzy), not
+    -- the caller-supplied p_client_name.
+    select count(*) into v_legacy_candidate_count
+    from public.folders
+    where parent_id = v_clients_root_id
+      and client_id is null
+      and coalesce(is_archived, false) = false
+      and coalesce(folder_kind, '') = ''
+      and (tenant_id is null or tenant_id = v_client_tenant)
+      and (
+        (nullif(btrim(coalesce(v_client_name_db, '')), '') is not null
+          and lower(btrim(name)) = lower(btrim(v_client_name_db)))
+        or (nullif(btrim(coalesce(v_client_whatsapp, '')), '') is not null
+          and lower(btrim(name)) = lower(btrim(v_client_whatsapp)))
+        or (nullif(btrim(coalesce(v_client_saved_contact, '')), '') is not null
+          and lower(btrim(name)) = lower(btrim(v_client_saved_contact)))
+      );
+
+    if v_legacy_candidate_count > 1 then
+      raise exception using errcode = 'P0001', message = 'FOLDER_CLIENT_ROOT_AMBIGUOUS';
+    elsif v_legacy_candidate_count = 1 then
+      select id into v_legacy_candidate_id
+      from public.folders
+      where parent_id = v_clients_root_id
+        and client_id is null
+        and coalesce(is_archived, false) = false
+        and coalesce(folder_kind, '') = ''
+        and (tenant_id is null or tenant_id = v_client_tenant)
+        and (
+          (nullif(btrim(coalesce(v_client_name_db, '')), '') is not null
+            and lower(btrim(name)) = lower(btrim(v_client_name_db)))
+          or (nullif(btrim(coalesce(v_client_whatsapp, '')), '') is not null
+            and lower(btrim(name)) = lower(btrim(v_client_whatsapp)))
+          or (nullif(btrim(coalesce(v_client_saved_contact, '')), '') is not null
+            and lower(btrim(name)) = lower(btrim(v_client_saved_contact)))
+        )
+      limit 1;
+
+      -- A name match whose subtree already carries a DIFFERENT client's
+      -- asset is a genuine identity conflict, not a case for silently
+      -- falling through to create a second root.
+      if exists (
+        with recursive subtree as (
+          select v_legacy_candidate_id as id
+          union all
+          select f2.id from public.folders f2 join subtree s on f2.parent_id = s.id
+        )
+        select 1 from public.client_assets ca
+        where ca.folder_id in (select id from subtree)
+          and ca.client_id is not null
+          and ca.client_id <> p_client_id
+      ) then
+        raise exception using errcode = 'P0001', message = 'FOLDER_CLIENT_ROOT_CONFLICT';
+      end if;
+
+      v_root_id := v_legacy_candidate_id;
     end if;
 
-    loop
-      v_attempt := v_attempt + 1;
-      begin
-        insert into public.folders (name, client_id, parent_id, tenant_id, folder_kind, color, created_by)
-        values (v_label, p_client_id, v_clients_root_id, v_client_tenant, 'client_root', 'blue', v_user_id::text)
-        returning id into v_root_id;
-        exit;
-      exception when unique_violation then
-        -- Either this client's root was created concurrently (reuse it),
-        -- or the disambiguated label itself collided (very unlikely,
-        -- but widen the suffix once rather than loop forever).
-        select id into v_root_id
-        from public.folders
-        where client_id = p_client_id and folder_kind = 'client_root'
-        limit 1;
-        if v_root_id is not null then
+    if v_root_id is null then
+      -- Disambiguate a colliding display name against existing siblings
+      -- under the same Clients root (idx_folders_client_subfolder_unique
+      -- covers parent_id + lower(name)) with a short, human-readable
+      -- client-id suffix — only when actually needed.
+      v_label := v_name;
+      if exists (
+        select 1 from public.folders
+        where parent_id = v_clients_root_id and lower(name) = lower(v_label)
+      ) then
+        v_suffix := lower(substr(replace(p_client_id::text, '-', ''), 1, 4));
+        v_label := v_name || ' · ' || v_suffix;
+      end if;
+
+      loop
+        v_attempt := v_attempt + 1;
+        begin
+          insert into public.folders (name, client_id, parent_id, tenant_id, folder_kind, color, created_by)
+          values (v_label, p_client_id, v_clients_root_id, v_client_tenant, 'client_root', 'blue', v_user_id::text)
+          returning id into v_root_id;
           exit;
-        end if;
-        if v_attempt >= 3 then
-          raise;
-        end if;
-        v_label := v_name || ' · ' || lower(substr(replace(p_client_id::text, '-', ''), 1, 4 + v_attempt));
-      end;
-    end loop;
+        exception when unique_violation then
+          -- Either this client's root was created concurrently (reuse it),
+          -- or the disambiguated label itself collided (very unlikely,
+          -- but widen the suffix once rather than loop forever).
+          select id into v_root_id
+          from public.folders
+          where client_id = p_client_id and folder_kind = 'client_root'
+          limit 1;
+          if v_root_id is not null then
+            exit;
+          end if;
+          if v_attempt >= 3 then
+            raise;
+          end if;
+          v_label := v_name || ' · ' || lower(substr(replace(p_client_id::text, '-', ''), 1, 4 + v_attempt));
+        end;
+      end loop;
+    end if;
   end if;
 
   if v_category is null then

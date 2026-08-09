@@ -322,5 +322,159 @@ end
 $$;
 reset role;
 
+-- ═══════════════════════════════════════════════════════════════════
+-- Final safety patch: get_or_create_client_asset_folder must READ-ONLY
+-- reuse an existing unowned legacy/manual client folder under Clients —
+-- closing the sequencing window between 202608080002 deploying and the
+-- manual restructure script actually adopting it (production shape:
+-- Clients/Lazi, client_id/folder_kind null, 6 loose files) — instead of
+-- creating a colliding "Lazi · xxxx" root.
+-- ═══════════════════════════════════════════════════════════════════
+
+-- 1. Legacy unowned client folder (Lazi) under the already-reused Clients
+-- root (83900000-...-0001) is reused read-only by the client RPC, never
+-- shadowed by a fresh "Lazi · xxxx" root, never mutated, loose assets
+-- untouched. A category MAY still be created directly under the reused
+-- root — the manual restructure adopts the root afterwards.
+insert into public.folders (id, name, client_id, parent_id, tenant_id, color, created_at) values
+  ('83900000-0000-0000-0000-000000000011', 'Lazi', null, '83900000-0000-0000-0000-000000000001', '83000000-0000-0000-0000-000000000001', 'blue', now() - interval '1 day');
+
+insert into public.client_assets (id, title, file_url, file_type, folder_id, client_id, order_id) values
+  ('83a10000-0000-0000-0000-000000000001', 'file1.png', 'private-upload://uploads/lazi/file1.png', 'png', '83900000-0000-0000-0000-000000000011', null, null),
+  ('83a10000-0000-0000-0000-000000000002', 'file2.png', 'private-upload://uploads/lazi/file2.png', 'png', '83900000-0000-0000-0000-000000000011', null, null);
+
+set local role authenticated;
+set local request.jwt.claim.sub = '83a00000-0000-0000-0000-000000000001';
+set local request.jwt.claim.email = 'staff-legacy@lib-refine-smoke.invalid';
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"sub":"83a00000-0000-0000-0000-000000000001","email":"staff-legacy@lib-refine-smoke.invalid","role":"authenticated"}';
+
+do $$
+declare
+  v_root uuid;
+  v_category uuid;
+  v_folder_kind text;
+  v_client_id uuid;
+begin
+  v_root := public.get_or_create_client_asset_folder('83300000-0000-0000-0000-000000000001', 'Lazi', null);
+  if v_root <> '83900000-0000-0000-0000-000000000011' then
+    raise exception 'SEQUENCING_WINDOW_LEGACY_LAZI_FOLDER_NOT_REUSED: got %', v_root;
+  end if;
+
+  select folder_kind, client_id into v_folder_kind, v_client_id from public.folders where id = v_root;
+  if v_folder_kind is not null then raise exception 'RPC_MUTATED_FOLDER_KIND_ON_READ_ONLY_REUSE'; end if;
+  if v_client_id is not null then raise exception 'RPC_MUTATED_CLIENT_ID_ON_READ_ONLY_REUSE'; end if;
+
+  if (select count(*) from public.folders where parent_id = '83900000-0000-0000-0000-000000000001' and lower(btrim(name)) = 'lazi') <> 1 then
+    raise exception 'DUPLICATE_LAZI_ROOT_WAS_CREATED';
+  end if;
+
+  if exists (
+    select 1 from public.client_assets
+    where id in ('83a10000-0000-0000-0000-000000000001', '83a10000-0000-0000-0000-000000000002')
+      and (client_id is not null or folder_id <> '83900000-0000-0000-0000-000000000011')
+  ) then
+    raise exception 'RPC_MUTATED_LOOSE_LEGACY_ASSETS';
+  end if;
+
+  v_category := public.get_or_create_client_asset_folder('83300000-0000-0000-0000-000000000001', 'Lazi', 'Mockups');
+  if (select parent_id from public.folders where id = v_category) <> '83900000-0000-0000-0000-000000000011' then
+    raise exception 'CATEGORY_NOT_CREATED_UNDER_REUSED_LEGACY_ROOT';
+  end if;
+end
+$$;
+reset role;
+set local request.jwt.claim.sub = '';
+set local request.jwt.claim.email = '';
+set local request.jwt.claim.role = '';
+set local request.jwt.claims = '';
+
+-- 2. Same shape, but the legacy folder's subtree already carries a
+-- DIFFERENT client's asset: the RPC must refuse with an explicit
+-- conflict, never silently create a duplicate root and never adopt.
+insert into public.tenants (id, slug, name) values
+  ('85000000-0000-0000-0000-000000000001', 'lib-refine-smoke-conflict', 'Lib Refine Smoke Conflict');
+insert into auth.users (id, aud, role, email, raw_app_meta_data, raw_user_meta_data) values
+  ('85a00000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'staff-conflict@lib-refine-smoke.invalid', '{}'::jsonb, '{}'::jsonb);
+insert into public.users (id, auth_user_id, user_email, full_name, role) values
+  ('85100000-0000-0000-0000-000000000001', '85a00000-0000-0000-0000-000000000001', 'staff-conflict@lib-refine-smoke.invalid', 'Staff Conflict', 'staff');
+insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role) values
+  ('85000000-0000-0000-0000-000000000001', '85a00000-0000-0000-0000-000000000001', 'member');
+insert into public.clients (id, name, email, tenant_id) values
+  ('85300000-0000-0000-0000-000000000001', 'Conflict Client', 'conflict-1@lib-refine-smoke.invalid', '85000000-0000-0000-0000-000000000001'),
+  ('85300000-0000-0000-0000-000000000002', 'Other Client', 'conflict-2@lib-refine-smoke.invalid', '85000000-0000-0000-0000-000000000001');
+insert into public.folders (id, name, client_id, parent_id, tenant_id, color) values
+  ('85900000-0000-0000-0000-000000000001', 'Clients', null, null, '85000000-0000-0000-0000-000000000001', 'blue'),
+  ('85900000-0000-0000-0000-000000000011', 'Conflict Client', null, '85900000-0000-0000-0000-000000000001', '85000000-0000-0000-0000-000000000001', 'blue');
+insert into public.client_assets (id, title, file_url, file_type, folder_id, client_id) values
+  ('85a10000-0000-0000-0000-000000000001', 'already-owned.png', 'private-upload://uploads/conflict/already-owned.png', 'png', '85900000-0000-0000-0000-000000000011', '85300000-0000-0000-0000-000000000002');
+
+set local role authenticated;
+set local request.jwt.claim.sub = '85a00000-0000-0000-0000-000000000001';
+set local request.jwt.claim.email = 'staff-conflict@lib-refine-smoke.invalid';
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"sub":"85a00000-0000-0000-0000-000000000001","email":"staff-conflict@lib-refine-smoke.invalid","role":"authenticated"}';
+do $$
+declare v_code text;
+begin
+  begin
+    perform public.get_or_create_client_asset_folder('85300000-0000-0000-0000-000000000001', 'Conflict Client', null);
+    raise exception 'CONFLICTING_LEGACY_FOLDER_SILENTLY_ACCEPTED';
+  exception when others then
+    get stacked diagnostics v_code = message_text;
+    if v_code <> 'FOLDER_CLIENT_ROOT_CONFLICT' then raise; end if;
+  end;
+
+  if exists (select 1 from public.folders where client_id = '85300000-0000-0000-0000-000000000001') then
+    raise exception 'DUPLICATE_ROOT_CREATED_DESPITE_CONFLICT';
+  end if;
+  if (select client_id from public.folders where id = '85900000-0000-0000-0000-000000000011') is not null then
+    raise exception 'CONFLICTING_LEGACY_FOLDER_WAS_MUTATED';
+  end if;
+end
+$$;
+reset role;
+set local request.jwt.claim.sub = '';
+set local request.jwt.claim.email = '';
+set local request.jwt.claim.role = '';
+set local request.jwt.claims = '';
+
+-- 3. Two safe (non-conflicting) unowned candidates both matching the same
+-- client's approved identity fields (one by name, one by whatsapp_name):
+-- explicit FOLDER_CLIENT_ROOT_AMBIGUOUS, never a silent pick.
+insert into public.tenants (id, slug, name) values
+  ('86000000-0000-0000-0000-000000000001', 'lib-refine-smoke-root-ambiguous', 'Lib Refine Smoke Root Ambiguous');
+insert into auth.users (id, aud, role, email, raw_app_meta_data, raw_user_meta_data) values
+  ('86a00000-0000-0000-0000-000000000001', 'authenticated', 'authenticated', 'staff-root-ambiguous@lib-refine-smoke.invalid', '{}'::jsonb, '{}'::jsonb);
+insert into public.users (id, auth_user_id, user_email, full_name, role) values
+  ('86100000-0000-0000-0000-000000000001', '86a00000-0000-0000-0000-000000000001', 'staff-root-ambiguous@lib-refine-smoke.invalid', 'Staff Root Ambiguous', 'staff');
+insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role) values
+  ('86000000-0000-0000-0000-000000000001', '86a00000-0000-0000-0000-000000000001', 'member');
+insert into public.clients (id, name, whatsapp_name, email, tenant_id) values
+  ('86300000-0000-0000-0000-000000000001', 'Ambiguous Co', 'Ambiguous WA', 'ambiguous@lib-refine-smoke.invalid', '86000000-0000-0000-0000-000000000001');
+insert into public.folders (id, name, client_id, parent_id, tenant_id, color) values
+  ('86900000-0000-0000-0000-000000000001', 'Clients', null, null, '86000000-0000-0000-0000-000000000001', 'blue'),
+  ('86900000-0000-0000-0000-000000000011', 'Ambiguous Co', null, '86900000-0000-0000-0000-000000000001', '86000000-0000-0000-0000-000000000001', 'blue'),
+  ('86900000-0000-0000-0000-000000000012', 'Ambiguous WA', null, '86900000-0000-0000-0000-000000000001', '86000000-0000-0000-0000-000000000001', 'blue');
+
+set local role authenticated;
+set local request.jwt.claim.sub = '86a00000-0000-0000-0000-000000000001';
+set local request.jwt.claim.email = 'staff-root-ambiguous@lib-refine-smoke.invalid';
+set local request.jwt.claim.role = 'authenticated';
+set local request.jwt.claims = '{"sub":"86a00000-0000-0000-0000-000000000001","email":"staff-root-ambiguous@lib-refine-smoke.invalid","role":"authenticated"}';
+do $$
+declare v_code text;
+begin
+  begin
+    perform public.get_or_create_client_asset_folder('86300000-0000-0000-0000-000000000001', 'Ambiguous Co', null);
+    raise exception 'AMBIGUOUS_CLIENT_ROOT_SILENTLY_ACCEPTED';
+  exception when others then
+    get stacked diagnostics v_code = message_text;
+    if v_code <> 'FOLDER_CLIENT_ROOT_AMBIGUOUS' then raise; end if;
+  end;
+end
+$$;
+reset role;
+
 select 'ALL_CLIENT_FILE_LIBRARY_REFINEMENT_SMOKE_TESTS_PASSED' as result;
 rollback;

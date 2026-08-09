@@ -19,6 +19,13 @@
 --  restructure script is what performs that adoption; this script only
 --  reuses folders that already carry client_id, it does not adopt new
 --  ones itself.
+--
+--  An existing direct category folder whose own client_id/tenant_id
+--  conflicts with the client currently being processed raises
+--  FOLDER_CATEGORY_IDENTITY_CONFLICT and aborts (this whole script is one
+--  implicit transaction — a raised exception here rolls back everything
+--  the run has done so far) rather than inserting a ClientAsset into a
+--  folder owned by another client.
 -- ═══════════════════════════════════════════════════════════════════
 --
 -- Supersedes supabase/backfills/client_order_asset_folder_backfill.sql
@@ -242,17 +249,27 @@ begin
         insert into public.folders (name, client_id, parent_id, tenant_id, folder_kind, color)
         values (category, order_row.client_id, root_id, order_row.tenant_id, 'client_category', 'slate')
         returning id into category_id;
-      elsif not exists (
+      else
         -- An existing direct category folder (e.g. adopted by the
         -- restructure script, or manually created before folder_kind
         -- existed) is normalized in place — but only if its own identity
         -- doesn't already disagree with this client/tenant. A genuine
-        -- conflict is left completely untouched rather than overwritten.
-        select 1 from public.folders
-        where id = category_id
-          and ((client_id is not null and client_id <> order_row.client_id)
-            or (tenant_id is not null and tenant_id <> order_row.tenant_id))
-      ) then
+        -- conflict must never merely be "left unmodified" while still
+        -- being used as the insert destination below — no historical
+        -- ClientAsset may ever land in a folder owned by another client,
+        -- even within the same tenant. Raise and abort BEFORE the insert.
+        if exists (
+          select 1 from public.folders
+          where id = category_id
+            and ((client_id is not null and client_id <> order_row.client_id)
+              or (tenant_id is not null and tenant_id <> order_row.tenant_id))
+        ) then
+          raise exception using errcode = 'P0001',
+            message = format(
+              'FOLDER_CATEGORY_IDENTITY_CONFLICT client=%s root=%s category=%s folder=%s',
+              order_row.client_id, root_id, category, category_id
+            );
+        end if;
         update public.folders
         set client_id = order_row.client_id, tenant_id = order_row.tenant_id, folder_kind = 'client_category'
         where id = category_id and coalesce(folder_kind, '') <> 'client_category';

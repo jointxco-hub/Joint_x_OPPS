@@ -51,6 +51,14 @@
 -- disagrees with the match — are skipped for that one folder/asset,
 -- never overwritten, never silently resolved.
 --
+-- A conflicting DIRECT CATEGORY folder (an existing "Mockups"/"General"/
+-- etc. child whose own client_id or tenant_id already disagrees with the
+-- match) is a stricter case than a skip: it can never become a repoint
+-- or archive DESTINATION, and Part B never partially adopts a root only
+-- to discover General is unsafe afterwards. Both parts RAISE
+-- FOLDER_CATEGORY_IDENTITY_CONFLICT and abort the whole script (single
+-- transaction, nothing commits) rather than silently continuing.
+--
 -- Neither part ever re-uploads a binary, ever changes a
 -- client_assets.file_url or .id, or ever touches orders.file_urls.
 -- client_assets.order_id is always preserved as legacy/origin metadata.
@@ -243,18 +251,30 @@ begin
         -- A category folder already sitting directly under the client
         -- root (created before folder_kind existed) is normalized in
         -- place rather than left untagged — but only when its own
-        -- identity doesn't already disagree with this client/tenant.
+        -- identity doesn't already disagree with this client/tenant. A
+        -- conflicting folder must NEVER become a repoint/archive
+        -- destination below (it previously stayed assigned to
+        -- canonical_category_id even when left unmodified) — raise and
+        -- abort the whole (single-transaction) script instead so no
+        -- asset is silently repointed into another client's folder and
+        -- no Orders/order tree is archived on the strength of a category
+        -- consolidation that never actually happened.
         if canonical_category_id is not null then
-          if not exists (
+          if exists (
             select 1 from public.folders
             where id = canonical_category_id
               and ((client_id is not null and client_id <> root_row.client_id)
                 or (tenant_id is not null and tenant_id <> root_row.tenant_id))
           ) then
-            update public.folders
-            set client_id = root_row.client_id, tenant_id = root_row.tenant_id, folder_kind = 'client_category'
-            where id = canonical_category_id and coalesce(folder_kind, '') <> 'client_category';
+            raise exception using errcode = 'P0001',
+              message = format(
+                'FOLDER_CATEGORY_IDENTITY_CONFLICT client=%s root=%s category=%s folder=%s',
+                root_row.client_id, root_row.id, category_name, canonical_category_id
+              );
           end if;
+          update public.folders
+          set client_id = root_row.client_id, tenant_id = root_row.tenant_id, folder_kind = 'client_category'
+          where id = canonical_category_id and coalesce(folder_kind, '') <> 'client_category';
         end if;
 
         -- Redundant same-named category folders — Blocker 3 scope:
@@ -378,6 +398,31 @@ begin
       );
       if has_conflicting_asset then
         continue;
+      end if;
+
+      -- Preflight EVERY direct canonical-category-named child (Mockups,
+      -- Artwork, ..., and especially General, which loose assets are
+      -- about to be moved into below) for an identity conflict BEFORE
+      -- adopting the root at all. Previously a conflicting category
+      -- folder was merely left unmodified — but the root was still
+      -- adopted and, if the conflicting folder happened to be General,
+      -- loose assets could still be repointed into another client's
+      -- folder. Abort the whole (single-transaction) script instead of
+      -- partially adopting a root and discovering the conflict only when
+      -- General turns out to be unsafe.
+      if exists (
+        select 1 from public.folders f2
+        where f2.parent_id = candidate_folder.id
+          and coalesce(f2.is_archived, false) = false
+          and lower(btrim(f2.name)) = any(canonical_category_names)
+          and ((f2.client_id is not null and f2.client_id <> matched_client_id)
+            or (f2.tenant_id is not null and f2.tenant_id <> matched_client_tenant_id))
+      ) then
+        raise exception using errcode = 'P0001',
+          message = format(
+            'FOLDER_CATEGORY_IDENTITY_CONFLICT client=%s candidate_folder=%s',
+            matched_client_id, candidate_folder.id
+          );
       end if;
 
       -- Adopt in place: same id, same name, same created_at.
