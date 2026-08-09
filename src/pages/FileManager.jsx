@@ -6,12 +6,19 @@ import { Input } from "@/components/ui/input";
 import {
   FolderPlus, FileText, File, Trash2, Pencil, Archive,
   Search, FolderOpen, ChevronRight, Download, FileSpreadsheet,
-  Upload, MoreVertical, Copy, MoveRight,
+  Upload, MoreVertical, Copy, MoveRight, Images, Files as FilesIcon, LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { useSignedFileUrl } from "@/lib/privateFiles";
+import {
+  buildLightboxItems,
+  canCopyFileRecord,
+  classifyFileReference,
+  resolveLightboxIndex,
+  splitFilesIntoVisualsAndFiles,
+} from "@/lib/filePresentation";
 
 // Walks a folder's parent_id chain to find the client this folder belongs
 // to, if any — a client_root or client_category folder (Phase 1A.1) always
@@ -68,8 +75,13 @@ function FilePill({ file }) {
   const [imgError, setImgError] = useState(false);
   const { url: signedUrl, loading: signingUrl } = useSignedFileUrl(file.file_url);
   const ext = getFileExt(file.file_url, file.file_type);
-  const isImage = ext && ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext);
-  const isPdf = ext === "pdf";
+  // Image detection always goes through the centralized classifier
+  // (filePresentation.js -> imageReference.js) rather than a third local
+  // image-extension list. PDF/DOC/SHEET stay ext-based here since they only
+  // affect this card's icon/color styling, not gallery classification.
+  const category = classifyFileReference(file.file_url || (ext ? `file.${ext}` : ""));
+  const isImage = category === "image";
+  const isPdf = category === "pdf";
   const isDoc = ext && ["doc", "docx"].includes(ext);
   const isSheet = ext && ["xls", "xlsx", "csv"].includes(ext);
 
@@ -105,9 +117,29 @@ function FilePill({ file }) {
   );
 }
 
+function ViewModeTab({ mode, activeMode, onSelect, icon: Icon, label, count }) {
+  const isActive = mode === activeMode;
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={isActive}
+      onClick={() => onSelect(mode)}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+        isActive ? "bg-primary text-primary-foreground shadow-apple-sm" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+      <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${isActive ? "bg-primary-foreground/20" : "bg-secondary"}`}>{count}</span>
+    </button>
+  );
+}
+
 export default function FileManager() {
   const [currentFolder, setCurrentFolder] = useState(null);
-  const [lightboxFile, setLightboxFile] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // { files, index } | null
+  const [viewMode, setViewMode] = useState("all"); // "all" | "visuals" | "files"
   const [search, setSearch] = useState("");
   const [folderForm, setFolderForm] = useState(null);
   const [fileForm, setFileForm] = useState(null);
@@ -293,6 +325,19 @@ export default function FileManager() {
       (!selectedOrderUrls || selectedOrderUrls.has(a.file_url))
   );
 
+  // Presentation-only split (Phase 1B.1, Goal 4) — never changes which
+  // ClientAsset rows exist or which folder they belong to, only which
+  // subset of the same visibleFiles list is currently rendered.
+  const { visuals: visualFiles, files: nonVisualFiles } = splitFilesIntoVisualsAndFiles(visibleFiles);
+  const displayedFiles =
+    viewMode === "visuals" ? visualFiles : viewMode === "files" ? nonVisualFiles : visibleFiles;
+
+  const openLightboxAt = (file) => {
+    const items = buildLightboxItems(displayedFiles);
+    const startIndex = resolveLightboxIndex(items, file.file_url);
+    setLightbox({ files: items, index: startIndex });
+  };
+
   const breadcrumbs = [];
   let f = currentFolder;
   while (f) {
@@ -325,6 +370,7 @@ export default function FileManager() {
   const navigateToFolder = (folder) => {
     setCurrentFolder(folder);
     setOrderFilter("");
+    setViewMode("all");
   };
 
   return (
@@ -409,6 +455,15 @@ export default function FileManager() {
           )}
         </div>
 
+        {/* All / Visuals / Files presentation split — filters which of the
+            same visibleFiles are rendered below; it never changes a
+            ClientAsset's folder or canonical relationships. */}
+        <div className="mb-6 inline-flex items-center gap-1 rounded-xl border border-border bg-card p-1" role="tablist" aria-label="File view">
+          <ViewModeTab mode="all" activeMode={viewMode} onSelect={setViewMode} icon={LayoutGrid} label="All" count={visibleFiles.length} />
+          <ViewModeTab mode="visuals" activeMode={viewMode} onSelect={setViewMode} icon={Images} label="Visuals" count={visualFiles.length} />
+          <ViewModeTab mode="files" activeMode={viewMode} onSelect={setViewMode} icon={FilesIcon} label="Files" count={nonVisualFiles.length} />
+        </div>
+
         {/* Folders */}
         {visibleFolders.length > 0 && (
           <div className="mb-6">
@@ -460,23 +515,34 @@ export default function FileManager() {
 
         {/* Files */}
         <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Files</p>
-          {visibleFiles.length === 0 ? (
-            <label className="cursor-pointer block">
-              <div className="text-center py-16 bg-card rounded-2xl border-2 border-dashed border-border hover:border-primary/40 transition-all">
-                <Upload className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-                <h3 className="font-semibold text-foreground mb-1">Drop files here</h3>
-                <p className="text-sm text-muted-foreground">or tap to browse</p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
+            {viewMode === "visuals" ? "Visuals" : "Files"}{" "}
+            <span className="normal-case font-normal text-muted-foreground/80">({displayedFiles.length})</span>
+          </p>
+          {displayedFiles.length === 0 ? (
+            viewMode !== "all" ? (
+              <div className="text-center py-16 bg-card rounded-2xl border-2 border-dashed border-border">
+                <p className="text-sm text-muted-foreground">
+                  {viewMode === "visuals" ? "No image files here yet." : "No non-image files here yet."}
+                </p>
               </div>
-              <input type="file" className="hidden" multiple onChange={uploadFiles} disabled={uploading} />
-            </label>
+            ) : (
+              <label className="cursor-pointer block">
+                <div className="text-center py-16 bg-card rounded-2xl border-2 border-dashed border-border hover:border-primary/40 transition-all">
+                  <Upload className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
+                  <h3 className="font-semibold text-foreground mb-1">Drop files here</h3>
+                  <p className="text-sm text-muted-foreground">or tap to browse</p>
+                </div>
+                <input type="file" className="hidden" multiple onChange={uploadFiles} disabled={uploading} />
+              </label>
+            )
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {visibleFiles.map((file) => (
+              {displayedFiles.map((file) => (
                 <div
                   key={file.id}
                   className="group bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden cursor-pointer"
-                  onClick={() => setLightboxFile(file)}
+                  onClick={() => openLightboxAt(file)}
                 >
                   <FilePill file={file} />
                   <div className="p-3">
@@ -504,15 +570,15 @@ export default function FileManager() {
                       {/* A client-owned canonical asset (client_id set, Phase 1A.1) is
                           unique per (client_id, file_url) — copying it into another
                           folder would try to create a second row for the same file
-                          and violate that constraint. Move still works (it repoints
-                          the same row); Copy stays available only for internal,
-                          non-client-owned files, where duplicating a folder link is
-                          still a useful, non-conflicting action. */}
+                          and violate that constraint (idx_client_assets_client_file_url_unique).
+                          Move still works (it repoints the same row); "Add from client
+                          library" on an order reuses the same row without duplicating it.
+                          Copy stays available only for internal, non-client-owned files. */}
                       <button
-                        onClick={() => !file.client_id && setFileCopy(file)}
-                        disabled={Boolean(file.client_id)}
+                        onClick={() => canCopyFileRecord(file) && setFileCopy(file)}
+                        disabled={!canCopyFileRecord(file)}
                         className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-                        title={file.client_id ? "Client library files are unique per client — use Move instead" : "Copy link"}
+                        title={canCopyFileRecord(file) ? "Copy link" : "Client files are canonical. Move changes its category; use \"Add from client library\" on an order to reuse it."}
                       >
                         <Copy className="w-3.5 h-3.5" />
                       </button>
@@ -651,7 +717,14 @@ export default function FileManager() {
         </div>
       )}
 
-      {lightboxFile && <FileLightbox file={lightboxFile} onClose={() => setLightboxFile(null)} />}
+      {lightbox && (
+        <FileLightbox
+          files={lightbox.files}
+          index={lightbox.index}
+          onIndexChange={(nextIndex) => setLightbox((current) => (current ? { ...current, index: nextIndex } : current))}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }

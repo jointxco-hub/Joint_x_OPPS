@@ -1,111 +1,78 @@
-import React, { useState } from "react";
-import { Download, ExternalLink, File, Play, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useSignedFileUrl } from "@/lib/privateFiles";
+import { useState } from "react";
+import { File, Play } from "lucide-react";
+import FileLightbox from "@/components/files/FileLightbox";
+import { classifyFileReference } from "@/lib/filePresentation";
 
-function isImage(url = "") {
-  return /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
-}
-
-function isVideo(url = "") {
-  return /\.(mp4|mov|webm|avi)(\?|$)/i.test(url);
-}
-
-function isPdf(url = "") {
-  return /\.pdf(\?|#|$)/i.test(url);
-}
-
-export default function MediaPreview({ url, title = "Attachment", className = "" }) {
+// A compact thumbnail/button for a single file reference. Previewing it now
+// always opens the one shared FileLightbox instead of maintaining a second
+// full-screen modal implementation (Phase 1B.1, Goal 2) — MediaPreview
+// itself never imports FileLightbox's internals, it only renders it.
+//
+// Three ways callers use this:
+//   1. Standalone (no onClick prop): the thumbnail is self-contained —
+//      clicking it opens FileLightbox itself in single-file mode. This is
+//      what FileThumbnail.jsx relies on.
+//   2. Parent-controlled (onClick prop provided): the parent owns what
+//      happens on click (e.g. it wants to open FileLightbox itself with a
+//      full gallery collection instead of just this one file). MediaPreview
+//      renders a single non-nested <button> and defers entirely to the
+//      parent — this also removes the button-inside-button markup the
+//      previous per-caller modal implementations required.
+//   3. Decorative (interactive={false}): a plain, non-clickable thumbnail —
+//      for use inside an already-interactive parent element (e.g. a
+//      selection tile in a picker), where a second click target would
+//      conflict with the parent's own click handling.
+/**
+ * @param {{ url?: string, title?: string, className?: string, onClick?: () => void, interactive?: boolean }} props
+ */
+export default function MediaPreview({ url, title = "Attachment", className = "", onClick, interactive = true }) {
   const [open, setOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
-  const { url: signedUrl, loading, error, isPrivate } = useSignedFileUrl(url);
-  const displayUrl = signedUrl || "";
-  const fallbackUrl = isPrivate ? "" : url;
-  const linkUrl = displayUrl || fallbackUrl;
-  const canRenderSecureMedia = Boolean(displayUrl || fallbackUrl);
-  const image = isImage(url) && !imgError && canRenderSecureMedia && !loading && !error;
-  const video = isVideo(url) && canRenderSecureMedia && !loading && !error;
-  const pdf = isPdf(url) && canRenderSecureMedia && !loading && !error;
+  const category = classifyFileReference(url);
+
+  const thumbnail = (
+    <ThumbnailPreviewImage url={url} title={title} category={category} imgError={imgError} onImgError={() => setImgError(true)} />
+  );
+
+  if (!interactive) {
+    return <div className={`aspect-square overflow-hidden rounded-xl border border-border bg-secondary/30 ${className}`}>{thumbnail}</div>;
+  }
+
+  const handleClick = onClick || (() => setOpen(true));
 
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={handleClick}
         className={`aspect-square overflow-hidden rounded-xl border border-border bg-secondary/30 transition-all hover:border-primary/40 ${className}`}
       >
-        {image ? (
-          <img src={linkUrl} alt={title} loading="lazy" className="h-full w-full object-cover" onError={() => setImgError(true)} />
-        ) : video ? (
-          <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-muted-foreground">
-            <Play className="h-6 w-6" />
-            Video
-          </span>
-        ) : (
-          <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-muted-foreground">
-            <File className="h-6 w-6" />
-            File
-          </span>
-        )}
+        {thumbnail}
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onClick={() => setOpen(false)}>
-          <div className="relative max-h-[90vh] w-full max-w-5xl rounded-2xl bg-card p-3 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="truncate text-sm font-semibold text-foreground">{title}</p>
-              <div className="flex items-center gap-1">
-                <Button asChild variant="ghost" size="icon" className="rounded-full">
-                  <a href={linkUrl || undefined} download>
-                    <Download className="h-4 w-4" />
-                  </a>
-                </Button>
-                <Button asChild variant="ghost" size="icon" className="rounded-full">
-                  <a href={linkUrl || undefined} target="_blank" rel="noreferrer">
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                </Button>
-                <Button variant="ghost" size="icon" className="rounded-full" onClick={() => setOpen(false)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="flex max-h-[78vh] items-center justify-center overflow-hidden rounded-xl bg-secondary/30">
-              {image ? (
-                <img src={linkUrl} alt={title} className="max-h-[78vh] max-w-full object-contain" onError={() => setImgError(true)} />
-              ) : video ? (
-                <video src={linkUrl} controls className="max-h-[78vh] max-w-full" />
-              ) : pdf ? (
-                <iframe src={linkUrl} title={title} className="h-[78vh] w-full border-0" />
-              ) : (
-                <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 p-6 text-center">
-                  <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-background">
-                    <File className="h-7 w-7 text-muted-foreground" />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Preview is not available for this file type.</p>
-                    <p className="mt-1 text-sm text-muted-foreground">{error ? "You do not have access to this private file, or the signed link expired." : loading ? "Preparing secure file link..." : "Download it or open it in the browser."}</p>
-                  </div>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    <Button asChild variant="outline" className="rounded-full">
-                      <a href={linkUrl || undefined} download>
-                        <Download className="mr-2 h-4 w-4" />
-                        Download
-                      </a>
-                    </Button>
-                    <Button asChild variant="outline" className="rounded-full">
-                      <a href={linkUrl || undefined} target="_blank" rel="noreferrer">
-                        <ExternalLink className="mr-2 h-4 w-4" />
-                        Open
-                      </a>
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+      {open && !onClick && (
+        <FileLightbox file={{ file_url: url, title }} onClose={() => setOpen(false)} />
       )}
     </>
+  );
+}
+
+function ThumbnailPreviewImage({ url, title, category, imgError, onImgError }) {
+  if (category === "image" && !imgError) {
+    return <img src={url} alt={title} loading="lazy" className="h-full w-full object-cover" onError={onImgError} />;
+  }
+  if (category === "video") {
+    return (
+      <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-muted-foreground">
+        <Play className="h-6 w-6" />
+        Video
+      </span>
+    );
+  }
+  return (
+    <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-muted-foreground">
+      <File className="h-6 w-6" />
+      File
+    </span>
   );
 }

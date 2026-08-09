@@ -21,6 +21,7 @@ import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
 import { ORDER_ASSET_CATEGORIES } from "@/lib/orderAssetFolders";
 import { resolveClientCategoryFromFolder, determineAlreadyLinkedState, buildBulkOrderFileLinkPatch } from "@/lib/clientAssetOrderLink";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, syncOrderFileCategoryToClientAsset } from "./OrderDrawerShared";
+import { buildLightboxItems, isVisualFile, resolveLightboxIndex } from "@/lib/filePresentation";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
 
@@ -64,7 +65,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   const [textDialog, setTextDialog] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
   const [copyDialog, setCopyDialog] = useState(null);
-  const [previewFile, setPreviewFile] = useState(null);
+  const [preview, setPreview] = useState(null); // { files, index } | null
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const clientEmail = safeOrder.client_email || safeOrder.email || "";
   const { data: clientFileLibrary = { folders: [], files: [] }, isLoading: clientFilesLoading } = useQuery({
@@ -107,6 +108,9 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       ? uncategorizedFiles
       : fileEntries.filter((entry) => entry.folderId === openFolderId)
     : [];
+  // Scopes FileLightbox's previous/next navigation to the visuals actually
+  // shown in the currently open folder — never an unrelated collection.
+  const currentVisualEntries = currentFiles.filter((entry) => isVisualFile(entry.url));
   const uploadTargetFolderId = openFolderId && !isInvoiceFolder && !isUnsortedFolder ? openFolderId : "";
 
   const saveMetadata = (next) => onUpdate(safeOrder.id, { order_file_folders: next });
@@ -451,7 +455,24 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     }
   };
 
-  const isImageUrl = (url) => !isPrivateFileReference(url) && /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(String(url || ""));
+  // Only a truly public reference can be rendered via a raw, unsigned <img
+  // src> (used below for FolderPreview's small 4-up thumbnail grid) — a
+  // private-upload://... or signed-only URL is excluded here regardless of
+  // whether it's an image, same as before. Image-extension detection itself
+  // now goes through the shared classifier rather than a local regex.
+  const isImageUrl = (url) => !isPrivateFileReference(url) && isVisualFile(url);
+
+  // Opens FileLightbox scoped to the CURRENT folder's visual entries only —
+  // never an unrelated collection from elsewhere in the order.
+  const openGalleryPreview = (entries, clickedEntry) => {
+    const items = buildLightboxItems(entries, { titleFrom: (item) => displayFileName(item) });
+    const startIndex = resolveLightboxIndex(items, clickedEntry?.url || clickedEntry);
+    setPreview({ files: items, index: startIndex });
+  };
+
+  const openSinglePreview = (fileLike) => {
+    setPreview({ files: buildLightboxItems([fileLike]), index: 0 });
+  };
 
   const FolderPreview = ({ urls = [], tone = "primary" }) => {
     const previewUrls = urls.filter(isImageUrl).slice(0, 4);
@@ -525,17 +546,15 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     <div className={`rounded-2xl border bg-card p-2 shadow-sm transition-all hover:shadow-md ${
       visibleUrls.includes(entry.url) ? "border-primary/30" : "border-border"
     }`}>
-      <button
-        type="button"
-        onClick={() => entry.url && setPreviewFile({
-          title: displayFileName(entry) || `Order file ${index + 1}`,
-          file_url: entry.url,
-          url: entry.url,
-        })}
-        className="block w-full text-left"
-      >
-        <MediaPreview url={entry.url} title={displayFileName(entry) || `Order file ${index + 1}`} />
-      </button>
+      <MediaPreview
+        url={entry.url}
+        title={displayFileName(entry) || `Order file ${index + 1}`}
+        onClick={() => entry.url && (
+          isVisualFile(entry.url)
+            ? openGalleryPreview(currentVisualEntries, entry)
+            : openSinglePreview(entry)
+        )}
+      />
       <div className="mt-2 space-y-2">
         <div className="flex items-start justify-between gap-2 px-1">
           <p className="truncate text-xs font-semibold text-foreground" title={displayFileName(entry)}>
@@ -615,18 +634,15 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     return (
       <div className="rounded-2xl border border-border bg-card p-2">
         {url ? (
-          <button
-            type="button"
-            onClick={() => url && setPreviewFile({
+          <MediaPreview
+            url={url}
+            title={invoiceTitle(invoice, index)}
+            onClick={() => url && openSinglePreview({
               title: invoiceTitle(invoice, index),
               file_url: url,
-              url,
               file_type: invoice?.file_type || "application/pdf",
             })}
-            className="block w-full text-left"
-          >
-            <MediaPreview url={url} title={invoiceTitle(invoice, index)} />
-          </button>
+          />
         ) : (
           <div className="grid aspect-square place-items-center rounded-xl border border-border bg-secondary/30 text-xs text-muted-foreground">
             No invoice file
@@ -714,10 +730,9 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
             currentOrderUrls={fileUrls}
             folders={folders}
             onLink={linkClientFileToOrder}
-            onPreview={(file) => setPreviewFile({
+            onPreview={(file) => openSinglePreview({
               title: file.file_name || "Client file",
               file_url: file.file_url,
-              url: file.file_url,
               file_type: file.file_type,
             })}
           />
@@ -847,10 +862,12 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           onSubmit={submitCopyDialog}
         />
       )}
-      {previewFile && (
+      {preview && (
         <FileLightbox
-          file={previewFile}
-          onClose={() => setPreviewFile(null)}
+          files={preview.files}
+          index={preview.index}
+          onIndexChange={(nextIndex) => setPreview((current) => (current ? { ...current, index: nextIndex } : current))}
+          onClose={() => setPreview(null)}
         />
       )}
       {showLibraryPicker && (
@@ -1000,13 +1017,12 @@ function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink, o
                 return (
                   <div key={file.id} className="rounded-xl border border-border bg-background p-2">
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => onPreview(file)} className="shrink-0 text-left">
-                        <MediaPreview
-                          url={fileUrl}
-                          title={file.file_name || "Client file"}
-                          className="h-16 w-16 rounded-xl"
-                        />
-                      </button>
+                      <MediaPreview
+                        url={fileUrl}
+                        title={file.file_name || "Client file"}
+                        className="h-16 w-16 shrink-0 rounded-xl"
+                        onClick={() => onPreview(file)}
+                      />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-semibold text-foreground" title={file.file_name}>{file.file_name || "Client file"}</p>
                         <p className="mt-1 truncate text-[11px] text-muted-foreground">{file.file_type || "file"}</p>
@@ -1205,7 +1221,7 @@ function ClientLibraryPickerModal({ clientId, currentOrderUrls, onClose, onLink 
                     <div className="absolute right-3 top-3 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-card">
                       {isSelected && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
                     </div>
-                    <MediaPreview url={asset.file_url} title={asset.title || "Client file"} className="h-24 w-full rounded-xl" />
+                    <MediaPreview url={asset.file_url} title={asset.title || "Client file"} className="h-24 w-full rounded-xl" interactive={false} />
                     <p className="mt-2 truncate text-xs font-semibold text-foreground" title={asset.title}>
                       {asset.title || "Client file"}
                     </p>

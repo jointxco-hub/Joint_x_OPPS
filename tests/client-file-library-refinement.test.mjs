@@ -374,9 +374,14 @@ test("linking existing client assets never calls the upload integration", async 
 // ─────────────────────────────────────────────────────────────────────
 
 test("FileManager disables Copy for a client-owned asset (client_id set) but keeps it for internal assets", async () => {
+  // Phase 1B.1 routes this through the shared, directly-unit-tested
+  // canCopyFileRecord() helper (see tests/file-gallery.test.mjs) instead of
+  // an inline Boolean(file.client_id) check — same safety property
+  // (client-owned canonical assets can never be duplicated via Copy),
+  // now reusable and testable independent of this source-pattern pin.
   const source = await readSource("src/pages/FileManager.jsx");
-  const start = source.indexOf("onClick={() => !file.client_id && setFileCopy(file)}");
-  assert.notEqual(start, -1, "the Copy button must be gated on file.client_id");
+  const start = source.indexOf("onClick={() => canCopyFileRecord(file) && setFileCopy(file)}");
+  assert.notEqual(start, -1, "the Copy button must be gated on canCopyFileRecord(file)");
   const nearby = source.slice(start, start + 400);
-  assert.ok(nearby.includes("disabled={Boolean(file.client_id)}"), "Copy must be disabled specifically for client-owned assets");
+  assert.ok(nearby.includes("disabled={!canCopyFileRecord(file)}"), "Copy must be disabled specifically for client-owned assets");
 });

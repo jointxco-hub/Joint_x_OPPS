@@ -16,6 +16,8 @@ import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrde
 import SecureImage from "@/components/common/SecureImage";
 import { computeImageReadiness } from "@/lib/printReadiness";
 import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, provisionOrderAssetFolders } from "@/components/orders/drawer/OrderDrawerShared";
+import FileLightbox from "@/components/files/FileLightbox";
+import { buildImageGallery, buildLightboxItems } from "@/lib/filePresentation";
 
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
@@ -935,20 +937,29 @@ function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange
   const internalBlocker = order.production_internal_note || order.production_hold_reason || "";
   const detailLabel = productionDetailLabel(order);
   const methodLabel = productionMethodLabel(order.production_method);
+  const [galleryOpen, setGalleryOpen] = useState(false);
 
   return (
+    <>
     <article className="print-order-card rounded-2xl border border-zinc-200 bg-white p-3 print:rounded-lg print:p-2.5">
       <div className="flex gap-3">
         <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 print:h-20 print:w-20">
           {thumb ? (
-            <SecureImage
-              value={thumb}
-              alt=""
-              className="h-full w-full object-cover"
-              loadingMode="eager"
-              onStatusChange={(status) => onThumbnailStatusChange?.(thumbKey, thumb, status)}
-              fallback={<div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>}
-            />
+            <button
+              type="button"
+              onClick={() => setGalleryOpen(true)}
+              className="block h-full w-full"
+              aria-label={`Open ${order.client_name || "order"} image gallery`}
+            >
+              <SecureImage
+                value={thumb}
+                alt=""
+                className="h-full w-full object-cover"
+                loadingMode="eager"
+                onStatusChange={(status) => onThumbnailStatusChange?.(thumbKey, thumb, status)}
+                fallback={<div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>}
+              />
+            </button>
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>
           )}
@@ -1007,6 +1018,13 @@ function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange
         ) : null}
       </div>
     </article>
+    {galleryOpen && (
+      <FileLightbox
+        files={buildLightboxItems(getOrderImageGallery(order))}
+        onClose={() => setGalleryOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -1134,6 +1152,21 @@ function getOrderThumbnail(order) {
     ...getOrderProducts(order).flatMap(product => extractUrls([product.image_url, product.image, product.thumbnail_url, product.thumbnail])),
   ];
   return candidates.find(isImageUrl) || "";
+}
+
+// Same candidate sources as getOrderThumbnail above (unchanged — Phase
+// 1B.1 keeps current primary-image selection semantics exactly as they
+// are; Phase 1B.2 replaces this with the canonical primary-image role),
+// but returns every related image, deduped, with the current thumbnail
+// moved first — backs the Production Summary gallery/lightbox.
+function getOrderImageGallery(order) {
+  const candidates = [
+    ...extractUrls(order.portal_visible_file_urls),
+    ...extractUrls(order.file_urls),
+    ...extractUrls(order.mockup_urls),
+    ...getOrderProducts(order).flatMap(product => extractUrls([product.image_url, product.image, product.thumbnail_url, product.thumbnail])),
+  ];
+  return buildImageGallery(candidates, { preferredFirst: getOrderThumbnail(order) });
 }
 
 function extractUrls(value) {
