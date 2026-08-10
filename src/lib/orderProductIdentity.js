@@ -102,3 +102,39 @@ export function ensureOrderProductLineIds(products) {
     return { ...product, line_id: id };
   });
 }
+
+// Validates that every object product line ALREADY carries a valid,
+// same-order-unique line_id - never generates one. Used at UPDATE
+// boundaries: a persisted order's products should already all have
+// identity by the time an update reaches here (either from the historical
+// backfill or from having been created after this feature shipped), so a
+// missing/invalid id on update most likely means a stale or external
+// payload. Inventing a new UUID there would silently replace existing
+// identity and could break whatever (e.g. an invoice line) references the
+// old one - INSERT may generate; UPDATE must preserve/provide identity.
+export function requireOrderProductLineIds(products) {
+  const list = Array.isArray(products) ? products : [];
+
+  const invalid = findInvalidOrderProductLineIds(list);
+  if (invalid.length) {
+    throw new OrderProductLineIdError(
+      `Order product has an invalid (non-UUID) line_id: ${JSON.stringify(invalid)}`
+    );
+  }
+
+  const hasMissing = list.some(
+    (product) => product && typeof product === "object" && !isValidOrderProductLineId(product.line_id)
+  );
+  if (hasMissing) {
+    throw new OrderProductLineIdError("ORDER_PRODUCT_LINE_ID_REQUIRED_ON_UPDATE");
+  }
+
+  const duplicates = findDuplicateOrderProductLineIds(list);
+  if (duplicates.length) {
+    throw new OrderProductLineIdError(
+      `Order has duplicate line_id values within the same order: ${JSON.stringify(duplicates)}`
+    );
+  }
+
+  return list;
+}

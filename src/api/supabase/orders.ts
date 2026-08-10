@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabaseClient';
-import { ensureOrderProductLineIds } from '@/lib/orderProductIdentity';
+import { ensureOrderProductLineIds, requireOrderProductLineIds } from '@/lib/orderProductIdentity';
 
 export type OrderStatus =
   | 'confirmed'
@@ -197,8 +197,13 @@ export async function updateOrderSupabase(
     return missingClientResult();
   }
 
+  // UPDATE must not invent missing identity - a persisted order's products
+  // should already all carry a line_id by now, so a missing/invalid one
+  // here most likely means a stale or external payload. Generating a new
+  // UUID would silently replace existing identity. Only CREATE may
+  // generate (see createOrderSupabase above).
   const normalizedFields = Array.isArray(fields.products)
-    ? { ...fields, products: ensureOrderProductLineIds(fields.products) }
+    ? { ...fields, products: requireOrderProductLineIds(fields.products) }
     : fields;
 
   const { data, error } = await supabase

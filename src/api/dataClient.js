@@ -1,7 +1,7 @@
 import { supabase } from '@/lib/supabaseClient';
 import { getCurrentTenantId } from '@/lib/tenantContext';
 import { toPrivateUploadRef } from '@/lib/privateFiles';
-import { ensureOrderProductLineIds } from '@/lib/orderProductIdentity';
+import { ensureOrderProductLineIds, requireOrderProductLineIds } from '@/lib/orderProductIdentity';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -195,7 +195,7 @@ const ENTITY_CONFIG = {
           products.reduce((sum, item) => sum + Number(item?.quantity ?? 0), 0),
       };
     },
-    serialize(payload) {
+    serialize(payload, context = {}) {
       const rawProducts = Array.isArray(payload.products)
         ? payload.products
         : payload.quantity && !payload.products
@@ -211,7 +211,18 @@ const ENTITY_CONFIG = {
       // NewOrderDrawer - but only when a products array is actually part of
       // this payload. undefined must stay undefined so an update that
       // doesn't touch products never synthesizes or replaces the column.
-      const sanitizedProducts = rawProducts ? ensureOrderProductLineIds(rawProducts) : undefined;
+      // INSERT may generate missing ids (a brand new order's products have
+      // never had a chance to acquire one yet). UPDATE must not - a
+      // persisted order's products should already all carry identity by
+      // now, so a missing/invalid id here most likely means a stale or
+      // external payload, and inventing a new UUID would silently replace
+      // existing identity. Anything other than an explicit "insert"
+      // operation is treated as update (the fail-closed default).
+      const sanitizedProducts = !rawProducts
+        ? undefined
+        : context.operation === 'insert'
+          ? ensureOrderProductLineIds(rawProducts)
+          : requireOrderProductLineIds(rawProducts);
 
       return compactObject({
         client_name: payload.client_name,
@@ -1855,7 +1866,7 @@ async function runInsert(entityName, payload = {}) {
     return null;
   }
 
-  const record = entityConfig.serialize(payload);
+  const record = entityConfig.serialize(payload, { operation: 'insert' });
   if (entityConfig.tenantScoped) {
     const tenantId = await getCurrentTenantId();
     if (tenantId) record.tenant_id = tenantId;
@@ -1885,7 +1896,7 @@ async function runUpdate(entityName, id, payload = {}) {
     return null;
   }
 
-  const record = entityConfig.serialize(payload);
+  const record = entityConfig.serialize(payload, { operation: 'update' });
   let query = supabase
     .from(entityConfig.table)
     .update(record)
