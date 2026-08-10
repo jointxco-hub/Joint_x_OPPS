@@ -137,7 +137,11 @@ test("OrderQuickPrintSheet's onLoad/onError handlers drive ready/error state fro
 test("OrderQuickPrintSheet derives print readiness from the shared computeImageReadiness primitive", async () => {
   const source = await readSource("src/components/orders/drawer/OrderQuickPrintSheet.jsx");
   assert.match(source, /import \{ computeImageReadiness \} from "@\/lib\/printReadiness";/);
-  assert.match(source, /ready: printReady \} = computeImageReadiness\(/);
+  assert.match(source, /ready: imageResolutionReady \} = computeImageReadiness\(/);
+  // Phase 1B.2: printReady additionally accounts for primary-image context
+  // still loading - it must still be derived from imageResolutionReady,
+  // never bypass it.
+  assert.match(source, /const printReady = imageResolutionReady && /);
   assert.match(source, /disabled=\{!printReady\}/);
   assert.match(source, /\{printReady \? "Print" : "Preparing images\.\.\."\}/);
 });
@@ -151,13 +155,19 @@ test("no React hooks are called inside a .map() callback in OrderQuickPrintSheet
   }
 });
 
-// mockups-folder-first selection priority and private-reference eligibility
-// (pinned again since this file changed further in this follow-up commit)
-test("mockups-folder-first selection and private-reference image eligibility are unchanged", async () => {
+// Private-reference image eligibility remains unchanged. Mockups-first
+// selection priority moved from this file's own local
+// filesForMockups/mockupFiles/imageFiles logic into the shared
+// buildOrderPrimaryImageGallery resolver (Phase 1B.2 final hardening,
+// see tests/quick-print-lightbox.test.mjs and
+// tests/order-primary-image.test.mjs) - the printed cards and the
+// lightbox both read the SAME resolver output now, rather than this
+// sheet computing its own separate local-folder candidate list.
+test("private-reference image eligibility is unchanged; mockups-first priority now lives in the shared resolver", async () => {
   const source = await readSource("src/components/orders/drawer/OrderQuickPrintSheet.jsx");
   assert.doesNotMatch(source, /isPrivateFileReference/);
-  assert.match(source, /const filesForMockups = mockupFiles\.length \? mockupFiles : imageFiles;/);
-  assert.match(source, /const imageFiles = allFiles\.filter\(isImageReference\);/);
+  assert.doesNotMatch(source, /filesForMockups|mockupFiles/);
+  assert.match(source, /const productionImageRefs = showMockups \? buildOrderPrimaryImageGallery\(order, primaryImageContext\) : \[\];/);
 });
 
 // --- Orders.jsx / OrdersProductionSummary ---
@@ -168,7 +178,11 @@ test("Active Production Summary gates its own Print button on secure thumbnail r
   assert.ok(summaryMatch, "OrdersProductionSummary function body must be found");
   const summaryBody = summaryMatch[0];
 
-  assert.match(summaryBody, /const \{ ready: printReady \} = computeImageReadiness\(thumbnailTargets, thumbnailStatus\);/);
+  assert.match(summaryBody, /const \{ ready: imageResolutionReady \} = computeImageReadiness\(thumbnailTargets, thumbnailStatus\);/);
+  // Phase 1B.2 final hardening: printReady additionally accounts for
+  // primary-image context loading/erroring and unresolved explicit
+  // primaries - it must still be derived from imageResolutionReady.
+  assert.match(summaryBody, /const printReady = imageResolutionReady && contextResolved && !hasUnresolvedExplicitPrimary;/);
   assert.match(summaryBody, /disabled=\{!printReady\}/);
   assert.match(summaryBody, /\{printReady \? "Print" : "Preparing images\.\.\."\}/);
 
@@ -180,7 +194,7 @@ test("Active Production Summary thumbnail status tracking keys by order identity
   const source = await readSource("src/pages/Orders.jsx");
   const summaryMatch = source.match(/function OrdersProductionSummary[\s\S]*?\nfunction ProductionSummaryOrderCard/);
   const summaryBody = summaryMatch[0];
-  assert.match(summaryBody, /const thumbnailTargets = summaryOrders\s*\.map\(order => \(\{ key: String\(order\.id \|\| order\.order_number\), ref: getOrderThumbnail\(order\) \}\)\)/);
+  assert.match(summaryBody, /const thumbnailTargets = summaryOrders\s*\.map\(order => \(\{\s*key: String\(order\.id \|\| order\.order_number\),\s*ref: resolveOrderPrimaryImage\(order, primaryImageContextByOrder\.get\(order\.id\) \|\| \[\]\)\.ref,\s*\}\)\)/);
 });
 
 test("ProductionSummaryOrderCard requests eager loading and reports thumbnail status upward", async () => {
@@ -193,9 +207,18 @@ test("ProductionSummaryOrderCard requests eager loading and reports thumbnail st
   assert.match(cardBody, /onStatusChange=\{\(status\) => onThumbnailStatusChange\?\.\(thumbKey, thumb, status\)\}/);
 });
 
-test("getOrderThumbnail still returns the raw canonical reference - no stored-data mutation", async () => {
-  const source = await readSource("src/pages/Orders.jsx");
-  assert.match(source, /function getOrderThumbnail\(order\) \{/);
+// Phase 1B.2 replaced Orders.jsx's local getOrderThumbnail() with the
+// shared src/lib/orderPrimaryImage.js resolver - resolveOrderPrimaryImage
+// still returns the raw canonical reference: it is a pure module with no
+// Supabase import at all, so it cannot sign a URL or persist anything.
+test("primary-image resolution still returns the raw canonical reference - no stored-data mutation", async () => {
+  const ordersSource = await readSource("src/pages/Orders.jsx");
+  assert.match(ordersSource, /resolveOrderPrimaryImage\(/);
+  assert.doesNotMatch(ordersSource, /function getOrderThumbnail/);
+  const resolverSource = await readSource("src/lib/orderPrimaryImage.js");
+  assert.doesNotMatch(resolverSource, /import .*supabase/i);
+  assert.doesNotMatch(resolverSource, /\.rpc\(/);
+  assert.doesNotMatch(resolverSource, /getSignedFileUrl|useSignedFileUrl/);
 });
 
 // --- persistence safety (still true after this follow-up) ---

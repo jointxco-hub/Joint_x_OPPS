@@ -11,6 +11,7 @@ import {
   Pencil,
   Printer,
   Search,
+  Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
@@ -21,7 +22,8 @@ import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
 import { ORDER_ASSET_CATEGORIES } from "@/lib/orderAssetFolders";
 import { resolveClientCategoryFromFolder, determineAlreadyLinkedState, buildBulkOrderFileLinkPatch } from "@/lib/clientAssetOrderLink";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, syncOrderFileCategoryToClientAsset } from "./OrderDrawerShared";
-import { buildLightboxItems, isVisualFile, resolveLightboxIndex } from "@/lib/filePresentation";
+import { buildLightboxItems, fileNameFromReference, isVisualFile, resolveLightboxIndex } from "@/lib/filePresentation";
+import { resolveUnlinkPrimaryImagePatch } from "@/lib/orderPrimaryImage";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
 
@@ -80,6 +82,34 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   });
   const fileUrls = normalizeFileUrlList(safeOrder.file_urls);
   const visibleUrls = normalizeFileUrlList(safeOrder.portal_visible_file_urls);
+  const primaryAssetId = safeOrder.primary_image_asset_id || "";
+  // Canonical ClientAsset context for this order's currently-linked files
+  // (get_order_primary_image_context RPC) - the only source of real,
+  // persisted ClientAsset identity a "Set as primary image" action may
+  // use. Never derived from file:${url}/copy-* UI ids or a raw URL alone.
+  const {
+    data: primaryImageContext = [],
+    isLoading: primaryImageContextLoading,
+    isError: primaryImageContextQueryError,
+    refetch: refetchPrimaryImageContext,
+  } = useQuery({
+    queryKey: ["orderPrimaryImageContext", safeOrder.id],
+    queryFn: async () => dataClient.files.getOrderPrimaryImageContext([safeOrder.id]),
+    enabled: Boolean(safeOrder.id) && Boolean(safeOrder.client_id),
+    staleTime: 15_000,
+  });
+  const findPrimaryContextRow = (url) => primaryImageContext.find((row) => row.file_url === url);
+  const setPrimaryImage = (assetId) => onUpdate(safeOrder.id, { primary_image_asset_id: assetId });
+  const clearPrimaryImage = () => onUpdate(safeOrder.id, { primary_image_asset_id: null });
+  // Backs the always-available header-level Clear Primary action
+  // (section 12): staff must never lose the ability to clear an explicit
+  // primary just because the context RPC failed, the asset was archived,
+  // or its relationship went stale. Clearing only ever sends
+  // { primary_image_asset_id: null } - it never needs the ClientAsset row
+  // to succeed, so this lookup is purely for the optional filename label.
+  const primaryResolvedRow = primaryAssetId
+    ? primaryImageContext.find((row) => row.asset_id === primaryAssetId)
+    : null;
   const invoices = Array.isArray(safeOrder.invoice_files) ? safeOrder.invoice_files.map(normalizeInvoiceFile).filter(Boolean) : [];
   const folders = Array.isArray(metadata.folders) ? metadata.folders : [];
   const currentFolder = folders.find((folder) => folder.id === openFolderId);
@@ -428,6 +458,16 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     const nextFolders = { ...(metadata.fileFolders || {}) };
     delete nextFolders[entry.url];
     const nextLabels = Object.fromEntries(Object.entries(metadata.fileLabels || {}).filter(([key]) => key !== entry.id));
+    // ONE atomic patch: if the file being unlinked is the order's
+    // currently selected primary, primary_image_asset_id clears in the
+    // same write - never a separate follow-up call that could land only
+    // one of the two changes. If primaryImageContext hasn't loaded (or
+    // failed) so this can't be determined client-side, this simply
+    // resolves to {} - the DB's trg_validate_order_primary_image trigger
+    // (before update of ... file_urls ...) still independently re-checks
+    // file_urls membership on this same UPDATE and clears an invalid
+    // primary_image_asset_id itself, so the invariant holds either way.
+    const primaryPatch = resolveUnlinkPrimaryImagePatch(safeOrder, primaryImageContext, entry.url);
     onUpdate(safeOrder.id, {
       file_urls: fileUrls.filter((item) => item !== entry.url),
       portal_visible_file_urls: visibleUrls.filter((item) => item !== entry.url),
@@ -437,6 +477,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         fileLabels: nextLabels,
         fileCopies: (metadata.fileCopies || []).filter((copy) => copy.url !== entry.url),
       },
+      ...primaryPatch,
     });
   };
 
@@ -576,6 +617,18 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         {entry.isCopy && (
           <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder. No duplicate binary was created.</p>
         )}
+        {isVisualFile(entry.url) && (
+          <PrimaryImageAction
+            hasClient={Boolean(safeOrder.client_id)}
+            loading={primaryImageContextLoading}
+            queryError={primaryImageContextQueryError}
+            contextRow={findPrimaryContextRow(entry.url)}
+            isPrimary={Boolean(primaryAssetId) && findPrimaryContextRow(entry.url)?.asset_id === primaryAssetId}
+            onSet={setPrimaryImage}
+            onClear={clearPrimaryImage}
+            onRetry={refetchPrimaryImageContext}
+          />
+        )}
         <button
           type="button"
           onClick={() => renameFile(entry)}
@@ -635,6 +688,66 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     </div>
   );
 
+  function PrimaryImageAction({ hasClient, loading, queryError, contextRow, isPrimary, onSet, onClear, onRetry }) {
+    if (!hasClient) {
+      return (
+        <p className="rounded-xl border border-dashed border-border px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+          Link this order to a client before setting a primary image.
+        </p>
+      );
+    }
+    if (loading) {
+      return (
+        <p className="rounded-xl border border-dashed border-border px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+          Checking client library sync...
+        </p>
+      );
+    }
+    // A failed RPC call is a different situation from a file that simply
+    // hasn't finished mirroring into canonical ClientAssets yet - staff
+    // need to know whether to just wait, or that something actually
+    // needs retrying.
+    if (queryError) {
+      return (
+        <button
+          type="button"
+          onClick={() => onRetry?.()}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-red-300 bg-red-50 px-3 py-2 text-[11px] font-medium text-red-700 hover:bg-red-100"
+        >
+          Could not load primary-image context - retry
+        </button>
+      );
+    }
+    // Real ClientAsset context hasn't caught up with this file link yet -
+    // never invent an asset id from the UI-only entry/URL to work around
+    // that; offer a retry instead.
+    if (!contextRow) {
+      return (
+        <button
+          type="button"
+          onClick={() => onRetry?.()}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        >
+          Still syncing to client library - retry
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => (isPrimary ? onClear() : onSet(contextRow.asset_id))}
+        className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium ${
+          isPrimary
+            ? "border-amber-300 bg-amber-50 text-amber-800"
+            : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        }`}
+      >
+        <Star className={`h-3.5 w-3.5 ${isPrimary ? "fill-amber-500 text-amber-500" : ""}`} />
+        {isPrimary ? "Clear primary image" : "Set as primary image"}
+      </button>
+    );
+  }
+
   const InvoiceCard = ({ invoice, index }) => {
     const url = invoiceUrl(invoice);
     return (
@@ -693,6 +806,42 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           Print mockups
         </button>
       </div>
+
+      {primaryAssetId && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs font-medium text-amber-900">
+            <Star className="h-3.5 w-3.5 fill-amber-500 text-amber-500" />
+            {primaryImageContextQueryError
+              ? "Could not load primary-image context"
+              : primaryImageContextLoading
+                ? "Checking primary image..."
+                : primaryResolvedRow
+                  ? `Primary image: ${fileNameFromReference(primaryResolvedRow.file_url)}`
+                  : "Primary image needs attention"}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {(primaryImageContextQueryError || (!primaryImageContextLoading && !primaryResolvedRow)) && (
+              <button
+                type="button"
+                onClick={() => refetchPrimaryImageContext()}
+                className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                Retry
+              </button>
+            )}
+            {/* Always available regardless of whether the ClientAsset
+                context resolved - clearing only ever needs the id already
+                on the order, never a resolved context row. */}
+            <button
+              type="button"
+              onClick={clearPrimaryImage}
+              className="rounded-full border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Clear primary image
+            </button>
+          </div>
+        </div>
+      )}
 
       {isInvoiceFolder ? (
         <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">

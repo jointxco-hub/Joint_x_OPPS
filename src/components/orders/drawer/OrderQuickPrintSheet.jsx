@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Printer, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { normalizeOrderFileFolders } from "./OrderDrawerShared";
 import { getSignedFileUrl } from "@/lib/privateFiles";
-import { isImageReference } from "@/lib/imageReference";
 import { computeImageReadiness } from "@/lib/printReadiness";
+import { dataClient } from "@/api/dataClient";
+import FileLightbox from "@/components/files/FileLightbox";
+import { buildLightboxItems, resolveLightboxIndex } from "@/lib/filePresentation";
+import { buildOrderPrimaryImageGallery, resolveOrderPrimaryImage } from "@/lib/orderPrimaryImage";
 
 const PRINT_SIGNED_URL_TTL_SECONDS = 1800;
 
@@ -18,19 +21,73 @@ const statusConfig = {
 };
 
 export default function OrderQuickPrintSheet({ type, order, payments, totalPaid, balance, onClose }) {
-  const metadata = normalizeOrderFileFolders(order.order_file_folders);
-  const allFiles = Array.isArray(order.file_urls) ? order.file_urls.filter(Boolean) : [];
   const invoices = Array.isArray(order.invoice_files) ? order.invoice_files : [];
   const products = Array.isArray(order.products) ? order.products : [];
   const printedAt = new Date().toLocaleString();
   const completedPayments = (Array.isArray(payments) ? payments : []).filter((payment) => payment.status === "completed");
-  const mockupFiles = allFiles.filter((url) => metadata.fileFolders?.[url] === "mockups");
-  const imageFiles = allFiles.filter(isImageReference);
-  const filesForMockups = mockupFiles.length ? mockupFiles : imageFiles;
   const showMockups = type !== "invoices";
-  const imageTargets = showMockups ? filesForMockups.filter(isImageReference) : [];
-  const imageTargetsKey = imageTargets.join("\n");
   const [resolvedImages, setResolvedImages] = useState({});
+  // { files, index } | null. files/index are raw canonical refs built from
+  // the shared Phase 1B.2 primary-image gallery via filePresentation.js
+  // helpers - never the print view's resolved signed URLs, and never a
+  // persisted ClientAsset id (preserveIdentity: false), matching
+  // Production Summary's gallery.
+  const [printImagePreview, setPrintImagePreview] = useState(null);
+
+  // Canonical ClientAsset context behind this order's current files -
+  // never client_assets.order_id. Same batched, read-only RPC Production
+  // Summary and OrderFilesTab use, so all three surfaces resolve the same
+  // primary image the same way. Required whenever this printout actually
+  // shows production images AND the order has a client (even with no
+  // explicit pin - an unpinned client-linked order may still have a
+  // canonical Mockups asset that outranks the product/order-file
+  // fallback, and until context arrives the resolver can't know that).
+  // An invoice-only printout (showMockups false) never renders the
+  // Mockups / Production Images section at all, so this context is
+  // irrelevant there - it must not gate invoice printing.
+  const contextRequired = showMockups && Boolean(order.client_id);
+  const {
+    data: primaryImageContext = [],
+    isLoading: primaryImageContextLoading,
+    isError: primaryImageContextError,
+    refetch: refetchPrimaryImageContext,
+  } = useQuery({
+    queryKey: ["orderPrimaryImageContext", order.id],
+    queryFn: async () => dataClient.files.getOrderPrimaryImageContext([order.id]),
+    enabled: Boolean(order.id) && contextRequired,
+    staleTime: 15_000,
+  });
+  const contextLoaded = !contextRequired || (!primaryImageContextLoading && !primaryImageContextError);
+
+  const primaryResolution = resolveOrderPrimaryImage(order, primaryImageContext);
+  // A pin exists but didn't resolve to "explicit" (asset no longer valid/
+  // linked) once context has actually, successfully loaded - the resolver
+  // already fell back safely, this just surfaces that to staff rather
+  // than silently printing a different image than what they think is
+  // pinned, or treating the order as fully ready when it isn't. Gated on
+  // contextRequired too - an invoice-only printout never fetches context
+  // (primaryImageContext is always []), so this must never evaluate for
+  // it even if the order happens to have a primary_image_asset_id set.
+  const explicitPrimaryUnresolved = contextRequired
+    && Boolean(order.primary_image_asset_id)
+    && contextLoaded
+    && primaryResolution.source !== "explicit";
+
+  // The actual printed image cards AND the click-to-preview lightbox
+  // collection both come from the same shared Phase 1B.2 primary-image
+  // gallery - primary first, wherever it actually lives (canonical
+  // Mockups, product fallback, any other order image), never restricted
+  // to a local "mockups folder or bust" list. Without this, an explicit
+  // primary or product-fallback image outside the local Mockups folder
+  // could appear first in the on-screen lightbox while being completely
+  // absent from the printed A4 output.
+  const productionImageRefs = showMockups ? buildOrderPrimaryImageGallery(order, primaryImageContext) : [];
+  const imageTargetsKey = productionImageRefs.join("\n");
+
+  const openImagePreview = (clickedUrl) => {
+    const files = buildLightboxItems(productionImageRefs, { preserveIdentity: false });
+    setPrintImagePreview({ files, index: resolveLightboxIndex(files, clickedUrl) });
+  };
 
   useEffect(() => {
     if (!imageTargetsKey) {
@@ -69,10 +126,18 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
     setResolvedImages((prev) => ({ ...prev, [ref]: { status: "error", url: "" } }));
   };
 
-  const { pendingCount: pendingImageCount, failedCount: failedImageCount, ready: printReady } = computeImageReadiness(
-    imageTargets.map((ref) => ({ key: ref, ref })),
-    Object.fromEntries(imageTargets.map((ref) => [ref, resolvedImages[ref] ? { ref, status: resolvedImages[ref].status } : null]))
+  const { pendingCount: pendingImageCount, failedCount: failedImageCount, ready: imageResolutionReady } = computeImageReadiness(
+    productionImageRefs.map((ref) => ({ key: ref, ref })),
+    Object.fromEntries(productionImageRefs.map((ref) => [ref, resolvedImages[ref] ? { ref, status: resolvedImages[ref].status } : null]))
   );
+  // Print must never enable while: the canonical context a client-linked
+  // order needs is still loading or failed to load (never just when a
+  // pin exists - an unpinned order can still have a canonical Mockups
+  // asset outranking whatever fallback is showing right now), or an
+  // explicit primary exists but couldn't be resolved after a successful
+  // load. A lower-priority fallback must never quietly print as if it
+  // were the verified, fully-resolved production image.
+  const printReady = imageResolutionReady && contextLoaded && !explicitPrimaryUnresolved;
 
   const title = type === "invoices"
     ? "Invoice Printout"
@@ -83,6 +148,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   const productRows = products.length ? products : [{ name: order.notes || "Order setup", quantity: "", size: "", color: "" }];
 
   return (
+    <>
     <div className="fixed inset-0 z-[95] bg-black/30 p-4 print:static print:bg-white print:p-0">
       <style>{`
         @page { size: A4; margin: 12mm; }
@@ -114,6 +180,27 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
             max-height: 180mm;
           }
           a { color: #111 !important; text-decoration: none !important; }
+          /* Screen-only click affordance on mockup/production images -
+             the printed A4 output must show a plain static image. */
+          .order-print-image-trigger {
+            cursor: default !important;
+            pointer-events: none !important;
+          }
+          .order-print-image-trigger:focus,
+          .order-print-image-trigger:focus-visible {
+            outline: none !important;
+            box-shadow: none !important;
+          }
+          /* The FileLightbox gallery is screen-only - never part of the
+             printed document, even if left open. */
+          .order-quick-print-lightbox {
+            display: none !important;
+          }
+          /* Staff-facing resolution warning - never part of the customer
+             printed document. */
+          .order-print-primary-warning {
+            display: none !important;
+          }
         }
       `}</style>
       <div className="order-quick-print mx-auto flex max-h-[92vh] max-w-4xl flex-col overflow-hidden rounded-2xl bg-card shadow-apple-xl print:max-h-none print:overflow-visible print:rounded-none">
@@ -217,45 +304,71 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
 
           {showMockups && (
             <OrderPrintSection title="Mockups / Production Images">
+              {contextRequired && primaryImageContextLoading && (
+                <p className="order-print-primary-warning mb-3 text-xs font-medium text-zinc-600">
+                  Preparing primary image context...
+                </p>
+              )}
+              {contextRequired && primaryImageContextError && (
+                <p className="order-print-primary-warning mb-3 flex flex-wrap items-center gap-2 text-xs font-medium text-red-700">
+                  Primary image context could not be loaded.
+                  <button
+                    type="button"
+                    onClick={() => refetchPrimaryImageContext()}
+                    className="order-print-image-trigger rounded-full border border-red-200 bg-red-50 px-2 py-0.5 font-semibold hover:bg-red-100"
+                  >
+                    Retry
+                  </button>
+                </p>
+              )}
+              {explicitPrimaryUnresolved && (
+                <p className="order-print-primary-warning mb-3 text-xs font-medium text-amber-700">
+                  The selected primary image could not be verified - showing the standard fallback instead.
+                </p>
+              )}
               {failedImageCount > 0 && (
                 <p className="mb-3 text-xs font-medium text-amber-700">
                   {failedImageCount} image{failedImageCount > 1 ? "s" : ""} could not be loaded.
                 </p>
               )}
-              {filesForMockups.length ? (
+              {productionImageRefs.length ? (
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {filesForMockups.map((url, index) => {
+                  {productionImageRefs.map((url, index) => {
                     const resolved = resolvedImages[url];
+                    const imageBody = resolved?.status === "error" ? (
+                      <div className="flex h-64 w-full items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                        Image unavailable
+                      </div>
+                    ) : resolved?.url ? (
+                      <div className="relative h-64 w-full print:h-auto">
+                        <img
+                          src={resolved.url}
+                          alt=""
+                          className={`h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm] ${resolved.status === "ready" ? "" : "opacity-0 absolute inset-0"}`}
+                          onLoad={() => handleImageLoaded(url, resolved.url)}
+                          onError={() => handleImageFailed(url)}
+                        />
+                        {resolved.status !== "ready" && (
+                          <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                            Preparing...
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                        Preparing...
+                      </div>
+                    );
                     return (
                       <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3 print:p-2.5">
-                        {isImageReference(url) ? (
-                          resolved?.status === "error" ? (
-                            <div className="flex h-64 w-full items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
-                              Image unavailable
-                            </div>
-                          ) : resolved?.url ? (
-                            <div className="relative h-64 w-full print:h-auto">
-                              <img
-                                src={resolved.url}
-                                alt=""
-                                className={`h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm] ${resolved.status === "ready" ? "" : "opacity-0 absolute inset-0"}`}
-                                onLoad={() => handleImageLoaded(url, resolved.url)}
-                                onError={() => handleImageFailed(url)}
-                              />
-                              {resolved.status !== "ready" && (
-                                <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
-                                  Preparing...
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
-                              Preparing...
-                            </div>
-                          )
-                        ) : (
-                          <p className="break-words text-sm text-zinc-700">{printFileName(url)}</p>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => openImagePreview(url)}
+                          className="order-print-image-trigger block w-full cursor-zoom-in rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          aria-label={`Open image ${index + 1} of ${productionImageRefs.length} in gallery view`}
+                        >
+                          {imageBody}
+                        </button>
                         <p className="mt-2 break-words text-xs text-zinc-500">{index + 1}. {printFileName(url)}</p>
                       </div>
                     );
@@ -301,6 +414,16 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
         </div>
       </div>
     </div>
+    {printImagePreview && (
+      <div className="order-quick-print-lightbox">
+        <FileLightbox
+          files={printImagePreview.files}
+          index={printImagePreview.index}
+          onClose={() => setPrintImagePreview(null)}
+        />
+      </div>
+    )}
+    </>
   );
 }
 

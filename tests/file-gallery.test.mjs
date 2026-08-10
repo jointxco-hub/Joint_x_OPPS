@@ -511,31 +511,25 @@ test("OrderFilesTab: never writes orders.file_urls except through existing user 
   assert.doesNotMatch(galleryHelperSection, /onUpdate\(/);
 });
 
-test("Orders.jsx: getOrderThumbnail primary-image selection is untouched", async () => {
+// Phase 1B.1's own getOrderThumbnail()/getOrderImageGallery() were
+// replaced in Phase 1B.2 by the canonical, ClientAsset-backed resolver in
+// src/lib/orderPrimaryImage.js (see tests/order-primary-image.test.mjs for
+// its full behavioral coverage - explicit primary/fallback priority,
+// dedupe, client/tenant validation, etc.). This file only pins that
+// Orders.jsx actually delegates to it rather than keeping (or
+// reintroducing) a second, local selection implementation.
+test("Orders.jsx: Production Summary delegates primary-image selection to the shared canonical resolver", async () => {
   const source = await readSource("src/pages/Orders.jsx");
-  assert.match(source, /function getOrderThumbnail\(order\) \{/);
-  assert.match(source, /return candidates\.find\(isImageUrl\) \|\| "";/);
+  assert.match(source, /import \{ buildOrderPrimaryImageGallery, groupPrimaryImageContextByOrder, resolveOrderPrimaryImage \} from "@\/lib\/orderPrimaryImage"/);
+  assert.doesNotMatch(source, /function getOrderThumbnail/);
+  assert.doesNotMatch(source, /function getOrderImageGallery/);
 });
 
 test("Orders.jsx: Production Summary thumbnail opens the shared FileLightbox", async () => {
   const source = await readSource("src/pages/Orders.jsx");
   assert.match(source, /import FileLightbox from "@\/components\/files\/FileLightbox"/);
   assert.match(source, /setGalleryOpen\(true\)/);
-  assert.match(source, /getOrderImageGallery\(order\)/);
-});
-
-test("Orders.jsx: gallery helper reuses getOrderThumbnail's own candidate sources (no new selection logic)", async () => {
-  const source = await readSource("src/pages/Orders.jsx");
-  const gallerySection = source.slice(source.indexOf("function getOrderImageGallery"));
-  assert.match(gallerySection, /order\.portal_visible_file_urls/);
-  assert.match(gallerySection, /order\.file_urls/);
-  assert.match(gallerySection, /order\.mockup_urls/);
-  assert.match(gallerySection, /preferredFirst: getOrderThumbnail\(order\)/);
-});
-
-test("Orders.jsx: does not add production_thumbnail_url or a new migration-backed field", async () => {
-  const source = await readSource("src/pages/Orders.jsx");
-  assert.doesNotMatch(source, /production_thumbnail_url/);
+  assert.match(source, /buildOrderPrimaryImageGallery\(order, primaryImageContext\)/);
 });
 
 test("no changed file introduces a ProductionSummaryLightbox duplicate implementation", async () => {
@@ -624,6 +618,9 @@ test("OrderFilesTab: gallery preview helpers strip UI-only identity before build
 
 test("Orders.jsx: Production Summary gallery items are built with preserveIdentity: false", async () => {
   const source = await readSource("src/pages/Orders.jsx");
-  const gallerySection = source.slice(source.indexOf("buildLightboxItems(getOrderImageGallery(order)"), source.indexOf("buildLightboxItems(getOrderImageGallery(order)") + 200);
+  const anchor = "buildLightboxItems(buildOrderPrimaryImageGallery(order, primaryImageContext)";
+  const index = source.indexOf(anchor);
+  assert.ok(index > -1, "gallery build call not found");
+  const gallerySection = source.slice(index, index + 200);
   assert.match(gallerySection, /preserveIdentity: false/);
 });

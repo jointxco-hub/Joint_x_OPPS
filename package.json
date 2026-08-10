@@ -16,6 +16,7 @@
     "test:order-asset-folder-provisioning": "node --test tests/order-asset-folder-provisioning.test.mjs",
     "test:client-file-library-refinement": "node --test tests/client-file-library-refinement.test.mjs",
     "test:file-gallery": "node --test tests/file-gallery.test.mjs",
+    "test:order-primary-image": "node --test tests/order-primary-image.test.mjs",
     "typecheck": "tsc -p ./jsconfig.json",
     "preview": "vite preview"
   },
