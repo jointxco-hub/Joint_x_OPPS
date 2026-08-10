@@ -11,6 +11,7 @@ import {
   Pencil,
   Printer,
   Search,
+  Star,
 } from "lucide-react";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
@@ -80,6 +81,9 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   });
   const fileUrls = normalizeFileUrlList(safeOrder.file_urls);
   const visibleUrls = normalizeFileUrlList(safeOrder.portal_visible_file_urls);
+  const thumbnailUrl = safeOrder.production_thumbnail_url || "";
+  const setAsThumbnail = (url) => onUpdate(safeOrder.id, { production_thumbnail_url: url });
+  const clearThumbnail = () => onUpdate(safeOrder.id, { production_thumbnail_url: null });
   const invoices = Array.isArray(safeOrder.invoice_files) ? safeOrder.invoice_files.map(normalizeInvoiceFile).filter(Boolean) : [];
   const folders = Array.isArray(metadata.folders) ? metadata.folders : [];
   const currentFolder = folders.find((folder) => folder.id === openFolderId);
@@ -575,6 +579,20 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         </div>
         {entry.isCopy && (
           <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder. No duplicate binary was created.</p>
+        )}
+        {isVisualFile(entry.url) && (
+          <button
+            type="button"
+            onClick={() => (thumbnailUrl === entry.url ? clearThumbnail() : setAsThumbnail(entry.url))}
+            className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium ${
+              thumbnailUrl === entry.url
+                ? "border-amber-300 bg-amber-50 text-amber-800"
+                : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+            }`}
+          >
+            <Star className={`h-3.5 w-3.5 ${thumbnailUrl === entry.url ? "fill-amber-500 text-amber-500" : ""}`} />
+            {thumbnailUrl === entry.url ? "Order thumbnail" : "Set as thumbnail"}
+          </button>
         )}
         <button
           type="button"

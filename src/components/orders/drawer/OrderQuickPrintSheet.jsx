@@ -5,6 +5,8 @@ import { normalizeOrderFileFolders } from "./OrderDrawerShared";
 import { getSignedFileUrl } from "@/lib/privateFiles";
 import { isImageReference } from "@/lib/imageReference";
 import { computeImageReadiness } from "@/lib/printReadiness";
+import FileLightbox from "@/components/files/FileLightbox";
+import { buildImageGallery, buildLightboxItems, resolveLightboxIndex } from "@/lib/filePresentation";
 
 const PRINT_SIGNED_URL_TTL_SECONDS = 1800;
 
@@ -31,6 +33,17 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   const imageTargets = showMockups ? filesForMockups.filter(isImageReference) : [];
   const imageTargetsKey = imageTargets.join("\n");
   const [resolvedImages, setResolvedImages] = useState({});
+  // { files, index } | null. files/index are raw canonical refs built from
+  // imageTargets via the shared filePresentation.js helpers - never the
+  // print view's resolved signed URLs, and never a persisted ClientAsset
+  // id (preserveIdentity: false), matching Production Summary's gallery.
+  const [printImagePreview, setPrintImagePreview] = useState(null);
+
+  const openImagePreview = (clickedUrl) => {
+    const gallery = buildImageGallery(imageTargets, { preferredFirst: order.production_thumbnail_url || "" });
+    const files = buildLightboxItems(gallery, { preserveIdentity: false });
+    setPrintImagePreview({ files, index: resolveLightboxIndex(files, clickedUrl) });
+  };
 
   useEffect(() => {
     if (!imageTargetsKey) {
@@ -83,6 +96,7 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   const productRows = products.length ? products : [{ name: order.notes || "Order setup", quantity: "", size: "", color: "" }];
 
   return (
+    <>
     <div className="fixed inset-0 z-[95] bg-black/30 p-4 print:static print:bg-white print:p-0">
       <style>{`
         @page { size: A4; margin: 12mm; }
@@ -114,6 +128,22 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
             max-height: 180mm;
           }
           a { color: #111 !important; text-decoration: none !important; }
+          /* Screen-only click affordance on mockup/production images -
+             the printed A4 output must show a plain static image. */
+          .order-print-image-trigger {
+            cursor: default !important;
+            pointer-events: none !important;
+          }
+          .order-print-image-trigger:focus,
+          .order-print-image-trigger:focus-visible {
+            outline: none !important;
+            box-shadow: none !important;
+          }
+          /* The FileLightbox gallery is screen-only - never part of the
+             printed document, even if left open. */
+          .order-quick-print-lightbox {
+            display: none !important;
+          }
         }
       `}</style>
       <div className="order-quick-print mx-auto flex max-h-[92vh] max-w-4xl flex-col overflow-hidden rounded-2xl bg-card shadow-apple-xl print:max-h-none print:overflow-visible print:rounded-none">
@@ -226,33 +256,42 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
                 <div className="grid gap-4 sm:grid-cols-2">
                   {filesForMockups.map((url, index) => {
                     const resolved = resolvedImages[url];
+                    const isImage = isImageReference(url);
+                    const imageBody = resolved?.status === "error" ? (
+                      <div className="flex h-64 w-full items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                        Image unavailable
+                      </div>
+                    ) : resolved?.url ? (
+                      <div className="relative h-64 w-full print:h-auto">
+                        <img
+                          src={resolved.url}
+                          alt=""
+                          className={`h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm] ${resolved.status === "ready" ? "" : "opacity-0 absolute inset-0"}`}
+                          onLoad={() => handleImageLoaded(url, resolved.url)}
+                          onError={() => handleImageFailed(url)}
+                        />
+                        {resolved.status !== "ready" && (
+                          <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                            Preparing...
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
+                        Preparing...
+                      </div>
+                    );
                     return (
                       <div key={url} className="order-print-card rounded-xl border border-zinc-200 p-3 print:p-2.5">
-                        {isImageReference(url) ? (
-                          resolved?.status === "error" ? (
-                            <div className="flex h-64 w-full items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
-                              Image unavailable
-                            </div>
-                          ) : resolved?.url ? (
-                            <div className="relative h-64 w-full print:h-auto">
-                              <img
-                                src={resolved.url}
-                                alt=""
-                                className={`h-64 w-full rounded-lg object-contain print:h-auto print:max-h-[180mm] ${resolved.status === "ready" ? "" : "opacity-0 absolute inset-0"}`}
-                                onLoad={() => handleImageLoaded(url, resolved.url)}
-                                onError={() => handleImageFailed(url)}
-                              />
-                              {resolved.status !== "ready" && (
-                                <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
-                                  Preparing...
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex h-64 w-full animate-pulse items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold uppercase tracking-wide text-zinc-400 print:h-auto">
-                              Preparing...
-                            </div>
-                          )
+                        {isImage ? (
+                          <button
+                            type="button"
+                            onClick={() => openImagePreview(url)}
+                            className="order-print-image-trigger block w-full cursor-zoom-in rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                            aria-label={`Open image ${index + 1} of ${filesForMockups.length} in gallery view`}
+                          >
+                            {imageBody}
+                          </button>
                         ) : (
                           <p className="break-words text-sm text-zinc-700">{printFileName(url)}</p>
                         )}
@@ -301,6 +340,16 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
         </div>
       </div>
     </div>
+    {printImagePreview && (
+      <div className="order-quick-print-lightbox">
+        <FileLightbox
+          files={printImagePreview.files}
+          index={printImagePreview.index}
+          onClose={() => setPrintImagePreview(null)}
+        />
+      </div>
+    )}
+    </>
   );
 }
 

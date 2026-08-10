@@ -222,6 +222,7 @@ const ENTITY_CONFIG = {
         delivery_note: payload.delivery_note,
         file_urls: payload.file_urls,
         portal_visible_file_urls: payload.portal_visible_file_urls,
+        production_thumbnail_url: payload.production_thumbnail_url,
         order_file_folders: payload.order_file_folders,
         assigned_team: payload.assigned_team,
         assigned_to: payload.assigned_to,

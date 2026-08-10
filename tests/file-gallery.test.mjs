@@ -533,9 +533,19 @@ test("Orders.jsx: gallery helper reuses getOrderThumbnail's own candidate source
   assert.match(gallerySection, /preferredFirst: getOrderThumbnail\(order\)/);
 });
 
-test("Orders.jsx: does not add production_thumbnail_url or a new migration-backed field", async () => {
+// Phase 1B.1 scoped production_thumbnail_url out entirely (see the removed
+// guard this test replaces). Phase 1B.2 is the phase that adds the
+// canonical primary-image pin - getOrderThumbnail must check it before
+// falling back to the original (unchanged) candidate search, and
+// getOrderImageGallery must include it in its own candidate set so
+// buildImageGallery's preferredFirst can actually find and front it.
+test("Orders.jsx: production_thumbnail_url is the primary-image pin (Phase 1B.2)", async () => {
   const source = await readSource("src/pages/Orders.jsx");
-  assert.doesNotMatch(source, /production_thumbnail_url/);
+  const thumbFn = source.slice(source.indexOf("function getOrderThumbnail"), source.indexOf("function getOrderImageGallery"));
+  assert.match(thumbFn, /if \(order\.production_thumbnail_url && isImageUrl\(order\.production_thumbnail_url\)\) \{/);
+  assert.match(thumbFn, /return order\.production_thumbnail_url;/);
+  const galleryFn = source.slice(source.indexOf("function getOrderImageGallery"));
+  assert.match(galleryFn, /order\.production_thumbnail_url,/);
 });
 
 test("no changed file introduces a ProductionSummaryLightbox duplicate implementation", async () => {

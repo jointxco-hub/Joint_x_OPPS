@@ -1147,7 +1147,16 @@ function getOrderProducts(order) {
   return [];
 }
 
+// Phase 1B.2: a staff-pinned production_thumbnail_url (OrderFilesTab "Set
+// as thumbnail") wins outright over the old candidate search. The
+// candidate order below is otherwise exactly Phase 1B.1's original
+// unchanged fallback (portal-visible, then other order files, then
+// mockups, then product images) — only the new pin was added on top, so
+// orders without a pin keep selecting the same thumbnail as before.
 function getOrderThumbnail(order) {
+  if (order.production_thumbnail_url && isImageUrl(order.production_thumbnail_url)) {
+    return order.production_thumbnail_url;
+  }
   const candidates = [
     ...extractUrls(order.portal_visible_file_urls),
     ...extractUrls(order.file_urls),
@@ -1157,13 +1166,12 @@ function getOrderThumbnail(order) {
   return candidates.find(isImageUrl) || "";
 }
 
-// Same candidate sources as getOrderThumbnail above (unchanged — Phase
-// 1B.1 keeps current primary-image selection semantics exactly as they
-// are; Phase 1B.2 replaces this with the canonical primary-image role),
-// but returns every related image, deduped, with the current thumbnail
-// moved first — backs the Production Summary gallery/lightbox.
+// Same candidate sources as getOrderThumbnail above, plus the pin itself
+// so it's present in the dedup set, with the current thumbnail (the pin,
+// when set) moved first — backs the Production Summary gallery/lightbox.
 function getOrderImageGallery(order) {
   const candidates = [
+    order.production_thumbnail_url,
     ...extractUrls(order.portal_visible_file_urls),
     ...extractUrls(order.file_urls),
     ...extractUrls(order.mockup_urls),
