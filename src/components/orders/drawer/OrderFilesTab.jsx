@@ -464,14 +464,20 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
 
   // Opens FileLightbox scoped to the CURRENT folder's visual entries only —
   // never an unrelated collection from elsewhere in the order.
+  //
+  // preserveIdentity: false is deliberate and unconditional here — every
+  // `entry` in OrderFilesTab carries a UI-only id (`file:${url}`,
+  // `copy-${...}` — see fileEntries above), never a real ClientAsset id.
+  // Passing that id straight through would let FileLightbox believe an
+  // arbitrary order file is a commentable, persisted ClientAsset row.
   const openGalleryPreview = (entries, clickedEntry) => {
-    const items = buildLightboxItems(entries, { titleFrom: (item) => displayFileName(item) });
+    const items = buildLightboxItems(entries, { titleFrom: (item) => displayFileName(item), preserveIdentity: false });
     const startIndex = resolveLightboxIndex(items, clickedEntry?.url || clickedEntry);
     setPreview({ files: items, index: startIndex });
   };
 
   const openSinglePreview = (fileLike) => {
-    setPreview({ files: buildLightboxItems([fileLike]), index: 0 });
+    setPreview({ files: buildLightboxItems([fileLike], { preserveIdentity: false }), index: 0 });
   };
 
   const FolderPreview = ({ urls = [], tone = "primary" }) => {

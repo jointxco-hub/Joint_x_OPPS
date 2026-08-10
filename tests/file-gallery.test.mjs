@@ -10,6 +10,8 @@ import {
   dedupeFileEntries,
   fileNameFromReference,
   fileUrlFrom,
+  getThumbnailWindow,
+  isEditableKeyboardTarget,
   isVisualFile,
   resolveLightboxIndex,
   splitFilesIntoVisualsAndFiles,
@@ -184,6 +186,186 @@ test("fileNameFromReference extracts a sensible filename from every reference sh
   assert.equal(fileNameFromReference("", "Fallback"), "Fallback");
 });
 
+// ──────────────────── buildLightboxItems: no invented ids ────────────────────
+// Remote review correction: buildLightboxItems must never manufacture a
+// persisted-looking id. FileLightbox uses `!!activeFile.id` to decide
+// whether a file is commentable — a synthetic id would make an arbitrary,
+// non-persisted file look like a real ClientAsset row.
+
+test("1: buildLightboxItems(['a.jpg'])[0].id is undefined", () => {
+  const items = buildLightboxItems(["a.jpg"]);
+  assert.equal(items[0].id, undefined);
+});
+
+test("2: a real ClientAsset input preserves its real id", () => {
+  const items = buildLightboxItems([{ id: "asset-123", file_url: "a.jpg" }]);
+  assert.equal(items[0].id, "asset-123");
+});
+
+test("3: a real ClientAsset input preserves tenant_id", () => {
+  const items = buildLightboxItems([{ id: "asset-123", file_url: "a.jpg", tenant_id: "tenant-9" }]);
+  assert.equal(items[0].tenant_id, "tenant-9");
+});
+
+test("4: an OrderFiles UI entry (id 'file:a.jpg') does not become a persisted FileLightbox id when preserveIdentity is false", () => {
+  const items = buildLightboxItems([{ id: "file:a.jpg", url: "a.jpg" }], { preserveIdentity: false });
+  assert.equal(items[0].id, undefined);
+  assert.equal(items[0].file_url, "a.jpg");
+});
+
+test("an OrderFiles fileCopies UI entry (id 'copy-...') does not leak into FileLightbox identity either", () => {
+  const items = buildLightboxItems([{ id: "copy-abc123-xyz", url: "b.png" }], { preserveIdentity: false });
+  assert.equal(items[0].id, undefined);
+});
+
+test("5: a plain Production Summary URL receives no id", () => {
+  const items = buildLightboxItems(["https://cdn.example.com/order-mockup.jpg"]);
+  assert.equal(items[0].id, undefined);
+});
+
+test("6: no synthetic id is generated merely for React rendering — two different plain URLs both come out id-less, never fabricated", () => {
+  const items = buildLightboxItems(["a.jpg", "b.jpg"]);
+  assert.equal(items[0].id, undefined);
+  assert.equal(items[1].id, undefined);
+  // A caller needing a React key should build one locally (e.g. from
+  // file_url or its own index) — file_url is always present here.
+  assert.ok(items[0].file_url && items[1].file_url);
+});
+
+test("preserveIdentity: false strips both id and tenant_id even from a record that has real-looking ones", () => {
+  const items = buildLightboxItems([{ id: "asset-real", tenant_id: "tenant-real", file_url: "a.jpg" }], { preserveIdentity: false });
+  assert.equal(items[0].id, undefined);
+  assert.equal(items[0].tenant_id, undefined);
+});
+
+// ──────────────────────── canCopyFileRecord hardening ────────────────────────
+// idx_client_assets_client_file_url_unique (client_id, file_url) protects
+// client-owned rows; idx_client_assets_order_file_url_unique (order_id,
+// file_url) separately protects legacy rows that carry a non-null order_id
+// even with client_id null. Either one set must block Copy.
+
+test("client_id set => cannot copy", () => {
+  assert.equal(canCopyFileRecord({ client_id: "client-1", order_id: null, file_url: "a.jpg" }), false);
+});
+
+test("order_id set and client_id null => cannot copy", () => {
+  assert.equal(canCopyFileRecord({ client_id: null, order_id: "order-1", file_url: "a.jpg" }), false);
+});
+
+test("both client_id and order_id set => cannot copy", () => {
+  assert.equal(canCopyFileRecord({ client_id: "client-1", order_id: "order-1", file_url: "a.jpg" }), false);
+});
+
+test("client_id null + order_id null => may copy", () => {
+  assert.equal(canCopyFileRecord({ client_id: null, order_id: null, file_url: "a.jpg" }), true);
+});
+
+test("empty-string identities are handled safely (treated as not-set)", () => {
+  assert.equal(canCopyFileRecord({ client_id: "", order_id: "", file_url: "a.jpg" }), true);
+  assert.equal(canCopyFileRecord({ client_id: "", order_id: "order-1", file_url: "a.jpg" }), false);
+});
+
+test("null/undefined file is handled safely (no crash)", () => {
+  assert.equal(canCopyFileRecord(null), true);
+  assert.equal(canCopyFileRecord(undefined), true);
+});
+
+// Production read-only verification cited in the correction (26 active
+// client_id=null ClientAssets, all 26 also order_id=null, 0 with
+// client_id=null and order_id!=null) — this hardening changes nothing for
+// any currently-valid copy action.
+test("a currently-valid internal asset (both null) is unaffected by the hardening", () => {
+  assert.equal(canCopyFileRecord({ client_id: null, order_id: null, file_url: "private-upload://uploads/internal/x.pdf" }), true);
+});
+
+// ──────────────────────────── getThumbnailWindow ────────────────────────────
+
+test("collection smaller than the limit shows all items", () => {
+  const items = ["a", "b", "c"];
+  const { items: windowed, startIndex } = getThumbnailWindow(items, 1, 12);
+  assert.deepEqual(windowed, items);
+  assert.equal(startIndex, 0);
+});
+
+test("start of a large collection windows from index 0", () => {
+  const items = Array.from({ length: 100 }, (_, i) => `item-${i}`);
+  const { items: windowed, startIndex } = getThumbnailWindow(items, 0, 12);
+  assert.equal(startIndex, 0);
+  assert.equal(windowed.length, 12);
+  assert.equal(windowed[0], "item-0");
+});
+
+test("middle of a large collection centers the window on activeIndex", () => {
+  const items = Array.from({ length: 100 }, (_, i) => `item-${i}`);
+  const { items: windowed, startIndex } = getThumbnailWindow(items, 50, 12);
+  assert.equal(startIndex, 44);
+  assert.equal(windowed.length, 12);
+  assert.equal(windowed[windowed.length - 1], "item-55");
+});
+
+test("end of a large collection windows up to the last item", () => {
+  const items = Array.from({ length: 100 }, (_, i) => `item-${i}`);
+  const { items: windowed, startIndex } = getThumbnailWindow(items, 99, 12);
+  assert.equal(windowed.length, 12);
+  assert.equal(windowed[windowed.length - 1], "item-99");
+  assert.equal(startIndex + windowed.length, 100);
+});
+
+test("active item is always included in the window across the whole collection", () => {
+  const items = Array.from({ length: 100 }, (_, i) => `item-${i}`);
+  for (let activeIndex = 0; activeIndex < items.length; activeIndex += 7) {
+    const { items: windowed, startIndex } = getThumbnailWindow(items, activeIndex, 12);
+    assert.ok(activeIndex >= startIndex && activeIndex < startIndex + windowed.length, `active index ${activeIndex} not in window starting at ${startIndex}`);
+  }
+});
+
+test("maximum mounted count is respected regardless of collection size", () => {
+  const items = Array.from({ length: 500 }, (_, i) => `item-${i}`);
+  for (const activeIndex of [0, 1, 250, 498, 499]) {
+    const { items: windowed } = getThumbnailWindow(items, activeIndex, 12);
+    assert.ok(windowed.length <= 12);
+  }
+});
+
+test("getThumbnailWindow never truncates the underlying collection itself", () => {
+  const items = Array.from({ length: 30 }, (_, i) => `item-${i}`);
+  const { items: windowed } = getThumbnailWindow(items, 15, 12);
+  assert.ok(windowed.length < items.length); // the window is bounded...
+  assert.equal(items.length, 30); // ...but the original collection is untouched
+});
+
+// ────────────────────────── isEditableKeyboardTarget ──────────────────────────
+
+test("textarea target => editable (arrows ignored)", () => {
+  assert.equal(isEditableKeyboardTarget({ tagName: "TEXTAREA" }), true);
+});
+
+test("input target => editable (arrows ignored)", () => {
+  assert.equal(isEditableKeyboardTarget({ tagName: "INPUT" }), true);
+});
+
+test("select target => editable (arrows ignored)", () => {
+  assert.equal(isEditableKeyboardTarget({ tagName: "SELECT" }), true);
+});
+
+test("contenteditable target => editable (arrows ignored)", () => {
+  assert.equal(isEditableKeyboardTarget({ tagName: "DIV", isContentEditable: true }), true);
+});
+
+test("normal div/body target => not editable (arrows allowed)", () => {
+  assert.equal(isEditableKeyboardTarget({ tagName: "DIV" }), false);
+  assert.equal(isEditableKeyboardTarget({ tagName: "BODY" }), false);
+});
+
+test("isEditableKeyboardTarget handles a missing/null target safely", () => {
+  assert.equal(isEditableKeyboardTarget(null), false);
+  assert.equal(isEditableKeyboardTarget(undefined), false);
+});
+
+test("isEditableKeyboardTarget is case-insensitive on tagName", () => {
+  assert.equal(isEditableKeyboardTarget({ tagName: "textarea" }), true);
+});
+
 // ───────────────────── source-structure assertions ─────────────────────
 // Structural pins for the React components this suite cannot execute
 // directly (no DOM/bundler in plain `node --test` — see note at top).
@@ -349,4 +531,81 @@ test("Orders.jsx: does not add production_thumbnail_url or a new migration-backe
 test("no changed file introduces a ProductionSummaryLightbox duplicate implementation", async () => {
   const source = await readSource("src/pages/Orders.jsx");
   assert.doesNotMatch(source, /ProductionSummaryLightbox/);
+});
+
+// ─────────────── remote review correction pass: source pins ───────────────
+
+test("MediaPreview: image thumbnails no longer render a raw unsigned <img src={url}>", async () => {
+  const source = await readSource("src/components/common/MediaPreview.jsx");
+  assert.doesNotMatch(source, /<img src=\{url\}/);
+});
+
+test("MediaPreview: image thumbnails use the existing SecureImage secure-signing path", async () => {
+  const source = await readSource("src/components/common/MediaPreview.jsx");
+  assert.match(source, /import SecureImage from "@\/components\/common\/SecureImage"/);
+  assert.match(source, /<SecureImage/);
+  assert.match(source, /value=\{url\}/);
+});
+
+test("MediaPreview: does not invent a second signing helper", async () => {
+  const source = await readSource("src/components/common/MediaPreview.jsx");
+  assert.doesNotMatch(source, /useSignedFileUrl/);
+  assert.doesNotMatch(source, /createSignedUrl/);
+});
+
+test("MediaPreview: all three modes (standalone, parent-controlled, decorative) are still present", async () => {
+  const source = await readSource("src/components/common/MediaPreview.jsx");
+  assert.match(source, /if \(!interactive\)/);
+  assert.match(source, /const handleClick = onClick \|\| /);
+  assert.match(source, /\{open && !onClick && \(/);
+});
+
+test("FileLightbox: arrow-key navigation is gated on isEditableKeyboardTarget, Escape is not", async () => {
+  const source = await readSource("src/components/files/FileLightbox.jsx");
+  assert.match(source, /import \{[^}]*isEditableKeyboardTarget[^}]*\} from "@\/lib\/filePresentation"/);
+  const handlerStart = source.indexOf("const handleKeyDown");
+  assert.ok(handlerStart > -1);
+  const handlerBody = source.slice(handlerStart, handlerStart + 500);
+  const escapeIndex = handlerBody.indexOf('"Escape"');
+  const editableGuardIndex = handlerBody.indexOf("isEditableKeyboardTarget(event.target)");
+  assert.ok(escapeIndex > -1 && editableGuardIndex > -1);
+  assert.ok(escapeIndex < editableGuardIndex, "Escape check must come before (and be unaffected by) the editable-target guard");
+});
+
+test("FileLightbox: thumbnail strip is bounded via getThumbnailWindow, not a plain items.map", async () => {
+  const source = await readSource("src/components/files/FileLightbox.jsx");
+  assert.match(source, /import \{[^}]*getThumbnailWindow[^}]*\} from "@\/lib\/filePresentation"/);
+  assert.match(source, /getThumbnailWindow\(items, activeIndex, THUMBNAIL_WINDOW_SIZE\)/);
+  assert.match(source, /thumbnailWindow\.items\.map/);
+  assert.doesNotMatch(source, /\{items\.map\(\(item, itemIndex\) => \(/);
+});
+
+test("FileLightbox: full collection navigation (prev/next/keyboard/N of M) still reads from the complete items array, not the bounded window", async () => {
+  const source = await readSource("src/components/files/FileLightbox.jsx");
+  assert.match(source, /const hasMultiple = items\.length > 1;/);
+  assert.match(source, /const canGoNext = activeIndex < items\.length - 1;/);
+  assert.match(source, /\$\{activeIndex \+ 1\} of \$\{items\.length\}/);
+});
+
+test("FileManager: copy mutation has a defensive guard at the write boundary, not just the disabled UI button", async () => {
+  const source = await readSource("src/pages/FileManager.jsx");
+  const mutationStart = source.indexOf("const copyFile = useMutation");
+  assert.ok(mutationStart > -1);
+  const mutationBody = source.slice(mutationStart, mutationStart + 600);
+  assert.match(mutationBody, /if \(!canCopyFileRecord\(file\)\)/);
+  assert.match(mutationBody, /Promise\.reject/);
+});
+
+test("OrderFilesTab: gallery preview helpers strip UI-only identity before building lightbox items", async () => {
+  const source = await readSource("src/components/orders/drawer/OrderFilesTab.jsx");
+  const gallerySection = source.slice(source.indexOf("const openGalleryPreview"), source.indexOf("const openGalleryPreview") + 700);
+  assert.match(gallerySection, /preserveIdentity: false/g);
+  const openGalleryCount = (gallerySection.match(/preserveIdentity: false/g) || []).length;
+  assert.ok(openGalleryCount >= 2, "both openGalleryPreview and openSinglePreview must set preserveIdentity: false");
+});
+
+test("Orders.jsx: Production Summary gallery items are built with preserveIdentity: false", async () => {
+  const source = await readSource("src/pages/Orders.jsx");
+  const gallerySection = source.slice(source.indexOf("buildLightboxItems(getOrderImageGallery(order)"), source.indexOf("buildLightboxItems(getOrderImageGallery(order)") + 200);
+  assert.match(gallerySection, /preserveIdentity: false/);
 });

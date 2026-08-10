@@ -1020,7 +1020,10 @@ function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange
     </article>
     {galleryOpen && (
       <FileLightbox
-        files={buildLightboxItems(getOrderImageGallery(order))}
+        // preserveIdentity: false — these are plain image URLs, never real
+        // ClientAsset rows; Production Summary's gallery must stay
+        // non-commentable (no Phase 1B.2 primary-image role exists yet).
+        files={buildLightboxItems(getOrderImageGallery(order), { preserveIdentity: false })}
         onClose={() => setGalleryOpen(false)}
       />
     )}

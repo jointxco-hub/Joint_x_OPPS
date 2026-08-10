@@ -11,11 +11,14 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
 import { useSignedFileUrl } from "@/lib/privateFiles";
-import { classifyFileReference, fileNameFromReference, fileUrlFrom } from "@/lib/filePresentation";
+import { classifyFileReference, fileNameFromReference, fileUrlFrom, getThumbnailWindow, isEditableKeyboardTarget } from "@/lib/filePresentation";
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.25;
+// Maximum thumbnail-strip items mounted at once — opening a large
+// collection must not fire a signing request per item all at once.
+const THUMBNAIL_WINDOW_SIZE = 12;
 
 // FileLightbox is the one shared full-screen file viewer in OPPS (Phase
 // 1B.1). Two ways to call it:
@@ -51,6 +54,13 @@ export default function FileLightbox({ file = null, files = [], index = 0, onInd
   const canGoNext = activeIndex < items.length - 1;
   const goPrev = () => canGoPrev && setActiveIndex(activeIndex - 1);
   const goNext = () => canGoNext && setActiveIndex(activeIndex + 1);
+  // Previous/Next, keyboard arrows, and "N of M" all operate on the FULL
+  // `items` collection above — only the thumbnail STRIP's mounted DOM is
+  // bounded, never actual gallery navigation.
+  const thumbnailWindow = useMemo(
+    () => getThumbnailWindow(items, activeIndex, THUMBNAIL_WINDOW_SIZE),
+    [items, activeIndex]
+  );
 
   const [showCommentForm, setShowCommentForm] = useState(false);
   const [imgError, setImgError] = useState(false);
@@ -99,13 +109,19 @@ export default function FileLightbox({ file = null, files = [], index = 0, onInd
 
   // Keyboard navigation: ArrowLeft/ArrowRight move through the collection
   // (no wraparound — prev/next simply do nothing past the ends), Escape
-  // always closes regardless of collection size.
+  // always closes regardless of collection size. Arrow keys are ignored
+  // while the event originates inside an editable control (the comment
+  // textarea, the mention/status <select>s, any future input) — a staff
+  // member moving their text cursor while writing a comment must never
+  // accidentally switch files. Escape is NOT gated by this check; it
+  // always closes.
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         onClose?.();
         return;
       }
+      if (isEditableKeyboardTarget(event.target)) return;
       if (!hasMultiple) return;
       if (event.key === "ArrowLeft") goPrev();
       else if (event.key === "ArrowRight") goNext();
@@ -263,14 +279,17 @@ export default function FileLightbox({ file = null, files = [], index = 0, onInd
 
           {hasMultiple && (
             <div className="flex gap-2 overflow-x-auto border-t border-slate-200 bg-white p-3">
-              {items.map((item, itemIndex) => (
-                <LightboxThumbnailStripItem
-                  key={item.id || item.file_url || item.url || itemIndex}
-                  item={item}
-                  isActive={itemIndex === activeIndex}
-                  onSelect={() => setActiveIndex(itemIndex)}
-                />
-              ))}
+              {thumbnailWindow.items.map((item, localIndex) => {
+                const itemIndex = thumbnailWindow.startIndex + localIndex;
+                return (
+                  <LightboxThumbnailStripItem
+                    key={item.file_url || itemIndex}
+                    item={item}
+                    isActive={itemIndex === activeIndex}
+                    onSelect={() => setActiveIndex(itemIndex)}
+                  />
+                );
+              })}
             </div>
           )}
 

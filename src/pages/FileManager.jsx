@@ -246,8 +246,15 @@ export default function FileManager() {
   });
 
   const copyFile = useMutation({
-    mutationFn: ({ file, folderId }) =>
-      createWithOfflineQueue("ClientAsset", {
+    // Defensive guard at the actual write boundary, not just the disabled
+    // UI button above — protects against stale React state and any future
+    // caller that invokes this mutation directly. Never silently falls
+    // back to a move; it just refuses the write.
+    mutationFn: ({ file, folderId }) => {
+      if (!canCopyFileRecord(file)) {
+        return Promise.reject(new Error("This file can't be copied — it's already linked to a client or order. Use Move instead."));
+      }
+      return createWithOfflineQueue("ClientAsset", {
         title: file.title,
         file_url: file.file_url,
         file_type: file.file_type,
@@ -260,11 +267,15 @@ export default function FileManager() {
         approval_status: file.approval_status,
         tags: file.tags,
         notes: file.notes,
-      }),
+      });
+    },
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["clientAssets"] });
       setFileCopy(null);
       toast.success(created?.isQueuedOffline ? "File link saved offline. It will sync when online." : "File link copied");
+    },
+    onError: (err) => {
+      toast.error(/** @type {any} */ (err)?.message || "Copy failed");
     },
   });
 
