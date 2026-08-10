@@ -42,7 +42,7 @@ test("OrderQuickPrintSheet: clicking a production image opens the lightbox", () 
 
 // 4: multiple images are passed as a collection (files=, not a single file=).
 test("OrderQuickPrintSheet: passes a files collection, not a single file", () => {
-  assert.match(quickPrintSource, /buildImageGallery\(imageTargets/);
+  assert.match(quickPrintSource, /buildOrderPrimaryImageGallery\(order, primaryImageContext\)/);
   assert.match(quickPrintSource, /buildLightboxItems\(gallery/);
   assert.match(quickPrintSource, /files=\{printImagePreview\.files\}/);
   assert.doesNotMatch(quickPrintSource, /<FileLightbox[^>]*\bfile=\{/);
@@ -54,9 +54,13 @@ test("OrderQuickPrintSheet: clicked image resolves the starting index", () => {
   assert.match(quickPrintSource, /index=\{printImagePreview\.index\}/);
 });
 
-// 6: the Order Primary Image (pin) ordering remains first in the gallery.
-test("OrderQuickPrintSheet: primary image is preferred first in the gallery", () => {
-  assert.match(quickPrintSource, /preferredFirst:\s*order\.production_thumbnail_url/);
+// 6: the resolved Order Primary Image is preferred first in the gallery -
+// via the shared Phase 1B.2 resolver, not a bare url column, and not
+// restricted to this sheet's own local "mockups folder" candidate list
+// (imageTargets only governs what's rendered on the printed page itself).
+test("OrderQuickPrintSheet: primary image is resolved via the shared canonical resolver, not a url pin", () => {
+  assert.match(quickPrintSource, /import \{ buildOrderPrimaryImageGallery, resolveOrderPrimaryImage \} from "@\/lib\/orderPrimaryImage"/);
+  assert.doesNotMatch(quickPrintSource, /production_thumbnail_url/);
 });
 
 // 7 & 8: raw canonical refs are passed to FileLightbox - resolved signed
@@ -67,7 +71,18 @@ test("OrderQuickPrintSheet: gallery is built from raw refs, not resolved signed 
   const body = openPreviewMatch[0];
   assert.doesNotMatch(body, /resolvedImages/);
   assert.doesNotMatch(body, /resolved\.url/);
-  assert.match(body, /buildImageGallery\(imageTargets/);
+  assert.match(body, /buildOrderPrimaryImageGallery\(order, primaryImageContext\)/);
+});
+
+// Canonical context is fetched once via the batched, read-only RPC -
+// never a per-file/per-click lookup, and never client_assets.order_id.
+test("OrderQuickPrintSheet: fetches canonical primary-image context via the batched RPC wrapper", () => {
+  assert.match(quickPrintSource, /dataClient\.files\.getOrderPrimaryImageContext\(\[order\.id\]\)/);
+});
+
+// Print must not falsely enable while a pinned primary is still resolving.
+test("OrderQuickPrintSheet: print readiness accounts for primary-image context still loading", () => {
+  assert.match(quickPrintSource, /printReady = imageResolutionReady && !\(order\.primary_image_asset_id && primaryImageContextLoading\)/);
 });
 
 // 9: synthetic/UI ids are never passed through as persisted ClientAsset ids.
@@ -98,38 +113,7 @@ test("OrderQuickPrintSheet: @media print hides interactive lightbox controls", (
   assert.match(printBlock, /\.order-quick-print-lightbox\s*\{\s*display:\s*none\s*!important;\s*\}/);
 });
 
-// ───────────────────── Order Primary Image pin (Orders.jsx) ─────────────────────
-
-test("Orders.jsx: getOrderThumbnail prefers a pinned production_thumbnail_url", async () => {
-  const source = await readSource("src/pages/Orders.jsx");
-  const fnMatch = source.match(/function getOrderThumbnail\(order\) \{[\s\S]*?\n\}/);
-  assert.ok(fnMatch, "getOrderThumbnail not found");
-  assert.match(fnMatch[0], /order\.production_thumbnail_url && isImageUrl\(order\.production_thumbnail_url\)/);
-  assert.match(fnMatch[0], /return order\.production_thumbnail_url;/);
-});
-
-test("Orders.jsx: getOrderImageGallery includes the pin in its candidate set", async () => {
-  const source = await readSource("src/pages/Orders.jsx");
-  const fnMatch = source.match(/function getOrderImageGallery\(order\) \{[\s\S]*?\n\}/);
-  assert.ok(fnMatch, "getOrderImageGallery not found");
-  assert.match(fnMatch[0], /order\.production_thumbnail_url,/);
-});
-
-// ───────────────────── Order Primary Image pin (OrderFilesTab.jsx) ─────────────────────
-
-test("OrderFilesTab.jsx: 'Set as thumbnail' writes production_thumbnail_url via onUpdate", async () => {
-  const source = await readSource("src/components/orders/drawer/OrderFilesTab.jsx");
-  assert.match(source, /const setAsThumbnail = \(url\) => onUpdate\(safeOrder\.id, \{ production_thumbnail_url: url \}\)/);
-  assert.match(source, /const clearThumbnail = \(\) => onUpdate\(safeOrder\.id, \{ production_thumbnail_url: null \}\)/);
-});
-
-test("dataClient.js: orders update whitelists production_thumbnail_url", async () => {
-  const source = await readSource("src/api/dataClient.js");
-  assert.match(source, /production_thumbnail_url: payload\.production_thumbnail_url,/);
-});
-
-test("migration: production_thumbnail_url column is added additively", async () => {
-  const source = await readSource("supabase/migrations/202608060005_add_order_production_thumbnail.sql");
-  assert.match(source, /alter table public\.orders/);
-  assert.match(source, /add column if not exists production_thumbnail_url text/);
-});
+// The canonical Order Primary Image role (primary_image_asset_id, the
+// validation trigger, the RPC, Orders.jsx/OrderFilesTab.jsx/dataClient.js
+// wiring) is covered comprehensively in tests/order-primary-image.test.mjs
+// - not duplicated here. This file stays scoped to OrderQuickPrintSheet.jsx.

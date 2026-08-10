@@ -222,7 +222,15 @@ const ENTITY_CONFIG = {
         delivery_note: payload.delivery_note,
         file_urls: payload.file_urls,
         portal_visible_file_urls: payload.portal_visible_file_urls,
-        production_thumbnail_url: payload.production_thumbnail_url,
+        // A plain idOrUndefined() would turn an explicit null (clearing the
+        // primary) into undefined, which compactObject then drops entirely
+        // - the update would silently omit the column instead of clearing
+        // it. null must serialize as a real NULL; undefined (field simply
+        // not part of this payload) must still be omitted.
+        primary_image_asset_id:
+          payload.primary_image_asset_id === null
+            ? null
+            : idOrUndefined(payload.primary_image_asset_id),
         order_file_folders: payload.order_file_folders,
         assigned_team: payload.assigned_team,
         assigned_to: payload.assigned_to,
@@ -2286,6 +2294,24 @@ export const dataClient = {
       });
       if (error) throw error;
       return data || null;
+    },
+    // Batched, read-only lookup of the canonical ClientAsset context behind
+    // each order's current primary-image candidates - never invents an
+    // asset, never returns a signed URL. Backed by the
+    // get_order_primary_image_context RPC (see
+    // supabase/migrations/202608100001_order_primary_image.sql), which
+    // resolves current linkage server-side via
+    // client_assets.file_url = ANY(orders.file_urls) plus matching
+    // client_id/tenant_id - never client_assets.order_id, which only
+    // records the order an asset was first uploaded/linked from.
+    async getOrderPrimaryImageContext(orderIds = []) {
+      const ids = Array.from(new Set((Array.isArray(orderIds) ? orderIds : []).filter(Boolean)));
+      if (!supabase || ids.length === 0) return [];
+      const { data, error } = await supabase.rpc('get_order_primary_image_context', {
+        p_order_ids: ids,
+      });
+      if (error) throw error;
+      return Array.isArray(data) ? data : [];
     },
   },
   agents: {

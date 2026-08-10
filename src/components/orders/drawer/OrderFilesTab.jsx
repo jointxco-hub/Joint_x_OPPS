@@ -23,6 +23,7 @@ import { ORDER_ASSET_CATEGORIES } from "@/lib/orderAssetFolders";
 import { resolveClientCategoryFromFolder, determineAlreadyLinkedState, buildBulkOrderFileLinkPatch } from "@/lib/clientAssetOrderLink";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, syncOrderFileCategoryToClientAsset } from "./OrderDrawerShared";
 import { buildLightboxItems, isVisualFile, resolveLightboxIndex } from "@/lib/filePresentation";
+import { resolveUnlinkPrimaryImagePatch } from "@/lib/orderPrimaryImage";
 
 const UNSORTED_FOLDER_ID = "__unsorted";
 
@@ -81,9 +82,20 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
   });
   const fileUrls = normalizeFileUrlList(safeOrder.file_urls);
   const visibleUrls = normalizeFileUrlList(safeOrder.portal_visible_file_urls);
-  const thumbnailUrl = safeOrder.production_thumbnail_url || "";
-  const setAsThumbnail = (url) => onUpdate(safeOrder.id, { production_thumbnail_url: url });
-  const clearThumbnail = () => onUpdate(safeOrder.id, { production_thumbnail_url: null });
+  const primaryAssetId = safeOrder.primary_image_asset_id || "";
+  // Canonical ClientAsset context for this order's currently-linked files
+  // (get_order_primary_image_context RPC) - the only source of real,
+  // persisted ClientAsset identity a "Set as primary image" action may
+  // use. Never derived from file:${url}/copy-* UI ids or a raw URL alone.
+  const { data: primaryImageContext = [], isLoading: primaryImageContextLoading, refetch: refetchPrimaryImageContext } = useQuery({
+    queryKey: ["orderPrimaryImageContext", safeOrder.id],
+    queryFn: async () => dataClient.files.getOrderPrimaryImageContext([safeOrder.id]),
+    enabled: Boolean(safeOrder.id) && Boolean(safeOrder.client_id),
+    staleTime: 15_000,
+  });
+  const findPrimaryContextRow = (url) => primaryImageContext.find((row) => row.file_url === url);
+  const setPrimaryImage = (assetId) => onUpdate(safeOrder.id, { primary_image_asset_id: assetId });
+  const clearPrimaryImage = () => onUpdate(safeOrder.id, { primary_image_asset_id: null });
   const invoices = Array.isArray(safeOrder.invoice_files) ? safeOrder.invoice_files.map(normalizeInvoiceFile).filter(Boolean) : [];
   const folders = Array.isArray(metadata.folders) ? metadata.folders : [];
   const currentFolder = folders.find((folder) => folder.id === openFolderId);
@@ -432,6 +444,11 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
     const nextFolders = { ...(metadata.fileFolders || {}) };
     delete nextFolders[entry.url];
     const nextLabels = Object.fromEntries(Object.entries(metadata.fileLabels || {}).filter(([key]) => key !== entry.id));
+    // ONE atomic patch: if the file being unlinked is the order's
+    // currently selected primary, primary_image_asset_id clears in the
+    // same write - never a separate follow-up call that could land only
+    // one of the two changes.
+    const primaryPatch = resolveUnlinkPrimaryImagePatch(safeOrder, primaryImageContext, entry.url);
     onUpdate(safeOrder.id, {
       file_urls: fileUrls.filter((item) => item !== entry.url),
       portal_visible_file_urls: visibleUrls.filter((item) => item !== entry.url),
@@ -441,6 +458,7 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         fileLabels: nextLabels,
         fileCopies: (metadata.fileCopies || []).filter((copy) => copy.url !== entry.url),
       },
+      ...primaryPatch,
     });
   };
 
@@ -581,18 +599,15 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
           <p className="px-1 text-[11px] leading-4 text-muted-foreground">Same storage file, linked into this folder. No duplicate binary was created.</p>
         )}
         {isVisualFile(entry.url) && (
-          <button
-            type="button"
-            onClick={() => (thumbnailUrl === entry.url ? clearThumbnail() : setAsThumbnail(entry.url))}
-            className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium ${
-              thumbnailUrl === entry.url
-                ? "border-amber-300 bg-amber-50 text-amber-800"
-                : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
-            }`}
-          >
-            <Star className={`h-3.5 w-3.5 ${thumbnailUrl === entry.url ? "fill-amber-500 text-amber-500" : ""}`} />
-            {thumbnailUrl === entry.url ? "Order thumbnail" : "Set as thumbnail"}
-          </button>
+          <PrimaryImageAction
+            hasClient={Boolean(safeOrder.client_id)}
+            loading={primaryImageContextLoading}
+            contextRow={findPrimaryContextRow(entry.url)}
+            isPrimary={Boolean(primaryAssetId) && findPrimaryContextRow(entry.url)?.asset_id === primaryAssetId}
+            onSet={setPrimaryImage}
+            onClear={clearPrimaryImage}
+            onRetry={refetchPrimaryImageContext}
+          />
         )}
         <button
           type="button"
@@ -652,6 +667,51 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
       </div>
     </div>
   );
+
+  function PrimaryImageAction({ hasClient, loading, contextRow, isPrimary, onSet, onClear, onRetry }) {
+    if (!hasClient) {
+      return (
+        <p className="rounded-xl border border-dashed border-border px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+          Link this order to a client before setting a primary image.
+        </p>
+      );
+    }
+    if (loading) {
+      return (
+        <p className="rounded-xl border border-dashed border-border px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+          Checking client library sync...
+        </p>
+      );
+    }
+    // Real ClientAsset context hasn't caught up with this file link yet -
+    // never invent an asset id from the UI-only entry/URL to work around
+    // that; offer a retry instead.
+    if (!contextRow) {
+      return (
+        <button
+          type="button"
+          onClick={() => onRetry?.()}
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        >
+          Still syncing to client library - retry
+        </button>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={() => (isPrimary ? onClear() : onSet(contextRow.asset_id))}
+        className={`inline-flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium ${
+          isPrimary
+            ? "border-amber-300 bg-amber-50 text-amber-800"
+            : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+        }`}
+      >
+        <Star className={`h-3.5 w-3.5 ${isPrimary ? "fill-amber-500 text-amber-500" : ""}`} />
+        {isPrimary ? "Clear primary image" : "Set as primary image"}
+      </button>
+    );
+  }
 
   const InvoiceCard = ({ invoice, index }) => {
     const url = invoiceUrl(invoice);

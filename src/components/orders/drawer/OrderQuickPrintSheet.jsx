@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Printer, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { normalizeOrderFileFolders } from "./OrderDrawerShared";
 import { getSignedFileUrl } from "@/lib/privateFiles";
 import { isImageReference } from "@/lib/imageReference";
 import { computeImageReadiness } from "@/lib/printReadiness";
+import { dataClient } from "@/api/dataClient";
 import FileLightbox from "@/components/files/FileLightbox";
-import { buildImageGallery, buildLightboxItems, resolveLightboxIndex } from "@/lib/filePresentation";
+import { buildLightboxItems, resolveLightboxIndex } from "@/lib/filePresentation";
+import { buildOrderPrimaryImageGallery, resolveOrderPrimaryImage } from "@/lib/orderPrimaryImage";
 
 const PRINT_SIGNED_URL_TTL_SECONDS = 1800;
 
@@ -34,13 +37,40 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   const imageTargetsKey = imageTargets.join("\n");
   const [resolvedImages, setResolvedImages] = useState({});
   // { files, index } | null. files/index are raw canonical refs built from
-  // imageTargets via the shared filePresentation.js helpers - never the
-  // print view's resolved signed URLs, and never a persisted ClientAsset
-  // id (preserveIdentity: false), matching Production Summary's gallery.
+  // the shared Phase 1B.2 primary-image gallery via filePresentation.js
+  // helpers - never the print view's resolved signed URLs, and never a
+  // persisted ClientAsset id (preserveIdentity: false), matching
+  // Production Summary's gallery.
   const [printImagePreview, setPrintImagePreview] = useState(null);
 
+  // Canonical ClientAsset context behind this order's current files -
+  // never client_assets.order_id. Same batched, read-only RPC Production
+  // Summary and OrderFilesTab use, so all three surfaces resolve the same
+  // primary image the same way.
+  const { data: primaryImageContext = [], isLoading: primaryImageContextLoading } = useQuery({
+    queryKey: ["orderPrimaryImageContext", order.id],
+    queryFn: async () => dataClient.files.getOrderPrimaryImageContext([order.id]),
+    enabled: Boolean(order.id) && Boolean(order.client_id),
+    staleTime: 15_000,
+  });
+
+  const primaryResolution = resolveOrderPrimaryImage(order, primaryImageContext);
+  // A pin exists but didn't resolve to "explicit" (asset no longer valid/
+  // linked) once context has actually loaded - the resolver already fell
+  // back safely, this just surfaces that to staff rather than silently
+  // showing a different image than what they think is pinned.
+  const primaryUnresolved = Boolean(order.primary_image_asset_id)
+    && !primaryImageContextLoading
+    && primaryResolution.source !== "explicit";
+
+  // The click-to-preview collection is the FULL Phase 1B.2 primary-image
+  // gallery (primary first, wherever it actually lives - canonical
+  // Mockups, product fallback, any other order image) - never restricted
+  // to this sheet's own local "mockups folder or bust" print-content list
+  // (imageTargets/filesForMockups), which only governs what's rendered on
+  // the printed page itself.
   const openImagePreview = (clickedUrl) => {
-    const gallery = buildImageGallery(imageTargets, { preferredFirst: order.production_thumbnail_url || "" });
+    const gallery = buildOrderPrimaryImageGallery(order, primaryImageContext);
     const files = buildLightboxItems(gallery, { preserveIdentity: false });
     setPrintImagePreview({ files, index: resolveLightboxIndex(files, clickedUrl) });
   };
@@ -82,10 +112,15 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
     setResolvedImages((prev) => ({ ...prev, [ref]: { status: "error", url: "" } }));
   };
 
-  const { pendingCount: pendingImageCount, failedCount: failedImageCount, ready: printReady } = computeImageReadiness(
+  const { pendingCount: pendingImageCount, failedCount: failedImageCount, ready: imageResolutionReady } = computeImageReadiness(
     imageTargets.map((ref) => ({ key: ref, ref })),
     Object.fromEntries(imageTargets.map((ref) => [ref, resolvedImages[ref] ? { ref, status: resolvedImages[ref].status } : null]))
   );
+  // Never let Print enable while an order with a pinned primary is still
+  // resolving that primary's context - a stale/incomplete resolution must
+  // not be treated as "ready" just because the unrelated mockup images
+  // happened to finish loading first.
+  const printReady = imageResolutionReady && !(order.primary_image_asset_id && primaryImageContextLoading);
 
   const title = type === "invoices"
     ? "Invoice Printout"
@@ -142,6 +177,11 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
           /* The FileLightbox gallery is screen-only - never part of the
              printed document, even if left open. */
           .order-quick-print-lightbox {
+            display: none !important;
+          }
+          /* Staff-facing resolution warning - never part of the customer
+             printed document. */
+          .order-print-primary-warning {
             display: none !important;
           }
         }
@@ -247,6 +287,11 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
 
           {showMockups && (
             <OrderPrintSection title="Mockups / Production Images">
+              {primaryUnresolved && (
+                <p className="order-print-primary-warning mb-3 text-xs font-medium text-amber-700">
+                  The selected primary image could not be verified - showing the standard fallback instead.
+                </p>
+              )}
               {failedImageCount > 0 && (
                 <p className="mb-3 text-xs font-medium text-amber-700">
                   {failedImageCount} image{failedImageCount > 1 ? "s" : ""} could not be loaded.
