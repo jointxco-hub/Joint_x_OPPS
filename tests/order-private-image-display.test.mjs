@@ -155,13 +155,19 @@ test("no React hooks are called inside a .map() callback in OrderQuickPrintSheet
   }
 });
 
-// mockups-folder-first selection priority and private-reference eligibility
-// (pinned again since this file changed further in this follow-up commit)
-test("mockups-folder-first selection and private-reference image eligibility are unchanged", async () => {
+// Private-reference image eligibility remains unchanged. Mockups-first
+// selection priority moved from this file's own local
+// filesForMockups/mockupFiles/imageFiles logic into the shared
+// buildOrderPrimaryImageGallery resolver (Phase 1B.2 final hardening,
+// see tests/quick-print-lightbox.test.mjs and
+// tests/order-primary-image.test.mjs) - the printed cards and the
+// lightbox both read the SAME resolver output now, rather than this
+// sheet computing its own separate local-folder candidate list.
+test("private-reference image eligibility is unchanged; mockups-first priority now lives in the shared resolver", async () => {
   const source = await readSource("src/components/orders/drawer/OrderQuickPrintSheet.jsx");
   assert.doesNotMatch(source, /isPrivateFileReference/);
-  assert.match(source, /const filesForMockups = mockupFiles\.length \? mockupFiles : imageFiles;/);
-  assert.match(source, /const imageFiles = allFiles\.filter\(isImageReference\);/);
+  assert.doesNotMatch(source, /filesForMockups|mockupFiles/);
+  assert.match(source, /const productionImageRefs = showMockups \? buildOrderPrimaryImageGallery\(order, primaryImageContext\) : \[\];/);
 });
 
 // --- Orders.jsx / OrdersProductionSummary ---
@@ -172,7 +178,11 @@ test("Active Production Summary gates its own Print button on secure thumbnail r
   assert.ok(summaryMatch, "OrdersProductionSummary function body must be found");
   const summaryBody = summaryMatch[0];
 
-  assert.match(summaryBody, /const \{ ready: printReady \} = computeImageReadiness\(thumbnailTargets, thumbnailStatus\);/);
+  assert.match(summaryBody, /const \{ ready: imageResolutionReady \} = computeImageReadiness\(thumbnailTargets, thumbnailStatus\);/);
+  // Phase 1B.2 final hardening: printReady additionally accounts for
+  // primary-image context loading/erroring and unresolved explicit
+  // primaries - it must still be derived from imageResolutionReady.
+  assert.match(summaryBody, /const printReady = imageResolutionReady && contextResolved && !hasUnresolvedExplicitPrimary;/);
   assert.match(summaryBody, /disabled=\{!printReady\}/);
   assert.match(summaryBody, /\{printReady \? "Print" : "Preparing images\.\.\."\}/);
 

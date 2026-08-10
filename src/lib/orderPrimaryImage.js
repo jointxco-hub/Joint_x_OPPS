@@ -47,30 +47,45 @@ export function groupPrimaryImageContextByOrder(rows) {
   return map;
 }
 
-// "Canonical Mockups" means the ClientAsset's own folder is named Mockups
-// (case-insensitive) - the per-order category folder every order gets via
-// provision_order_asset_folders - never the separate, order-local,
-// UI-only order.order_file_folders.fileFolders[url] === "mockups" tag
-// OrderFilesTab's ad-hoc folder view uses for its own display grouping.
+// "Canonical Mockups" requires BOTH signals, not folder name alone: a
+// real client-category folder (folder_kind === "client_category" - the
+// kind provision_order_asset_folders' category subfolders carry in
+// production, confirmed via a read-only production metadata check) named
+// Mockups (case-insensitive). Folder name alone would let an unrelated
+// legacy folder that merely happens to be titled "Mockups" silently
+// become the automatic production primary. This is never the separate,
+// order-local, UI-only order.order_file_folders.fileFolders[url] ===
+// "mockups" tag OrderFilesTab's ad-hoc folder view uses for its own
+// display grouping - that tag never reaches a context row at all.
 function isCanonicalMockup(row) {
-  return typeof row?.folder_name === "string" && row.folder_name.trim().toLowerCase() === "mockups";
+  return row?.folder_kind === "client_category"
+    && typeof row?.folder_name === "string"
+    && row.folder_name.trim().toLowerCase() === "mockups";
 }
 
 // A context row is only a legitimate primary-image candidate if it is
-// actually this order's own client/tenant's asset and its file is a
-// visual/image reference. The RPC's own join already guarantees the
-// client_id/tenant_id match server-side, but this is re-checked here too
-// - defense in depth, and the only check available at all for a caller
-// that assembles rows itself (e.g. a test, or a future non-RPC source)
-// rather than trusting every row blindly.
+// actually this order's own client/tenant's asset, currently linked to
+// the order (its file_url is present in order.file_urls), not archived,
+// and its file is a visual/image reference.
+//
+// The RPC's own join already guarantees client/tenant match, current
+// file_urls linkage, and non-archived status server-side - every check
+// here is re-verified anyway. This is defense in depth: the only check
+// available at all for a caller that assembles rows itself (e.g. a test,
+// or a future non-RPC source) rather than trusting every row blindly.
+// is_archived/asset_is_archived aren't fields the real RPC's rows carry
+// (archived rows are excluded before they'd ever have one), but a
+// synthetic/future row that does carry either name is still rejected
+// rather than silently trusted.
 export function isSelectablePrimaryCandidate(order, row) {
-  return Boolean(
-    row
-    && row.file_url
-    && isVisualFile(row.file_url)
-    && row.asset_client_id === order?.client_id
-    && row.asset_tenant_id === order?.tenant_id
-  );
+  if (!row || !row.file_url) return false;
+  if (row.is_archived === true || row.asset_is_archived === true) return false;
+  if (!isVisualFile(row.file_url)) return false;
+  if (row.asset_client_id !== order?.client_id) return false;
+  if (row.asset_tenant_id !== order?.tenant_id) return false;
+  const fileUrls = extractUrls(order?.file_urls);
+  if (!fileUrls.includes(row.file_url)) return false;
+  return true;
 }
 
 export function getSelectablePrimaryCandidates(order, contextRowsForOrder) {

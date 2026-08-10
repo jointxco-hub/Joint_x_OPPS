@@ -784,7 +784,12 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
     () => Array.from(new Set(activeOrders.map(order => order.id).filter(Boolean))),
     [activeOrders]
   );
-  const { data: primaryImageContextRows = [] } = useQuery({
+  const {
+    data: primaryImageContextRows = [],
+    isLoading: primaryImageContextLoading,
+    isError: primaryImageContextError,
+    refetch: refetchPrimaryImageContext,
+  } = useQuery({
     queryKey: ["orderPrimaryImageContext", "productionSummary", activeOrderIds],
     queryFn: async () => dataClient.files.getOrderPrimaryImageContext(activeOrderIds),
     enabled: activeOrderIds.length > 0,
@@ -817,7 +822,17 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
       ref: resolveOrderPrimaryImage(order, primaryImageContextByOrder.get(order.id) || []).ref,
     }))
     .filter(target => target.ref);
-  const { ready: printReady } = computeImageReadiness(thumbnailTargets, thumbnailStatus);
+  const { ready: imageResolutionReady } = computeImageReadiness(thumbnailTargets, thumbnailStatus);
+  // At least one displayed order has an explicit pin that a SUCCESSFUL
+  // context load could not resolve - never print against a lower-priority
+  // fallback while presenting the summary as fully ready.
+  const contextResolved = !primaryImageContextLoading && !primaryImageContextError;
+  const hasUnresolvedExplicitPrimary = contextResolved && summaryOrders.some((order) => {
+    if (!order.primary_image_asset_id) return false;
+    const rows = primaryImageContextByOrder.get(order.id) || [];
+    return resolveOrderPrimaryImage(order, rows).source !== "explicit";
+  });
+  const printReady = imageResolutionReady && contextResolved && !hasUnresolvedExplicitPrimary;
 
   return (
     <div className="fixed inset-0 z-[80] bg-background/95 p-4 print:static print:bg-white print:p-0">
@@ -897,6 +912,24 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
         </div>
       </div>
 
+      {primaryImageContextLoading && (
+        <p className="no-print mx-auto mb-3 max-w-6xl rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-600">
+          Preparing primary images...
+        </p>
+      )}
+      {primaryImageContextError && (
+        <p className="no-print mx-auto mb-3 flex max-w-6xl flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+          Primary image context could not be loaded.
+          <button
+            type="button"
+            onClick={() => refetchPrimaryImageContext()}
+            className="rounded-full border border-red-200 bg-white px-2 py-0.5 font-semibold hover:bg-red-100"
+          >
+            Retry
+          </button>
+        </p>
+      )}
+
       <div className="orders-production-print mx-auto max-h-[calc(100vh-96px)] max-w-6xl overflow-y-auto rounded-2xl border border-border bg-white p-6 shadow-apple-sm print:max-h-none print:overflow-visible print:rounded-none print:border-0 print:p-0 print:shadow-none">
         <header className="print-summary-header mb-5 flex items-start justify-between gap-6 border-b border-zinc-200 pb-4">
           <div>
@@ -937,6 +970,7 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
                       stageLabel={stageLabelByKey.get(order.pipeline_stage)}
                       onThumbnailStatusChange={handleThumbnailStatusChange}
                       primaryImageContext={primaryImageContextByOrder.get(order.id) || []}
+                      contextPending={Boolean(order.client_id) && primaryImageContextLoading}
                     />
                   ))}
                 </div>
@@ -949,8 +983,12 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
   );
 }
 
-function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange, primaryImageContext = [] }) {
-  const thumb = resolveOrderPrimaryImage(order, primaryImageContext).ref;
+function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange, primaryImageContext = [], contextPending = false }) {
+  // While canonical context is still loading for a client-linked order,
+  // never present a product/order-file fallback as though it were already
+  // the resolved production primary - a canonical Mockups asset (which
+  // outranks that fallback) may still be on its way in.
+  const thumb = contextPending ? "" : resolveOrderPrimaryImage(order, primaryImageContext).ref;
   const thumbKey = String(order.id || order.order_number);
   const products = getOrderProducts(order);
   const statusLabel = statusConfig[order.status]?.label || String(order.status || "Active").replace(/_/g, " ");
@@ -983,6 +1021,8 @@ function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange
                 fallback={<div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>}
               />
             </button>
+          ) : contextPending ? (
+            <div className="flex h-full w-full animate-pulse items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Preparing...</div>
           ) : (
             <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold uppercase tracking-wide text-zinc-400">No mockup</div>
           )}

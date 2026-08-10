@@ -12,6 +12,8 @@
 --
 -- Rollback:
 --   drop function if exists public.get_order_primary_image_context(uuid[]);
+--   drop trigger if exists trg_invalidate_stale_order_primary_image on public.client_assets;
+--   drop function if exists public.invalidate_stale_order_primary_image();
 --   drop trigger if exists trg_validate_order_primary_image on public.orders;
 --   drop function if exists public.validate_order_primary_image();
 --   drop index if exists public.idx_orders_primary_image_asset_id;
@@ -151,7 +153,10 @@ begin
     return new;
   end if;
 
-  if v_asset.file_url is null or v_asset.file_url !~* '\.(png|jpe?g|webp|gif|avif|svg)(\?|#|$)' then
+  -- Dollar-quoted so the regex's own backslashes/dollar-sign never
+  -- interact with SQL string-literal escaping rules - avoids any
+  -- ambiguity between standard_conforming_strings settings.
+  if v_asset.file_url is null or v_asset.file_url !~* $img$\.(png|jpe?g|webp|gif|avif|svg)(\?|#|$)$img$ then
     if v_explicit then
       raise exception using errcode = 'P0001', message = 'ORDER_PRIMARY_IMAGE_NOT_AN_IMAGE';
     end if;
@@ -187,8 +192,59 @@ create trigger trg_validate_order_primary_image
   on public.orders
   for each row execute function public.validate_order_primary_image();
 
+revoke all on function public.validate_order_primary_image() from public, anon, authenticated;
+
 -- ═══════════════════════════════════════════════════════════════════
--- 3. Read-only primary-image context RPC
+-- 3. ClientAsset lifecycle backstop
+-- ═══════════════════════════════════════════════════════════════════
+-- The trigger above only re-validates when the ORDER row changes. If the
+-- referenced ClientAsset itself is later archived, moved to a different
+-- client/tenant, or given a different file_url that is no longer linked
+-- to the order, nothing fires the order-side trigger and the order would
+-- keep pointing at a now-invalid primary indefinitely. This backstop
+-- clears it the moment the asset itself becomes invalid for whichever
+-- order(s) currently reference it as their primary - never a broad
+-- re-validation, and never for changes that don't affect validity
+-- (folder_id/title/notes/tags/approval metadata all leave primary alone).
+-- DELETE of the ClientAsset row itself is already handled by
+-- ON DELETE SET NULL on the FK - this only covers UPDATE.
+create or replace function public.invalidate_stale_order_primary_image()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  update public.orders o
+  set primary_image_asset_id = null
+  where o.primary_image_asset_id = new.id
+    and (
+      coalesce(new.is_archived, false)
+      or new.client_id is distinct from o.client_id
+      or new.tenant_id is distinct from o.tenant_id
+      or new.file_url is null
+      or new.file_url !~* $img$\.(png|jpe?g|webp|gif|avif|svg)(\?|#|$)$img$
+      or not exists (
+        select 1 from jsonb_array_elements_text(
+          case when jsonb_typeof(to_jsonb(o.file_urls)) = 'array' then to_jsonb(o.file_urls) else '[]'::jsonb end
+        ) as u(url)
+        where u.url = new.file_url
+      )
+    );
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_invalidate_stale_order_primary_image on public.client_assets;
+create trigger trg_invalidate_stale_order_primary_image
+  after update of is_archived, client_id, tenant_id, file_url
+  on public.client_assets
+  for each row execute function public.invalidate_stale_order_primary_image();
+
+revoke all on function public.invalidate_stale_order_primary_image() from public, anon, authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- 4. Read-only primary-image context RPC
 -- ═══════════════════════════════════════════════════════════════════
 -- Batched lookup used by the frontend (OrderFilesTab, OrderQuickPrintSheet,
 -- Production Summary) to resolve every ClientAsset currently linked to a
@@ -202,6 +258,14 @@ create trigger trg_validate_order_primary_image
 -- caller can access its tenant (or is an app admin) - security definer
 -- bypasses RLS on client_assets/orders directly, so this check is the
 -- only gate and must not be dropped.
+--
+-- Bounded, never silently truncated: a caller supplying more than 200
+-- distinct order ids gets a clear error, not a partial result it has no
+-- way to detect. The dataClient.files.getOrderPrimaryImageContext()
+-- wrapper is the one responsible for staying under this limit - it
+-- chunks a larger input into multiple <=200 calls and combines the
+-- results, so no caller should ever actually hit this exception in
+-- normal use.
 create or replace function public.get_order_primary_image_context(p_order_ids uuid[])
 returns table (
   order_id uuid,
@@ -221,16 +285,19 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_order_ids uuid[];
+  v_count int;
 begin
   if p_order_ids is null or array_length(p_order_ids, 1) is null then
     return;
   end if;
 
-  -- Dedupe, then bound to at most 200 orders per call.
   select array_agg(oid) into v_order_ids
-  from (
-    select distinct oid from unnest(p_order_ids) as oid limit 200
-  ) bounded;
+  from (select distinct oid from unnest(p_order_ids) as oid) deduped;
+
+  v_count := coalesce(array_length(v_order_ids, 1), 0);
+  if v_count > 200 then
+    raise exception using errcode = 'P0001', message = 'ORDER_PRIMARY_IMAGE_CONTEXT_TOO_MANY_ORDERS';
+  end if;
 
   return query
   select

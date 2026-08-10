@@ -8,6 +8,11 @@ let currentUser = null;
 
 const LOCAL_ENTITY_CACHE_PREFIX = 'jx_entity_cache:';
 const LOCAL_USER_CACHE_KEY = 'jx_current_user';
+// Must stay <= the get_order_primary_image_context RPC's own limit (see
+// supabase/migrations/202608100001_order_primary_image.sql) - the RPC
+// raises ORDER_PRIMARY_IMAGE_CONTEXT_TOO_MANY_ORDERS above it rather than
+// silently truncating, so this wrapper chunks instead of ever exceeding it.
+const PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE = 200;
 
 function readJson(key, fallback = null) {
   if (typeof window === 'undefined') return fallback;
@@ -2307,11 +2312,25 @@ export const dataClient = {
     async getOrderPrimaryImageContext(orderIds = []) {
       const ids = Array.from(new Set((Array.isArray(orderIds) ? orderIds : []).filter(Boolean)));
       if (!supabase || ids.length === 0) return [];
-      const { data, error } = await supabase.rpc('get_order_primary_image_context', {
-        p_order_ids: ids,
-      });
-      if (error) throw error;
-      return Array.isArray(data) ? data : [];
+      // The RPC rejects (does not silently truncate) a call with more than
+      // PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE distinct order ids - so a larger
+      // input is chunked into multiple bounded batched calls here rather
+      // than one unbounded call. Still never one call per order/file: a
+      // page of, say, 450 orders makes 3 RPC calls, not 450.
+      const chunks = [];
+      for (let i = 0; i < ids.length; i += PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE) {
+        chunks.push(ids.slice(i, i + PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE));
+      }
+      const results = await Promise.all(
+        chunks.map(async (chunk) => {
+          const { data, error } = await supabase.rpc('get_order_primary_image_context', {
+            p_order_ids: chunk,
+          });
+          if (error) throw error;
+          return Array.isArray(data) ? data : [];
+        })
+      );
+      return results.flat();
     },
   },
   agents: {

@@ -39,6 +39,12 @@ function makeOrder(overrides = {}) {
   };
 }
 
+// Mirrors what the real get_order_primary_image_context RPC guarantees by
+// construction: folder_kind is "client_category" for the real category
+// subfolders provision_order_asset_folders creates (confirmed via a
+// read-only production metadata check), and file_url is always a member
+// of the order's own file_urls (the RPC's own join condition). Individual
+// tests that need to violate one of these invariants do so explicitly.
 function makeRow(overrides = {}) {
   return {
     order_id: "order-1",
@@ -47,7 +53,7 @@ function makeRow(overrides = {}) {
     file_type: "image/jpeg",
     folder_id: "folder-1",
     folder_name: "Mockups",
-    folder_kind: null,
+    folder_kind: "client_category",
     asset_client_id: CLIENT_ID,
     asset_tenant_id: TENANT_ID,
     ...overrides,
@@ -57,7 +63,7 @@ function makeRow(overrides = {}) {
 // ─────────────────────── explicit primary resolution ───────────────────────
 
 test("valid explicit ClientAsset primary wins", () => {
-  const order = makeOrder({ primary_image_asset_id: "asset-1" });
+  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://a.jpg"] });
   const rows = [makeRow({ asset_id: "asset-1", file_url: "private-upload://a.jpg" })];
   const result = resolveOrderPrimaryImage(order, rows);
   assert.equal(result.ref, "private-upload://a.jpg");
@@ -66,7 +72,10 @@ test("valid explicit ClientAsset primary wins", () => {
 });
 
 test("wrong client rejected", () => {
-  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://fallback.jpg"] });
+  const order = makeOrder({
+    primary_image_asset_id: "asset-1",
+    file_urls: ["private-upload://a.jpg", "private-upload://fallback.jpg"],
+  });
   const rows = [makeRow({ asset_id: "asset-1", asset_client_id: "someone-else", file_url: "private-upload://a.jpg" })];
   const result = resolveOrderPrimaryImage(order, rows);
   assert.notEqual(result.source, "explicit");
@@ -75,7 +84,7 @@ test("wrong client rejected", () => {
 });
 
 test("wrong tenant rejected", () => {
-  const order = makeOrder({ primary_image_asset_id: "asset-1" });
+  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://a.jpg"] });
   const rows = [makeRow({ asset_id: "asset-1", asset_tenant_id: "someone-else-tenant", file_url: "private-upload://a.jpg" })];
   const result = resolveOrderPrimaryImage(order, rows);
   assert.notEqual(result.source, "explicit");
@@ -93,18 +102,34 @@ test("URL no longer linked to the order is rejected (no matching context row)", 
   assert.equal(result.source, "order-file");
 });
 
-test("archived asset is rejected (server excludes it from context, so it never resolves as explicit)", () => {
-  // The RPC filters is_archived = false server-side, so an archived asset
-  // never appears as a context row - functionally identical at this layer
-  // to "no longer linked": the explicit branch has nothing to select.
-  const order = makeOrder({ primary_image_asset_id: "asset-archived" });
-  const rows = [makeRow({ asset_id: "asset-live", file_url: "private-upload://live.jpg" })];
-  const result = resolveOrderPrimaryImage(order, rows);
-  assert.notEqual(result.assetId, "asset-archived");
+// Defense in depth (section 4 of the final hardening pass): the resolver
+// does not merely trust that every row it's handed is currently linked -
+// a row whose file_url isn't in order.file_urls is rejected by the pure
+// helper itself, not just by the RPC's own join. This matters because the
+// helper is documented as safe even for a caller that assembles context
+// rows outside the RPC (a test, or a future non-RPC source).
+test("a context row whose file_url is NOT in order.file_urls is rejected (resolver's own relationship guard)", () => {
+  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://fallback.jpg"] });
+  const staleRow = makeRow({ asset_id: "asset-1", file_url: "private-upload://no-longer-linked.jpg" });
+  assert.equal(isSelectablePrimaryCandidate(order, staleRow), false);
+  const result = resolveOrderPrimaryImage(order, [staleRow]);
+  assert.notEqual(result.source, "explicit");
+  assert.equal(result.ref, "private-upload://fallback.jpg");
+});
+
+test("a synthetic row explicitly marked archived is rejected, however it is named", () => {
+  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://a.jpg"] });
+  const archivedViaIsArchived = makeRow({ asset_id: "asset-1", file_url: "private-upload://a.jpg", is_archived: true });
+  assert.equal(isSelectablePrimaryCandidate(order, archivedViaIsArchived), false);
+  const archivedViaAssetIsArchived = makeRow({ asset_id: "asset-1", file_url: "private-upload://a.jpg", asset_is_archived: true });
+  assert.equal(isSelectablePrimaryCandidate(order, archivedViaAssetIsArchived), false);
+  const result = resolveOrderPrimaryImage(order, [archivedViaIsArchived]);
+  assert.notEqual(result.source, "explicit");
+  assert.notEqual(result.assetId, "asset-1");
 });
 
 test("non-image asset is rejected", () => {
-  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://fallback.jpg"] });
+  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://doc.pdf", "private-upload://fallback.jpg"] });
   const rows = [makeRow({ asset_id: "asset-1", file_url: "private-upload://doc.pdf" })];
   const result = resolveOrderPrimaryImage(order, rows);
   assert.notEqual(result.source, "explicit");
@@ -116,7 +141,7 @@ test("a differing/absent client_assets.order_id (origin order) never affects val
   // (the order currently being resolved, via the RPC's grouping), asset_id,
   // and the ownership/linkage fields. A row missing any origin-order
   // concept entirely still resolves normally.
-  const order = makeOrder({ primary_image_asset_id: "asset-1" });
+  const order = makeOrder({ primary_image_asset_id: "asset-1", file_urls: ["private-upload://a.jpg"] });
   const row = makeRow({ asset_id: "asset-1", file_url: "private-upload://a.jpg" });
   delete row.order_id;
   const result = resolveOrderPrimaryImage(order, [row]);
@@ -124,11 +149,42 @@ test("a differing/absent client_assets.order_id (origin order) never affects val
   assert.equal(result.ref, "private-upload://a.jpg");
 });
 
+// ─────────────────────── canonical Mockups requires folder_kind ───────────────────────
+
+test("client_category + Mockups is canonical", () => {
+  const order = makeOrder({ file_urls: ["private-upload://mockup.jpg"] });
+  const rows = [makeRow({ folder_kind: "client_category", folder_name: "Mockups", file_url: "private-upload://mockup.jpg" })];
+  const result = resolveOrderPrimaryImage(order, rows);
+  assert.equal(result.source, "canonical-mockups");
+  assert.equal(result.ref, "private-upload://mockup.jpg");
+});
+
+test("wrong folder_kind + Mockups name is NOT canonical", () => {
+  const order = makeOrder({
+    file_urls: ["private-upload://legacy-mockups-folder.jpg", "private-upload://other.jpg"],
+  });
+  const rows = [makeRow({ folder_kind: "order_category", folder_name: "Mockups", file_url: "private-upload://legacy-mockups-folder.jpg" })];
+  const result = resolveOrderPrimaryImage(order, rows);
+  assert.notEqual(result.source, "canonical-mockups");
+  // Falls through to the generic order-file tier instead - the file is
+  // still a real image, it just isn't the automatic canonical pick.
+  assert.equal(result.source, "order-file");
+});
+
+test("client_category + a non-Mockups name is NOT canonical", () => {
+  const order = makeOrder({ file_urls: ["private-upload://artwork.jpg"] });
+  const rows = [makeRow({ folder_kind: "client_category", folder_name: "Artwork", file_url: "private-upload://artwork.jpg" })];
+  const result = resolveOrderPrimaryImage(order, rows);
+  assert.notEqual(result.source, "canonical-mockups");
+  assert.equal(result.source, "order-file");
+});
+
 // ─────────────────────── fallback priority ───────────────────────
 
 test("canonical Mockups beats a product image", () => {
   const order = makeOrder({
     products: [{ image_url: "private-upload://product.jpg" }],
+    file_urls: ["private-upload://mockup.jpg"],
   });
   const rows = [makeRow({ folder_name: "Mockups", file_url: "private-upload://mockup.jpg" })];
   const result = resolveOrderPrimaryImage(order, rows);
@@ -228,12 +284,15 @@ test("groupPrimaryImageContextByOrder groups a flat batched result by order_id",
   assert.equal(grouped.get("order-c"), undefined);
 });
 
-test("getSelectablePrimaryCandidates filters out non-image and mismatched-ownership rows", () => {
-  const order = makeOrder();
+test("getSelectablePrimaryCandidates filters out non-image, mismatched-ownership, and unlinked rows", () => {
+  const order = makeOrder({
+    file_urls: ["private-upload://a.jpg", "private-upload://a.pdf", "private-upload://b.jpg", "private-upload://c.jpg"],
+  });
   const rows = [
     makeRow({ asset_id: "ok", file_url: "private-upload://a.jpg" }),
     makeRow({ asset_id: "bad-ext", file_url: "private-upload://a.pdf" }),
     makeRow({ asset_id: "bad-client", asset_client_id: "someone-else", file_url: "private-upload://b.jpg" }),
+    makeRow({ asset_id: "bad-linkage", file_url: "private-upload://not-in-file-urls.jpg" }),
   ];
   const candidates = getSelectablePrimaryCandidates(order, rows);
   assert.deepEqual(candidates.map((r) => r.asset_id), ["ok"]);
@@ -289,6 +348,29 @@ test("OrderFilesTab: 'Set as primary image' / 'Clear primary image' use a real C
 
 test("OrderFilesTab: loads canonical context via getOrderPrimaryImageContext, never a per-file lookup", () => {
   assert.match(orderFilesTabSource, /dataClient\.files\.getOrderPrimaryImageContext\(\[safeOrder\.id\]\)/);
+});
+
+// Section 12: an unconditional Clear Primary action must exist at the
+// Order Files header level, independent of whether the ClientAsset
+// context resolved - staff must never lose the ability to clear a stale/
+// unresolvable primary.
+test("OrderFilesTab: an unconditional header-level Clear Primary action exists whenever a primary is set", () => {
+  const headerBlock = orderFilesTabSource.match(/\{primaryAssetId && \(([\s\S]*?)\n {6}\)\}/);
+  assert.ok(headerBlock, "unconditional primary-image header block not found");
+  const block = headerBlock[1];
+  assert.match(block, /onClick=\{clearPrimaryImage\}/);
+  assert.match(block, /Clear primary image/);
+  // Must not be gated behind contextRow/loading/error checks - it renders
+  // whenever primaryAssetId is set, full stop.
+  assert.doesNotMatch(block, /\{primaryImageContextLoading && \(/);
+});
+
+test("OrderFilesTab: distinguishes an RPC failure from a file still syncing to the client library", () => {
+  assert.match(orderFilesTabSource, /Could not load primary-image context/);
+  assert.match(orderFilesTabSource, /Still syncing to client library/);
+  const actionFn = orderFilesTabSource.match(/function PrimaryImageAction\([\s\S]*?\n {2}\}/);
+  assert.ok(actionFn, "PrimaryImageAction not found");
+  assert.match(actionFn[0], /if \(queryError\) \{/);
 });
 
 test("OrderFilesTab: removing a real file link atomically clears primary in ONE patch when it is the selected primary", () => {
@@ -352,6 +434,25 @@ test("Orders.jsx: Production Summary priority excludes portal-visible files (del
   assert.match(source, /buildOrderPrimaryImageGallery\(/);
 });
 
+test("Orders.jsx: Production Summary print waits for context (loading/error) and unresolved explicit primaries", async () => {
+  const source = await readSource("src/pages/Orders.jsx");
+  const summaryMatch = source.match(/function OrdersProductionSummary[\s\S]*?\nfunction ProductionSummaryOrderCard/);
+  assert.ok(summaryMatch, "OrdersProductionSummary body not found");
+  const body = summaryMatch[0];
+  assert.match(body, /isLoading: primaryImageContextLoading/);
+  assert.match(body, /isError: primaryImageContextError/);
+  assert.match(body, /const contextResolved = !primaryImageContextLoading && !primaryImageContextError;/);
+  assert.match(body, /const printReady = imageResolutionReady && contextResolved && !hasUnresolvedExplicitPrimary;/);
+});
+
+test("Orders.jsx: a client-linked card does not show a false fallback while context is pending", async () => {
+  const source = await readSource("src/pages/Orders.jsx");
+  assert.match(source, /contextPending=\{Boolean\(order\.client_id\) && primaryImageContextLoading\}/);
+  const cardMatch = source.match(/function ProductionSummaryOrderCard\([\s\S]*?\n\}/);
+  assert.ok(cardMatch, "ProductionSummaryOrderCard body not found");
+  assert.match(cardMatch[0], /const thumb = contextPending \? "" : resolveOrderPrimaryImage\(order, primaryImageContext\)\.ref;/);
+});
+
 test("dataClient.js: production_thumbnail_url is fully removed", async () => {
   const source = await readSource("src/api/dataClient.js");
   assert.doesNotMatch(source, /production_thumbnail_url/);
@@ -370,6 +471,23 @@ test("dataClient.js: getOrderPrimaryImageContext calls the RPC and normalizes in
   assert.match(source, /supabase\.rpc\('get_order_primary_image_context', \{/);
 });
 
+// Section 6: the RPC rejects (never silently truncates) an oversized
+// input, and the client wrapper chunks so no caller ever actually sends
+// more than the RPC's own limit.
+test("dataClient.js: getOrderPrimaryImageContext chunks input at <= 200 ids per RPC call, never one call per order", async () => {
+  const source = await readSource("src/api/dataClient.js");
+  assert.match(source, /PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE = 200/);
+  const fnMatch = source.match(/async getOrderPrimaryImageContext\(orderIds = \[\]\) \{[\s\S]*?\n    \},/);
+  assert.ok(fnMatch, "getOrderPrimaryImageContext body not found");
+  assert.match(fnMatch[0], /for \(let i = 0; i < ids\.length; i \+= PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE\)/);
+  assert.match(fnMatch[0], /chunks\.push\(ids\.slice\(i, i \+ PRIMARY_IMAGE_CONTEXT_CHUNK_SIZE\)\)/);
+  assert.match(fnMatch[0], /Promise\.all\(/);
+  // Exactly one supabase.rpc call site inside the chunk-mapping loop, not
+  // one per id/order.
+  const rpcCalls = fnMatch[0].match(/supabase\.rpc\(/g) || [];
+  assert.equal(rpcCalls.length, 1);
+});
+
 test("migration: the rejected production_thumbnail_url migration file no longer exists", async () => {
   await assert.rejects(
     readFile(new URL("../supabase/migrations/202608060005_add_order_production_thumbnail.sql", import.meta.url)),
@@ -377,12 +495,81 @@ test("migration: the rejected production_thumbnail_url migration file no longer 
   );
 });
 
+let migrationSource;
+test.before(async () => {
+  migrationSource = await readSource("supabase/migrations/202608100001_order_primary_image.sql");
+});
+
 test("migration: canonical primary_image_asset_id migration adds the FK, validation trigger, and RPC", async () => {
-  const source = await readSource("supabase/migrations/202608100001_order_primary_image.sql");
-  assert.match(source, /add column if not exists primary_image_asset_id uuid null/);
-  assert.match(source, /references public\.client_assets\(id\)/);
-  assert.match(source, /on delete set null/);
-  assert.match(source, /create or replace function public\.validate_order_primary_image/);
-  assert.match(source, /create or replace function public\.get_order_primary_image_context/);
-  assert.doesNotMatch(source, /update public\.orders set primary_image_asset_id/i);
+  assert.match(migrationSource, /add column if not exists primary_image_asset_id uuid null/);
+  assert.match(migrationSource, /references public\.client_assets\(id\)/);
+  assert.match(migrationSource, /on delete set null/);
+  assert.match(migrationSource, /create or replace function public\.validate_order_primary_image/);
+  assert.match(migrationSource, /create or replace function public\.get_order_primary_image_context/);
+  assert.doesNotMatch(migrationSource, /update public\.orders set primary_image_asset_id/i);
+});
+
+test("migration: the image-extension regex is dollar-quoted, not a plain single-quoted string", () => {
+  const dollarQuoted = "$img$\\.(png|jpe?g|webp|gif|avif|svg)(\\?|#|$)$img$";
+  const occurrences = migrationSource.split(dollarQuoted).length - 1;
+  // Used once in the order-side trigger and once in the ClientAsset
+  // lifecycle backstop - both must use the unambiguous form.
+  assert.equal(occurrences, 2);
+  assert.doesNotMatch(migrationSource, /!~\* '\\\.\(png/);
+});
+
+test("migration: image extensions match src/lib/imageReference.js exactly (no video)", () => {
+  // Extract the actual extension-alternation substring used inside the
+  // dollar-quoted regex and check THAT, not the whole file - a prose word
+  // like "moved" contains "mov" as a substring and would otherwise
+  // false-positive against a whole-file search.
+  const match = migrationSource.match(/\$img\$\\\.\(([^)]+)\)/);
+  assert.ok(match, "extension alternation not found");
+  assert.equal(match[1], "png|jpe?g|webp|gif|avif|svg");
+});
+
+// Section 3: a ClientAsset lifecycle backstop must exist, scoped to only
+// the columns that actually affect primary-image validity.
+test("migration: a ClientAsset lifecycle trigger invalidates a stale primary when the asset itself changes", () => {
+  assert.match(migrationSource, /create or replace function public\.invalidate_stale_order_primary_image/);
+  assert.match(
+    migrationSource,
+    /after update of is_archived, client_id, tenant_id, file_url\s*\n\s*on public\.client_assets/
+  );
+  // Never fires on folder/title/notes/tags/approval metadata changes.
+  assert.doesNotMatch(migrationSource, /after update of[^\n]*folder_id[^\n]*on public\.client_assets/);
+});
+
+test("migration: the ClientAsset lifecycle trigger only clears the SPECIFIC order(s) referencing the changed asset (row-scoped, not a backfill)", () => {
+  const fnMatch = migrationSource.match(/create or replace function public\.invalidate_stale_order_primary_image[\s\S]*?\$\$;/);
+  assert.ok(fnMatch, "invalidate_stale_order_primary_image body not found");
+  assert.match(fnMatch[0], /where o\.primary_image_asset_id = new\.id/);
+  assert.match(fnMatch[0], /coalesce\(new\.is_archived, false\)/);
+  assert.match(fnMatch[0], /new\.client_id is distinct from o\.client_id/);
+  assert.match(fnMatch[0], /new\.tenant_id is distinct from o\.tenant_id/);
+});
+
+test("migration: RPC rejects an oversized input instead of silently truncating it", () => {
+  const fnMatch = migrationSource.match(/create or replace function public\.get_order_primary_image_context[\s\S]*?\$\$;/);
+  assert.ok(fnMatch, "get_order_primary_image_context body not found");
+  assert.doesNotMatch(fnMatch[0], /limit 200/i);
+  assert.match(fnMatch[0], /if v_count > 200 then/);
+  assert.match(fnMatch[0], /ORDER_PRIMARY_IMAGE_CONTEXT_TOO_MANY_ORDERS/);
+});
+
+test("migration: RPC still resolves linkage via orders.file_urls, never client_assets.order_id", () => {
+  const fnMatch = migrationSource.match(/create or replace function public\.get_order_primary_image_context[\s\S]*?\$\$;/);
+  assert.match(fnMatch[0], /jsonb_array_elements_text/);
+  assert.doesNotMatch(fnMatch[0], /ca\.order_id/);
+});
+
+test("migration: trigger functions revoke direct execute from ordinary roles", () => {
+  assert.match(migrationSource, /revoke all on function public\.validate_order_primary_image\(\) from public, anon, authenticated;/);
+  assert.match(migrationSource, /revoke all on function public\.invalidate_stale_order_primary_image\(\) from public, anon, authenticated;/);
+  assert.match(migrationSource, /revoke all on function public\.get_order_primary_image_context\(uuid\[\]\) from public, anon;/);
+  assert.match(migrationSource, /grant execute on function public\.get_order_primary_image_context\(uuid\[\]\) to authenticated;/);
+});
+
+test("migration: no historical backfill of any kind", () => {
+  assert.doesNotMatch(migrationSource, /^update /im);
 });

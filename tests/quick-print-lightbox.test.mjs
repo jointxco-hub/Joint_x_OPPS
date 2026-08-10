@@ -42,8 +42,7 @@ test("OrderQuickPrintSheet: clicking a production image opens the lightbox", () 
 
 // 4: multiple images are passed as a collection (files=, not a single file=).
 test("OrderQuickPrintSheet: passes a files collection, not a single file", () => {
-  assert.match(quickPrintSource, /buildOrderPrimaryImageGallery\(order, primaryImageContext\)/);
-  assert.match(quickPrintSource, /buildLightboxItems\(gallery/);
+  assert.match(quickPrintSource, /buildLightboxItems\(productionImageRefs, \{ preserveIdentity: false \}\)/);
   assert.match(quickPrintSource, /files=\{printImagePreview\.files\}/);
   assert.doesNotMatch(quickPrintSource, /<FileLightbox[^>]*\bfile=\{/);
 });
@@ -55,12 +54,28 @@ test("OrderQuickPrintSheet: clicked image resolves the starting index", () => {
 });
 
 // 6: the resolved Order Primary Image is preferred first in the gallery -
-// via the shared Phase 1B.2 resolver, not a bare url column, and not
-// restricted to this sheet's own local "mockups folder" candidate list
-// (imageTargets only governs what's rendered on the printed page itself).
+// via the shared Phase 1B.2 resolver, not a bare url column.
 test("OrderQuickPrintSheet: primary image is resolved via the shared canonical resolver, not a url pin", () => {
   assert.match(quickPrintSource, /import \{ buildOrderPrimaryImageGallery, resolveOrderPrimaryImage \} from "@\/lib\/orderPrimaryImage"/);
   assert.doesNotMatch(quickPrintSource, /production_thumbnail_url/);
+});
+
+// BLOCKER FIX (final hardening pass): the actual printed image cards must
+// use the SAME primary-first collection as the lightbox - a local
+// "mockups folder or bust" list (the old filesForMockups) could omit an
+// explicit primary or product-fallback image that lives outside that
+// folder, so the print output and the on-screen lightbox could disagree
+// about which image is the order's primary.
+test("OrderQuickPrintSheet: printed image cards and the lightbox both come from buildOrderPrimaryImageGallery - no separate local-folder list", () => {
+  assert.doesNotMatch(quickPrintSource, /filesForMockups/);
+  assert.doesNotMatch(quickPrintSource, /mockupFiles/);
+  assert.doesNotMatch(quickPrintSource, /imageFiles\b/);
+  assert.match(
+    quickPrintSource,
+    /const productionImageRefs = showMockups \? buildOrderPrimaryImageGallery\(order, primaryImageContext\) : \[\];/
+  );
+  assert.match(quickPrintSource, /\{productionImageRefs\.map\(\(url, index\) => \{/);
+  assert.match(quickPrintSource, /No mockup\/image files attached yet\./);
 });
 
 // 7 & 8: raw canonical refs are passed to FileLightbox - resolved signed
@@ -71,7 +86,7 @@ test("OrderQuickPrintSheet: gallery is built from raw refs, not resolved signed 
   const body = openPreviewMatch[0];
   assert.doesNotMatch(body, /resolvedImages/);
   assert.doesNotMatch(body, /resolved\.url/);
-  assert.match(body, /buildOrderPrimaryImageGallery\(order, primaryImageContext\)/);
+  assert.match(body, /buildLightboxItems\(productionImageRefs/);
 });
 
 // Canonical context is fetched once via the batched, read-only RPC -
@@ -80,14 +95,36 @@ test("OrderQuickPrintSheet: fetches canonical primary-image context via the batc
   assert.match(quickPrintSource, /dataClient\.files\.getOrderPrimaryImageContext\(\[order\.id\]\)/);
 });
 
-// Print must not falsely enable while a pinned primary is still resolving.
-test("OrderQuickPrintSheet: print readiness accounts for primary-image context still loading", () => {
-  assert.match(quickPrintSource, /printReady = imageResolutionReady && !\(order\.primary_image_asset_id && primaryImageContextLoading\)/);
+// Context must be required for ANY client-linked order, not only when an
+// explicit pin exists - an unpinned order can still have a canonical
+// Mockups asset the resolver can't know about until context loads.
+test("OrderQuickPrintSheet: canonical context is required for any client-linked order, not only a pinned one", () => {
+  assert.match(quickPrintSource, /const contextRequired = Boolean\(order\.client_id\);/);
+  assert.match(quickPrintSource, /enabled: Boolean\(order\.id\) && contextRequired,/);
+  assert.doesNotMatch(quickPrintSource, /enabled: Boolean\(order\.id\) && Boolean\(order\.client_id\)/);
+});
+
+// Print must not falsely enable while context is loading OR failed to
+// load, and must not enable while an explicit primary couldn't be
+// resolved after a successful load.
+test("OrderQuickPrintSheet: print readiness accounts for context loading, context errors, and an unresolved explicit primary", () => {
+  assert.match(quickPrintSource, /isError: primaryImageContextError,/);
+  assert.match(
+    quickPrintSource,
+    /const contextLoaded = !contextRequired \|\| \(!primaryImageContextLoading && !primaryImageContextError\);/
+  );
+  assert.match(
+    quickPrintSource,
+    /const explicitPrimaryUnresolved = Boolean\(order\.primary_image_asset_id\)\s*\n\s*&& contextLoaded\s*\n\s*&& primaryResolution\.source !== "explicit";/
+  );
+  assert.match(quickPrintSource, /const printReady = imageResolutionReady && contextLoaded && !explicitPrimaryUnresolved;/);
+  assert.match(quickPrintSource, /Primary image context could not be loaded\./);
+  assert.match(quickPrintSource, /onClick=\{\(\) => refetchPrimaryImageContext\(\)\}/);
 });
 
 // 9: synthetic/UI ids are never passed through as persisted ClientAsset ids.
 test("OrderQuickPrintSheet: gallery items are built with preserveIdentity: false", () => {
-  assert.match(quickPrintSource, /buildLightboxItems\(gallery, \{ preserveIdentity: false \}\)/);
+  assert.match(quickPrintSource, /buildLightboxItems\(productionImageRefs, \{ preserveIdentity: false \}\)/);
 });
 
 // 10: the existing getSignedFileUrl print-signing flow remains untouched.
