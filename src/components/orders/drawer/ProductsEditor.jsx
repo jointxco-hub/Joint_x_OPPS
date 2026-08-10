@@ -5,12 +5,7 @@ import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-function newLineId() {
-  return typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `line-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
+import { createOrderProductLineId } from "@/lib/orderProductIdentity";
 
 export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "" }) {
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
@@ -119,7 +114,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
 
   const addRow = () => {
     if (locked || !newRow.name.trim()) return;
-    const updated = [...products, { ...newRow, quantity: Number(newRow.quantity) || 1, line_id: newLineId() }];
+    const updated = [...products, { ...newRow, quantity: Number(newRow.quantity) || 1, line_id: createOrderProductLineId() }];
     onUpdate(order.id, { products: updated });
     setNewRow(emptyRow);
     setSizeRun({});
@@ -147,7 +142,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         ...newRow,
         size,
         quantity,
-        line_id: newLineId(),
+        line_id: createOrderProductLineId(),
       })),
     ];
     onUpdate(order.id, { products: updated });
@@ -164,7 +159,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const duplicateRow = (/** @type {any} */ rawProduct) => {
     if (locked) return;
     const p = cleanProduct(rawProduct);
-    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1, line_id: newLineId() }] });
+    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1, line_id: createOrderProductLineId() }] });
     toast.success("Product copied on this order");
   };
 

@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabaseClient';
+import { ensureOrderProductLineIds } from '@/lib/orderProductIdentity';
 
 export type OrderStatus =
   | 'confirmed'
@@ -17,6 +18,9 @@ export interface OrderProduct {
   price: number;
   size?: string;
   color?: string;
+  // Order-scoped line identity - identifies THIS line inside THIS order,
+  // never the catalog product. Unique within an order, not globally.
+  line_id?: string;
 }
 
 export interface SupabaseOrder {
@@ -84,7 +88,7 @@ export async function createOrderSupabase(
       is_archived: order.is_archived ?? false,
       file_urls: order.file_urls ?? [],
       assigned_team: order.assigned_team ?? [],
-      products: order.products ?? [],
+      products: ensureOrderProductLineIds(order.products ?? []),
       source: order.source ?? 'opps',
     })
     .select()
@@ -193,9 +197,13 @@ export async function updateOrderSupabase(
     return missingClientResult();
   }
 
+  const normalizedFields = Array.isArray(fields.products)
+    ? { ...fields, products: ensureOrderProductLineIds(fields.products) }
+    : fields;
+
   const { data, error } = await supabase
     .from('orders')
-    .update(fields)
+    .update(normalizedFields)
     .eq('id', id)
     .select()
     .single();

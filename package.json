@@ -17,6 +17,7 @@
     "test:client-file-library-refinement": "node --test tests/client-file-library-refinement.test.mjs",
     "test:file-gallery": "node --test tests/file-gallery.test.mjs",
     "test:order-primary-image": "node --test tests/order-primary-image.test.mjs",
+    "test:order-product-identity": "node --test tests/order-product-identity.test.mjs",
     "typecheck": "tsc -p ./jsconfig.json",
     "preview": "vite preview"
   },

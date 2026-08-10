@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabaseClient';
 import { getCurrentTenantId } from '@/lib/tenantContext';
 import { toPrivateUploadRef } from '@/lib/privateFiles';
+import { ensureOrderProductLineIds } from '@/lib/orderProductIdentity';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -195,7 +196,7 @@ const ENTITY_CONFIG = {
       };
     },
     serialize(payload) {
-      const sanitizedProducts = Array.isArray(payload.products)
+      const rawProducts = Array.isArray(payload.products)
         ? payload.products
         : payload.quantity && !payload.products
           ? [
@@ -206,6 +207,11 @@ const ENTITY_CONFIG = {
               },
             ]
           : undefined;
+      // Normalize line_id here too, as a backstop behind ProductsEditor and
+      // NewOrderDrawer - but only when a products array is actually part of
+      // this payload. undefined must stay undefined so an update that
+      // doesn't touch products never synthesizes or replaces the column.
+      const sanitizedProducts = rawProducts ? ensureOrderProductLineIds(rawProducts) : undefined;
 
       return compactObject({
         client_name: payload.client_name,

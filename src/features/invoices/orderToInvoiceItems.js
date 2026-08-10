@@ -8,6 +8,12 @@
 // `line_id`. A line with no `source_order_item_id` was added directly on the
 // invoice (e.g. a shipping/rush fee) and sync never touches it.
 
+// Relative import (not the "@/" alias) so this module stays directly
+// executable under plain `node --test`, same as every other pure module in
+// this file's test suite (tests/order-invoice-sync.test.mjs imports and
+// runs this file's exports directly, no bundler available).
+import { createOrderProductLineId } from "../../lib/orderProductIdentity.js";
+
 function numberOrZero(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -194,10 +200,7 @@ export function backfillOrderProductLineIds(products = []) {
   const next = list.map((product) => {
     if (product && typeof product === "object" && !product.line_id) {
       changed = true;
-      const id = typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `line-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-      return { ...product, line_id: id };
+      return { ...product, line_id: createOrderProductLineId() };
     }
     return product;
   });

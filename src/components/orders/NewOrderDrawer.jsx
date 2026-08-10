@@ -9,6 +9,7 @@ import { dataClient } from "@/api/dataClient";
 import { getInternalClientFileLibrary } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
 import { isPrivateFileReference } from "@/lib/privateFiles";
+import { ensureOrderProductLineIds } from "@/lib/orderProductIdentity";
 import { toast } from "sonner";
 
 /**
@@ -378,7 +379,12 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         client_id: clientId || undefined,
         total_amount: total,
         source: 'opps',
-        products: form.products.filter(p => p.name.trim()),
+        // Every new order product must enter persistence with identity
+        // already present. Repeat-order copies intentionally carry over
+        // only the product details (normalizeRepeatProduct never copies
+        // line_id), so this always assigns fresh line_ids for this order,
+        // never reusing a previous order's line_id.
+        products: ensureOrderProductLineIds(form.products.filter(p => p.name.trim())),
         file_urls: Array.isArray(form.file_urls) ? form.file_urls.filter(Boolean) : [],
         portal_visible_file_urls: Array.isArray(form.portal_visible_file_urls) ? form.portal_visible_file_urls.filter(Boolean) : [],
       };
