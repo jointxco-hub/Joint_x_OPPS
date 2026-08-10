@@ -207,7 +207,14 @@ export function isEditableKeyboardTarget(target) {
 // equivalents. Only a truly internal/unowned asset — client_id AND
 // order_id both null/empty — may still be copied/linked into another
 // folder via File Manager's existing Copy action.
+//
+// Fails CLOSED for missing/malformed input: a null/undefined/non-object
+// `file` returns false, not true. The defensive guard at FileManager's
+// copy mutation boundary relies on this — if a missing file were treated
+// as "eligible", the guard would pass through and the mutation would go
+// on to crash reading file.title/file_url anyway. Refusing up front is
+// the safe failure mode.
 export function canCopyFileRecord(file) {
-  if (!file) return true;
+  if (!file || typeof file !== "object") return false;
   return !file.client_id && !file.order_id;
 }

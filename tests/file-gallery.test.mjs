@@ -112,7 +112,6 @@ test("canCopyFileRecord refuses a client-owned asset", () => {
 test("canCopyFileRecord allows an internal (client_id null) asset", () => {
   assert.equal(canCopyFileRecord({ client_id: null, file_url: "a.jpg" }), true);
   assert.equal(canCopyFileRecord({ file_url: "a.jpg" }), true);
-  assert.equal(canCopyFileRecord(null), true);
 });
 
 // 12: collection ordering is deterministic — same input, same output, every
@@ -265,9 +264,20 @@ test("empty-string identities are handled safely (treated as not-set)", () => {
   assert.equal(canCopyFileRecord({ client_id: "", order_id: "order-1", file_url: "a.jpg" }), false);
 });
 
-test("null/undefined file is handled safely (no crash)", () => {
-  assert.equal(canCopyFileRecord(null), true);
-  assert.equal(canCopyFileRecord(undefined), true);
+// Fails CLOSED: a missing file must never be treated as "eligible" — that
+// would let the defensive mutation-boundary guard pass a null/undefined
+// file straight through to code that reads file.title/file_url and crashes.
+test("null file is not copy-eligible (fails closed)", () => {
+  assert.equal(canCopyFileRecord(null), false);
+});
+
+test("undefined file is not copy-eligible (fails closed)", () => {
+  assert.equal(canCopyFileRecord(undefined), false);
+});
+
+test("non-object file input is not copy-eligible (fails closed)", () => {
+  assert.equal(canCopyFileRecord("not-an-object"), false);
+  assert.equal(canCopyFileRecord(0), false);
 });
 
 // Production read-only verification cited in the correction (26 active
@@ -591,9 +601,17 @@ test("FileManager: copy mutation has a defensive guard at the write boundary, no
   const source = await readSource("src/pages/FileManager.jsx");
   const mutationStart = source.indexOf("const copyFile = useMutation");
   assert.ok(mutationStart > -1);
-  const mutationBody = source.slice(mutationStart, mutationStart + 600);
+  const mutationBody = source.slice(mutationStart, mutationStart + 900);
   assert.match(mutationBody, /if \(!canCopyFileRecord\(file\)\)/);
   assert.match(mutationBody, /Promise\.reject/);
+
+  // The guard must run BEFORE any file.title/file_url property access —
+  // canCopyFileRecord() now fails closed for a null/undefined file
+  // specifically so this ordering can never crash instead of rejecting.
+  const guardIndex = mutationBody.indexOf("if (!canCopyFileRecord(file))");
+  const firstPropertyAccessIndex = mutationBody.indexOf("file.title");
+  assert.ok(guardIndex > -1 && firstPropertyAccessIndex > -1);
+  assert.ok(guardIndex < firstPropertyAccessIndex, "canCopyFileRecord guard must run before file.title/file_url access");
 });
 
 test("OrderFilesTab: gallery preview helpers strip UI-only identity before building lightbox items", async () => {
