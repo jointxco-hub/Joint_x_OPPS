@@ -95,13 +95,39 @@ test("OrderQuickPrintSheet: fetches canonical primary-image context via the batc
   assert.match(quickPrintSource, /dataClient\.files\.getOrderPrimaryImageContext\(\[order\.id\]\)/);
 });
 
-// Context must be required for ANY client-linked order, not only when an
-// explicit pin exists - an unpinned order can still have a canonical
-// Mockups asset the resolver can't know about until context loads.
-test("OrderQuickPrintSheet: canonical context is required for any client-linked order, not only a pinned one", () => {
-  assert.match(quickPrintSource, /const contextRequired = Boolean\(order\.client_id\);/);
+// Context must be required for ANY client-linked SUMMARY/MOCKUPS order,
+// not only when an explicit pin exists - an unpinned order can still have
+// a canonical Mockups asset the resolver can't know about until context
+// loads. But an invoice-only printout (showMockups false) never renders
+// the Mockups / Production Images section at all, so primary-image
+// context is irrelevant there and must never gate invoice printing.
+test("OrderQuickPrintSheet: canonical context is required for client-linked summary/mockups orders, never for invoice-only printing", () => {
+  assert.match(quickPrintSource, /const showMockups = type !== "invoices";/);
+  assert.match(quickPrintSource, /const contextRequired = showMockups && Boolean\(order\.client_id\);/);
   assert.match(quickPrintSource, /enabled: Boolean\(order\.id\) && contextRequired,/);
+  assert.doesNotMatch(quickPrintSource, /const contextRequired = Boolean\(order\.client_id\);/);
   assert.doesNotMatch(quickPrintSource, /enabled: Boolean\(order\.id\) && Boolean\(order\.client_id\)/);
+});
+
+test("OrderQuickPrintSheet: an invoice-only printout cannot be gated by primary-image resolution even if the order has a pin", () => {
+  const unresolvedMatch = quickPrintSource.match(/const explicitPrimaryUnresolved = contextRequired[\s\S]*?;\n/);
+  assert.ok(unresolvedMatch, "explicitPrimaryUnresolved not found");
+  assert.match(unresolvedMatch[0], /^const explicitPrimaryUnresolved = contextRequired\n/);
+});
+
+test("OrderQuickPrintSheet: productionImageRefs stays empty for invoice-only printing (showMockups false)", () => {
+  assert.match(
+    quickPrintSource,
+    /const productionImageRefs = showMockups \? buildOrderPrimaryImageGallery\(order, primaryImageContext\) : \[\];/
+  );
+});
+
+test("OrderQuickPrintSheet: primary-image warnings/retry UI are scoped inside the showMockups-only section, never shown for invoices", () => {
+  const mockupsSection = quickPrintSource.match(/\{showMockups && \(\s*<OrderPrintSection title="Mockups \/ Production Images">[\s\S]*?\n {10}\)\}/);
+  assert.ok(mockupsSection, "Mockups / Production Images section not found");
+  assert.match(mockupsSection[0], /Preparing primary image context/);
+  assert.match(mockupsSection[0], /Primary image context could not be loaded/);
+  assert.match(mockupsSection[0], /could not be verified/);
 });
 
 // Print must not falsely enable while context is loading OR failed to
@@ -115,7 +141,7 @@ test("OrderQuickPrintSheet: print readiness accounts for context loading, contex
   );
   assert.match(
     quickPrintSource,
-    /const explicitPrimaryUnresolved = Boolean\(order\.primary_image_asset_id\)\s*\n\s*&& contextLoaded\s*\n\s*&& primaryResolution\.source !== "explicit";/
+    /const explicitPrimaryUnresolved = contextRequired\s*\n\s*&& Boolean\(order\.primary_image_asset_id\)\s*\n\s*&& contextLoaded\s*\n\s*&& primaryResolution\.source !== "explicit";/
   );
   assert.match(quickPrintSource, /const printReady = imageResolutionReady && contextLoaded && !explicitPrimaryUnresolved;/);
   assert.match(quickPrintSource, /Primary image context could not be loaded\./);

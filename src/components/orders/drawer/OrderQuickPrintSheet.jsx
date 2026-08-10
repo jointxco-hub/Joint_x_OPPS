@@ -37,11 +37,15 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   // Canonical ClientAsset context behind this order's current files -
   // never client_assets.order_id. Same batched, read-only RPC Production
   // Summary and OrderFilesTab use, so all three surfaces resolve the same
-  // primary image the same way. Required whenever the order has a client
-  // (even with no explicit pin - an unpinned client-linked order may still
-  // have a canonical Mockups asset that outranks the product/order-file
+  // primary image the same way. Required whenever this printout actually
+  // shows production images AND the order has a client (even with no
+  // explicit pin - an unpinned client-linked order may still have a
+  // canonical Mockups asset that outranks the product/order-file
   // fallback, and until context arrives the resolver can't know that).
-  const contextRequired = Boolean(order.client_id);
+  // An invoice-only printout (showMockups false) never renders the
+  // Mockups / Production Images section at all, so this context is
+  // irrelevant there - it must not gate invoice printing.
+  const contextRequired = showMockups && Boolean(order.client_id);
   const {
     data: primaryImageContext = [],
     isLoading: primaryImageContextLoading,
@@ -60,8 +64,12 @@ export default function OrderQuickPrintSheet({ type, order, payments, totalPaid,
   // linked) once context has actually, successfully loaded - the resolver
   // already fell back safely, this just surfaces that to staff rather
   // than silently printing a different image than what they think is
-  // pinned, or treating the order as fully ready when it isn't.
-  const explicitPrimaryUnresolved = Boolean(order.primary_image_asset_id)
+  // pinned, or treating the order as fully ready when it isn't. Gated on
+  // contextRequired too - an invoice-only printout never fetches context
+  // (primaryImageContext is always []), so this must never evaluate for
+  // it even if the order happens to have a primary_image_asset_id set.
+  const explicitPrimaryUnresolved = contextRequired
+    && Boolean(order.primary_image_asset_id)
     && contextLoaded
     && primaryResolution.source !== "explicit";
 
