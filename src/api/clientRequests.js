@@ -193,6 +193,43 @@ export async function getInternalClientFileLibrary({ clientEmail, limit = 80 } =
   }
 }
 
+/**
+ * @param {{ requestId?: string }} [params]
+ */
+export async function getInternalClientRequestAssets({ requestId } = {}) {
+  if (!supabase) return { data: [], error: 'Supabase not configured' };
+  if (!requestId) return { data: [], error: null };
+  try {
+    const { data, error } = await supabase.rpc('get_internal_client_request_assets', { p_request_id: requestId });
+    if (error) {
+      if (friendlyMissingMessage(error.message)) return { data: [], error: null };
+      return { data: [], error: error.message };
+    }
+    return { data: data || [], error: null };
+  } catch {
+    return { data: [], error: 'Could not load request assets.' };
+  }
+}
+
+/**
+ * @param {{ requestId?: string, fileLinkId?: string, role?: string|null, setPrimary?: boolean, clearPrimary?: boolean }} [params]
+ */
+export async function updateInternalClientRequestAsset({ requestId, fileLinkId, role, setPrimary = false, clearPrimary = false } = {}) {
+  if (!supabase) return { data: null, error: 'Supabase not configured' };
+  try {
+    const { data, error } = await supabase.rpc('update_internal_client_request_asset', {
+      p_request_id: requestId,
+      p_file_link_id: fileLinkId,
+      p_role: role || null,
+      p_set_primary: Boolean(setPrimary),
+      p_clear_primary: Boolean(clearPrimary),
+    });
+    return { data, error: error?.message || null };
+  } catch {
+    return { data: null, error: 'Could not update request asset.' };
+  }
+}
+
 // Approves a quote/reorder request and activates it as a payable X LAB order
 // (public.xlab_orders, status 'pending_payment'). Backed by
 // approve_client_quote_request, which wraps the shared

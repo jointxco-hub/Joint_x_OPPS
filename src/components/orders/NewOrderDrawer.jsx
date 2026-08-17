@@ -10,6 +10,7 @@ import { getInternalClientFileLibrary } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
 import { isPrivateFileReference } from "@/lib/privateFiles";
 import { toast } from "sonner";
+import { buildClientDefaultsUpdate, hydrateOrderClientDefaults } from "@/features/orders/clientDefaults";
 
 /**
  * Fuzzy score between query and target string.
@@ -80,6 +81,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     saved_contact_name: '',
     pep_code: '',
     delivery_note: '',
+    courier: '',
+    display_name: '',
     order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
     status: 'confirmed',
     priority: 'normal',
@@ -96,6 +99,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   const [clientSearch, setClientSearch] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [updateClientDefaults, setUpdateClientDefaults] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const queryClient = useQueryClient();
 
@@ -200,16 +204,10 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   const selectClient = (client) => {
     setForm(f => ({
       ...f,
-      client_id: client.id,
-      client_name: client.name,
-      client_email: client.email || client.client_email || f.client_email,
-      client_phone: client.phone || client.client_phone || client.whatsapp || f.client_phone,
-      whatsapp_name: client.whatsapp_name || f.whatsapp_name,
-      saved_contact_name: client.saved_contact_name || f.saved_contact_name,
-      pep_code: client.pep_code || f.pep_code,
-      delivery_note: client.delivery_note || client.delivery_address || f.delivery_note,
+      ...hydrateOrderClientDefaults(client),
       total_amount: '',
     }));
+    setUpdateClientDefaults(false);
     setClientSearch(client.name);
     setShowClientDropdown(false);
   };
@@ -327,6 +325,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     try {
       const total = form.total_amount ? parseFloat(form.total_amount) : calcTotal();
       let clientId = form.client_id;
+      let clientUpdateError = null;
 
       if (!clientId) {
         const existing = clients.find(
@@ -344,6 +343,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             pep_code: form.pep_code || undefined,
             delivery_note: form.delivery_note || undefined,
             delivery_address: form.delivery_note || undefined,
+            preferred_courier: form.courier || undefined,
             status: 'active',
             total_orders: 0,
             total_revenue: 0,
@@ -357,19 +357,18 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       if (clientId) {
         try {
           const client = clients.find(c => c.id === clientId);
-          await dataClient.entities.Client.update(clientId, {
+          const clientUpdate = {
             total_orders: (client?.total_orders || 0) + 1,
             total_revenue: (client?.total_revenue || 0) + total,
             last_activity_date: new Date().toISOString().split('T')[0],
             status: 'active',
-            whatsapp_name: form.whatsapp_name || client?.whatsapp_name || undefined,
-            saved_contact_name: form.saved_contact_name || client?.saved_contact_name || undefined,
-            pep_code: form.pep_code || client?.pep_code || undefined,
-            delivery_note: form.delivery_note || client?.delivery_note || undefined,
-            delivery_address: form.delivery_note || client?.delivery_address || undefined,
-          });
-        } catch {
-          // stats update is non-critical — order creation continues
+          };
+          if (updateClientDefaults) {
+            Object.assign(clientUpdate, buildClientDefaultsUpdate(form));
+          }
+          await dataClient.entities.Client.update(clientId, clientUpdate);
+        } catch (error) {
+          clientUpdateError = error;
         }
       }
 
@@ -389,6 +388,11 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       if (!orderData.portal_visible_file_urls.length) delete orderData.portal_visible_file_urls;
 
       await onCreate(orderData);
+      if (clientUpdateError) {
+        toast.warning(updateClientDefaults
+          ? 'Order created, but client defaults could not be updated. Re-open the client and retry the profile changes.'
+          : 'Order created, but client activity totals could not be updated.');
+      }
 
     } catch (err) {
       console.error('Order create error:', err);
@@ -524,6 +528,23 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
           </div>
 
+          <div className={'grid gap-3 sm:grid-cols-2'}>
+            <div>
+              <label className={'mb-1.5 block text-xs font-medium text-muted-foreground'}>Order Courier</label>
+              <Input value={form.courier} onChange={(event) => setForm({ ...form, courier: event.target.value })} placeholder={'Courier for this order'} className={'h-9 rounded-xl text-sm'} />
+              <p className={'mt-1 text-[11px] text-muted-foreground'}>Defaults from the client profile; this order can use a different courier.</p>
+            </div>
+            {form.client_id ? (
+              <label className={'flex items-start gap-2 rounded-xl border border-border bg-secondary/25 p-3 text-sm'}>
+                <input type={'checkbox'} checked={updateClientDefaults} onChange={(event) => setUpdateClientDefaults(event.target.checked)} className={'mt-0.5'} />
+                <span>
+                  <span className={'block font-semibold'}>Update client defaults</span>
+                  <span className={'block text-xs text-muted-foreground'}>Save the contact, delivery and courier values above for the next order. Blank fields will be cleared.</span>
+                </span>
+              </label>
+            ) : null}
+          </div>
+
           {(form.client_id || clientContextEmail) && (
             <div className="rounded-2xl border border-border bg-secondary/25 p-3">
               <div className="flex items-start justify-between gap-3">
@@ -657,6 +678,12 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
               </div>
             </div>
           )}
+
+          <div>
+            <label className={'mb-1.5 block text-xs font-medium text-muted-foreground'}>Order Display Name</label>
+            <Input value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} placeholder={'Mike - Black Staff Tees'} className={'h-9 rounded-xl text-sm'} />
+            <p className={'mt-1 text-[11px] text-muted-foreground'}>Optional staff-facing identity. The order number remains unchanged.</p>
+          </div>
 
           {/* Order number + due date */}
           <div className="grid grid-cols-2 gap-3">
