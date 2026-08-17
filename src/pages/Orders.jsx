@@ -544,7 +544,7 @@ export default function Orders() {
                         <SourceBadge source={order.source} />
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{sc.label}</span>
                       </div>
-                      <p className="truncate text-base font-semibold text-foreground">{order.client_name || "Customer"}</p>
+                      <p className="truncate text-base font-semibold text-foreground">{order.display_name || order.client_name || "Customer"}</p>
                       {aliasText && (
                         <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
                       )}
@@ -570,7 +570,7 @@ export default function Orders() {
                       <div className="col-span-4 flex items-start gap-3">
                         <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${priorityDot[order.priority] || priorityDot.normal}`} />
                         <div>
-                          <p className="font-medium text-foreground text-sm">{order.client_name}</p>
+                          <p className="font-medium text-foreground text-sm">{order.display_name || order.client_name}</p>
                           {aliasText && (
                             <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
                           )}
@@ -1030,7 +1030,7 @@ function ProductionSummaryOrderCard({ order, stageLabel, onThumbnailStatusChange
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
             <div>
-              <h3 className="truncate text-sm font-bold text-zinc-950">{order.client_name || "Client"}</h3>
+              <h3 className="truncate text-sm font-bold text-zinc-950">{order.display_name || order.client_name || "Client"}</h3>
               <p className="font-mono text-xs text-zinc-500">{order.order_number || order.id}</p>
             </div>
             <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700">{statusLabel}</span>
@@ -1235,7 +1235,7 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
       <div className="mb-1">
         <SourceBadge source={order.source} />
       </div>
-      <p className="text-xs font-semibold text-foreground truncate mb-0.5">{order.client_name}</p>
+      <p className="text-xs font-semibold text-foreground truncate mb-0.5">{order.display_name || order.client_name}</p>
       {aliasText && (
         <p className="mb-0.5 truncate text-[10px] font-medium text-primary">{aliasText}</p>
       )}

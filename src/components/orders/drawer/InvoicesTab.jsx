@@ -11,12 +11,14 @@ import CreateInvoiceFromOrderButton from "@/features/invoices/CreateInvoiceFromO
 import {
   createInvoiceExportRecord,
   getInvoice,
+  linkInvoiceToOrder,
   listInvoices,
   markInvoiceExported,
   markInvoiceImportedToZoho,
 } from "@/api/invoices";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "@/features/invoices/zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "@/features/invoices/invoiceDisplayStatus";
+import { getLinkableInvoiceCandidates } from "@/features/invoices/orderInvoiceCandidates";
 
 // Extract an invoice/reference number from a filename.
 // Matches patterns like INV-1234, ZB-5678, INV_001, ZB001, 2024-INV-99, etc.
@@ -77,6 +79,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
   const [invoiceTotal, setInvoiceTotal] = useState("");
   const [amountIdx, setAmountIdx] = useState(/** @type {number|null} */ (null));
   const [amountInput, setAmountInput] = useState("");
+  const [showExistingInvoices, setShowExistingInvoices] = useState(false);
   const orderId = order?.id;
   const orderTotal = Number(order?.total_amount || 0);
   const typedInvoiceTotal = parseMoneyInput(invoiceTotal);
@@ -93,6 +96,26 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
 
   const linkedOppsInvoices = linkedInvoicesQuery.data || [];
   const firstOppsInvoice = linkedOppsInvoices[0];
+  const candidateInvoicesQuery = useQuery({
+    queryKey: ['orderInvoiceCandidates', orderId, order?.client_id],
+    queryFn: () => listInvoices({ customerId: order?.client_id, status: 'draft', pageSize: 50 }),
+    enabled: Boolean(showExistingInvoices && orderId && order?.client_id),
+    select: (result) => getLinkableInvoiceCandidates(result.data || [], order),
+  });
+  const linkExistingInvoiceMutation = useMutation({
+    mutationFn: async (invoice) => {
+      const fullInvoice = await getInvoice(invoice.id, { includeItems: true });
+      return linkInvoiceToOrder(fullInvoice, order);
+    },
+    onSuccess: () => {
+      toast.success('Existing invoice linked to this order');
+      setShowExistingInvoices(false);
+      queryClient.invalidateQueries({ queryKey: ['orderOppsInvoices', orderId] });
+      queryClient.invalidateQueries({ queryKey: ['orderInvoiceCandidates', orderId, order?.client_id] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+    },
+    onError: (error) => toast.error(error?.message || 'Could not link invoice'),
+  });
 
   const exportOppsInvoiceMutation = useMutation({
     mutationFn: async (invoice) => {
@@ -235,7 +258,42 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
             linkedInvoicesQuery.refetch();
           }}
         />
+        <Button type={'button'} variant={'outline'} size={'sm'} disabled={!order?.client_id} onClick={() => setShowExistingInvoices((value) => !value)}>
+          Link existing invoice
+        </Button>
       </div>
+
+      {showExistingInvoices ? (
+        <div className={'rounded-2xl border border-primary/20 bg-primary/5 p-3'}>
+          <div className={'mb-3 flex items-center justify-between gap-2'}>
+            <div>
+              <p className={'text-sm font-semibold'}>Link an existing draft invoice</p>
+              <p className={'text-xs text-muted-foreground'}>Same-client drafts only. Linking uses the established order item synchronization rules.</p>
+            </div>
+            <Button type={'button'} variant={'ghost'} size={'sm'} onClick={() => setShowExistingInvoices(false)}>Close</Button>
+          </div>
+          {candidateInvoicesQuery.isLoading ? <p className={'text-sm text-muted-foreground'}>Loading invoices...</p> : null}
+          {!candidateInvoicesQuery.isLoading && !(candidateInvoicesQuery.data || []).length ? (
+            <p className={'rounded-xl bg-background p-3 text-sm text-muted-foreground'}>No unlinked draft invoices were found for this client.</p>
+          ) : null}
+          <div className={'space-y-2'}>
+            {(candidateInvoicesQuery.data || []).map((invoice) => (
+              <div key={invoice.id} className={'flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-background p-3'}>
+                <div>
+                  <p className={'text-sm font-semibold'}>{invoice.invoice_number}</p>
+                  <p className={'text-xs text-muted-foreground'}>
+                    {invoice.customer_name} - {invoice.invoice_date ? format(new Date(invoice.invoice_date), 'd MMM yyyy') : 'No date'} - {formatCurrency(invoice.total)}
+                  </p>
+                  <p className={'text-xs text-muted-foreground'}>{invoice.status} - Paid {formatCurrency(invoice.amount_paid)} - Balance {formatCurrency(invoice.balance_due)}</p>
+                </div>
+                <Button type={'button'} size={'sm'} disabled={linkExistingInvoiceMutation.isPending} onClick={() => linkExistingInvoiceMutation.mutate(invoice)}>
+                  Link invoice
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-border bg-card p-3 space-y-3">
         <div className="flex items-center justify-between gap-2">

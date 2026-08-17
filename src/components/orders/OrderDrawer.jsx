@@ -542,7 +542,7 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
         <div className="flex items-center justify-between p-5 border-b border-border">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5">
-              <h2 className="font-bold text-foreground">{clientDisplay.name}</h2>
+              <h2 className="font-bold text-foreground">{order.display_name || clientDisplay.name}</h2>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusConfig[order.status]?.color || 'bg-secondary'}`}>
                 {statusConfig[order.status]?.label || order.status}
               </span>
@@ -770,6 +770,10 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                 <EditField label="Order Number" field="order_number" value={order.order_number}
                   editing={editingField === 'order_number'} editValue={fieldValue}
                   onEdit={() => startEdit('order_number', order.order_number)}
+                  onChange={setFieldValue} onSave={saveEdit} />
+                <EditField label={'Display Name'} field={'display_name'} value={order.display_name}
+                  editing={editingField === 'display_name'} editValue={fieldValue}
+                  onEdit={() => startEdit('display_name', order.display_name || '')}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Total Amount" field="total_amount" value={order.total_amount ? `R${order.total_amount.toLocaleString()}` : '-'}
                   editing={editingField === 'total_amount'} editValue={fieldValue}

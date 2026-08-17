@@ -27,8 +27,10 @@ import {
   approveClientQuoteRequest,
   getClientQuoteRequestOrder,
   getInternalClientFileLibrary,
+  getInternalClientRequestAssets,
   listClientOrdersAwaitingPayment,
   listClientRequests,
+  updateInternalClientRequestAsset,
   updateClientRequestStatus,
 } from "@/api/clientRequests";
 import {
@@ -640,6 +642,16 @@ function QuoteApprovalSection({ request, onApproved }) {
   const [items, setItems] = useState([defaultItem()]);
   const [note, setNote] = useState("");
   const [touched, setTouched] = useState(false);
+  const { data: requestAssets = [] } = useQuery({
+    queryKey: ['clientRequestAssets', request.id],
+    queryFn: async () => {
+      const result = await getInternalClientRequestAssets({ requestId: request.id });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    staleTime: 15_000,
+  });
+  const requestCover = requestAssets.find((asset) => asset.is_request_primary);
 
   React.useEffect(() => {
     setItems([defaultItem()]);
@@ -739,6 +751,15 @@ function QuoteApprovalSection({ request, onApproved }) {
         Review and price the line items, then approve. This creates an X LAB order in pending_payment and messages
         the client a payment link - it does not touch PayFast or OPPS directly.
       </p>
+      {requestAssets.length > 0 ? (
+        <div className={'mb-3 flex items-center gap-3 rounded-xl border border-primary/20 bg-background p-3'}>
+          {requestCover ? <SecureFileThumb url={requestCover.file_url} type={requestCover.file_type} name={requestCover.file_name} /> : null}
+          <div>
+            <p className={'text-sm font-semibold'}>{requestAssets.length} file{requestAssets.length === 1 ? '' : 's'} will be linked to this order</p>
+            <p className={'text-xs text-muted-foreground'}>{requestCover ? `Cover: ${requestCover.file_name}` : 'No image cover selected'}</p>
+          </div>
+        </div>
+      ) : null}
 
       <div className="space-y-2">
         {items.map((item, index) => {
@@ -895,6 +916,25 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onRe
     enabled: Boolean(open && request?.client_email),
     staleTime: 30_000,
   });
+  const { data: requestAssets = [], isLoading: requestAssetsLoading } = useQuery({
+    queryKey: ['clientRequestAssets', request?.id],
+    queryFn: async () => {
+      const result = await getInternalClientRequestAssets({ requestId: request?.id });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: Boolean(open && request?.id && ['quote_request', 'reorder_request'].includes(request?.request_type)),
+    staleTime: 15_000,
+  });
+  const requestAssetMutation = useMutation({
+    mutationFn: async (input) => {
+      const result = await updateInternalClientRequestAsset({ requestId: request.id, ...input });
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['clientRequestAssets', request?.id] }),
+    onError: (error) => toast.error(error?.message || 'Could not update request asset'),
+  });
 
   React.useEffect(() => {
     if (open) setNote("");
@@ -940,6 +980,16 @@ function RequestDetailDialog({ request, open, onOpenChange, onStatusChange, onRe
         </section>
 
         <PayloadView request={request} onPreview={setPreviewFile} />
+
+        {['quote_request', 'reorder_request'].includes(request.request_type) && (
+          <RequestAssetsSection
+            assets={requestAssets}
+            loading={requestAssetsLoading}
+            pending={requestAssetMutation.isPending}
+            onPreview={setPreviewFile}
+            onUpdate={(input) => requestAssetMutation.mutate(input)}
+          />
+        )}
 
         {["quote_request", "reorder_request"].includes(request.request_type) && (
           <QuoteApprovalSection request={request} onApproved={onApproved} />
@@ -1157,6 +1207,62 @@ function PayloadReferencesSection({ references, onPreview }) {
             <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
           </button>
         ))}
+      </div>
+    </section>
+  );
+}
+
+const REQUEST_ASSET_ROLES = ['mockup', 'artwork', 'print_file', 'reference', 'proof', 'production_photo', 'other'];
+
+function RequestAssetsSection({ assets, loading, pending, onPreview, onUpdate }) {
+  if (loading) return <section className={'rounded-xl border border-border p-4 text-sm text-muted-foreground'}>Loading request assets...</section>;
+  if (!assets.length) return null;
+  return (
+    <section className={'rounded-xl border border-primary/20 bg-primary/5 p-4'}>
+      <div className={'mb-3 flex items-center justify-between gap-3'}>
+        <div className={'flex items-center gap-2'}>
+          <Paperclip className={'h-4 w-4 text-primary'} />
+          <p className={'text-xs font-semibold uppercase tracking-widest text-primary'}>Assets / Files</p>
+        </div>
+        <Badge variant={'outline'} className={'rounded-full'}>{assets.length} linked</Badge>
+      </div>
+      <div className={'grid gap-3 sm:grid-cols-2'}>
+        {assets.map((asset) => {
+          const visual = canShowImageFile(asset.file_url, asset.file_type);
+          return (
+            <article key={asset.id} className={'rounded-xl border border-border bg-background p-3'}>
+              <button type={'button'} onClick={() => onPreview?.(asset)} className={'flex w-full items-center gap-3 text-left'}>
+                <SecureFileThumb url={asset.file_url} type={asset.file_type} name={asset.file_name} />
+                <span className={'min-w-0 flex-1'}>
+                  <span className={'block truncate text-sm font-semibold'}>{asset.file_name || 'File'}</span>
+                  <span className={'block truncate text-xs text-muted-foreground'}>{asset.file_type || 'file'}</span>
+                </span>
+                {asset.is_request_primary && <BadgeCheck className={'h-4 w-4 text-primary'} />}
+              </button>
+              <div className={'mt-3 flex items-center gap-2'}>
+                <select
+                  value={asset.request_role || 'reference'}
+                  disabled={pending}
+                  onChange={(event) => onUpdate?.({ fileLinkId: asset.id, role: event.target.value })}
+                  className={'h-8 min-w-0 flex-1 rounded-lg border border-border bg-background px-2 text-xs'}
+                >
+                  {REQUEST_ASSET_ROLES.map((role) => <option key={role} value={role}>{readable(role)}</option>)}
+                </select>
+                {visual && !asset.is_request_primary && (
+                  <Button type={'button'} variant={'outline'} size={'sm'} disabled={pending} onClick={() => onUpdate?.({ fileLinkId: asset.id, setPrimary: true })}>
+                    Set as cover
+                  </Button>
+                )}
+                {asset.is_request_primary && (
+                  <Button type={'button'} variant={'outline'} size={'sm'} disabled={pending} onClick={() => onUpdate?.({ fileLinkId: asset.id, clearPrimary: true })}>
+                    Clear cover
+                  </Button>
+                )}
+              </div>
+              {asset.is_request_primary && <p className={'mt-2 text-xs font-semibold text-primary'}>Request cover</p>}
+            </article>
+          );
+        })}
       </div>
     </section>
   );
