@@ -8,6 +8,7 @@ import NavigationTracker from '@/lib/NavigationTracker'
 import PWAInstallPrompt from '@/components/common/PWAInstallPrompt'
 import AppLoader from '@/components/common/AppLoader'
 import GlobalRefreshControl from '@/components/common/GlobalRefreshControl'
+import RouteErrorBoundary from '@/components/common/RouteErrorBoundary'
 import { pagesConfig } from './pages.config'
 import { Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
@@ -76,7 +77,9 @@ const AuthenticatedApp = () => {
       <Routes>
         <Route path="/" element={
           <LayoutWrapper currentPageName={mainPageKey}>
-            <MainPage />
+            <RouteErrorBoundary pageName={mainPageKey} resetKey={location.pathname}>
+              <MainPage />
+            </RouteErrorBoundary>
           </LayoutWrapper>
         } />
         {Object.entries(Pages).map(([path, Page]) => (
@@ -85,7 +88,9 @@ const AuthenticatedApp = () => {
             path={`/${path}`}
             element={
               <LayoutWrapper currentPageName={path}>
-                <Page />
+                <RouteErrorBoundary pageName={path} resetKey={location.pathname}>
+                  <Page />
+                </RouteErrorBoundary>
               </LayoutWrapper>
             }
           />

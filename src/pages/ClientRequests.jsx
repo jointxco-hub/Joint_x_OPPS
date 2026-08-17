@@ -100,6 +100,22 @@ function readable(value = "") {
   return String(value || "").replace(/_/g, " ");
 }
 
+// Used by collectPayloadReferences() when a scanned URL has no accompanying
+// name/file_name/title metadata (e.g. a bare URL parsed out of a free-text
+// "details" line). Was missing entirely, which threw a ReferenceError on
+// first render for any request with that shape — with no error boundary
+// wrapping the route, that unmounted the whole page, which is what showed
+// up as a blank screen. Mirrors the existing helper in Orders.jsx /
+// NewOrderDrawer.jsx for consistency.
+function fileNameFromUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    return decodeURIComponent(pathname.split("/").filter(Boolean).pop() || url);
+  } catch {
+    return decodeURIComponent(String(url).split("/").filter(Boolean).pop() || String(url));
+  }
+}
+
 function titleCase(value = "") {
   return readable(value)
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
@@ -1061,7 +1077,11 @@ function collectPayloadReferences(request) {
   const urlRegex = /https?:\/\/[^\s,]+/gi;
 
   const addRef = (url, meta = {}) => {
-    const cleanUrl = String(url || "").trim();
+    // Regex-extracted URLs (see urlRegex below) grab trailing punctuation
+    // from surrounding prose, e.g. the closing ")" in "(https://...jpg)" -
+    // trim it so the link actually resolves instead of 404ing on a
+    // mangled object key.
+    const cleanUrl = String(url || "").trim().replace(/[)\].,;]+$/, "");
     if (!cleanUrl || seen.has(cleanUrl)) return;
     seen.add(cleanUrl);
     refs.push({
