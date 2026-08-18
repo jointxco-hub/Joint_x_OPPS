@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format, isToday, isPast, startOfWeek, endOfWeek } from "date-fns";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
+import DiagnosticsPanel from "@/components/common/DiagnosticsPanel";
 
 const greetings = ["Good morning", "Good afternoon", "Good evening"];
 const getGreeting = () => {
@@ -155,6 +156,7 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      <DiagnosticsPanel />
     </div>
   );
 }

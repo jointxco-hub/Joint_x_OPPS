@@ -356,6 +356,8 @@ export default function Invoices() {
               page={page}
               pageSize={pageSize}
               isLoading={invoicesQuery.isLoading}
+              isError={invoicesQuery.isError}
+              error={invoicesQuery.error}
               filters={filters}
               onFiltersChange={(next) => { setFilters(next); setPage(1); }}
               onPageChange={setPage}

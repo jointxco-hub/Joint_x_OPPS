@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import {
   FolderPlus, FileText, File, Trash2, Pencil, Archive,
   Search, FolderOpen, ChevronRight, Download, FileSpreadsheet,
-  Upload, MoreVertical, Copy, MoveRight, Images, Files as FilesIcon, LayoutGrid,
+  Upload, MoreVertical, Copy, MoveRight, Images, Files as FilesIcon, LayoutGrid, ImageOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import FileLightbox from "@/components/files/FileLightbox";
@@ -73,7 +73,12 @@ function FileDownloadLink({ file }) {
 
 function FilePill({ file }) {
   const [imgError, setImgError] = useState(false);
-  const { url: signedUrl, loading: signingUrl } = useSignedFileUrl(file.file_url);
+  // error was previously discarded here, so a genuine signing failure
+  // (expired session, denied access) fell through to the same generic
+  // type-icon block as "this just isn't an image" - indistinguishable to
+  // the user and impossible to retry. Mirrors SecureImage.jsx's established
+  // loading/error/ready split for the same useSignedFileUrl hook.
+  const { url: signedUrl, error: signingError } = useSignedFileUrl(file.file_url);
   const ext = getFileExt(file.file_url, file.file_type);
   // Image detection always goes through the centralized classifier
   // (filePresentation.js -> imageReference.js) rather than a third local
@@ -85,17 +90,30 @@ function FilePill({ file }) {
   const isDoc = ext && ["doc", "docx"].includes(ext);
   const isSheet = ext && ["xls", "xlsx", "csv"].includes(ext);
 
-  if (isImage && !imgError && !signingUrl && signedUrl) {
-    return (
-      <div className="w-full h-28 overflow-hidden bg-secondary">
-        <img
-          src={signedUrl}
-          alt={file.title}
-          className="w-full h-full object-cover"
-          onError={() => setImgError(true)}
-        />
-      </div>
-    );
+  if (isImage) {
+    if (signedUrl && !imgError) {
+      return (
+        <div className="w-full h-28 overflow-hidden bg-secondary">
+          <img
+            src={signedUrl}
+            alt={file.title}
+            className="w-full h-full object-cover"
+            onError={() => setImgError(true)}
+          />
+        </div>
+      );
+    }
+    if (signingError || imgError) {
+      return (
+        <div className="w-full h-28 flex flex-col items-center justify-center gap-1.5 bg-secondary/30 text-muted-foreground" title="Image unavailable">
+          <ImageOff className="w-8 h-8 opacity-60" aria-hidden="true" />
+          <span className="text-xs font-semibold tracking-wide">UNAVAILABLE</span>
+        </div>
+      );
+    }
+    // Signing still in flight (no url, no error yet) - genuine loading
+    // skeleton rather than a premature "unavailable"/generic icon.
+    return <div className="w-full h-28 animate-pulse bg-secondary/40" aria-hidden="true" />;
   }
   const colorClass = isPdf
     ? "bg-red-50 text-red-500"
