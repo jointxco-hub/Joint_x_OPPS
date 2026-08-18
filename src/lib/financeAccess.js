@@ -107,3 +107,13 @@ export const canManageBuyingItems = (u) => isAdmin(u);
 
 /** Approve buying items — admin / owner only */
 export const canApproveBuyingItems = (u) => isAdmin(u);
+
+/**
+ * Reopen an approved/exported/partially-paid invoice for correction —
+ * deliberately stricter than canAccessInvoices (level 1 or 2): this
+ * schema has no finer-grained "senior finance" role than level 1
+ * (admin/owner), so level 1 alone is the strictest gate available,
+ * matching reopen_invoice()'s server-side check exactly (see
+ * supabase/migrations/202608180003_invoice_relational_link_and_reopen.sql).
+ */
+export const canReopenInvoices = (u) => getFinanceLevel(u) === 1;

@@ -626,6 +626,72 @@ export async function unlinkInvoiceFromOrder(invoice) {
   return saved;
 }
 
+const RELATIONAL_LINK_ERROR_MESSAGES = {
+  FINANCE_PERMISSION_REQUIRED: "You do not have permission to link invoices.",
+  INVOICE_NOT_FOUND: "This invoice could not be found.",
+  ORDER_NOT_FOUND: "This order could not be found.",
+  TENANT_ACCESS_DENIED: "This invoice or order is not available in the active tenant.",
+  TENANT_MISMATCH: "This invoice and order belong to different tenants.",
+  CLIENT_MISMATCH: "This invoice belongs to a different client than the order.",
+  INVOICE_VOID: "A void invoice cannot be linked to an order.",
+  INVOICE_ALREADY_LINKED: "This invoice is already linked to a different order.",
+};
+
+const REOPEN_INVOICE_ERROR_MESSAGES = {
+  FINANCE_ADMIN_REQUIRED: "Reopening an invoice requires finance admin permission.",
+  REASON_REQUIRED: "A reason is required to reopen this invoice.",
+  INVOICE_NOT_FOUND: "This invoice could not be found.",
+  TENANT_ACCESS_DENIED: "This invoice is not available in the active tenant.",
+  INVOICE_ALREADY_DRAFT: "This invoice is already a draft.",
+  PAID_INVOICE_REOPEN_BLOCKED: "A paid invoice cannot be reopened. OPPS has no credit-note/adjustment workflow yet - void and recreate if the financials must change.",
+  VOID_INVOICE_REOPEN_BLOCKED: "A void invoice cannot be reopened.",
+};
+
+function rpcSafetyError(error, messageMap, fallback) {
+  const rawMessage = String(error?.message || "");
+  const code = Object.keys(messageMap).find((candidate) => rawMessage.includes(candidate));
+  return Object.assign(new Error(code ? messageMap[code] : rawMessage || fallback), {
+    code: code || error?.code || "UNKNOWN_ERROR",
+    cause: error,
+  });
+}
+
+// Relationship-only linking for a same-client, same-tenant invoice at ANY
+// non-void status - writes source_order_id ONLY (see the RPC), never
+// items/totals/customer snapshot/payment fields. This is deliberately a
+// SEPARATE path from linkInvoiceToOrder() above, which stays exactly as
+// it was for the existing draft-resync workflow. Same-client/tenant
+// safety is enforced inside the RPC itself, not just here.
+export async function linkInvoiceToOrderRelational(invoiceId, order) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("link_invoice_to_order_relational", {
+    p_invoice_id: invoiceId,
+    p_order_id: order.id,
+  });
+  if (error) {
+    throw rpcSafetyError(error, RELATIONAL_LINK_ERROR_MESSAGES, "Could not link this invoice to the order.");
+  }
+  return data;
+}
+
+// Moves an approved/exported/imported_to_zoho/overdue/partially_paid
+// invoice back to draft so its line items/totals can be corrected,
+// without erasing its approval history - the RPC records from_status/
+// to_status/reason on the existing opps_invoice_activity table. Paid and
+// void invoices are refused by the RPC itself; there is no client-side
+// override for that.
+export async function reopenInvoice(invoiceId, reason) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("reopen_invoice", {
+    p_invoice_id: invoiceId,
+    p_reason: reason,
+  });
+  if (error) {
+    throw rpcSafetyError(error, REOPEN_INVOICE_ERROR_MESSAGES, "Could not reopen this invoice.");
+  }
+  return data;
+}
+
 // Re-pulls an already-linked invoice's order-sourced lines from the order's
 // current products. Same matching/preservation rules as linkInvoiceToOrder.
 export async function syncInvoiceItemsFromOrder(invoice, order) {

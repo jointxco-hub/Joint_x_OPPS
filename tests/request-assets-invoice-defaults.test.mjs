@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { buildClientDefaultsUpdate, hydrateOrderClientDefaults } from '../src/features/orders/clientDefaults.js';
-import { getLinkableInvoiceCandidates } from '../src/features/invoices/orderInvoiceCandidates.js';
+import { getAlreadyLinkedElsewhereInvoices, getLinkableInvoiceCandidates } from '../src/features/invoices/orderInvoiceCandidates.js';
 
 const migrationUrl = new URL('../supabase/migrations/20260817173710_request_assets_order_identity.sql', import.meta.url);
 const dataClientUrl = new URL('../src/api/dataClient.js', import.meta.url);
@@ -37,13 +37,37 @@ test('Mike invoice-first scenario links one existing draft without creating anot
     { id: 'invoice-issued', customer_id: 'client-mike', status: 'approved', source_order_id: null, invoice_date: '2026-08-11' },
     { id: 'invoice-other', customer_id: 'client-other', status: 'draft', source_order_id: null, invoice_date: '2026-08-12' },
   ];
+  // Eligibility now extends beyond draft (any non-void status) - the
+  // approved same-client invoice is a legitimate candidate too, sorted
+  // newest-first alongside the draft. Cross-client stays excluded either way.
   const candidates = getLinkableInvoiceCandidates(invoices, mikeOrder);
-  assert.deepEqual(candidates.map((invoice) => invoice.id), ['invoice-mike']);
+  assert.deepEqual(candidates.map((invoice) => invoice.id), ['invoice-issued', 'invoice-mike']);
   const beforeCount = invoices.length;
-  const linked = { ...candidates[0], source_order_id: mikeOrder.id };
+  const linked = { ...candidates[1], source_order_id: mikeOrder.id };
   assert.equal(linked.source_order_id, mikeOrder.id);
   assert.equal(invoices.length, beforeCount);
   assert.equal(getLinkableInvoiceCandidates([linked], mikeOrder).length, 0);
+});
+
+test('void invoices are never linkable candidates regardless of client match', () => {
+  const order = { id: 'order-1', client_id: 'client-a' };
+  const invoices = [
+    { id: 'invoice-void', customer_id: 'client-a', status: 'void', source_order_id: null, invoice_date: '2026-08-10' },
+    { id: 'invoice-paid', customer_id: 'client-a', status: 'paid', source_order_id: null, invoice_date: '2026-08-09' },
+  ];
+  const candidates = getLinkableInvoiceCandidates(invoices, order);
+  assert.deepEqual(candidates.map((invoice) => invoice.id), ['invoice-paid']);
+});
+
+test('an invoice already linked to a different order is surfaced separately, never silently reassignable', () => {
+  const order = { id: 'order-2', client_id: 'client-a' };
+  const invoices = [
+    { id: 'invoice-elsewhere', customer_id: 'client-a', status: 'approved', source_order_id: 'order-other', invoice_date: '2026-08-10' },
+    { id: 'invoice-self', customer_id: 'client-a', status: 'approved', source_order_id: 'order-2', invoice_date: '2026-08-11' },
+    { id: 'invoice-free', customer_id: 'client-a', status: 'approved', source_order_id: null, invoice_date: '2026-08-12' },
+  ];
+  assert.deepEqual(getLinkableInvoiceCandidates(invoices, order).map((i) => i.id), ['invoice-free']);
+  assert.deepEqual(getAlreadyLinkedElsewhereInvoices(invoices, order).map((i) => i.id), ['invoice-elsewhere']);
 });
 
 test('preferred courier and contact defaults hydrate while historical order snapshots remain unchanged', () => {
