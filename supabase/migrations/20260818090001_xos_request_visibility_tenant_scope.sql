@@ -23,6 +23,16 @@
 -- Previous definitions of both functions are captured verbatim in
 -- docs/XOS_2_5_REQUEST_VISIBILITY_FIX.md before this migration, for
 -- rollback reference.
+--
+-- get_internal_client_requests_unscoped's output columns are changing (a
+-- new tenant_id column), and Postgres refuses to CREATE OR REPLACE a
+-- table-returning function across an OUT-parameter change ("cannot change
+-- return type of existing function ... Row type defined by OUT parameters
+-- is different") - it must be dropped first. get_internal_client_requests
+-- keeps its exact original return shape (only its body changes), so it
+-- does not need a drop.
+
+drop function if exists public.get_internal_client_requests_unscoped(text, text, text, text, integer);
 
 create or replace function public.get_internal_client_requests_unscoped(
   p_type text default null::text,
@@ -376,12 +386,24 @@ begin
 end;
 $function$;
 
--- Grants verification: CREATE OR REPLACE FUNCTION preserves existing
--- grants in Postgres, so no grant statements are needed here. Confirmed
--- pre-migration state (see docs/XOS_2_5_REQUEST_VISIBILITY_FIX.md):
---   get_internal_client_requests: EXECUTE granted to authenticated, postgres, service_role
---   get_internal_client_requests_unscoped: EXECUTE granted to postgres, service_role only
---   (no anon or authenticated grant on the unscoped function - it must
---   only ever be reached through the tenant-scoped wrapper)
--- Re-run the grants query in that doc after applying this migration to
--- confirm both are unchanged.
+-- Grants: get_internal_client_requests keeps its exact prior signature,
+-- so CREATE OR REPLACE preserves its existing grants unchanged (EXECUTE to
+-- authenticated, postgres, service_role - no statement needed).
+--
+-- get_internal_client_requests_unscoped was dropped and recreated above
+-- (required for the OUT-parameter change), which does NOT preserve prior
+-- grants. Confirmed live during cutover: a fresh CREATE FUNCTION on this
+-- project auto-grants EXECUTE to PUBLIC (which anon and authenticated
+-- both inherit) - naming individual roles in a REVOKE does not remove
+-- that PUBLIC grant, it has to be revoked from PUBLIC explicitly, or this
+-- internal-only function becomes directly callable by any signed-in (or
+-- even anonymous) caller via PostgREST RPC, bypassing the intended
+-- "only reachable through the tenant-scoped wrapper" design - restoring
+-- its exact pre-migration grants (postgres, service_role only):
+revoke execute on function public.get_internal_client_requests_unscoped(text, text, text, text, integer) from public;
+grant execute on function public.get_internal_client_requests_unscoped(text, text, text, text, integer) to postgres;
+grant execute on function public.get_internal_client_requests_unscoped(text, text, text, text, integer) to service_role;
+
+-- Re-run the grants query in docs/XOS_2_5_REQUEST_VISIBILITY_FIX.md after
+-- applying this migration to confirm both functions end up exactly as
+-- documented.
