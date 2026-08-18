@@ -14,6 +14,8 @@ import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoice
 import ClientInvoiceView from "./ClientInvoiceView";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
 import InvoicePdfDownloadButton from "./InvoicePdfDownloadButton";
+import InvoiceSharePdfButton from "./InvoiceSharePdfButton";
+import { invoiceShareSummaryText } from "./invoicePdfBuilder";
 import { isCompleteInvoiceDetail } from "./invoiceReliability";
 
 const steps = ["Customer", "Details", "Items", "Review", "Finish"];
@@ -71,20 +73,6 @@ function openInvoiceUrl(url) {
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function invoicePreviewText(invoice = {}, items = []) {
-  const lines = [
-    `Invoice for ${invoice.customer_name || "Customer"}`,
-    `Date: ${invoice.invoice_date || ""}`,
-    `Due: ${invoice.due_date || invoice.payment_terms || ""}`,
-    "",
-    ...items.map((item) => `${item.quantity || 1} x ${item.item_name || "Item"} @ ${money(item.rate)} = ${money(item.item_total)}`),
-    "",
-    `Total: ${money(invoice.total)}`,
-    `Balance due: ${money(invoice.balance_due)}`,
-  ];
-  return lines.join("\n");
 }
 
 function fuzzyScore(query, target) {
@@ -537,18 +525,22 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                       invoice={previewInvoice}
                       disabled={!validation.isValid}
                     />
+                    <InvoiceSharePdfButton
+                      invoice={previewInvoice}
+                      disabled={!validation.isValid}
+                    />
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        const text = invoicePreviewText(calculated.invoice, calculated.items);
-                        if (navigator.share) navigator.share({ title: "Invoice draft", text });
+                        const text = invoiceShareSummaryText(previewInvoice);
+                        if (navigator.share) navigator.share({ title: "Invoice summary", text });
                         else navigator.clipboard?.writeText(text);
                       }}
                       className="h-9 rounded-xl"
                     >
-                      <Share2 className="h-3.5 w-3.5" /> Share
+                      <Share2 className="h-3.5 w-3.5" /> Share invoice summary
                     </Button>
                   </div>
                 </div>

@@ -12,13 +12,19 @@ import {
   createInvoiceExportRecord,
   getInvoice,
   linkInvoiceToOrder,
+  linkInvoiceToOrderRelational,
   listInvoices,
   markInvoiceExported,
   markInvoiceImportedToZoho,
 } from "@/api/invoices";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "@/features/invoices/zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "@/features/invoices/invoiceDisplayStatus";
-import { getLinkableInvoiceCandidates } from "@/features/invoices/orderInvoiceCandidates";
+import {
+  getAlreadyLinkedElsewhereInvoices,
+  getLinkableInvoiceCandidates,
+  invoiceStatusGroupLabel,
+  linkActionCopyForStatus,
+} from "@/features/invoices/orderInvoiceCandidates";
 
 // Extract an invoice/reference number from a filename.
 // Matches patterns like INV-1234, ZB-5678, INV_001, ZB001, 2024-INV-99, etc.
@@ -96,16 +102,29 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
 
   const linkedOppsInvoices = linkedInvoicesQuery.data || [];
   const firstOppsInvoice = linkedOppsInvoices[0];
+  // No status filter here anymore - eligibility (any non-void status) and
+  // same-client filtering both happen in orderInvoiceCandidates.js, so
+  // every status this client has is available to classify/display.
   const candidateInvoicesQuery = useQuery({
     queryKey: ['orderInvoiceCandidates', orderId, order?.client_id],
-    queryFn: () => listInvoices({ customerId: order?.client_id, status: 'draft', pageSize: 50 }),
+    queryFn: () => listInvoices({ customerId: order?.client_id, pageSize: 50 }),
     enabled: Boolean(showExistingInvoices && orderId && order?.client_id),
-    select: (result) => getLinkableInvoiceCandidates(result.data || [], order),
   });
+  const candidateInvoices = getLinkableInvoiceCandidates(candidateInvoicesQuery.data?.data || [], order);
+  const alreadyLinkedElsewhere = getAlreadyLinkedElsewhereInvoices(candidateInvoicesQuery.data?.data || [], order);
   const linkExistingInvoiceMutation = useMutation({
     mutationFn: async (invoice) => {
-      const fullInvoice = await getInvoice(invoice.id, { includeItems: true });
-      return linkInvoiceToOrder(fullInvoice, order);
+      // Draft keeps the existing, well-tested resync-on-link behaviour
+      // exactly as before. Every other status goes through the new
+      // relational-only path (source_order_id only - see
+      // link_invoice_to_order_relational()) since the item-resync RPC
+      // hard-blocks non-draft invoices, and per the client-safety rules
+      // linking must never mutate financial values on its own.
+      if (invoice.status === 'draft') {
+        const fullInvoice = await getInvoice(invoice.id, { includeItems: true });
+        return linkInvoiceToOrder(fullInvoice, order);
+      }
+      return linkInvoiceToOrderRelational(invoice.id, order);
     },
     onSuccess: () => {
       toast.success('Existing invoice linked to this order');
@@ -267,31 +286,54 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
         <div className={'rounded-2xl border border-primary/20 bg-primary/5 p-3'}>
           <div className={'mb-3 flex items-center justify-between gap-2'}>
             <div>
-              <p className={'text-sm font-semibold'}>Link an existing draft invoice</p>
-              <p className={'text-xs text-muted-foreground'}>Same-client drafts only. Linking uses the established order item synchronization rules.</p>
+              <p className={'text-sm font-semibold'}>Link an existing invoice</p>
+              <p className={'text-xs text-muted-foreground'}>Same-client invoices only. Linking a draft syncs its items from this order; linking any other status only attaches the relationship - financial values never change.</p>
             </div>
             <Button type={'button'} variant={'ghost'} size={'sm'} onClick={() => setShowExistingInvoices(false)}>Close</Button>
           </div>
           {candidateInvoicesQuery.isLoading ? <p className={'text-sm text-muted-foreground'}>Loading invoices...</p> : null}
-          {!candidateInvoicesQuery.isLoading && !(candidateInvoicesQuery.data || []).length ? (
-            <p className={'rounded-xl bg-background p-3 text-sm text-muted-foreground'}>No unlinked draft invoices were found for this client.</p>
+          {!candidateInvoicesQuery.isLoading && !candidateInvoices.length ? (
+            <p className={'rounded-xl bg-background p-3 text-sm text-muted-foreground'}>No unlinked invoices were found for this client.</p>
           ) : null}
           <div className={'space-y-2'}>
-            {(candidateInvoicesQuery.data || []).map((invoice) => (
-              <div key={invoice.id} className={'flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-background p-3'}>
-                <div>
-                  <p className={'text-sm font-semibold'}>{invoice.invoice_number}</p>
-                  <p className={'text-xs text-muted-foreground'}>
-                    {invoice.customer_name} - {invoice.invoice_date ? format(new Date(invoice.invoice_date), 'd MMM yyyy') : 'No date'} - {formatCurrency(invoice.total)}
-                  </p>
-                  <p className={'text-xs text-muted-foreground'}>{invoice.status} - Paid {formatCurrency(invoice.amount_paid)} - Balance {formatCurrency(invoice.balance_due)}</p>
+            {candidateInvoices.map((invoice) => {
+              const linkCopy = linkActionCopyForStatus(invoice.status);
+              return (
+                <div key={invoice.id} className={'flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-background p-3'}>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className={'text-sm font-semibold'}>{invoice.invoice_number}</p>
+                      <StatusPill label={invoiceStatusGroupLabel(invoice.status)} />
+                    </div>
+                    <p className={'text-xs text-muted-foreground'}>
+                      {invoice.customer_name} - {invoice.invoice_date ? format(new Date(invoice.invoice_date), 'd MMM yyyy') : 'No date'} - {formatCurrency(invoice.total)}
+                    </p>
+                    <p className={'text-xs text-muted-foreground'}>Paid {formatCurrency(invoice.amount_paid)} - Balance {formatCurrency(invoice.balance_due)}</p>
+                    {linkCopy.helpText && <p className={'mt-1 text-[11px] text-muted-foreground'}>{linkCopy.helpText}</p>}
+                  </div>
+                  <Button type={'button'} size={'sm'} disabled={linkExistingInvoiceMutation.isPending} onClick={() => linkExistingInvoiceMutation.mutate(invoice)}>
+                    {linkCopy.label}
+                  </Button>
                 </div>
-                <Button type={'button'} size={'sm'} disabled={linkExistingInvoiceMutation.isPending} onClick={() => linkExistingInvoiceMutation.mutate(invoice)}>
-                  Link invoice
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
+          {alreadyLinkedElsewhere.length > 0 && (
+            <div className="mt-3 space-y-1.5 border-t border-primary/10 pt-3">
+              <p className="text-xs font-semibold text-muted-foreground">Already linked to another order</p>
+              {alreadyLinkedElsewhere.map((invoice) => (
+                <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-secondary/20 p-3 opacity-80">
+                  <div>
+                    <p className="text-sm font-medium">{invoice.invoice_number}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {invoice.customer_name} - {formatCurrency(invoice.total)}
+                    </p>
+                  </div>
+                  <span className="text-xs font-medium text-muted-foreground">Already linked to another order</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
 

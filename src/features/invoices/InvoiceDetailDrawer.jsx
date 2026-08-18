@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer } from "lucide-react";
+import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import InvoiceStatusBadge from "./InvoiceStatusBadge";
 import OrderLinkPanel from "./OrderLinkPanel";
@@ -48,6 +49,15 @@ function openClientInvoice(invoice, print = false) {
   window.location.assign(url.toString());
 }
 
+const REOPEN_REASON_PRESETS = [
+  { value: "quantity_correction", label: "Quantity correction" },
+  { value: "pricing_correction", label: "Pricing correction" },
+  { value: "client_amendment", label: "Client amendment" },
+  { value: "incorrect_item", label: "Incorrect item" },
+  { value: "staff_entry_error", label: "Staff entry error" },
+  { value: "other", label: "Other" },
+];
+
 export default function InvoiceDetailDrawer({
   invoice,
   summaryInvoice,
@@ -72,6 +82,9 @@ export default function InvoiceDetailDrawer({
   onUnlinkOrder,
   onSyncFromOrder,
   isOrderLinkPending,
+  canReopen = false,
+  onReopen,
+  isReopenPending = false,
 }) {
   const [partialPaymentOpen, setPartialPaymentOpen] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
@@ -79,6 +92,10 @@ export default function InvoiceDetailDrawer({
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
   const [duplicateToVoid, setDuplicateToVoid] = useState(null);
   const [showMoreActions, setShowMoreActions] = useState(false);
+  const [unlinkedApproveWarningOpen, setUnlinkedApproveWarningOpen] = useState(false);
+  const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
+  const [reopenReasonPreset, setReopenReasonPreset] = useState("quantity_correction");
+  const [reopenReasonDetail, setReopenReasonDetail] = useState("");
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const activeDuplicates = duplicateInvoices.filter((item) => item.status !== "void");
   const displayStates = getInvoiceDisplayStates(invoice);
@@ -108,6 +125,35 @@ export default function InvoiceDetailDrawer({
     if (!invoice || partialAmountInvalid) return;
     onMarkPartiallyPaid?.(invoice, partialAmountNumber, partialNote);
     setPartialPaymentOpen(false);
+  };
+
+  // Standalone invoices remain valid - this never forces every invoice to
+  // have an order. It only warns because approving first makes linking
+  // harder later (the item-resync-on-link path is draft-only), so staff
+  // who intend to link should know before they lock themselves out of the
+  // easy path. "Approve anyway" always remains one click away.
+  const handleApproveClick = () => {
+    if (invoice && !invoice.source_order_id) {
+      setUnlinkedApproveWarningOpen(true);
+      return;
+    }
+    onApprove?.(invoice);
+  };
+
+  const openReopenDialog = () => {
+    setReopenReasonPreset("quantity_correction");
+    setReopenReasonDetail("");
+    setReopenDialogOpen(true);
+  };
+
+  const reopenReasonInvalid = reopenReasonPreset === "other" && !reopenReasonDetail.trim();
+
+  const submitReopen = () => {
+    if (!invoice || reopenReasonInvalid) return;
+    const presetLabel = REOPEN_REASON_PRESETS.find((option) => option.value === reopenReasonPreset)?.label || reopenReasonPreset;
+    const reason = reopenReasonDetail.trim() ? `${presetLabel}: ${reopenReasonDetail.trim()}` : presetLabel;
+    onReopen?.(invoice, reason);
+    setReopenDialogOpen(false);
   };
 
   const printPosInvoiceSummary = async () => {
@@ -258,7 +304,7 @@ export default function InvoiceDetailDrawer({
                       <Button variant="outline" size="sm" onClick={() => onEditDraft?.(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
                         <Pencil className="h-3.5 w-3.5" /> Edit
                       </Button>
-                      <Button size="sm" onClick={() => onApprove?.(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
+                      <Button size="sm" onClick={handleApproveClick} className="h-9 rounded-xl text-xs sm:text-sm">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approve
                       </Button>
                     </>
@@ -300,6 +346,11 @@ export default function InvoiceDetailDrawer({
                     {canTakePayment && (
                       <Button variant="outline" size="sm" onClick={openPartialPayment} className="h-8 rounded-xl text-xs">
                         <CreditCard className="h-3.5 w-3.5" /> Partial
+                      </Button>
+                    )}
+                    {canReopen && !['draft', 'paid', 'void'].includes(invoice.status) && (
+                      <Button variant="outline" size="sm" onClick={openReopenDialog} className="h-8 rounded-xl text-xs">
+                        <RotateCcw className="h-3.5 w-3.5" /> Reopen
                       </Button>
                     )}
                     {!['paid', 'void'].includes(invoice.status) && (
@@ -348,6 +399,75 @@ export default function InvoiceDetailDrawer({
         <DialogFooter>
           <Button variant="outline" onClick={() => setPartialPaymentOpen(false)} className="rounded-xl">Cancel</Button>
           <Button onClick={submitPartialPayment} disabled={partialAmountInvalid} className="rounded-xl">Save payment status</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={unlinkedApproveWarningOpen} onOpenChange={setUnlinkedApproveWarningOpen}>
+      <DialogContent className="rounded-2xl">
+        <DialogHeader>
+          <DialogTitle>This invoice is not linked to an order</DialogTitle>
+          <DialogDescription>
+            Standalone invoices are fine - this is just a heads-up that linking an order becomes more involved once an
+            invoice is approved. You can still link one later if you need to.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-col gap-2 sm:flex-row">
+          <Button
+            variant="outline"
+            className="rounded-xl"
+            onClick={() => setUnlinkedApproveWarningOpen(false)}
+          >
+            Link order first
+          </Button>
+          <Button
+            className="rounded-xl"
+            onClick={() => {
+              setUnlinkedApproveWarningOpen(false);
+              onApprove?.(invoice);
+            }}
+          >
+            Approve anyway
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={reopenDialogOpen} onOpenChange={setReopenDialogOpen}>
+      <DialogContent className="rounded-2xl">
+        <DialogHeader>
+          <DialogTitle>Reopen invoice for correction</DialogTitle>
+          <DialogDescription>
+            You are reopening an approved invoice. This allows financial details to be changed and will be recorded
+            in invoice history.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Select value={reopenReasonPreset} onValueChange={setReopenReasonPreset}>
+            <SelectTrigger className="h-11 rounded-xl">
+              <SelectValue placeholder="Select a reason" />
+            </SelectTrigger>
+            <SelectContent>
+              {REOPEN_REASON_PRESETS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Textarea
+            value={reopenReasonDetail}
+            onChange={(event) => setReopenReasonDetail(event.target.value)}
+            placeholder={reopenReasonPreset === "other" ? "Describe the reason for reopening" : "Optional additional detail"}
+            className="min-h-20 rounded-xl"
+          />
+          {reopenReasonInvalid && (
+            <p className="text-sm text-destructive">Please describe the reason for reopening.</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setReopenDialogOpen(false)} className="rounded-xl">Cancel</Button>
+          <Button onClick={submitReopen} disabled={reopenReasonInvalid || isReopenPending} className="rounded-xl">
+            {isReopenPending ? "Reopening..." : "Reopen invoice"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

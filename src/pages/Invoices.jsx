@@ -21,11 +21,12 @@ import {
   markInvoicePaid,
   markInvoicePartiallyPaid,
   markInvoiceVoid,
+  reopenInvoice,
   syncInvoiceItemsFromOrder,
   unlinkInvoiceFromOrder,
   updateInvoice,
 } from "@/api/invoices";
-import { canAccessInvoices } from "@/lib/financeAccess";
+import { canAccessInvoices, canReopenInvoices } from "@/lib/financeAccess";
 import InvoiceList from "@/features/invoices/InvoiceList";
 import InvoiceCreateFlow from "@/features/invoices/InvoiceCreateFlow";
 import InvoiceDetailDrawer from "@/features/invoices/InvoiceDetailDrawer";
@@ -63,6 +64,7 @@ export default function Invoices() {
   });
 
   const canAccess = canAccessInvoices(userQuery.data);
+  const canReopen = canReopenInvoices(userQuery.data);
   const linkedInvoiceId = searchParams.get("invoice");
 
   useEffect(() => {
@@ -170,6 +172,17 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] });
     },
     onError: (error) => toast.error(error?.message || "Could not approve invoice"),
+  });
+
+  const reopenMutation = useMutation({
+    mutationFn: ({ invoice, reason }) => reopenInvoice(invoice.id, reason),
+    onSuccess: () => {
+      toast.success("Invoice reopened for correction");
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not reopen invoice"),
   });
 
   const markExportedMutation = useMutation({
@@ -397,6 +410,9 @@ export default function Invoices() {
           }
         }}
         onApprove={(invoice) => approveMutation.mutate(invoice)}
+        canReopen={canReopen}
+        onReopen={(invoice, reason) => reopenMutation.mutate({ invoice, reason })}
+        isReopenPending={reopenMutation.isPending}
         onEditDraft={(invoice) => {
           if (!isCompleteInvoiceDetail(detailQuery.data || invoice)) {
             toast.error("Invoice details must load completely before editing.");

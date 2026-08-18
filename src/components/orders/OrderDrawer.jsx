@@ -45,13 +45,23 @@ const buildCourierTrackingUrl = (courier, trackingNumber) => {
 };
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { dataClient } from "@/api/dataClient";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { saveInternalClientFileLink } from "@/api/clientRequests";
 import { useOrderDrawerData } from "@/hooks/useOrderDrawerData";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import PipelineStrip from "@/components/orders/PipelineStrip";
 import OrderTagBadges from "@/components/orders/OrderTagBadges";
 import ExceptionFlag from "@/components/orders/ExceptionFlag";
@@ -59,6 +69,9 @@ import OrderFilesTab from "@/components/orders/drawer/OrderFilesTab";
 import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder } from "@/components/orders/drawer/OrderDrawerShared";
 import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
 import { canAccessInvoices } from "@/lib/financeAccess";
+import { listInvoices } from "@/api/invoices";
+import { supabase } from "@/lib/supabaseClient";
+import { createPageUrl } from "@/utils";
 
 const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
 
@@ -222,7 +235,11 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
   const [newTaskDeadline, setNewTaskDeadline] = useState("");
   const [newTaskAssignee, setNewTaskAssignee] = useState("_none");
+  const [unlockDialogOpen, setUnlockDialogOpen] = useState(false);
+  const [unlockReason, setUnlockReason] = useState("");
+  const [lockInterceptOpen, setLockInterceptOpen] = useState(false);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const currentUserQuery = useQuery({
     queryKey: ["currentUser", "orderDrawer"],
@@ -239,16 +256,68 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       ? "Locked automatically — this order has moved into production."
       : "";
 
+  const linkedInvoicesForLockQuery = useQuery({
+    queryKey: ["orderLinkedInvoicesForLock", order.id],
+    queryFn: () => listInvoices({ sourceOrderId: order.id, pageSize: 10 }),
+    enabled: Boolean(order.id) && canManageProductsLock,
+    select: (result) => result.data || [],
+  });
+  const linkedNonDraftInvoice = (linkedInvoicesForLockQuery.data || []).find(
+    (invoice) => invoice.status !== "draft" && invoice.status !== "void"
+  );
+
+  const logOrderCorrectionEvent = async (reason) => {
+    const actorName = currentUserQuery.data?.full_name || currentUserQuery.data?.email || "Unknown";
+    try {
+      await supabase.from("opps_activity_events").insert({
+        tenant_id: order.tenant_id,
+        actor_email: currentUserQuery.data?.email,
+        actor_name: actorName,
+        event_type: "order_reopened_for_correction",
+        entity_type: "order",
+        entity_id: order.id,
+        summary: `${actorName} unlocked ${order.order_number || "an order"} for correction: ${reason}`,
+        metadata: {
+          reason,
+          linked_invoice_id: linkedNonDraftInvoice?.id || null,
+          linked_invoice_number: linkedNonDraftInvoice?.invoice_number || null,
+        },
+      });
+    } catch {
+      // Best-effort audit trail only — the unlock itself has already succeeded.
+    }
+  };
+
+  const performUnlock = (reason) => {
+    onUpdate(order.id, { products_locked_at: null, products_locked_by: null });
+    toast.success("Products unlocked for correction");
+    logOrderCorrectionEvent(reason);
+    setUnlockDialogOpen(false);
+    setLockInterceptOpen(false);
+    setUnlockReason("");
+  };
+
   const toggleProductsLock = () => {
     if (isManuallyLocked) {
-      onUpdate(order.id, { products_locked_at: null, products_locked_by: null });
-      toast.success("Products unlocked");
+      if (linkedNonDraftInvoice) {
+        setLockInterceptOpen(true);
+      } else {
+        setUnlockReason("");
+        setUnlockDialogOpen(true);
+      }
     } else {
       onUpdate(order.id, {
         products_locked_at: new Date().toISOString(),
         products_locked_by: currentUserQuery.data?.full_name || currentUserQuery.data?.email || "Unknown",
       });
       toast.success("Products locked");
+    }
+  };
+
+  const goReopenLinkedInvoice = () => {
+    setLockInterceptOpen(false);
+    if (linkedNonDraftInvoice?.id) {
+      navigate(`${createPageUrl("Invoices")}?invoice=${linkedNonDraftInvoice.id}`);
     }
   };
 
@@ -1290,6 +1359,64 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
           queryClient.invalidateQueries({ queryKey: ['orders'] });
         }}
       />
+
+      <Dialog open={unlockDialogOpen} onOpenChange={setUnlockDialogOpen}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Unlock products for correction?</DialogTitle>
+            <DialogDescription>
+              This reopens the product list for editing. Please note why — it's recorded in this order's activity
+              history.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={unlockReason}
+            onChange={(event) => setUnlockReason(event.target.value)}
+            placeholder="Reason for unlocking (e.g. quantity correction, client amendment)"
+            className="min-h-20 rounded-xl"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnlockDialogOpen(false)} className="rounded-xl">Cancel</Button>
+            <Button
+              onClick={() => performUnlock(unlockReason.trim())}
+              disabled={!unlockReason.trim()}
+              className="rounded-xl"
+            >
+              Unlock products
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={lockInterceptOpen} onOpenChange={setLockInterceptOpen}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>This order is linked to invoice {linkedNonDraftInvoice?.invoice_number || ""}</DialogTitle>
+            <DialogDescription>
+              That invoice has already moved beyond draft. Unlocking products here will not change the invoice's
+              items or totals. If the correction should also update the invoice, reopen it separately first.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button variant="outline" className="rounded-xl" onClick={() => setLockInterceptOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="outline" className="rounded-xl" onClick={goReopenLinkedInvoice}>
+              Reopen invoice to update it
+            </Button>
+            <Button
+              className="rounded-xl"
+              onClick={() => {
+                setLockInterceptOpen(false);
+                setUnlockReason("");
+                setUnlockDialogOpen(true);
+              }}
+            >
+              Save order correction only
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1,26 +1,9 @@
 import { useRef, useState } from "react";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import ClientInvoiceView from "./ClientInvoiceView";
-
-function safeFileName(value) {
-  return String(value || "invoice").replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/^-+|-+$/g, "") || "invoice";
-}
-
-async function waitForImages(element) {
-  const images = Array.from(element?.querySelectorAll("img") || []);
-  await Promise.all(images.map((image) => {
-    if (image.complete) return Promise.resolve();
-    return new Promise((resolve) => {
-      image.addEventListener("load", resolve, { once: true });
-      image.addEventListener("error", resolve, { once: true });
-      window.setTimeout(resolve, 5000);
-    });
-  }));
-}
+import { buildInvoicePdf, safeInvoiceFileName } from "./invoicePdfBuilder";
 
 export default function InvoicePdfDownloadButton({ invoice, order, template, disabled = false, className = "" }) {
   const captureRef = useRef(null);
@@ -30,27 +13,8 @@ export default function InvoicePdfDownloadButton({ invoice, order, template, dis
     if (!invoice || !captureRef.current) return;
     setDownloading(true);
     try {
-      await waitForImages(captureRef.current);
-      const canvas = await html2canvas(captureRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: "#ffffff",
-        logging: false,
-        width: 794,
-        windowWidth: 1200,
-      });
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
-      const pageWidth = 190;
-      const pageHeight = 277;
-      const imageHeight = (canvas.height * pageWidth) / canvas.width;
-      const imageData = canvas.toDataURL("image/jpeg", 0.94);
-      const pageCount = Math.max(1, Math.ceil(imageHeight / pageHeight));
-      for (let page = 0; page < pageCount; page += 1) {
-        if (page > 0) pdf.addPage("a4", "portrait");
-        pdf.addImage(imageData, "JPEG", 10, 10 - page * pageHeight, pageWidth, imageHeight, undefined, "FAST");
-      }
-      pdf.save(`${safeFileName(invoice.invoice_number || invoice.customer_name || "draft-invoice")}.pdf`);
+      const pdf = await buildInvoicePdf(captureRef.current);
+      pdf.save(`${safeInvoiceFileName(invoice.invoice_number || invoice.customer_name || "draft-invoice")}.pdf`);
       toast.success("Invoice PDF downloaded");
     } catch (error) {
       toast.error(error?.message || "Could not create invoice PDF");

@@ -101,7 +101,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
 
   return (
     <article className={`client-invoice mx-auto bg-white text-slate-950 print:min-h-0 print:max-w-none print:p-0 print:shadow-none ${documentMode ? "w-[794px] min-h-[1123px] px-9 py-9 shadow-none" : "w-full max-w-[210mm] px-4 py-5 shadow-2xl sm:px-7 sm:py-7 lg:min-h-[297mm] lg:px-9 lg:py-9"}`}>
-      <header className="border-b border-slate-200 pb-6 sm:pb-7">
+      <header data-pdf-block="true" className="border-b border-slate-200 pb-6 sm:pb-7">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
           <div className="min-w-0">
             <div className="mb-6 flex items-start gap-3 sm:mb-7 sm:items-center sm:gap-4">
@@ -148,7 +148,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
         </div>
       </header>
 
-      <section className="grid gap-6 border-b border-slate-200 py-6 sm:gap-7 sm:py-7 md:grid-cols-[1.1fr_0.9fr]">
+      <section data-pdf-block="true" className="grid gap-6 border-b border-slate-200 py-6 sm:gap-7 sm:py-7 md:grid-cols-[1.1fr_0.9fr]">
         <Panel title="Billed to" icon={ReceiptText}>
           <h2 className="break-words text-lg font-semibold sm:text-xl">{invoice.customer_name}</h2>
           <div className="mt-3 space-y-1 text-sm leading-6 text-slate-600">
@@ -174,7 +174,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
       </section>
 
       {delivery.length > 0 && (
-        <section className="border-b border-slate-200 py-5">
+        <section data-pdf-block="true" className="border-b border-slate-200 py-5">
           <Panel title="Delivery and tracking" icon={Truck}>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               {delivery.map(([label, value]) => (
@@ -206,7 +206,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
           </div>
           <div className="divide-y divide-slate-100">
             {items.map((item, index) => (
-              <div key={item.id || item.line_number || index} className="grid gap-3 px-4 py-4 md:grid-cols-[70px_1fr_64px_92px_105px] md:items-start md:gap-4 md:px-5 md:py-5">
+              <div key={item.id || item.line_number || index} data-pdf-block="true" className="grid gap-3 px-4 py-4 md:grid-cols-[70px_1fr_64px_92px_105px] md:items-start md:gap-4 md:px-5 md:py-5">
                 <div className="h-14 w-14 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
                   {template.showProductThumbnails !== false && (item.image_url || item.thumbnail_url) ? (
                     <SignedInvoiceImage value={item.image_url || item.thumbnail_url} alt={item.item_name || ""} className="h-full w-full object-cover" />
@@ -231,7 +231,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
         </div>
       </section>
 
-      <section className="grid gap-6 border-t border-slate-200 py-6 sm:gap-7 sm:py-7 md:grid-cols-[1fr_300px]">
+      <section data-pdf-block="true" className="grid gap-6 border-t border-slate-200 py-6 sm:gap-7 sm:py-7 md:grid-cols-[1fr_300px]">
         <div className="space-y-4 text-sm leading-6 text-slate-600">
           <div className="rounded-lg border border-[#00866f]/20 bg-[#00866f]/5 p-4">
             <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#006f5d]">
@@ -273,7 +273,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
         </div>
       </section>
 
-      <section className="break-before-auto border-t border-slate-200 pt-7">
+      <section data-pdf-block="true" className="break-before-auto border-t border-slate-200 pt-7">
         <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Terms and conditions</p>
         <ol className="grid gap-2 text-xs leading-5 text-slate-600">
           {TERMS.map((term, index) => (
@@ -293,7 +293,7 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
             <p className="mt-1 text-sm text-slate-500">Use the version and status below when checking production details.</p>
           </div>
           {proofs.map((proof, index) => (
-            <article key={proof.id || proof.file_url || index} className="break-before-page min-h-[980px] border-t border-slate-200 pt-7 first:border-t-0">
+            <article key={proof.id || proof.file_url || index} data-pdf-block="true" className="break-before-page min-h-[980px] border-t border-slate-200 pt-7 first:border-t-0">
               <div className="mb-4 flex items-center justify-between gap-4">
                 <span className="text-lg font-semibold">{proof.item_name || "Print proof"}</span>
                 <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase ${proof.status === "approved" ? "bg-emerald-100 text-emerald-800" : proof.status === "rejected" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{proof.status || "draft"}</span>
