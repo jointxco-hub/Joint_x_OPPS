@@ -1,4 +1,4 @@
-import { Search, Plus, ChevronLeft, ChevronRight, FileText } from "lucide-react";
+import { Search, Plus, ChevronLeft, ChevronRight, FileText, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,6 +29,8 @@ function formatDate(value) {
 export default function InvoiceList({
   invoices = [],
   isLoading,
+  isError = false,
+  error = null,
   filters,
   onFiltersChange,
   page,
@@ -80,6 +82,19 @@ export default function InvoiceList({
 
       {isLoading ? (
         <Card className="rounded-2xl border-border p-8 text-center text-sm text-muted-foreground">Loading invoices...</Card>
+      ) : isError ? (
+        // Distinct from the genuine zero-record state below - a query
+        // failure (wrong/unresolved tenant, RLS denial, network error)
+        // must never look identical to "you have no invoices yet", since
+        // that identical rendering is exactly what made a real fetch
+        // failure indistinguishable from "Create your first invoice" here.
+        <Card className="rounded-2xl border-red-200 bg-red-50 p-10 text-center shadow-apple-sm">
+          <AlertTriangle className="mx-auto mb-4 h-12 w-12 text-red-400" />
+          <h3 className="text-lg font-semibold text-red-900">Could not load invoices</h3>
+          <p className="mt-2 text-sm text-red-700">
+            {error?.message || "Something went wrong loading invoices for your account."}
+          </p>
+        </Card>
       ) : invoices.length === 0 ? (
         <Card className="rounded-2xl border-border p-10 text-center shadow-apple-sm">
           <FileText className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
