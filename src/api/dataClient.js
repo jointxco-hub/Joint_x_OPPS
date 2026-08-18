@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabaseClient';
 import { getCurrentTenantId } from '@/lib/tenantContext';
 import { toPrivateUploadRef } from '@/lib/privateFiles';
+import { resolveOfflineUserFromSession, resolveOnlineUserFromAuthCheck } from '@/lib/authIdentity';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -2055,6 +2056,21 @@ const entities = new Proxy(
   }
 );
 
+function applyUserCacheAction(cacheAction, user) {
+  if (cacheAction === 'clear') {
+    currentUser = null;
+    writeJson(LOCAL_USER_CACHE_KEY, null);
+  } else if (cacheAction === 'write') {
+    currentUser = user;
+    writeJson(LOCAL_USER_CACHE_KEY, user);
+  }
+  // 'none' - leave currentUser/localStorage exactly as they were.
+}
+
+// Thin IO wrapper: fetches session/user/profile from the real Supabase
+// client, then defers the actual "what does this mean for the current
+// user/cache" decision to the pure helpers in authIdentity.js (unit
+// tested there without needing a live Supabase client).
 async function getCurrentUser() {
   const cachedUser = currentUser ?? readJson(LOCAL_USER_CACHE_KEY, null);
 
@@ -2066,34 +2082,16 @@ async function getCurrentUser() {
   const { data: sessionData } = await supabase.auth.getSession();
   const sessionUser = sessionData?.session?.user;
 
-  if (!isOnline() && sessionUser) {
-    currentUser = {
-      id: sessionUser.id,
-      email: sessionUser.email,
-      full_name:
-        cachedUser?.full_name ??
-        sessionUser.user_metadata?.full_name ??
-        sessionUser.user_metadata?.name ??
-        sessionUser.email ??
-        'Supabase User',
-      role: cachedUser?.role ?? sessionUser.user_metadata?.role ?? 'user',
-      department: cachedUser?.department,
-      phone: cachedUser?.phone,
-      profile_photo: cachedUser?.profile_photo ?? sessionUser.user_metadata?.avatar_url ?? null,
-      auth_user_id: sessionUser.id,
-    };
-    writeJson(LOCAL_USER_CACHE_KEY, currentUser);
-    return currentUser;
+  if (!isOnline()) {
+    const { user, cacheAction } = resolveOfflineUserFromSession({ sessionUser, cachedUser });
+    applyUserCacheAction(cacheAction, user);
+    return user;
   }
 
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data?.user) {
-    currentUser = cachedUser;
-    return currentUser;
-  }
+  const { data, error: authError } = await supabase.auth.getUser();
+  const authUser = data?.user ?? null;
 
-  const authUser = data.user;
-  const { data: profile } = isOnline()
+  const profileResult = authUser
     ? await supabase
         .from('users')
         .select('*')
@@ -2102,34 +2100,22 @@ async function getCurrentUser() {
         .maybeSingle()
     : { data: null };
 
-  if (profile && profile.is_active === false) {
-    currentUser = null;
-    writeJson(LOCAL_USER_CACHE_KEY, null);
+  const { user, cacheAction, revoked } = resolveOnlineUserFromAuthCheck({
+    authError,
+    authUser,
+    profile: profileResult.data,
+  });
+
+  applyUserCacheAction(cacheAction, user);
+
+  if (revoked) {
     await supabase.auth.signOut();
     const error = new Error('Your OPPS access has been revoked. Contact an administrator if this is incorrect.');
     error.code = 'OPPS_ACCESS_REVOKED';
     throw error;
   }
 
-  currentUser = {
-    id: authUser.id,
-    email: authUser.email,
-    full_name:
-      profile?.full_name ??
-      authUser.user_metadata?.full_name ??
-      authUser.user_metadata?.name ??
-      authUser.email ??
-      'Supabase User',
-    role: profile?.role ?? authUser.user_metadata?.role ?? 'user',
-    department: profile?.department,
-    phone: profile?.phone,
-    profile_photo: profile?.avatar_url ?? authUser.user_metadata?.avatar_url ?? null,
-    auth_user_id: authUser.id,
-    is_active: profile?.is_active !== false,
-  };
-
-  writeJson(LOCAL_USER_CACHE_KEY, currentUser);
-  return currentUser;
+  return user;
 }
 
 export const dataClient = {
