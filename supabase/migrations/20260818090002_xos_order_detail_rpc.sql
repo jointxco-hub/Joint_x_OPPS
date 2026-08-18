@@ -89,11 +89,21 @@ begin
 end;
 $function$;
 
+-- A fresh CREATE FUNCTION on this project auto-grants EXECUTE to PUBLIC
+-- (confirmed live during cutover of migration 20260818090001, and
+-- reconfirmed here - the same behavior applies to any newly created
+-- function, not just DROP+CREATE ones). Revoke that default first, or
+-- anon ends up able to call this RPC directly via PostgREST despite never
+-- being named in a grant - matches get_xos_orders_for_host,
+-- get_xos_requests_for_host, get_xos_files_for_host,
+-- create_xos_request_for_host, none of which grant anon.
+revoke execute on function public.get_xos_order_detail_for_host(text, text) from public;
 grant execute on function public.get_xos_order_detail_for_host(text, text) to authenticated;
 
--- Explicitly no grant to anon - matches get_xos_orders_for_host,
--- get_xos_requests_for_host, get_xos_files_for_host,
--- create_xos_request_for_host. Verify after applying:
+-- Verify after applying:
 --   select grantee, privilege_type from information_schema.routine_privileges
 --   where routine_schema = 'public' and routine_name = 'get_xos_order_detail_for_host';
--- Expected: authenticated, postgres, service_role only.
+-- Expected: authenticated, postgres, service_role only. Also verify with
+-- has_function_privilege('anon', 'public.get_xos_order_detail_for_host(text,text)', 'EXECUTE')
+-- directly - PUBLIC grants do not always surface as a named row in
+-- routine_privileges the way anon/authenticated grants do.

@@ -96,7 +96,27 @@ for all three orders, mixed string/numeric sources included. The migration
 file was corrected to match before being considered done — this is the
 exact syntax the deployed function uses.
 
-Not applied to production — see the top-level report for readiness status.
+## Applied to production (2026-08-18, controlled cutover)
+
+Same `PUBLIC`-default-grant issue found on migration 20260818090001 also
+applies to any fresh `CREATE FUNCTION` on this project, not just
+drop+recreate ones — confirmed live: immediately after creating this new
+function, `anon` had `EXECUTE` via the inherited `PUBLIC` grant despite
+never being named. Added an explicit `revoke ... from public;` before the
+`authenticated` grant. Reconfirmed: `anon` → denied at the grant level
+(`permission denied for function`, a stronger signal than the internal
+tenant check even firing), `authenticated`/`postgres`/`service_role` → as
+intended.
+
+Full positive + negative test matrix run against the live deployed
+function with simulated sessions: real order detail returned correctly
+(2 items, all client-safe fields populated, all excluded fields absent by
+inspection); anonymous denied at the grant level; authenticated outsider
+denied (`XOS access denied`); authorized member requesting a real order
+from a different tenant denied safely (`Order not found` — does not leak
+whether the order exists elsewhere); nonexistent order same safe
+not-found; malformed hostname denied; service_role/postgres confirmed
+to retain access.
 
 ## Frontend wiring
 

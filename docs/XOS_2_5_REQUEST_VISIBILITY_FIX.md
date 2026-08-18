@@ -268,5 +268,33 @@ database (not the actual function — nothing was applied):
 No Docker/local Postgres was available in this environment for a fully
 isolated instance (checked — Docker daemon not running here); the above is
 read-only logic validation against the real database, not a deployed
-function. **Not applied to production** — see the top-level report for
-readiness status.
+function.
+
+## Applied to production (2026-08-18, controlled cutover)
+
+Two issues were found and fixed live during application, both confirmed
+via independent verification (never trusting the apply command's own
+"success" alone):
+
+1. **`CREATE OR REPLACE` rejected outright.** Postgres refuses to change a
+   table-returning function's output columns without an explicit
+   `DROP FUNCTION` first (`cannot change return type of existing function`).
+   Added `drop function if exists ... ;` before the `get_internal_client_requests_unscoped`
+   redefinition. `get_internal_client_requests` needed no drop — its
+   public return shape didn't change, only its body.
+2. **The DROP+CREATE silently widened grants.** A fresh `CREATE FUNCTION`
+   on this project auto-grants `EXECUTE` to `PUBLIC`, which `anon` and
+   `authenticated` both inherit — confirmed live: both could call
+   `get_internal_client_requests_unscoped` directly via PostgREST RPC
+   immediately after the drop+recreate, bypassing the intended
+   "only reachable through the tenant-scoped wrapper" design. Naming
+   individual roles in a `REVOKE` does not remove a `PUBLIC` grant — it
+   has to be revoked from `PUBLIC` explicitly. Fixed and reconfirmed via
+   `has_function_privilege('anon', ..., 'EXECUTE')` → `false`.
+
+Re-ran the full test matrix below against the live deployed function using
+a simulated session (`set_config('request.jwt.claims', ...)` + `set role`
+within a transaction, matching how `auth.uid()`/`auth.jwt()` actually read
+their values) rather than a hand-copied proxy query — all results matched
+the pre-applied prediction exactly (18 total, orphan visible, cross-tenant
+excluded, no duplication, outsider denied).
