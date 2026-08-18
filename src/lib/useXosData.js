@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { listXosFiles, listXosOrders, listXosRequests } from '@/lib/xosModules';
+import { getXosOrderDetail, listXosFiles, listXosOrders, listXosRequests } from '@/lib/xosModules';
 
 // Each hook is its own query with its own limit, so Overview's small
 // summary fetch and a module page's full list fetch are independently
@@ -15,6 +15,17 @@ export function useXosOrders({ hostname, limit, enabled = true }) {
     queryKey: ['xos-orders', hostname, limit],
     queryFn: () => listXosOrders({ hostname, limit }).then(unwrap),
     enabled: enabled && Boolean(hostname),
+    staleTime: 30_000,
+  });
+}
+
+// Fetched only when an order detail sheet is actually open (see
+// XOSOrders.jsx) - the Orders list never pulls item arrays.
+export function useXosOrderDetail({ hostname, orderNumber, enabled = true }) {
+  return useQuery({
+    queryKey: ['xos-order-detail', hostname, orderNumber],
+    queryFn: () => getXosOrderDetail({ hostname, orderNumber }).then(unwrap),
+    enabled: enabled && Boolean(hostname) && Boolean(orderNumber),
     staleTime: 30_000,
   });
 }
