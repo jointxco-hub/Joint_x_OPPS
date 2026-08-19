@@ -746,20 +746,30 @@ const CONTACT_REFRESH_FIELDS = [
 // invoice status, deliberately bypassing updateInvoice()'s draft-only
 // gate rather than routing through it, since that gate exists to protect
 // the financial snapshot this function never touches.
+//
+// Logs actual before/after VALUES (not just field names) to
+// opps_invoice_activity on every call, regardless of invoice status -
+// this is the one function in this file that intentionally does NOT
+// special-case approved/exported/paid, precisely so a refresh on an
+// approved or paid invoice is captured with the same before/after detail
+// as one on a draft, per "record significant contact/shipping refreshes
+// in activity/history" for exactly those statuses.
 export async function refreshInvoiceContactDetails(id, fields = {}) {
   ensureSupabase();
   const invoice = await getInvoice(id);
 
   const patch = {};
-  const changedKeys = [];
+  const changes = [];
   for (const key of CONTACT_REFRESH_FIELDS) {
     if (!(key in fields)) continue;
     const value = fields[key];
-    if (value !== invoice[key]) changedKeys.push(key);
-    patch[key] = value === "" ? null : value;
+    const from = invoice[key] ?? null;
+    const to = value === "" ? null : value;
+    if (from !== to) changes.push({ field: key, from, to });
+    patch[key] = to;
   }
 
-  if (changedKeys.length === 0) return invoice;
+  if (changes.length === 0) return invoice;
 
   const { data, error } = await supabase
     .from("opps_invoices")
@@ -771,8 +781,11 @@ export async function refreshInvoiceContactDetails(id, fields = {}) {
   if (error) throw new Error(error.message);
   await createInvoiceActivity(id, {
     activity_type: "invoice_contact_refreshed",
-    activity_note: `Refreshed from client profile: ${changedKeys.join(", ")}`,
-    metadata: { changed_fields: changedKeys },
+    activity_note: `Refreshed from client profile - ${changes.map((c) => `${c.field}: "${c.from ?? ""}" -> "${c.to ?? ""}"`).join("; ")}`,
+    metadata: {
+      invoice_status_at_refresh: invoice.status,
+      changes,
+    },
   });
   return data;
 }

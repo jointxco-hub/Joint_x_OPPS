@@ -27,6 +27,7 @@ import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoice
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
 import { printIminReceipt } from "@/lib/pos/iminPrinter";
 import { getClientContactSnapshot, clientToInvoiceContactFields } from "@/api/invoices";
+import { getCourierRequirementGap } from "@/lib/shippingRequirements";
 import { toast } from "sonner";
 
 const CONTACT_FIELD_LABELS = {
@@ -128,10 +129,13 @@ export default function InvoiceDetailDrawer({
       .filter((row) => row.from !== row.to);
   })();
 
-  const needsShippingWarning = invoice
-    && invoice.fulfillment_type === "courier"
-    && !invoice.shipping_courier
-    && !invoice.shipping_courier_code;
+  const shippingGapReason = invoice
+    ? getCourierRequirementGap({
+        fulfillmentType: invoice.fulfillment_type,
+        courier: invoice.shipping_courier,
+        courierCode: invoice.shipping_courier_code,
+      })
+    : null;
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const activeDuplicates = duplicateInvoices.filter((item) => item.status !== "void");
   const displayStates = getInvoiceDisplayStates(invoice);
@@ -234,12 +238,12 @@ export default function InvoiceDetailDrawer({
                 </div>
               ) : null}
 
-              {needsShippingWarning && (
+              {shippingGapReason && (
                 <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
                   <div>
                     <p className="font-semibold">Delivery details incomplete</p>
-                    <p className="mt-0.5 text-amber-800">This invoice needs courier delivery but has no courier or PAXI/courier code set. Collection or service-only invoices don't need this.</p>
+                    <p className="mt-0.5 text-amber-800">{shippingGapReason}. Collection or service-only invoices don't need this.</p>
                     <button
                       type="button"
                       onClick={() => setRefreshDialogOpen(true)}
