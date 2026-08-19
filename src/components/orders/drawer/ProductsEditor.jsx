@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Copy, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, Copy, Factory, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
 
 function newLineId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -23,6 +24,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [pickerCategory, setPickerCategory] = useState("all");
   const [showPicker, setShowPicker] = useState(false);
   const [sizeRun, setSizeRun] = useState({});
+  const [expandedProductionLineId, setExpandedProductionLineId] = useState("");
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
@@ -35,6 +37,36 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
     enabled: addMode,
     staleTime: 300_000,
+  });
+
+  // Product Composition & Production Components (Phase 1) - only lines
+  // whose catalog product has a defined composition get the per-line
+  // Production control; every other line renders exactly as before.
+  const queryClient = useQueryClient();
+  const { data: productComponents = [] } = useQuery({
+    queryKey: ["productComponents"],
+    queryFn: () => dataClient.entities.ProductComponent.filter({ is_active: true }, "product_id", 500),
+    staleTime: 60_000,
+  });
+  const { data: productionTracking = [] } = useQuery({
+    queryKey: ["orderLineProductionTracking", order.id],
+    queryFn: () => dataClient.entities.OrderLineProductionTracking.filter({ order_id: order.id }, "line_id", 200),
+    enabled: Boolean(order.id),
+    staleTime: 30_000,
+  });
+  const composedProductIds = new Set((Array.isArray(productComponents) ? productComponents : []).map((c) => c.product_id));
+  const trackingByLineId = new Map((Array.isArray(productionTracking) ? productionTracking : []).map((t) => [t.line_id, t]));
+
+  const saveLineProduction = useMutation({
+    mutationFn: async ({ lineId, field, value }) => {
+      const existing = trackingByLineId.get(lineId);
+      if (existing) {
+        return dataClient.entities.OrderLineProductionTracking.update(existing.id, { [field]: value });
+      }
+      return dataClient.entities.OrderLineProductionTracking.create({ order_id: order.id, line_id: lineId, [field]: value });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] }),
+    onError: () => toast.error("Could not save production tracking for this line"),
   });
 
   const products = Array.isArray(order.products) ? order.products : [];
@@ -364,6 +396,16 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 <p className="mt-0.5 truncate text-xs text-amber-700">Add-ons: {p.selected_addons.map(optionLabel).join(", ")}</p>
               )}
               {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
+              {p.catalog_item_id && p.line_id && composedProductIds.has(p.catalog_item_id) && (
+                <LineProduction
+                  lineId={p.line_id}
+                  tracking={trackingByLineId.get(p.line_id)}
+                  expanded={expandedProductionLineId === p.line_id}
+                  onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
+                  onChange={(field, value) => saveLineProduction.mutate({ lineId: p.line_id, field, value })}
+                  saving={saveLineProduction.isPending}
+                />
+              )}
               </div>
               <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
                 {locked ? (
@@ -664,6 +706,59 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={addRow} disabled={!newRow.name.trim()}>Add</Button>
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Compact per-line production tracking - only rendered for lines whose
+// catalog product has a defined composition (product_components). Writes
+// to order_line_production_tracking, never the order's own
+// production_method/production_detail_stage columns, so orders/lines
+// without composition data keep behaving exactly as before.
+function LineProduction({ lineId, tracking, expanded, onToggle, onChange, saving }) {
+  return (
+    <div className="mt-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center gap-1.5 text-left text-[11px] font-semibold text-primary"
+      >
+        {expanded ? <ChevronDown className="h-3 w-3 flex-shrink-0" /> : <ChevronRight className="h-3 w-3 flex-shrink-0" />}
+        <Factory className="h-3 w-3 flex-shrink-0" />
+        Production
+        {tracking?.production_method && (
+          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            {PRODUCTION_METHODS.find((m) => m.value === tracking.production_method)?.label || tracking.production_method}
+          </span>
+        )}
+        {tracking?.production_stage && (
+          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            {PRODUCTION_DETAIL_STAGES.find((s) => s.value === tracking.production_stage)?.label || tracking.production_stage}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          <select
+            key={lineId}
+            value={tracking?.production_method || "__none"}
+            onChange={(e) => onChange("production_method", e.target.value === "__none" ? null : e.target.value)}
+            disabled={saving}
+            className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
+          >
+            {PRODUCTION_METHODS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <select
+            key={`${lineId}-stage`}
+            value={tracking?.production_stage || "__none"}
+            onChange={(e) => onChange("production_stage", e.target.value === "__none" ? null : e.target.value)}
+            disabled={saving}
+            className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
+          >
+            {PRODUCTION_DETAIL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
         </div>
       )}
     </div>

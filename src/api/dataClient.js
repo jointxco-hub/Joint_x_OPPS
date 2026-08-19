@@ -533,6 +533,42 @@ const ENTITY_CONFIG = {
       return row;
     },
   },
+  ProductComponent: {
+    table: 'product_components',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        product_id: payload.product_id,
+        component_type: payload.component_type,
+        inventory_product_id: payload.inventory_product_id,
+        quantity_per_unit: numberOrUndefined(payload.quantity_per_unit),
+        label: payload.label,
+        notes: payload.notes,
+        is_active: payload.is_active,
+      });
+    },
+  },
+  OrderLineProductionTracking: {
+    table: 'order_line_production_tracking',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        order_id: payload.order_id,
+        line_id: payload.line_id,
+        production_method: payload.production_method,
+        production_stage: payload.production_stage,
+        inventory_supplier_variant_id: payload.inventory_supplier_variant_id,
+        quantity_allocated: numberOrUndefined(payload.quantity_allocated),
+        notes: payload.notes,
+      });
+    },
+  },
   User: {
     table: 'users',
     sortMap: {

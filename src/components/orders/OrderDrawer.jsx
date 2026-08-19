@@ -70,6 +70,7 @@ import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder } from "@
 import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
 import { canAccessInvoices } from "@/lib/financeAccess";
 import { getCourierRequirementGap } from "@/lib/shippingRequirements";
+import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
 import { listInvoices } from "@/api/invoices";
 import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
@@ -94,42 +95,6 @@ const statusConfig = {
 const ORDER_STATUSES = ["confirmed", "in_production", "ready", "shipped", "delivered", "cancelled"];
 
 const progressStages = ["confirmed", "in_production", "ready", "shipped", "delivered"];
-
-const PRODUCTION_METHODS = [
-  { value: "__none", label: "Not set" },
-  { value: "dtf", label: "DTF printing" },
-  { value: "vinyl", label: "Vinyl cutting" },
-  { value: "screen", label: "Screen printing" },
-  { value: "embroidery", label: "Embroidery" },
-  { value: "pressing", label: "Heat pressing" },
-  { value: "tailoring", label: "Tailoring" },
-  { value: "cropping", label: "Cropping / alterations" },
-  { value: "labeling", label: "Labeling / tagging" },
-  { value: "mixed", label: "Mixed production" },
-  { value: "custom", label: "Custom" },
-];
-
-const PRODUCTION_DETAIL_STAGES = [
-  { value: "__none", label: "Not set" },
-  { value: "waiting_design_assets", label: "Waiting for design assets" },
-  { value: "artwork_check", label: "Artwork check" },
-  { value: "artwork_setup", label: "Artwork setup" },
-  { value: "awaiting_client_approval", label: "Awaiting client approval" },
-  { value: "print_setup", label: "Print setup" },
-  { value: "queued_pressing", label: "Queued for pressing" },
-  { value: "pressing", label: "Pressing" },
-  { value: "queued_embroidery", label: "Queued for embroidery" },
-  { value: "embroidering", label: "Embroidering" },
-  { value: "queued_tailor", label: "Queued for tailor" },
-  { value: "at_tailor", label: "At tailor" },
-  { value: "cropping_alterations", label: "Cropping / alterations" },
-  { value: "finishing", label: "Finishing" },
-  { value: "quality_check", label: "Quality check" },
-  { value: "rework", label: "Rework / correction" },
-  { value: "waiting_stock", label: "Waiting on stock / blanks" },
-  { value: "packing", label: "Packing" },
-  { value: "custom", label: "Custom" },
-];
 
 function selectValue(value, fallback = "__none") {
   if (Array.isArray(value)) {

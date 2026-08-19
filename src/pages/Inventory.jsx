@@ -661,7 +661,12 @@ function SingleChoiceChips({ value, onChange, presets, placeholder }) {
   );
 }
 
-function SearchSelect({ options, value, onChange, getLabel, placeholder, createLabel }) {
+// Exported for reuse outside Inventory.jsx (e.g. CatalogManagement.jsx's
+// Product Composition picker) - the "+ Create new" affordance is opt-in
+// via `createLabel`; omitting it (as composition does, since picking a
+// non-existent internal product there should route through the
+// Inventory mapping flow, not silently create one) just hides that row.
+export function SearchSelect({ options, value, onChange, getLabel, placeholder, createLabel }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selected = options.find(o => o.id === value);
@@ -679,10 +684,12 @@ function SearchSelect({ options, value, onChange, getLabel, placeholder, createL
       />
       {open && (
         <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-xl shadow-apple-sm max-h-56 overflow-auto">
-          <button type="button" onMouseDown={() => { onChange(NEW_OPTION); setOpen(false); }}
-            className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-secondary/50 font-medium">
-            {createLabel}
-          </button>
+          {createLabel && (
+            <button type="button" onMouseDown={() => { onChange(NEW_OPTION); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-secondary/50 font-medium">
+              {createLabel}
+            </button>
+          )}
           {filtered.length === 0 ? (
             <div className="px-3 py-2 text-sm text-muted-foreground">No existing matches</div>
           ) : filtered.map(o => (
