@@ -256,6 +256,14 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       ? "Locked automatically — this order has moved into production."
       : "";
 
+  // fulfillment_type defaults to 'courier' (see the migration) so an
+  // order created before this field existed still gets the warning if
+  // it's genuinely missing courier details - collection/service-only
+  // orders opt out by having staff set fulfillment_type explicitly.
+  const needsShippingWarning = (order.fulfillment_type || "courier") === "courier"
+    && !order.courier
+    && !order.pep_code;
+
   const linkedInvoicesForLockQuery = useQuery({
     queryKey: ["orderLinkedInvoicesForLock", order.id],
     queryFn: () => listInvoices({ sourceOrderId: order.id, pageSize: 10 }),
@@ -663,6 +671,16 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
             onStageChange={setLocalPipelineStage}
           />
         </DrawerSectionBoundary>
+
+        {needsShippingWarning && (
+          <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+            <div>
+              <p className="font-semibold">Delivery details incomplete</p>
+              <p className="mt-0.5 text-amber-800">This order needs courier delivery but has no courier or PAXI code set.</p>
+            </div>
+          </div>
+        )}
 
         {/* Quick Actions */}
         <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">

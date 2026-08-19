@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer, RotateCcw } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer, RefreshCw, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,7 +26,20 @@ import OrderLinkPanel from "./OrderLinkPanel";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
 import { printIminReceipt } from "@/lib/pos/iminPrinter";
+import { getClientContactSnapshot, clientToInvoiceContactFields } from "@/api/invoices";
 import { toast } from "sonner";
+
+const CONTACT_FIELD_LABELS = {
+  contact_person: "Contact person",
+  customer_phone: "Phone",
+  customer_email: "Email",
+  customer_billing_address: "Billing address",
+  shipping_address: "Shipping address",
+  shipping_courier: "Courier",
+  shipping_courier_code: "Courier / PAXI code",
+  delivery_instructions: "Delivery instructions",
+  fulfillment_type: "Fulfillment type",
+};
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -85,6 +99,8 @@ export default function InvoiceDetailDrawer({
   canReopen = false,
   onReopen,
   isReopenPending = false,
+  onRefreshContact,
+  isRefreshContactPending = false,
 }) {
   const [partialPaymentOpen, setPartialPaymentOpen] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
@@ -96,6 +112,26 @@ export default function InvoiceDetailDrawer({
   const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
   const [reopenReasonPreset, setReopenReasonPreset] = useState("quantity_correction");
   const [reopenReasonDetail, setReopenReasonDetail] = useState("");
+  const [refreshDialogOpen, setRefreshDialogOpen] = useState(false);
+
+  const clientSnapshotQuery = useQuery({
+    queryKey: ["clientContactSnapshot", invoice?.customer_id],
+    queryFn: () => getClientContactSnapshot(invoice.customer_id),
+    enabled: refreshDialogOpen && Boolean(invoice?.customer_id),
+  });
+
+  const contactDiff = (() => {
+    if (!clientSnapshotQuery.data || !invoice) return [];
+    const proposed = clientToInvoiceContactFields(clientSnapshotQuery.data);
+    return Object.keys(CONTACT_FIELD_LABELS)
+      .map((key) => ({ key, label: CONTACT_FIELD_LABELS[key], from: invoice[key] || "", to: proposed[key] || "" }))
+      .filter((row) => row.from !== row.to);
+  })();
+
+  const needsShippingWarning = invoice
+    && invoice.fulfillment_type === "courier"
+    && !invoice.shipping_courier
+    && !invoice.shipping_courier_code;
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
   const activeDuplicates = duplicateInvoices.filter((item) => item.status !== "void");
   const displayStates = getInvoiceDisplayStates(invoice);
@@ -197,6 +233,23 @@ export default function InvoiceDetailDrawer({
                   This invoice was already exported. Re-export only if you need to upload again or fix a mapping issue.
                 </div>
               ) : null}
+
+              {needsShippingWarning && (
+                <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                  <div>
+                    <p className="font-semibold">Delivery details incomplete</p>
+                    <p className="mt-0.5 text-amber-800">This invoice needs courier delivery but has no courier or PAXI/courier code set. Collection or service-only invoices don't need this.</p>
+                    <button
+                      type="button"
+                      onClick={() => setRefreshDialogOpen(true)}
+                      className="mt-1.5 text-xs font-semibold text-amber-900 underline underline-offset-2 hover:text-amber-950"
+                    >
+                      Update client delivery details
+                    </button>
+                  </div>
+                </div>
+              )}
               {!isDraft && (
                 <div className="rounded-xl border border-border bg-secondary/30 p-3 text-sm text-muted-foreground md:p-4">
                   This invoice is locked because it has already moved beyond draft.
@@ -353,6 +406,11 @@ export default function InvoiceDetailDrawer({
                         <RotateCcw className="h-3.5 w-3.5" /> Reopen
                       </Button>
                     )}
+                    {invoice.customer_id && (
+                      <Button variant="outline" size="sm" onClick={() => setRefreshDialogOpen(true)} className="h-8 rounded-xl text-xs">
+                        <RefreshCw className="h-3.5 w-3.5" /> Refresh from client
+                      </Button>
+                    )}
                     {!['paid', 'void'].includes(invoice.status) && (
                       <Button variant="outline" size="sm" onClick={() => setVoidConfirmOpen(true)} className="h-8 rounded-xl text-xs text-destructive hover:text-destructive">
                         <Ban className="h-3.5 w-3.5" /> Void
@@ -467,6 +525,49 @@ export default function InvoiceDetailDrawer({
           <Button variant="outline" onClick={() => setReopenDialogOpen(false)} className="rounded-xl">Cancel</Button>
           <Button onClick={submitReopen} disabled={reopenReasonInvalid || isReopenPending} className="rounded-xl">
             {isReopenPending ? "Reopening..." : "Reopen invoice"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={refreshDialogOpen} onOpenChange={setRefreshDialogOpen}>
+      <DialogContent className="rounded-2xl">
+        <DialogHeader>
+          <DialogTitle>Refresh from client profile</DialogTitle>
+          <DialogDescription>
+            Only contact and shipping details change. Line items, prices, totals, payments, and approval status are
+            never touched.
+          </DialogDescription>
+        </DialogHeader>
+        {clientSnapshotQuery.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading client profile...</p>
+        ) : contactDiff.length === 0 ? (
+          <p className="text-sm text-muted-foreground">This invoice already matches the client's current profile.</p>
+        ) : (
+          <div className="space-y-2">
+            {contactDiff.map((row) => (
+              <div key={row.key} className="rounded-xl border border-border p-3 text-sm">
+                <p className="font-semibold text-foreground">{row.label}</p>
+                <p className="mt-1 text-muted-foreground">
+                  <span className="line-through">{row.from || "(empty)"}</span>
+                  {" "}&rarr;{" "}
+                  <span className="text-foreground">{row.to || "(empty)"}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setRefreshDialogOpen(false)} className="rounded-xl">Cancel</Button>
+          <Button
+            onClick={() => {
+              const fields = clientToInvoiceContactFields(clientSnapshotQuery.data);
+              onRefreshContact?.(invoice, fields);
+              setRefreshDialogOpen(false);
+            }}
+            disabled={contactDiff.length === 0 || isRefreshContactPending}
+            className="rounded-xl"
+          >
+            {isRefreshContactPending ? "Refreshing..." : "Apply refresh"}
           </Button>
         </DialogFooter>
       </DialogContent>

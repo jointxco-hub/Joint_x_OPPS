@@ -21,6 +21,7 @@ import {
   markInvoicePaid,
   markInvoicePartiallyPaid,
   markInvoiceVoid,
+  refreshInvoiceContactDetails,
   reopenInvoice,
   syncInvoiceItemsFromOrder,
   unlinkInvoiceFromOrder,
@@ -183,6 +184,17 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
     },
     onError: (error) => toast.error(error?.message || "Could not reopen invoice"),
+  });
+
+  const refreshContactMutation = useMutation({
+    mutationFn: ({ invoice, fields }) => refreshInvoiceContactDetails(invoice.id, fields),
+    onSuccess: () => {
+      toast.success("Contact & shipping details refreshed");
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not refresh contact details"),
   });
 
   const markExportedMutation = useMutation({
@@ -413,6 +425,8 @@ export default function Invoices() {
         canReopen={canReopen}
         onReopen={(invoice, reason) => reopenMutation.mutate({ invoice, reason })}
         isReopenPending={reopenMutation.isPending}
+        onRefreshContact={(invoice, fields) => refreshContactMutation.mutate({ invoice, fields })}
+        isRefreshContactPending={refreshContactMutation.isPending}
         onEditDraft={(invoice) => {
           if (!isCompleteInvoiceDetail(detailQuery.data || invoice)) {
             toast.error("Invoice details must load completely before editing.");

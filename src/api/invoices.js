@@ -440,6 +440,7 @@ const ACTIVITY_LABELS = {
   invoice_linked_to_order: "Linked to order",
   invoice_unlinked_from_order: "Unlinked from order",
   invoice_synced_from_order: "Synced from order",
+  invoice_contact_refreshed: "Contact/shipping details refreshed",
 };
 
 async function createInvoiceActivity(invoiceId, input = {}) {
@@ -689,6 +690,90 @@ export async function reopenInvoice(invoiceId, reason) {
   if (error) {
     throw rpcSafetyError(error, REOPEN_INVOICE_ERROR_MESSAGES, "Could not reopen this invoice.");
   }
+  return data;
+}
+
+// Fetches the safe, customer-facing subset of a client record for the
+// "Refresh from client profile" preview - just the category-A fields
+// this feature is allowed to pull from, not the whole clients row.
+export async function getClientContactSnapshot(clientId) {
+  if (!clientId) return null;
+  ensureSupabase();
+  const { data, error } = await supabase
+    .from("clients")
+    .select("id, name, email, phone, saved_contact_name, delivery_address, billing_address, preferred_courier, pep_code, courier_guy_code, delivery_note, fulfillment_type")
+    .eq("id", clientId)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+function courierCodeForClient(client) {
+  if (!client) return "";
+  if (client.preferred_courier === "pep_paxi") return client.pep_code || client.courier_guy_code || "";
+  if (client.preferred_courier === "the_courier_guy") return client.courier_guy_code || client.pep_code || "";
+  return client.pep_code || client.courier_guy_code || "";
+}
+
+// Maps a clients row onto the invoice's category-A field names, so the
+// preview/diff and the actual refreshInvoiceContactDetails() call use
+// identical field mapping logic.
+export function clientToInvoiceContactFields(client) {
+  if (!client) return {};
+  return {
+    contact_person: client.saved_contact_name || "",
+    customer_phone: client.phone || "",
+    customer_email: client.email || "",
+    customer_billing_address: client.billing_address || client.delivery_address || "",
+    shipping_address: client.delivery_address || "",
+    shipping_courier: client.preferred_courier || "",
+    shipping_courier_code: courierCodeForClient(client),
+    delivery_instructions: client.delivery_note || "",
+    fulfillment_type: client.fulfillment_type || "courier",
+  };
+}
+
+const CONTACT_REFRESH_FIELDS = [
+  "contact_person", "customer_phone", "customer_email", "customer_billing_address",
+  "shipping_address", "shipping_courier", "shipping_courier_code", "delivery_instructions",
+  "fulfillment_type",
+];
+
+// Refreshes ONLY the live/refreshable contact-shipping metadata on an
+// existing invoice (category A) - never items, totals, payments, balance,
+// or approval/payment status (category B). Modeled directly on
+// markInvoicePaid()'s narrowly-scoped direct update: works at any
+// invoice status, deliberately bypassing updateInvoice()'s draft-only
+// gate rather than routing through it, since that gate exists to protect
+// the financial snapshot this function never touches.
+export async function refreshInvoiceContactDetails(id, fields = {}) {
+  ensureSupabase();
+  const invoice = await getInvoice(id);
+
+  const patch = {};
+  const changedKeys = [];
+  for (const key of CONTACT_REFRESH_FIELDS) {
+    if (!(key in fields)) continue;
+    const value = fields[key];
+    if (value !== invoice[key]) changedKeys.push(key);
+    patch[key] = value === "" ? null : value;
+  }
+
+  if (changedKeys.length === 0) return invoice;
+
+  const { data, error } = await supabase
+    .from("opps_invoices")
+    .update({ ...patch, updated_by: await getAuthUserId() })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+  await createInvoiceActivity(id, {
+    activity_type: "invoice_contact_refreshed",
+    activity_note: `Refreshed from client profile: ${changedKeys.join(", ")}`,
+    metadata: { changed_fields: changedKeys },
+  });
   return data;
 }
 
