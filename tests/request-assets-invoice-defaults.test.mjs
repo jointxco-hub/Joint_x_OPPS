@@ -90,6 +90,20 @@ test('preferred courier and contact defaults hydrate while historical order snap
   assert.equal(orderB.whatsapp_name, 'Mike Orders');
 });
 
+test('fulfillment_type hydrates from the client and defaults to courier when unset', () => {
+  const withPreference = hydrateOrderClientDefaults({ id: 'client-a', fulfillment_type: 'collection' });
+  assert.equal(withPreference.fulfillment_type, 'collection');
+
+  const withoutPreference = hydrateOrderClientDefaults({ id: 'client-b' });
+  assert.equal(withoutPreference.fulfillment_type, 'courier');
+
+  const update = buildClientDefaultsUpdate({ client_name: 'Mike', fulfillment_type: 'service_only' });
+  assert.equal(update.fulfillment_type, 'service_only');
+
+  const updateWithoutOverride = buildClientDefaultsUpdate({ client_name: 'Mike' });
+  assert.equal(updateWithoutOverride.fulfillment_type, 'courier');
+});
+
 test('intentional blank reusable values serialize as null while order snapshot aliases are retained', async () => {
   const update = buildClientDefaultsUpdate({ client_name: 'Mike', client_email: '', client_phone: ' ', courier: '' });
   assert.equal(update.email, null);

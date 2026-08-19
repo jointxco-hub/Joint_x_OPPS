@@ -69,6 +69,7 @@ import OrderFilesTab from "@/components/orders/drawer/OrderFilesTab";
 import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder } from "@/components/orders/drawer/OrderDrawerShared";
 import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
 import { canAccessInvoices } from "@/lib/financeAccess";
+import { getCourierRequirementGap } from "@/lib/shippingRequirements";
 import { listInvoices } from "@/api/invoices";
 import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
@@ -255,6 +256,19 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
     : isPastConfirmed
       ? "Locked automatically — this order has moved into production."
       : "";
+
+  // fulfillment_type defaults to 'courier' (see the migration) so an
+  // order created before this field existed still gets checked if it's
+  // genuinely missing courier details - collection/service-only orders
+  // opt out by having staff set fulfillment_type explicitly. The gap
+  // reason is courier-type-aware (see shippingRequirements.js) - a
+  // selected PAXI/Courier Guy courier with no code is just as incomplete
+  // as no courier at all, not just the "both blank" case.
+  const shippingGapReason = getCourierRequirementGap({
+    fulfillmentType: order.fulfillment_type,
+    courier: order.courier,
+    courierCode: order.pep_code,
+  });
 
   const linkedInvoicesForLockQuery = useQuery({
     queryKey: ["orderLinkedInvoicesForLock", order.id],
@@ -663,6 +677,16 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
             onStageChange={setLocalPipelineStage}
           />
         </DrawerSectionBoundary>
+
+        {shippingGapReason && (
+          <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+            <div>
+              <p className="font-semibold">Delivery details incomplete</p>
+              <p className="mt-0.5 text-amber-800">{shippingGapReason}.</p>
+            </div>
+          </div>
+        )}
 
         {/* Quick Actions */}
         <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">

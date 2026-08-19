@@ -103,6 +103,16 @@ function searchableClientText(client = {}) {
   ].filter(Boolean).join(" ").toLowerCase();
 }
 
+// Whichever courier the client prefers determines which of their two
+// courier-specific codes actually applies - falls back to whichever one
+// is set if preferred_courier isn't one of the two we track a distinct
+// code for.
+function clientCourierCode(client = {}) {
+  if (client.preferred_courier === "pep_paxi") return client.pep_code || client.courier_guy_code || "";
+  if (client.preferred_courier === "the_courier_guy") return client.courier_guy_code || client.pep_code || "";
+  return client.pep_code || client.courier_guy_code || "";
+}
+
 function clientInvoiceFields(client = {}) {
   return {
     customer_id: client.id || "",
@@ -110,6 +120,12 @@ function clientInvoiceFields(client = {}) {
     customer_email: client.email || client.client_email || "",
     customer_phone: client.phone || client.client_phone || client.whatsapp || "",
     customer_billing_address: client.billing_address || client.delivery_address || client.delivery_note || "",
+    contact_person: client.saved_contact_name || "",
+    shipping_address: client.delivery_address || "",
+    shipping_courier: client.preferred_courier || "",
+    shipping_courier_code: clientCourierCode(client),
+    delivery_instructions: client.delivery_note || "",
+    fulfillment_type: client.fulfillment_type || "courier",
   };
 }
 
@@ -120,12 +136,19 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
   const topRef = useRef(null);
   const [step, setStep] = useState(0);
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
+  const [updateClientDefaults, setUpdateClientDefaults] = useState(false);
   const [invoice, setInvoice] = useState({
     customer_id: initialInvoice?.customer_id || "",
     customer_name: initialInvoice?.customer_name || "",
     customer_email: initialInvoice?.customer_email || "",
     customer_phone: initialInvoice?.customer_phone || "",
     customer_billing_address: initialInvoice?.customer_billing_address || "",
+    contact_person: initialInvoice?.contact_person || "",
+    shipping_address: initialInvoice?.shipping_address || "",
+    shipping_courier: initialInvoice?.shipping_courier || "",
+    shipping_courier_code: initialInvoice?.shipping_courier_code || "",
+    delivery_instructions: initialInvoice?.delivery_instructions || "",
+    fulfillment_type: initialInvoice?.fulfillment_type || "courier",
     source_order_id: initialInvoice?.source_order_id || "",
     invoice_date: initialInvoiceDate,
     due_date: initialInvoice?.due_date || addDaysIso(initialInvoiceDate, defaultInvoiceDefaults.dueDays),
@@ -252,11 +275,31 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
       ...current,
       ...clientInvoiceFields(client),
     }));
+    setUpdateClientDefaults(false);
     setShowClientSuggestions(false);
   };
 
   const submit = (status) => {
     if (isSaving || !detailReady) return;
+    // Explicit opt-in only - matches NewOrderDrawer.jsx's "Update client
+    // defaults" checkbox exactly. Without it, contact/shipping edits made
+    // here stay local to this invoice and never touch the client record.
+    if (updateClientDefaults && invoice.customer_id) {
+      dataClient.entities.Client.update(invoice.customer_id, {
+        name: String(invoice.customer_name || "").trim(),
+        email: invoice.customer_email || null,
+        phone: invoice.customer_phone || null,
+        saved_contact_name: invoice.contact_person || null,
+        delivery_address: invoice.shipping_address || null,
+        billing_address: invoice.customer_billing_address || null,
+        preferred_courier: invoice.shipping_courier || null,
+        delivery_note: invoice.delivery_instructions || null,
+        fulfillment_type: invoice.fulfillment_type || "courier",
+      }).catch(() => {
+        // Best-effort - the invoice save itself (below) is the primary
+        // action and should not be blocked by a client-defaults failure.
+      });
+    }
     onSave({
       ...calculated.invoice,
       id: initialInvoice?.id,
@@ -381,6 +424,45 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
                     Linked to existing client record.
                   </p>
                 )}
+
+                <div className="space-y-3 rounded-xl border border-border p-3">
+                  <h3 className="text-sm font-semibold text-foreground">Delivery & courier</h3>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <Input value={invoice.contact_person} onChange={(event) => setField("contact_person", event.target.value)} placeholder="Contact person" className="h-10 rounded-xl" />
+                    <Select value={invoice.fulfillment_type} onValueChange={(value) => setField("fulfillment_type", value)}>
+                      <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="courier">Courier delivery</SelectItem>
+                        <SelectItem value="collection">Collection / pickup</SelectItem>
+                        <SelectItem value="service_only">Service only - no shipping</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {invoice.fulfillment_type === "courier" && (
+                    <>
+                      <Textarea value={invoice.shipping_address} onChange={(event) => setField("shipping_address", event.target.value)} placeholder="Shipping address" className="min-h-16 rounded-xl" />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <Input value={invoice.shipping_courier} onChange={(event) => setField("shipping_courier", event.target.value)} placeholder="Courier (e.g. the_courier_guy, pep_paxi)" className="h-10 rounded-xl" />
+                        <Input value={invoice.shipping_courier_code} onChange={(event) => setField("shipping_courier_code", event.target.value)} placeholder="Courier / PAXI code" className="h-10 rounded-xl" />
+                      </div>
+                    </>
+                  )}
+                  <Textarea value={invoice.delivery_instructions} onChange={(event) => setField("delivery_instructions", event.target.value)} placeholder="Delivery instructions" className="min-h-16 rounded-xl" />
+                  {invoice.customer_id && (
+                    <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={updateClientDefaults}
+                        onChange={(event) => setUpdateClientDefaults(event.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="font-medium text-foreground">Update client defaults</span> — save the contact, delivery and
+                        courier values above for future orders and invoices. Blank fields will be cleared.
+                      </span>
+                    </label>
+                  )}
+                </div>
               </div>
             )}
 

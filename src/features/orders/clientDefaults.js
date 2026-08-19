@@ -18,6 +18,7 @@ export function hydrateOrderClientDefaults(client = {}) {
     pep_code: valueOrEmpty(client.pep_code),
     delivery_note: valueOrEmpty(client.delivery_note || client.delivery_address),
     courier: valueOrEmpty(client.preferred_courier),
+    fulfillment_type: valueOrEmpty(client.fulfillment_type) || 'courier',
   };
 }
 
@@ -32,5 +33,6 @@ export function buildClientDefaultsUpdate(form = {}) {
     delivery_note: clearable(form.delivery_note),
     delivery_address: clearable(form.delivery_note),
     preferred_courier: clearable(form.courier),
+    fulfillment_type: form.fulfillment_type || 'courier',
   };
 }
