@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
-import { useXosOrders } from '@/lib/useXosData';
+import { ImageOff, Search } from 'lucide-react';
+import { useXosOrderDetail, useXosOrders } from '@/lib/useXosData';
 import { getClientSafeOrderStatus, getOrderStageDetail } from '@/lib/xosOrderStatus';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -18,10 +18,79 @@ const STATUS_FILTERS = [
   { value: 'on_hold', label: 'On Hold' },
 ];
 
-function OrderDetailSheet({ order, onClose }) {
-  const clientStatus = order ? getClientSafeOrderStatus(order) : null;
+function ItemThumb({ imageUrl, name }) {
+  if (!imageUrl) {
+    return (
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-400">
+        <ImageOff className="h-4 w-4" />
+      </div>
+    );
+  }
   return (
-    <Sheet open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
+    <img
+      src={imageUrl}
+      alt={name || 'Item'}
+      className="h-12 w-12 shrink-0 rounded-lg object-cover"
+      loading="lazy"
+    />
+  );
+}
+
+function OrderItemsSection({ hostname, orderNumber, open }) {
+  const { data, isLoading, error, refetch } = useXosOrderDetail({ hostname, orderNumber, enabled: open });
+
+  if (isLoading) {
+    return (
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Items</p>
+        <ListSkeleton rows={2} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Items</p>
+        <ErrorState message={error.message} onRetry={refetch} />
+      </div>
+    );
+  }
+
+  const items = Array.isArray(data?.items) ? data.items : [];
+  if (items.length === 0) return null;
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">Items</p>
+      <ul className="space-y-3">
+        {items.map((item, i) => {
+          const variant = [item.size, item.color].filter(Boolean).join(' / ');
+          return (
+            <li key={i} className="flex items-center gap-3">
+              <ItemThumb imageUrl={item.image_url} name={item.name} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-zinc-900">{item.name}</p>
+                <p className="text-xs text-zinc-500">
+                  {[variant, item.quantity ? `Qty ${item.quantity}` : null].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+              {item.price != null && (
+                <p className="shrink-0 text-sm font-medium text-zinc-900">{formatCurrency(item.price)}</p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function OrderDetailSheet({ order, hostname, onClose }) {
+  const clientStatus = order ? getClientSafeOrderStatus(order) : null;
+  const open = Boolean(order);
+  return (
+    <Sheet open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
         {order && (
           <>
@@ -71,6 +140,8 @@ function OrderDetailSheet({ order, onClose }) {
                   </div>
                 )}
               </dl>
+
+              <OrderItemsSection hostname={hostname} orderNumber={order.order_number} open={open} />
             </div>
           </>
         )}
@@ -207,7 +278,7 @@ export default function XOSOrders({ gate }) {
         </>
       )}
 
-      <OrderDetailSheet order={selectedOrder} onClose={() => setSelectedOrder(null)} />
+      <OrderDetailSheet order={selectedOrder} hostname={gate.hostname} onClose={() => setSelectedOrder(null)} />
     </div>
   );
 }

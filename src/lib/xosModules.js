@@ -5,6 +5,7 @@ function missingRpc(message = "") {
   return lower.includes("get_xos_requests_for_host")
     || lower.includes("get_xos_files_for_host")
     || lower.includes("get_xos_orders_for_host")
+    || lower.includes("get_xos_order_detail_for_host")
     || lower.includes("create_xos_request_for_host")
     || lower.includes("could not find the function")
     || lower.includes("does not exist");
@@ -50,6 +51,26 @@ export async function listXosOrders({ hostname, limit = 20 } = {}) {
     return { data: Array.isArray(data) ? data : [], error: null };
   } catch {
     return { data: [], error: "Could not load XOS orders." };
+  }
+}
+
+export async function getXosOrderDetail({ hostname, orderNumber } = {}) {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+
+  try {
+    const { data, error } = await supabase.rpc("get_xos_order_detail_for_host", {
+      p_hostname: hostname,
+      p_order_number: orderNumber,
+    });
+
+    if (error) {
+      if (missingRpc(error.message)) return { data: null, error: "Order detail is not deployed yet." };
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || null, error: null };
+  } catch {
+    return { data: null, error: "Could not load order detail." };
   }
 }
 
