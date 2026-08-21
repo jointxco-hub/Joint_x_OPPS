@@ -108,17 +108,94 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     }
   };
 
-  // Copies the client product's CURRENT active components into immutable
-  // order_line_component_snapshots rows for this line. Explicit,
-  // staff-triggered, one line at a time - never automatic/bulk. Once
-  // taken, a snapshot never changes even if product_components does.
-  const attachComposition = useMutation({
-    mutationFn: async ({ lineId, clientProductId }) => {
+  // --- Exact internal inventory variant resolution -----------------------
+  // For a blank/base component, resolve the order line's free-text
+  // size/colour to the exact inventory_variants row for that component's
+  // inventory_product_id (never a supplier variant - that's downstream,
+  // handled separately on order_line_production_tracking). Both
+  // inventory_variants.size_name and colour_name are NOT NULL in the
+  // live schema, so an empty order-line size/colour can never
+  // auto-match - it always requires a staff pick rather than guessing.
+  const normalizeVariantField = (value) => (value || "").trim().toLowerCase();
+
+  const resolveBlankComponentVariant = async (component, orderLine) => {
+    if (component.fixed_inventory_variant_id) {
+      return { status: "fixed", resolvedVariantId: component.fixed_inventory_variant_id, options: [] };
+    }
+    if (!component.inventory_product_id) {
+      return { status: "not_applicable", resolvedVariantId: null, options: [] };
+    }
+    const variants = await dataClient.entities.InventoryVariant.filter(
+      { inventory_product_id: component.inventory_product_id, is_active: true }, "size_name", 200
+    );
+    const options = Array.isArray(variants) ? variants : [];
+    const size = normalizeVariantField(orderLine.size);
+    const colour = normalizeVariantField(orderLine.color);
+    const matches = size && colour
+      ? options.filter((v) => normalizeVariantField(v.size_name) === size && normalizeVariantField(v.colour_name) === colour)
+      : [];
+    if (matches.length === 1) {
+      return { status: "resolved", resolvedVariantId: matches[0].id, options };
+    }
+    // Zero or multiple matches: never guess. Zero shows an explicit
+    // unresolved state (attach may still proceed - see the production
+    // gate below); multiple requires an explicit staff pick before this
+    // component can be attached at all.
+    return { status: matches.length === 0 ? "unresolved_zero" : "unresolved_multiple", resolvedVariantId: null, options };
+  };
+
+  // { lineId, clientProductId, orderLine, resolutions: [{ component, status, resolvedVariantId, options, staffPickedVariantId }] }
+  const [pendingResolution, setPendingResolution] = useState(null);
+  const [resolvingLineId, setResolvingLineId] = useState("");
+
+  const beginAttach = async (lineId, clientProductId, orderLine) => {
+    setResolvingLineId(lineId);
+    try {
       const components = await dataClient.entities.ProductComponent.filter({ client_product_id: clientProductId, is_active: true }, "sort_order", 100);
       const active = (Array.isArray(components) ? components : []).filter((c) => c.is_active !== false);
-      if (active.length === 0) throw new Error("This client product has no active components yet");
+      if (active.length === 0) {
+        toast.error("This client product has no active components yet");
+        return;
+      }
+      const resolutions = [];
+      for (const component of active) {
+        const resolution = await resolveBlankComponentVariant(component, orderLine);
+        resolutions.push({ component, ...resolution, staffPickedVariantId: "" });
+      }
+      setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
+    } catch (err) {
+      toast.error(err?.message || "Could not resolve composition for this line");
+    } finally {
+      setResolvingLineId("");
+    }
+  };
+
+  const pickVariantForComponent = (componentId, variantId) => {
+    setPendingResolution((current) => current && {
+      ...current,
+      resolutions: current.resolutions.map((r) => r.component.id === componentId ? { ...r, staffPickedVariantId: variantId } : r),
+    });
+  };
+
+  const needsStaffPick = (r) => (r.status === "unresolved_zero" || r.status === "unresolved_multiple") && !r.staffPickedVariantId;
+  const attachIsBlocked = pendingResolution
+    ? pendingResolution.resolutions.some((r) => r.status === "unresolved_multiple" && !r.staffPickedVariantId)
+    : true;
+
+  // Writes the immutable snapshot rows only once every "must choose"
+  // (multiple-match) component has an explicit staff pick. A component
+  // left at "zero matches, no pick" still attaches - with
+  // resolved_inventory_variant_id left null and visibly flagged, never
+  // silently treated as known - per the production gate below.
+  const confirmAttach = useMutation({
+    mutationFn: async () => {
+      const { lineId, clientProductId, resolutions } = pendingResolution;
       const created = [];
-      for (const c of active) {
+      for (const r of resolutions) {
+        const c = r.component;
+        const finalVariantId = r.status === "resolved" || r.status === "fixed"
+          ? r.resolvedVariantId
+          : (r.staffPickedVariantId || null);
         created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
           order_id: order.id,
           line_id: lineId,
@@ -135,10 +212,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           quantity_per_unit: c.quantity_per_unit,
           sort_order: c.sort_order,
           inventory_product_id: c.inventory_product_id,
-          // Only pre-filled when the component is intrinsically fixed to
-          // one variant - variable garments still need per-order size/
-          // colour resolution, deliberately not built in this pass.
-          resolved_inventory_variant_id: c.fixed_inventory_variant_id || null,
+          resolved_inventory_variant_id: finalVariantId,
           artwork_revision_ids: [],
         }));
       }
@@ -146,10 +220,22 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      setPendingResolution(null);
       toast.success("Composition attached to this line");
     },
     onError: (err) => toast.error(err?.message || "Could not attach composition"),
   });
+
+  const { data: internalProductsForLabels = [] } = useQuery({
+    queryKey: ["inventoryProductsForVariantLabels"],
+    queryFn: () => dataClient.entities.InventoryProduct.list("internal_name", 200),
+    enabled: Boolean(pendingResolution),
+    staleTime: 300_000,
+  });
+  const internalProductLabelFor = (id) => (Array.isArray(internalProductsForLabels) ? internalProductsForLabels : [])
+    .find((p) => p.id === id)?.internal_name || "";
+  const variantLabel = (variant) => [internalProductLabelFor(variant.inventory_product_id), variant.colour_name, variant.size_name]
+    .filter(Boolean).join(" · ");
 
   const saveLineProduction = useMutation({
     mutationFn: async ({ snapshot, field, value }) => {
@@ -504,9 +590,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   expanded={expandedProductionLineId === p.line_id}
                   onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
                   onChange={(snapshot, field, value) => saveLineProduction.mutate({ snapshot, field, value })}
-                  onAttach={() => attachComposition.mutate({ lineId: p.line_id, clientProductId: clientProductByCatalogItemId.get(p.catalog_item_id).id })}
+                  onBeginAttach={() => beginAttach(p.line_id, clientProductByCatalogItemId.get(p.catalog_item_id).id, p)}
+                  resolving={resolvingLineId === p.line_id}
+                  pendingResolution={pendingResolution && pendingResolution.lineId === p.line_id ? pendingResolution : null}
+                  onPickVariant={pickVariantForComponent}
+                  onConfirmAttach={() => confirmAttach.mutate()}
+                  onCancelAttach={() => setPendingResolution(null)}
+                  attachIsBlocked={attachIsBlocked}
+                  needsStaffPick={needsStaffPick}
+                  variantLabel={variantLabel}
+                  confirming={confirmAttach.isPending}
                   saving={saveLineProduction.isPending}
-                  attaching={attachComposition.isPending}
                 />
               )}
               </div>
@@ -824,7 +918,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
 // to order_line_production_tracking, never the order's own
 // production_method/production_detail_stage columns, so orders/lines
 // without composition data keep behaving exactly as before.
-function LineProduction({ clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange, onAttach, saving, attaching }) {
+function LineProduction({
+  clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange,
+  onBeginAttach, resolving, pendingResolution, onPickVariant, onConfirmAttach, onCancelAttach,
+  attachIsBlocked, needsStaffPick, variantLabel, confirming, saving,
+}) {
   const hasSnapshots = snapshots.length > 0;
   return (
     <div className="mt-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5">
@@ -846,27 +944,87 @@ function LineProduction({ clientProduct, snapshots, trackingBySnapshotId, expand
             {snapshots.length} component{snapshots.length === 1 ? "" : "s"}
           </span>
         )}
+        {hasSnapshots && snapshots.some((s) => s.inventory_product_id && !s.resolved_inventory_variant_id) && (
+          <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+            unresolved variant
+          </span>
+        )}
       </button>
-      {expanded && !hasSnapshots && (
+
+      {expanded && !hasSnapshots && !pendingResolution && (
         <div className="mt-1.5 space-y-1">
           <p className="text-[11px] text-muted-foreground">
             {clientProduct?.client_facing_name || "This client product"} has a composition defined, but this order line hasn't captured a frozen snapshot of it yet.
           </p>
-          <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onAttach} disabled={attaching}>
-            {attaching ? "Attaching…" : "Attach composition to this line"}
+          <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onBeginAttach} disabled={resolving}>
+            {resolving ? "Resolving…" : "Attach composition to this line"}
           </Button>
         </div>
       )}
+
+      {expanded && pendingResolution && (
+        <div className="mt-1.5 space-y-2">
+          <p className="text-[11px] text-muted-foreground">
+            Resolving exact inventory variant per component. Line size &quot;{pendingResolution.orderLine.size || "(none)"}&quot; · colour &quot;{pendingResolution.orderLine.color || "(none)"}&quot;.
+          </p>
+          {pendingResolution.resolutions.map((r) => (
+            <div key={r.component.id} className={`rounded-lg border bg-background/60 p-1.5 ${needsStaffPick(r) && r.status === "unresolved_multiple" ? "border-red-300" : "border-primary/10"}`}>
+              <p className="mb-1 text-[10px] font-semibold text-slate-700">
+                {r.component.label || r.component.component_type}
+                {r.component.placement && <span className="text-slate-400"> · {r.component.placement}</span>}
+              </p>
+              {r.status === "resolved" && (
+                <p className="text-[10px] text-emerald-700">✓ resolved automatically: {variantLabel(r.options.find((o) => o.id === r.resolvedVariantId) || {})}</p>
+              )}
+              {r.status === "fixed" && (
+                <p className="text-[10px] text-emerald-700">✓ fixed variant configured on this component</p>
+              )}
+              {r.status === "not_applicable" && (
+                <p className="text-[10px] text-slate-400">no inventory identity on this component - nothing to resolve</p>
+              )}
+              {r.status === "unresolved_zero" && (
+                <p className="text-[10px] text-amber-700">no variant matches this line&apos;s size/colour - pick manually, or attach unresolved and flag production later</p>
+              )}
+              {r.status === "unresolved_multiple" && (
+                <p className="text-[10px] text-red-700">multiple variants match - staff must choose before this component can be attached</p>
+              )}
+              {(r.status === "unresolved_zero" || r.status === "unresolved_multiple") && (
+                <select
+                  value={r.staffPickedVariantId}
+                  onChange={(e) => onPickVariant(r.component.id, e.target.value)}
+                  className="mt-1 h-7 w-full rounded-lg border border-input bg-background px-2 text-[11px]"
+                >
+                  <option value="">Select internal variant…</option>
+                  {r.options.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
+                </select>
+              )}
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" className="h-7 flex-1 rounded-lg text-[11px]" onClick={onCancelAttach}>Cancel</Button>
+            <Button size="sm" className="h-7 flex-1 rounded-lg text-[11px]" onClick={onConfirmAttach} disabled={confirming || attachIsBlocked}>
+              {confirming ? "Attaching…" : "Confirm & attach"}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {expanded && hasSnapshots && (
         <div className="mt-1.5 space-y-2">
           {snapshots.map((snapshot) => {
             const tracking = trackingBySnapshotId.get(snapshot.id);
+            const stageBlocked = Boolean(snapshot.inventory_product_id && !snapshot.resolved_inventory_variant_id);
             return (
               <div key={snapshot.id} className="rounded-lg border border-primary/10 bg-background/60 p-1.5">
                 <p className="mb-1 text-[10px] font-semibold text-slate-700">
                   {snapshot.label || snapshot.component_type}
                   {snapshot.placement && <span className="text-slate-400"> · {snapshot.placement}</span>}
                 </p>
+                {stageBlocked && (
+                  <p className="mb-1 text-[10px] text-red-700">
+                    unresolved inventory variant - stock-related production stage is blocked until this is resolved
+                  </p>
+                )}
                 <div className="grid grid-cols-2 gap-1.5">
                   <select
                     key={`${snapshot.id}-method`}
@@ -881,8 +1039,9 @@ function LineProduction({ clientProduct, snapshots, trackingBySnapshotId, expand
                     key={`${snapshot.id}-stage`}
                     value={tracking?.production_stage || "__none"}
                     onChange={(e) => onChange(snapshot, "production_stage", e.target.value === "__none" ? null : e.target.value)}
-                    disabled={saving}
-                    className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
+                    disabled={saving || stageBlocked}
+                    title={stageBlocked ? "Resolve the internal inventory variant before progressing this component's production stage" : undefined}
+                    className="h-7 rounded-lg border border-input bg-background px-2 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {PRODUCTION_DETAIL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
