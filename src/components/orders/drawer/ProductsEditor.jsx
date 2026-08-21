@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Copy, Factory, Lock, Minus, Package, Pencil,
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
@@ -39,31 +40,130 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     staleTime: 300_000,
   });
 
-  // Product Composition & Production Components (Phase 1) - only lines
-  // whose catalog product has a defined composition get the per-line
-  // Production control; every other line renders exactly as before.
+  // Product Composition & Production Components (Phase 1). Composition
+  // lives on client_products (client-specific), not the global catalog
+  // product, so a line's composition is found via the client product
+  // linked to this order's client whose opps_product_id matches the
+  // line's catalog_item_id. Production tracking operates against a
+  // frozen order_line_component_snapshots row (never the live
+  // product_components row), so a line with no snapshot taken yet shows
+  // an explicit "attach composition" action instead of live tracking
+  // controls - lines with no matching client product render exactly as
+  // before.
   const queryClient = useQueryClient();
-  const { data: productComponents = [] } = useQuery({
-    queryKey: ["productComponents"],
-    queryFn: () => dataClient.entities.ProductComponent.filter({ is_active: true }, "product_id", 500),
+  const { data: currentUser } = useQuery({
+    queryKey: ["currentUser"],
+    queryFn: () => dataClient.auth.me(),
+    staleTime: 300_000,
+  });
+  const { data: clientProductsForOrder = [] } = useQuery({
+    queryKey: ["clientProductsForOrder", order.client_id],
+    queryFn: () => dataClient.entities.ClientProduct.filter({ client_id: order.client_id }, "client_facing_name", 200),
+    enabled: Boolean(order.client_id),
     staleTime: 60_000,
   });
-  const { data: productionTracking = [] } = useQuery({
-    queryKey: ["orderLineProductionTracking", order.id],
-    queryFn: () => dataClient.entities.OrderLineProductionTracking.filter({ order_id: order.id }, "line_id", 200),
+  const { data: lineSnapshots = [] } = useQuery({
+    queryKey: ["orderLineComponentSnapshots", order.id],
+    queryFn: () => dataClient.entities.OrderLineComponentSnapshot.filter({ order_id: order.id }, "sort_order", 300),
     enabled: Boolean(order.id),
     staleTime: 30_000,
   });
-  const composedProductIds = new Set((Array.isArray(productComponents) ? productComponents : []).map((c) => c.product_id));
-  const trackingByLineId = new Map((Array.isArray(productionTracking) ? productionTracking : []).map((t) => [t.line_id, t]));
+  const { data: productionTracking = [] } = useQuery({
+    queryKey: ["orderLineProductionTracking", order.id],
+    queryFn: () => dataClient.entities.OrderLineProductionTracking.filter({ order_id: order.id }, "created_at", 300),
+    enabled: Boolean(order.id),
+    staleTime: 30_000,
+  });
+
+  const clientProductByCatalogItemId = new Map(
+    (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : [])
+      .filter((cp) => cp.opps_product_id)
+      .map((cp) => [cp.opps_product_id, cp])
+  );
+  const snapshotsByLineId = new Map();
+  for (const snapshot of (Array.isArray(lineSnapshots) ? lineSnapshots : [])) {
+    const list = snapshotsByLineId.get(snapshot.line_id) || [];
+    list.push(snapshot);
+    snapshotsByLineId.set(snapshot.line_id, list);
+  }
+  const trackingBySnapshotId = new Map(
+    (Array.isArray(productionTracking) ? productionTracking : []).map((t) => [t.order_line_component_snapshot_id, t])
+  );
+
+  const logProductionActivity = async (snapshot, field, fromValue, toValue) => {
+    if (!currentUser?.email) return;
+    try {
+      await supabase.from("opps_activity_events").insert({
+        tenant_id: order.tenant_id,
+        actor_email: currentUser.email,
+        actor_name: currentUser.full_name || currentUser.email,
+        event_type: field === "production_stage" ? "production_stage_changed" : "production_method_changed",
+        entity_type: "order_line_production_tracking",
+        entity_id: snapshot.id,
+        summary: `${snapshot.label || snapshot.component_type} on order line ${snapshot.line_id}: ${field} ${fromValue || "(none)"} -> ${toValue || "(none)"}`,
+        metadata: { order_id: order.id, line_id: snapshot.line_id, field, from: fromValue, to: toValue },
+      });
+    } catch {
+      // Best-effort audit trail - never block the actual stage/method save on this.
+    }
+  };
+
+  // Copies the client product's CURRENT active components into immutable
+  // order_line_component_snapshots rows for this line. Explicit,
+  // staff-triggered, one line at a time - never automatic/bulk. Once
+  // taken, a snapshot never changes even if product_components does.
+  const attachComposition = useMutation({
+    mutationFn: async ({ lineId, clientProductId }) => {
+      const components = await dataClient.entities.ProductComponent.filter({ client_product_id: clientProductId, is_active: true }, "sort_order", 100);
+      const active = (Array.isArray(components) ? components : []).filter((c) => c.is_active !== false);
+      if (active.length === 0) throw new Error("This client product has no active components yet");
+      const created = [];
+      for (const c of active) {
+        created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
+          order_id: order.id,
+          line_id: lineId,
+          client_product_id: clientProductId,
+          source_product_component_id: c.id,
+          component_type: c.component_type,
+          label: c.label,
+          production_method: c.production_method,
+          placement: c.placement,
+          production_colour: c.production_colour,
+          specification: c.specification,
+          production_instructions: c.production_instructions,
+          sell_price: c.default_sell_price,
+          quantity_per_unit: c.quantity_per_unit,
+          sort_order: c.sort_order,
+          inventory_product_id: c.inventory_product_id,
+          // Only pre-filled when the component is intrinsically fixed to
+          // one variant - variable garments still need per-order size/
+          // colour resolution, deliberately not built in this pass.
+          resolved_inventory_variant_id: c.fixed_inventory_variant_id || null,
+          artwork_revision_ids: [],
+        }));
+      }
+      return created;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      toast.success("Composition attached to this line");
+    },
+    onError: (err) => toast.error(err?.message || "Could not attach composition"),
+  });
 
   const saveLineProduction = useMutation({
-    mutationFn: async ({ lineId, field, value }) => {
-      const existing = trackingByLineId.get(lineId);
-      if (existing) {
-        return dataClient.entities.OrderLineProductionTracking.update(existing.id, { [field]: value });
+    mutationFn: async ({ snapshot, field, value }) => {
+      const existing = trackingBySnapshotId.get(snapshot.id);
+      const fromValue = existing?.[field] ?? null;
+      const row = existing
+        ? await dataClient.entities.OrderLineProductionTracking.update(existing.id, { [field]: value })
+        : await dataClient.entities.OrderLineProductionTracking.create({
+            order_id: order.id, line_id: snapshot.line_id, order_line_component_snapshot_id: snapshot.id, [field]: value,
+          });
+      if (field === "production_stage" || field === "production_method") {
+        await logProductionActivity(snapshot, field, fromValue, value);
       }
-      return dataClient.entities.OrderLineProductionTracking.create({ order_id: order.id, line_id: lineId, [field]: value });
+      return row;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] }),
     onError: () => toast.error("Could not save production tracking for this line"),
@@ -396,14 +496,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 <p className="mt-0.5 truncate text-xs text-amber-700">Add-ons: {p.selected_addons.map(optionLabel).join(", ")}</p>
               )}
               {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
-              {p.catalog_item_id && p.line_id && composedProductIds.has(p.catalog_item_id) && (
+              {p.catalog_item_id && p.line_id && clientProductByCatalogItemId.has(p.catalog_item_id) && (
                 <LineProduction
-                  lineId={p.line_id}
-                  tracking={trackingByLineId.get(p.line_id)}
+                  clientProduct={clientProductByCatalogItemId.get(p.catalog_item_id)}
+                  snapshots={snapshotsByLineId.get(p.line_id) || []}
+                  trackingBySnapshotId={trackingBySnapshotId}
                   expanded={expandedProductionLineId === p.line_id}
                   onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
-                  onChange={(field, value) => saveLineProduction.mutate({ lineId: p.line_id, field, value })}
+                  onChange={(snapshot, field, value) => saveLineProduction.mutate({ snapshot, field, value })}
+                  onAttach={() => attachComposition.mutate({ lineId: p.line_id, clientProductId: clientProductByCatalogItemId.get(p.catalog_item_id).id })}
                   saving={saveLineProduction.isPending}
+                  attaching={attachComposition.isPending}
                 />
               )}
               </div>
@@ -713,11 +816,16 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
 }
 
 // Compact per-line production tracking - only rendered for lines whose
-// catalog product has a defined composition (product_components). Writes
+// order client has a client product based on this catalog item
+// (product_components exist somewhere upstream). Until this line's
+// composition is explicitly snapshotted (order_line_component_snapshots),
+// this shows only an "attach composition" action - no tracking control
+// operates against the live, mutable product_components row. Writes go
 // to order_line_production_tracking, never the order's own
 // production_method/production_detail_stage columns, so orders/lines
 // without composition data keep behaving exactly as before.
-function LineProduction({ lineId, tracking, expanded, onToggle, onChange, saving }) {
+function LineProduction({ clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange, onAttach, saving, attaching }) {
+  const hasSnapshots = snapshots.length > 0;
   return (
     <div className="mt-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5">
       <button
@@ -728,37 +836,60 @@ function LineProduction({ lineId, tracking, expanded, onToggle, onChange, saving
         {expanded ? <ChevronDown className="h-3 w-3 flex-shrink-0" /> : <ChevronRight className="h-3 w-3 flex-shrink-0" />}
         <Factory className="h-3 w-3 flex-shrink-0" />
         Production
-        {tracking?.production_method && (
-          <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            {PRODUCTION_METHODS.find((m) => m.value === tracking.production_method)?.label || tracking.production_method}
+        {!hasSnapshots && (
+          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+            composition not attached
           </span>
         )}
-        {tracking?.production_stage && (
+        {hasSnapshots && (
           <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            {PRODUCTION_DETAIL_STAGES.find((s) => s.value === tracking.production_stage)?.label || tracking.production_stage}
+            {snapshots.length} component{snapshots.length === 1 ? "" : "s"}
           </span>
         )}
       </button>
-      {expanded && (
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <select
-            key={lineId}
-            value={tracking?.production_method || "__none"}
-            onChange={(e) => onChange("production_method", e.target.value === "__none" ? null : e.target.value)}
-            disabled={saving}
-            className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
-          >
-            {PRODUCTION_METHODS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          <select
-            key={`${lineId}-stage`}
-            value={tracking?.production_stage || "__none"}
-            onChange={(e) => onChange("production_stage", e.target.value === "__none" ? null : e.target.value)}
-            disabled={saving}
-            className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
-          >
-            {PRODUCTION_DETAIL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+      {expanded && !hasSnapshots && (
+        <div className="mt-1.5 space-y-1">
+          <p className="text-[11px] text-muted-foreground">
+            {clientProduct?.client_facing_name || "This client product"} has a composition defined, but this order line hasn't captured a frozen snapshot of it yet.
+          </p>
+          <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onAttach} disabled={attaching}>
+            {attaching ? "Attaching…" : "Attach composition to this line"}
+          </Button>
+        </div>
+      )}
+      {expanded && hasSnapshots && (
+        <div className="mt-1.5 space-y-2">
+          {snapshots.map((snapshot) => {
+            const tracking = trackingBySnapshotId.get(snapshot.id);
+            return (
+              <div key={snapshot.id} className="rounded-lg border border-primary/10 bg-background/60 p-1.5">
+                <p className="mb-1 text-[10px] font-semibold text-slate-700">
+                  {snapshot.label || snapshot.component_type}
+                  {snapshot.placement && <span className="text-slate-400"> · {snapshot.placement}</span>}
+                </p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <select
+                    key={`${snapshot.id}-method`}
+                    value={tracking?.production_method || snapshot.production_method || "__none"}
+                    onChange={(e) => onChange(snapshot, "production_method", e.target.value === "__none" ? null : e.target.value)}
+                    disabled={saving}
+                    className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
+                  >
+                    {PRODUCTION_METHODS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                  <select
+                    key={`${snapshot.id}-stage`}
+                    value={tracking?.production_stage || "__none"}
+                    onChange={(e) => onChange(snapshot, "production_stage", e.target.value === "__none" ? null : e.target.value)}
+                    disabled={saving}
+                    className="h-7 rounded-lg border border-input bg-background px-2 text-[11px]"
+                  >
+                    {PRODUCTION_DETAIL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

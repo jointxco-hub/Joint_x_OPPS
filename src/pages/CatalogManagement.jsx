@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory } from "lucide-react";
 import { toast } from "sonner";
 import { SearchSelect } from "@/pages/Inventory";
+import { PRODUCTION_METHODS } from "@/lib/productionStages";
 
 const COMPONENT_TYPES = [
   { value: "blank_garment", label: "Blank garment" },
@@ -60,28 +61,60 @@ export default function CatalogManagement() {
     }
   });
 
-  // Product Composition (Phase 1) - what this catalog product is made of.
-  // One product edited at a time, deliberately no bulk-apply action.
+  // Product Composition (Phase 1) - what a client_products row is made
+  // of. Composition belongs to client_products (client-specific name,
+  // price, mockup, artwork, approval lifecycle already live there), not
+  // to this global catalog product - so editing it here first requires
+  // picking WHICH client product, among those based on this catalog
+  // item (via client_products.opps_product_id), to compose. One client
+  // product edited at a time, deliberately no bulk-apply action.
+  const [selectedClientProductId, setSelectedClientProductId] = useState("");
   const [addingComponent, setAddingComponent] = useState(false);
-  const [newComponent, setNewComponent] = useState({ component_type: "blank_garment", inventory_product_id: "", quantity_per_unit: 1, label: "" });
+  const [newComponent, setNewComponent] = useState({
+    component_type: "blank_garment",
+    inventory_product_id: "",
+    fixed_inventory_variant_id: "",
+    quantity_per_unit: 1,
+    default_sell_price: "",
+    production_method: "",
+    placement: "",
+    production_colour: "",
+    specification: "",
+    production_instructions: "",
+    label: "",
+  });
 
   const { data: internalProducts = [] } = useQuery({
     queryKey: ['inventoryProducts'],
     queryFn: () => dataClient.entities.InventoryProduct.list('internal_name', 200),
     enabled: Boolean(editingItem),
   });
-  const { data: productComponents = [] } = useQuery({
-    queryKey: ['productComponents', editingItem?.id],
-    queryFn: () => dataClient.entities.ProductComponent.filter({ product_id: editingItem.id }, 'created_at', 100),
+  const { data: linkedClientProducts = [] } = useQuery({
+    queryKey: ['clientProductsForCatalogItem', editingItem?.id],
+    queryFn: () => dataClient.entities.ClientProduct.filter({ opps_product_id: editingItem.id }, 'client_facing_name', 100),
     enabled: Boolean(editingItem?.id),
+  });
+  const { data: productComponents = [] } = useQuery({
+    queryKey: ['productComponents', selectedClientProductId],
+    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: selectedClientProductId }, 'sort_order', 100),
+    enabled: Boolean(selectedClientProductId),
+  });
+  const { data: currentArtwork = [] } = useQuery({
+    queryKey: ['clientProductArtworkCurrent', selectedClientProductId],
+    queryFn: () => dataClient.entities.ClientProductArtwork.filter({ client_product_id: selectedClientProductId, is_current: true }, 'placement', 50),
+    enabled: Boolean(selectedClientProductId),
   });
 
   const createComponentMutation = useMutation({
-    mutationFn: (data) => dataClient.entities.ProductComponent.create({ ...data, product_id: editingItem.id }),
+    mutationFn: (data) => dataClient.entities.ProductComponent.create({ ...data, client_product_id: selectedClientProductId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productComponents', editingItem?.id] });
+      queryClient.invalidateQueries({ queryKey: ['productComponents', selectedClientProductId] });
       setAddingComponent(false);
-      setNewComponent({ component_type: "blank_garment", inventory_product_id: "", quantity_per_unit: 1, label: "" });
+      setNewComponent({
+        component_type: "blank_garment", inventory_product_id: "", fixed_inventory_variant_id: "",
+        quantity_per_unit: 1, default_sell_price: "", production_method: "", placement: "",
+        production_colour: "", specification: "", production_instructions: "", label: "",
+      });
       toast.success("Component added");
     },
     onError: () => toast.error("Could not add component"),
@@ -90,7 +123,7 @@ export default function CatalogManagement() {
   const removeComponentMutation = useMutation({
     mutationFn: (id) => dataClient.entities.ProductComponent.update(id, { is_active: false }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productComponents', editingItem?.id] });
+      queryClient.invalidateQueries({ queryKey: ['productComponents', selectedClientProductId] });
       toast.success("Component removed");
     },
     onError: () => toast.error("Could not remove component"),
@@ -98,6 +131,9 @@ export default function CatalogManagement() {
 
   const activeComponents = (Array.isArray(productComponents) ? productComponents : []).filter((c) => c.is_active !== false);
   const internalProductLabel = (id) => internalProducts.find((p) => p.id === id)?.internal_name || internalProducts.find((p) => p.id === id)?.internal_code || "Unmapped";
+  const hasApprovedArtwork = (placement) => !placement
+    ? null
+    : (Array.isArray(currentArtwork) ? currentArtwork : []).some((a) => a.placement === placement && a.status === 'approved');
 
   const handleImageUpload = async (e, item) => {
     const file = e.target.files?.[0];
@@ -541,87 +577,136 @@ export default function CatalogManagement() {
                       <Factory className="h-4 w-4 text-slate-500" />
                       <Label className="mb-0">Composition</Label>
                     </div>
-                    <p className="text-xs text-slate-500">What this product is made of - a blank garment (Inventory identity), print service, materials, packaging, labour.</p>
+                    <p className="text-xs text-slate-500">
+                      Composition belongs to the client product this catalog item is used in, not the catalog item itself -
+                      pick which client product (based on this catalog item via opps_product_id) to compose.
+                    </p>
 
-                    {activeComponents.length > 0 && (
-                      <div className="space-y-1.5">
-                        {activeComponents.map((component) => (
-                          <div key={component.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                            <div className="min-w-0">
-                              <span className="font-medium text-slate-800">
-                                {COMPONENT_TYPES.find((t) => t.value === component.component_type)?.label || component.component_type}
-                              </span>
-                              {component.inventory_product_id && (
-                                <span className="ml-1.5 text-slate-500">- {internalProductLabel(component.inventory_product_id)}</span>
-                              )}
-                              {component.label && <span className="ml-1.5 text-slate-500">({component.label})</span>}
-                              <span className="ml-1.5 text-slate-400">x{component.quantity_per_unit}</span>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 flex-shrink-0"
-                              onClick={() => removeComponentMutation.mutate(component.id)}
-                              disabled={removeComponentMutation.isPending}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                            </Button>
+                    <SearchSelect
+                      options={linkedClientProducts}
+                      value={selectedClientProductId}
+                      onChange={(id) => setSelectedClientProductId(id)}
+                      getLabel={(cp) => cp.client_facing_name}
+                      placeholder={linkedClientProducts.length ? "Select client product" : "No client products link to this catalog item yet"}
+                    />
+
+                    {selectedClientProductId && (
+                      <>
+                        {activeComponents.length > 0 && (
+                          <div className="space-y-1.5">
+                            {activeComponents.map((component) => (
+                              <div key={component.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                                <div className="min-w-0">
+                                  <span className="font-medium text-slate-800">
+                                    {COMPONENT_TYPES.find((t) => t.value === component.component_type)?.label || component.component_type}
+                                  </span>
+                                  {component.placement && <span className="ml-1.5 text-slate-500">- {component.placement}</span>}
+                                  {component.inventory_product_id && (
+                                    <span className="ml-1.5 text-slate-500">- {internalProductLabel(component.inventory_product_id)}</span>
+                                  )}
+                                  {component.label && <span className="ml-1.5 text-slate-500">({component.label})</span>}
+                                  <span className="ml-1.5 text-slate-400">x{component.quantity_per_unit}</span>
+                                  {component.default_sell_price != null && (
+                                    <span className="ml-1.5 text-slate-400">R{component.default_sell_price}</span>
+                                  )}
+                                  {component.placement && hasApprovedArtwork(component.placement) === false && (
+                                    <span className="ml-1.5 text-amber-600">no approved artwork</span>
+                                  )}
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 flex-shrink-0"
+                                  onClick={() => removeComponentMutation.mutate(component.id)}
+                                  disabled={removeComponentMutation.isPending}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                                </Button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {addingComponent ? (
-                      <div className="space-y-2 rounded-lg border border-slate-200 p-3">
-                        <Select value={newComponent.component_type} onValueChange={(v) => setNewComponent((c) => ({ ...c, component_type: v, inventory_product_id: v === "blank_garment" ? c.inventory_product_id : "" }))}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {COMPONENT_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        {newComponent.component_type === "blank_garment" && (
-                          <SearchSelect
-                            options={internalProducts}
-                            value={newComponent.inventory_product_id}
-                            onChange={(id) => setNewComponent((c) => ({ ...c, inventory_product_id: id }))}
-                            getLabel={(p) => p.internal_name || p.internal_code}
-                            placeholder="Search internal product (e.g. JET)"
-                          />
                         )}
-                        <div className="grid grid-cols-[1fr_80px] gap-2">
-                          <Input
-                            placeholder="Label (e.g. DTF print - front)"
-                            value={newComponent.label}
-                            onChange={(e) => setNewComponent((c) => ({ ...c, label: e.target.value }))}
-                          />
-                          <Input
-                            type="number"
-                            min="1"
-                            placeholder="Qty"
-                            value={newComponent.quantity_per_unit}
-                            onChange={(e) => setNewComponent((c) => ({ ...c, quantity_per_unit: e.target.value }))}
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" className="flex-1" onClick={() => setAddingComponent(false)}>Cancel</Button>
-                          <Button
-                            size="sm"
-                            className="flex-1"
-                            disabled={createComponentMutation.isPending || (newComponent.component_type === "blank_garment" && !newComponent.inventory_product_id)}
-                            onClick={() => createComponentMutation.mutate({
-                              ...newComponent,
-                              quantity_per_unit: Number(newComponent.quantity_per_unit) || 1,
-                              inventory_product_id: newComponent.inventory_product_id || null,
-                            })}
-                          >
-                            Add component
+
+                        {addingComponent ? (
+                          <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+                            <Select value={newComponent.component_type} onValueChange={(v) => setNewComponent((c) => ({ ...c, component_type: v, inventory_product_id: v === "blank_garment" ? c.inventory_product_id : "" }))}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {COMPONENT_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                            {newComponent.component_type === "blank_garment" && (
+                              <SearchSelect
+                                options={internalProducts}
+                                value={newComponent.inventory_product_id}
+                                onChange={(id) => setNewComponent((c) => ({ ...c, inventory_product_id: id }))}
+                                getLabel={(p) => p.internal_name || p.internal_code}
+                                placeholder="Search internal product (e.g. JET)"
+                              />
+                            )}
+                            {(newComponent.component_type === "print_service" || newComponent.component_type === "labour") && (
+                              <div className="grid grid-cols-2 gap-2">
+                                <Select value={newComponent.production_method || "__none"} onValueChange={(v) => setNewComponent((c) => ({ ...c, production_method: v === "__none" ? "" : v }))}>
+                                  <SelectTrigger><SelectValue placeholder="Method" /></SelectTrigger>
+                                  <SelectContent>
+                                    {PRODUCTION_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                                <Input
+                                  placeholder="Placement (e.g. front, back)"
+                                  value={newComponent.placement}
+                                  onChange={(e) => setNewComponent((c) => ({ ...c, placement: e.target.value }))}
+                                />
+                              </div>
+                            )}
+                            <div className="grid grid-cols-[1fr_80px_100px] gap-2">
+                              <Input
+                                placeholder="Label (e.g. Front DTF print)"
+                                value={newComponent.label}
+                                onChange={(e) => setNewComponent((c) => ({ ...c, label: e.target.value }))}
+                              />
+                              <Input
+                                type="number"
+                                min="1"
+                                placeholder="Qty"
+                                value={newComponent.quantity_per_unit}
+                                onChange={(e) => setNewComponent((c) => ({ ...c, quantity_per_unit: e.target.value }))}
+                              />
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="Sell price"
+                                value={newComponent.default_sell_price}
+                                onChange={(e) => setNewComponent((c) => ({ ...c, default_sell_price: e.target.value }))}
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button variant="outline" size="sm" className="flex-1" onClick={() => setAddingComponent(false)}>Cancel</Button>
+                              <Button
+                                size="sm"
+                                className="flex-1"
+                                disabled={createComponentMutation.isPending || (newComponent.component_type === "blank_garment" && !newComponent.inventory_product_id)}
+                                onClick={() => createComponentMutation.mutate({
+                                  ...newComponent,
+                                  quantity_per_unit: Number(newComponent.quantity_per_unit) || 1,
+                                  default_sell_price: newComponent.default_sell_price === "" ? null : Number(newComponent.default_sell_price),
+                                  inventory_product_id: newComponent.inventory_product_id || null,
+                                  production_method: newComponent.production_method || null,
+                                  placement: newComponent.placement || null,
+                                  sort_order: activeComponents.length,
+                                })}
+                              >
+                                Add component
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <Button variant="outline" size="sm" className="w-full" onClick={() => setAddingComponent(true)}>
+                            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add component
                           </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button variant="outline" size="sm" className="w-full" onClick={() => setAddingComponent(true)}>
-                        <Plus className="mr-1.5 h-3.5 w-3.5" /> Add component
-                      </Button>
+                        )}
+                      </>
                     )}
                   </div>
 

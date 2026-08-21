@@ -541,13 +541,64 @@ const ENTITY_CONFIG = {
     },
     serialize(payload) {
       return compactObject({
-        product_id: payload.product_id,
+        client_product_id: payload.client_product_id,
         component_type: payload.component_type,
-        inventory_product_id: payload.inventory_product_id,
+        production_method: payload.production_method,
+        placement: payload.placement,
+        production_colour: payload.production_colour,
+        specification: payload.specification,
+        production_instructions: payload.production_instructions,
+        default_sell_price: numberOrUndefined(payload.default_sell_price),
         quantity_per_unit: numberOrUndefined(payload.quantity_per_unit),
+        sort_order: numberOrUndefined(payload.sort_order),
+        inventory_product_id: payload.inventory_product_id,
+        fixed_inventory_variant_id: payload.fixed_inventory_variant_id,
         label: payload.label,
         notes: payload.notes,
         is_active: payload.is_active,
+      });
+    },
+  },
+  ClientProduct: {
+    table: 'client_products',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+  },
+  ClientProductArtwork: {
+    table: 'client_product_artwork',
+    tenantScoped: false,
+    normalize(row) {
+      return row;
+    },
+  },
+  OrderLineComponentSnapshot: {
+    table: 'order_line_component_snapshots',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        order_id: payload.order_id,
+        line_id: payload.line_id,
+        client_product_id: payload.client_product_id,
+        source_product_component_id: payload.source_product_component_id,
+        component_type: payload.component_type,
+        label: payload.label,
+        production_method: payload.production_method,
+        placement: payload.placement,
+        production_colour: payload.production_colour,
+        specification: payload.specification,
+        production_instructions: payload.production_instructions,
+        sell_price: numberOrUndefined(payload.sell_price),
+        quantity_per_unit: numberOrUndefined(payload.quantity_per_unit),
+        sort_order: numberOrUndefined(payload.sort_order),
+        inventory_product_id: payload.inventory_product_id,
+        resolved_inventory_variant_id: payload.resolved_inventory_variant_id,
+        artwork_revision_ids: payload.artwork_revision_ids,
+        notes: payload.notes,
       });
     },
   },
@@ -561,6 +612,7 @@ const ENTITY_CONFIG = {
       return compactObject({
         order_id: payload.order_id,
         line_id: payload.line_id,
+        order_line_component_snapshot_id: payload.order_line_component_snapshot_id,
         production_method: payload.production_method,
         production_stage: payload.production_stage,
         inventory_supplier_variant_id: payload.inventory_supplier_variant_id,
