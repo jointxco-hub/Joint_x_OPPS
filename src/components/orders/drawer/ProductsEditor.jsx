@@ -90,6 +90,31 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     (Array.isArray(productionTracking) ? productionTracking : []).map((t) => [t.order_line_component_snapshot_id, t])
   );
 
+  // Inventory Phase 2A, Stage A - read-only dry-run only. This never
+  // writes a reservation or movement; it only surfaces what a reservation
+  // WOULD look like (on_hand/reserved/available, all derived, from
+  // inventory_variant_availability_v) so staff can see shortage/unverified
+  // status before any reservation capability is wired up.
+  const resolvedVariantIds = Array.from(new Set(
+    (Array.isArray(lineSnapshots) ? lineSnapshots : [])
+      .map((s) => s.resolved_inventory_variant_id)
+      .filter(Boolean)
+  ));
+  const { data: availabilityRows = [] } = useQuery({
+    queryKey: ["inventoryVariantAvailability", order.id, resolvedVariantIds.join(",")],
+    queryFn: async () => {
+      const rows = await Promise.all(
+        resolvedVariantIds.map((id) => dataClient.entities.InventoryVariantAvailability.filter({ inventory_variant_id: id }, undefined, 1))
+      );
+      return rows.flatMap((r) => (Array.isArray(r) ? r : []));
+    },
+    enabled: resolvedVariantIds.length > 0,
+    staleTime: 15_000,
+  });
+  const availabilityByVariantId = new Map(
+    (Array.isArray(availabilityRows) ? availabilityRows : []).map((a) => [a.inventory_variant_id, a])
+  );
+
   const logProductionActivity = async (snapshot, field, fromValue, toValue) => {
     if (!currentUser?.email) return;
     try {
@@ -587,6 +612,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   clientProduct={clientProductByCatalogItemId.get(p.catalog_item_id)}
                   snapshots={snapshotsByLineId.get(p.line_id) || []}
                   trackingBySnapshotId={trackingBySnapshotId}
+                  lineQuantity={Number(p.quantity) || 0}
+                  availabilityByVariantId={availabilityByVariantId}
                   expanded={expandedProductionLineId === p.line_id}
                   onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
                   onChange={(snapshot, field, value) => saveLineProduction.mutate({ snapshot, field, value })}
@@ -922,6 +949,7 @@ function LineProduction({
   clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange,
   onBeginAttach, resolving, pendingResolution, onPickVariant, onConfirmAttach, onCancelAttach,
   attachIsBlocked, needsStaffPick, variantLabel, confirming, saving,
+  lineQuantity, availabilityByVariantId,
 }) {
   const hasSnapshots = snapshots.length > 0;
   return (
@@ -1025,6 +1053,26 @@ function LineProduction({
                     unresolved inventory variant - stock-related production stage is blocked until this is resolved
                   </p>
                 )}
+                {snapshot.resolved_inventory_variant_id && (() => {
+                  const availability = availabilityByVariantId.get(snapshot.resolved_inventory_variant_id);
+                  const required = (Number(snapshot.quantity_per_unit) || 0) * (Number(lineQuantity) || 0);
+                  const onHand = Number(availability?.on_hand_qty) || 0;
+                  const reserved = Number(availability?.reserved_qty) || 0;
+                  const available = availability ? Number(availability.available_qty) || 0 : onHand - reserved;
+                  const short = Math.max(0, required - available);
+                  const verified = Boolean(availability?.balance_verified_at);
+                  return (
+                    <div className="mb-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-600">
+                      <span className="font-semibold text-slate-700">Stock (dry-run)</span>
+                      {" — "}Required {required} · On hand {onHand} · Reserved elsewhere {reserved} · Available {available}
+                      {short > 0 && <span className="font-semibold text-red-700"> · Short {short}</span>}
+                      <br />
+                      <span className={verified ? "text-emerald-700" : "text-amber-700"}>
+                        Stock status: {verified ? "VERIFIED" : "UNVERIFIED — informational only, not enforced"}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-2 gap-1.5">
                   <select
                     key={`${snapshot.id}-method`}
