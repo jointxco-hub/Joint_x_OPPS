@@ -88,6 +88,62 @@ test('invoice-only line gets a fresh, stable line_id - never null, never reused,
   assert.notEqual(products[0].line_id, 'Business Cards');
 });
 
+// PHASE 0 fix: the previous implementation never wrote the new line_id
+// back onto opps_invoice_items.source_order_item_id, so every re-sync of
+// a still-unmatched invoice item minted another duplicate order line -
+// confirmed live on ORD-MT4NPA4O. buildInvoiceOrderSyncPlan now also
+// returns the {invoiceItemId, newLineId} pairing the caller
+// (apply_invoice_order_sync RPC) must persist to close that gap.
+test('invoice -> order: a new line reports its invoiceItemId <-> newLineId pairing for write-back', () => {
+  const items = [invoiceItem({ id: 'inv-item-1', source_order_item_id: null, item_name: 'A4 Colour Prints', quantity: 2, rate: 20, source_metadata: {} })];
+  const { products, linePairings } = buildInvoiceOrderSyncPlan(items, []);
+  assert.equal(linePairings.length, 1);
+  assert.equal(linePairings[0].invoiceItemId, 'inv-item-1');
+  assert.equal(linePairings[0].newLineId, products[0].line_id);
+});
+
+test('invoice -> order: a matched (already-paired) line produces no new pairing', () => {
+  const items = [invoiceItem({ id: 'inv-item-1' })]; // source_order_item_id: 'line-1' (default), matches orderLine()
+  const { linePairings } = buildInvoiceOrderSyncPlan(items, [orderLine()]);
+  assert.deepEqual(linePairings, []);
+});
+
+test('invoice -> order: an invoice item with no id (defensive) never produces a pairing', () => {
+  const items = [invoiceItem({ id: undefined, source_order_item_id: null, item_name: 'No id', source_metadata: {} })];
+  const { linePairings } = buildInvoiceOrderSyncPlan(items, []);
+  assert.deepEqual(linePairings, []);
+});
+
+// Simulates the full write-back loop apply_invoice_order_sync performs:
+// build plan -> caller persists products + writes newLineId onto the
+// invoice item's source_order_item_id -> a second sync of the exact same
+// (now-paired) invoice items must recognize the existing line instead of
+// minting another one. This is the regression test for the duplication
+// defect itself, not just the pairing shape.
+test('invoice -> order: once a pairing is applied, repeat sync does not duplicate the same invoice item', () => {
+  const items = [invoiceItem({ id: 'inv-item-1', source_order_item_id: null, item_name: 'Business Cards', quantity: 1, rate: 50, source_metadata: {} })];
+
+  const first = buildInvoiceOrderSyncPlan(items, []);
+  assert.equal(first.products.length, 1);
+  assert.equal(first.diff.added.length, 1);
+  assert.equal(first.linePairings.length, 1);
+
+  // Apply the write-back exactly as apply_invoice_order_sync does.
+  const pairedItems = items.map((item) =>
+    item.id === first.linePairings[0].invoiceItemId
+      ? { ...item, source_order_item_id: first.linePairings[0].newLineId }
+      : item
+  );
+
+  const second = buildInvoiceOrderSyncPlan(pairedItems, first.products);
+  assert.equal(second.products.length, 1, 'must still be exactly one line, not a duplicate');
+  assert.deepEqual(second.diff.added, [], 'the now-paired item must not be treated as new again');
+  assert.deepEqual(second.linePairings, [], 'an already-paired item produces no further pairing');
+
+  const third = buildInvoiceOrderSyncPlan(pairedItems, second.products);
+  assert.equal(third.products.length, 1, 'idempotent under a third sync too');
+});
+
 test('invoice -> order: quantity change is detected and applied, before/after reported', () => {
   const items = [invoiceItem({ quantity: 3 })];
   const { products, diff } = buildInvoiceOrderSyncPlan(items, [orderLine({ quantity: 2 })]);

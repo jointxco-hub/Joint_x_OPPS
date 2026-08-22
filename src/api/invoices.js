@@ -816,33 +816,6 @@ export async function syncInvoiceItemsFromOrder(invoice, order) {
   return saved;
 }
 
-async function getAuthUserEmail() {
-  ensureSupabase();
-  const { data } = await supabase.auth.getUser();
-  return data?.user?.email || null;
-}
-
-// Order-side audit trail - opps_activity_events, the same table/shape
-// order production-tracking changes already log to (ProductsEditor.jsx's
-// logProductionActivity). No parallel audit table.
-async function createOrderActivity(orderId, tenantId, input = {}) {
-  if (!orderId) return null;
-  ensureSupabase();
-  const email = await getAuthUserEmail();
-  const { error } = await supabase.from("opps_activity_events").insert({
-    tenant_id: tenantId,
-    actor_email: email,
-    actor_name: email,
-    event_type: input.event_type,
-    entity_type: "order",
-    entity_id: orderId,
-    summary: input.summary || null,
-    metadata: input.metadata || {},
-  });
-  if (error) throw new Error(error.message);
-  return true;
-}
-
 // Read-only - computes the invoice -> order plan and flags which changed/
 // removal-candidate lines already have frozen production data, so the UI
 // can show the PHASE 8 warning in the preview, before staff ever confirms
@@ -910,6 +883,12 @@ export async function syncOrderItemsFromInvoice(order, invoice, { productsLocked
   const finalProducts = removeSet.size
     ? plan.products.filter((product) => !removeSet.has(product.line_id))
     : plan.products;
+  const finalLineIds = new Set(finalProducts.map((product) => product.line_id));
+  // Only write back pairings for lines that actually survived the removal
+  // choices above - a newly-added line staff chose to remove in the same
+  // confirm step must never get its source_order_item_id set, which
+  // would make a future sync silently skip re-adding it.
+  const linePairings = plan.linePairings.filter((pairing) => finalLineIds.has(pairing.newLineId));
   const shippingPatch = plan.diff.shipping.differs
     ? {
         apply_shipping_fee: plan.diff.shipping.invoiceAmount > 0,
@@ -917,26 +896,21 @@ export async function syncOrderItemsFromInvoice(order, invoice, { productsLocked
       }
     : {};
 
-  const { data, error } = await supabase
-    .from("orders")
-    .update({ products: finalProducts, ...shippingPatch, updated_at: new Date().toISOString() })
-    .eq("id", order.id)
-    .select("*")
-    .single();
-  if (error) throw new Error(error.message);
-
-  await createOrderActivity(order.id, order.tenant_id, {
-    event_type: "order_synced_from_invoice",
-    summary: `Synced from invoice ${invoice.invoice_number || invoice.id}`,
-    metadata: { invoice_id: invoice.id, ...plan.diff, removedLineIds: Array.from(removeSet) },
+  // Single atomic RPC (apply_invoice_order_sync): the order's products
+  // update, every invoice-item source_order_item_id write-back, and the
+  // activity log entry all happen inside one Postgres transaction - never
+  // separate REST calls that could leave the order updated with a still-
+  // unmatched invoice item (the exact bug this replaces).
+  const { data, error } = await supabase.rpc("apply_invoice_order_sync", {
+    p_order_id: order.id,
+    p_invoice_id: invoice.id,
+    p_products: finalProducts,
+    p_line_pairings: linePairings,
+    p_activity_metadata: { ...plan.diff, removedLineIds: Array.from(removeSet) },
+    p_apply_shipping_fee: plan.diff.shipping.differs ? shippingPatch.apply_shipping_fee : null,
+    p_shipping_fee: plan.diff.shipping.differs ? shippingPatch.shipping_fee : null,
   });
-  if (plan.diff.shipping.differs) {
-    await createOrderActivity(order.id, order.tenant_id, {
-      event_type: "order_shipping_charge_changed",
-      summary: `Shipping changed via invoice sync: R${plan.diff.shipping.orderAmount} -> R${plan.diff.shipping.invoiceAmount}`,
-      metadata: { invoice_id: invoice.id, before: { apply_shipping_fee: order.apply_shipping_fee, shipping_fee: order.shipping_fee }, after: shippingPatch },
-    });
-  }
+  if (error) throw new Error(error.message);
 
   return data;
 }
