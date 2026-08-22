@@ -573,6 +573,16 @@ const ENTITY_CONFIG = {
       return row;
     },
   },
+  InventoryVariantAvailability: {
+    // Read-only dry-run view: available = on_hand_qty - active reservations,
+    // always derived, never a second stored balance. See
+    // supabase/migrations/202608220001_inventory_phase2a_reservation_schema.sql.
+    table: 'inventory_variant_availability_v',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+  },
   OrderLineComponentSnapshot: {
     table: 'order_line_component_snapshots',
     tenantScoped: true,
