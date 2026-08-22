@@ -17,8 +17,33 @@ export const PRODUCTION_METHODS = [
   { value: "tailoring", label: "Tailoring" },
   { value: "cropping", label: "Cropping / alterations" },
   { value: "labeling", label: "Labeling / tagging" },
+  { value: "sublimation", label: "Sublimation" },
   { value: "mixed", label: "Mixed production" },
   { value: "custom", label: "Custom" },
+];
+
+// The subset of PRODUCTION_METHODS offered by the Product Composition
+// "+ Add print option" flow - print-specific methods only, excluding
+// order-level-only values (pressing/tailoring/cropping/labeling/mixed
+// describe garment finishing work, not a print/decoration technique).
+export const PRINT_COMPONENT_METHODS = PRODUCTION_METHODS.filter((m) =>
+  ["dtf", "vinyl", "screen", "embroidery", "sublimation", "custom"].includes(m.value)
+);
+
+// Placement presets for print-type components. placement itself stays a
+// free-text column (not a CHECK-constrained enum) - these are UI
+// suggestions, not a closed vocabulary, so a "Custom" option always
+// falls through to a free-text field rather than blocking anything
+// staff need that isn't listed here.
+export const PLACEMENT_PRESETS = [
+  "Front",
+  "Back",
+  "Left Chest",
+  "Right Chest",
+  "Left Sleeve",
+  "Right Sleeve",
+  "Inside Neck",
+  "Neck Tag",
 ];
 
 export const PRODUCTION_DETAIL_STAGES = [

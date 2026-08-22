@@ -549,6 +549,7 @@ const ENTITY_CONFIG = {
         specification: payload.specification,
         production_instructions: payload.production_instructions,
         default_sell_price: numberOrUndefined(payload.default_sell_price),
+        billing_mode: payload.billing_mode,
         quantity_per_unit: numberOrUndefined(payload.quantity_per_unit),
         sort_order: numberOrUndefined(payload.sort_order),
         inventory_product_id: payload.inventory_product_id,
@@ -556,6 +557,22 @@ const ENTITY_CONFIG = {
         label: payload.label,
         notes: payload.notes,
         is_active: payload.is_active,
+      });
+    },
+  },
+  ProductionPricingDefault: {
+    table: 'production_pricing_defaults',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        production_method: payload.production_method,
+        default_sell_price: numberOrUndefined(payload.default_sell_price),
+        default_setup_fee: numberOrUndefined(payload.default_setup_fee),
+        is_active: payload.is_active,
+        updated_by: payload.updated_by,
       });
     },
   },
@@ -603,6 +620,7 @@ const ENTITY_CONFIG = {
         specification: payload.specification,
         production_instructions: payload.production_instructions,
         sell_price: numberOrUndefined(payload.sell_price),
+        billing_mode: payload.billing_mode,
         quantity_per_unit: numberOrUndefined(payload.quantity_per_unit),
         sort_order: numberOrUndefined(payload.sort_order),
         inventory_product_id: payload.inventory_product_id,

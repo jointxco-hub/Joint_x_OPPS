@@ -7,6 +7,12 @@ import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
+import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
+
+function toMoneyDisplay(value) {
+  const n = toMoney(value);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
 
 function newLineId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -185,7 +191,16 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       const resolutions = [];
       for (const component of active) {
         const resolution = await resolveBlankComponentVariant(component, orderLine);
-        resolutions.push({ component, ...resolution, staffPickedVariantId: "" });
+        // staffPrice is the order-specific override tier - prefilled from
+        // the client-product default but editable per line, per attach.
+        // Changing it here only ever affects the snapshot about to be
+        // created; it never writes back to product_components.
+        resolutions.push({
+          component,
+          ...resolution,
+          staffPickedVariantId: "",
+          staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
+        });
       }
       setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
     } catch (err) {
@@ -199,6 +214,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     setPendingResolution((current) => current && {
       ...current,
       resolutions: current.resolutions.map((r) => r.component.id === componentId ? { ...r, staffPickedVariantId: variantId } : r),
+    });
+  };
+
+  const setComponentPrice = (componentId, value) => {
+    setPendingResolution((current) => current && {
+      ...current,
+      resolutions: current.resolutions.map((r) => r.component.id === componentId ? { ...r, staffPrice: value } : r),
     });
   };
 
@@ -221,6 +243,12 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         const finalVariantId = r.status === "resolved" || r.status === "fixed"
           ? r.resolvedVariantId
           : (r.staffPickedVariantId || null);
+        // Order-specific override tier: staffPrice was prefilled from
+        // c.default_sell_price and is editable per attach - it is the
+        // ONLY value ever written to the snapshot's sell_price, and it
+        // is written only here, never back onto product_components.
+        const overridePrice = r.staffPrice === "" || r.staffPrice == null ? null : Number(r.staffPrice);
+        const finalPrice = Number.isFinite(overridePrice) ? overridePrice : c.default_sell_price;
         created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
           order_id: order.id,
           line_id: lineId,
@@ -233,7 +261,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           production_colour: c.production_colour,
           specification: c.specification,
           production_instructions: c.production_instructions,
-          sell_price: c.default_sell_price,
+          sell_price: finalPrice,
+          billing_mode: c.billing_mode || "per_unit",
           quantity_per_unit: c.quantity_per_unit,
           sort_order: c.sort_order,
           inventory_product_id: c.inventory_product_id,
@@ -621,6 +650,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   resolving={resolvingLineId === p.line_id}
                   pendingResolution={pendingResolution && pendingResolution.lineId === p.line_id ? pendingResolution : null}
                   onPickVariant={pickVariantForComponent}
+                  onSetComponentPrice={setComponentPrice}
                   onConfirmAttach={() => confirmAttach.mutate()}
                   onCancelAttach={() => setPendingResolution(null)}
                   attachIsBlocked={attachIsBlocked}
@@ -947,7 +977,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
 // without composition data keep behaving exactly as before.
 function LineProduction({
   clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange,
-  onBeginAttach, resolving, pendingResolution, onPickVariant, onConfirmAttach, onCancelAttach,
+  onBeginAttach, resolving, pendingResolution, onPickVariant, onSetComponentPrice, onConfirmAttach, onCancelAttach,
   attachIsBlocked, needsStaffPick, variantLabel, confirming, saving,
   lineQuantity, availabilityByVariantId,
 }) {
@@ -1026,6 +1056,23 @@ function LineProduction({
                   {r.options.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
                 </select>
               )}
+              <div className="mt-1 flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-500">
+                  Default {r.component.default_sell_price != null ? `R${r.component.default_sell_price}` : "—"}
+                </span>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={r.staffPrice}
+                  onChange={(e) => onSetComponentPrice(r.component.id, e.target.value)}
+                  className="h-6 flex-1 rounded-lg px-2 text-[11px]"
+                  placeholder="Order price"
+                />
+                {r.component.default_sell_price != null && r.staffPrice !== "" && Number(r.staffPrice) !== Number(r.component.default_sell_price) && (
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">Order override</span>
+                )}
+              </div>
             </div>
           ))}
           <div className="flex gap-2">
@@ -1039,6 +1086,47 @@ function LineProduction({
 
       {expanded && hasSnapshots && (
         <div className="mt-1.5 space-y-2">
+          {(() => {
+            const pricing = computeCompositionPricing(snapshots, lineQuantity);
+            if (pricing.perUnit.length === 0 && pricing.onceOff.length === 0) return null;
+            return (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[10px] text-slate-700">
+                {pricing.perUnit.length > 0 && (
+                  <>
+                    <p className="font-semibold text-slate-800">Per unit</p>
+                    {pricing.perUnit.map((s) => (
+                      <p key={s.id} className="flex justify-between text-slate-600">
+                        <span>{s.label || s.component_type}</span>
+                        <span>R{toMoneyDisplay(s.sell_price)}</span>
+                      </p>
+                    ))}
+                    <p className="flex justify-between font-semibold text-slate-800">
+                      <span>Unit total</span>
+                      <span>R{toMoneyDisplay(pricing.perUnitSubtotal)}</span>
+                    </p>
+                  </>
+                )}
+                {pricing.onceOff.length > 0 && (
+                  <>
+                    <p className="mt-1 font-semibold text-slate-800">Once-off</p>
+                    {pricing.onceOff.map((s) => (
+                      <p key={s.id} className="flex justify-between text-slate-600">
+                        <span>{s.label || s.component_type}</span>
+                        <span>R{toMoneyDisplay(s.sell_price)}</span>
+                      </p>
+                    ))}
+                  </>
+                )}
+                <p className="mt-1 flex justify-between border-t border-slate-200 pt-1 font-semibold text-slate-900">
+                  <span>Line total (qty {pricing.quantity})</span>
+                  <span>R{toMoneyDisplay(pricing.lineTotal)}</span>
+                </p>
+                <p className="mt-0.5 text-[9px] text-slate-400">
+                  Composition reference only - does not automatically change the order line price above.
+                </p>
+              </div>
+            );
+          })()}
           {snapshots.map((snapshot) => {
             const tracking = trackingBySnapshotId.get(snapshot.id);
             const stageBlocked = Boolean(snapshot.inventory_product_id && !snapshot.resolved_inventory_variant_id);
