@@ -72,8 +72,21 @@ begin
     raise exception 'INVENTORY_RESERVE_INVALID_QUANTITY: quantity must be positive';
   end if;
 
-  select u.user_email, coalesce(u.full_name, u.user_email) into v_actor_email, v_actor_name
-  from public.users u where u.auth_user_id = auth.uid();
+  -- Server-derived actor identity only - never trusts a frontend-supplied
+  -- email/name. Reuses the exact join public.is_opps_staff() already used
+  -- to prove staff access, plus its same active-user filter, so this can
+  -- never disagree with the staff check that already passed above. Since
+  -- that check requires a matching row to exist, this lookup is
+  -- guaranteed to find one - the explicit null guard below is a fail-fast
+  -- backstop, not a normal-path outcome.
+  select u.user_email, u.full_name into v_actor_email, v_actor_name
+  from public.users u
+  where u.auth_user_id = auth.uid() and coalesce(u.is_active, true)
+  order by u.created_at asc
+  limit 1;
+  if v_actor_email is null then
+    raise exception 'INVENTORY_ACTOR_UNRESOLVED: authenticated user does not resolve to a valid OPPS staff identity';
+  end if;
 
   -- Idempotent replay: return the existing reservation - no new row, no
   -- new activity event. One logical reservation creation = one event.
@@ -184,8 +197,21 @@ begin
     raise exception 'INVENTORY_RELEASE_FORBIDDEN: tenant access denied';
   end if;
 
-  select u.user_email, coalesce(u.full_name, u.user_email) into v_actor_email, v_actor_name
-  from public.users u where u.auth_user_id = auth.uid();
+  -- Server-derived actor identity only - never trusts a frontend-supplied
+  -- email/name. Reuses the exact join public.is_opps_staff() already used
+  -- to prove staff access, plus its same active-user filter, so this can
+  -- never disagree with the staff check that already passed above. Since
+  -- that check requires a matching row to exist, this lookup is
+  -- guaranteed to find one - the explicit null guard below is a fail-fast
+  -- backstop, not a normal-path outcome.
+  select u.user_email, u.full_name into v_actor_email, v_actor_name
+  from public.users u
+  where u.auth_user_id = auth.uid() and coalesce(u.is_active, true)
+  order by u.created_at asc
+  limit 1;
+  if v_actor_email is null then
+    raise exception 'INVENTORY_ACTOR_UNRESOLVED: authenticated user does not resolve to a valid OPPS staff identity';
+  end if;
 
   select * into v_reservation
   from public.inventory_variant_reservations
@@ -267,8 +293,21 @@ begin
     raise exception 'INVENTORY_CONSUME_INVALID_MOVEMENT_TYPE: %', p_movement_type;
   end if;
 
-  select u.user_email, coalesce(u.full_name, u.user_email) into v_actor_email, v_actor_name
-  from public.users u where u.auth_user_id = auth.uid();
+  -- Server-derived actor identity only - never trusts a frontend-supplied
+  -- email/name. Reuses the exact join public.is_opps_staff() already used
+  -- to prove staff access, plus its same active-user filter, so this can
+  -- never disagree with the staff check that already passed above. Since
+  -- that check requires a matching row to exist, this lookup is
+  -- guaranteed to find one - the explicit null guard below is a fail-fast
+  -- backstop, not a normal-path outcome.
+  select u.user_email, u.full_name into v_actor_email, v_actor_name
+  from public.users u
+  where u.auth_user_id = auth.uid() and coalesce(u.is_active, true)
+  order by u.created_at asc
+  limit 1;
+  if v_actor_email is null then
+    raise exception 'INVENTORY_ACTOR_UNRESOLVED: authenticated user does not resolve to a valid OPPS staff identity';
+  end if;
 
   select * into v_reservation
   from public.inventory_variant_reservations
@@ -369,8 +408,21 @@ begin
     raise exception 'INVENTORY_RECALC_FORBIDDEN: tenant access denied';
   end if;
 
-  select u.user_email, coalesce(u.full_name, u.user_email) into v_actor_email, v_actor_name
-  from public.users u where u.auth_user_id = auth.uid();
+  -- Server-derived actor identity only - never trusts a frontend-supplied
+  -- email/name. Reuses the exact join public.is_opps_staff() already used
+  -- to prove staff access, plus its same active-user filter, so this can
+  -- never disagree with the staff check that already passed above. Since
+  -- that check requires a matching row to exist, this lookup is
+  -- guaranteed to find one - the explicit null guard below is a fail-fast
+  -- backstop, not a normal-path outcome.
+  select u.user_email, u.full_name into v_actor_email, v_actor_name
+  from public.users u
+  where u.auth_user_id = auth.uid() and coalesce(u.is_active, true)
+  order by u.created_at asc
+  limit 1;
+  if v_actor_email is null then
+    raise exception 'INVENTORY_ACTOR_UNRESOLVED: authenticated user does not resolve to a valid OPPS staff identity';
+  end if;
 
   select * into v_order from public.orders where id = p_order_id and tenant_id = p_tenant_id;
   if not found then
