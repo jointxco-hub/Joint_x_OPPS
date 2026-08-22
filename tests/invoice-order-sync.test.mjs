@@ -162,6 +162,35 @@ test('invoice -> order: sell price change is detected and applied, before/after 
   assert.equal(diff.updated[0].after.price, 150);
 });
 
+// PHASE 12 regression: once staff has run Configure Product on an
+// invoice-originated line (setting catalog_item_id, and in practice a
+// client_product/composition built on top of it), a LATER invoice->order
+// sync must never erase that mapping - only the commercial fields the
+// sync actually owns may change. buildInvoiceOrderSyncPlan's matched
+// branch spreads ...existing first and overrides only name/quantity/
+// price/size/color/notes, so any other field (catalog_item_id,
+// inventory_item_id, client_product_id, image_url set via Configure
+// Product) survives untouched by construction - this proves it
+// explicitly rather than relying on the spread order never changing.
+test('invoice -> order: catalog_item_id/client_product mapping set via Configure Product survives a later re-sync', () => {
+  const configuredLine = orderLine({
+    line_id: 'line-1',
+    catalog_item_id: 'cat-jet-tshirt',
+    client_product_id: 'cp-123',
+    image_url: 'https://example.com/mockup.jpg',
+    added_from_invoice: true,
+  });
+  const items = [invoiceItem({ quantity: 3, rate: 194 })]; // a later commercial-only change
+  const { products, diff } = buildInvoiceOrderSyncPlan(items, [configuredLine]);
+
+  assert.equal(products[0].catalog_item_id, 'cat-jet-tshirt', 'Configure Product mapping must survive re-sync');
+  assert.equal(products[0].client_product_id, 'cp-123', 'client_product association must survive re-sync');
+  assert.equal(products[0].image_url, 'https://example.com/mockup.jpg', 'explicitly set thumbnail must survive re-sync');
+  assert.equal(products[0].quantity, 3, 'commercial fields the sync owns still update');
+  assert.equal(products[0].price, 194);
+  assert.equal(diff.updated.length, 1, 'the commercial change is still reported');
+});
+
 test('invoice -> order: matching an existing line never fabricates inventory/composition identity, and preserves what was already there', () => {
   const order = orderLine({ catalog_item_id: 'cat-1', inventory_item_id: 'inv-1', selected_print_options: [{ name: 'DTF' }] });
   const items = [invoiceItem({ quantity: 5 })];
