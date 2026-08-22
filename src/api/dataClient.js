@@ -600,6 +600,18 @@ const ENTITY_CONFIG = {
       return row;
     },
   },
+  InventoryVariantReservation: {
+    // Read-only: used only to compute how much of a variant's globally
+    // reserved quantity belongs to THIS order line's own component
+    // snapshot, so the dry-run display can separate "reserved for this
+    // order" from "reserved elsewhere" instead of double-counting this
+    // order's own reservation as a competing claim. See src/lib/stockDryRun.js.
+    table: 'inventory_variant_reservations',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+  },
   OrderLineComponentSnapshot: {
     table: 'order_line_component_snapshots',
     tenantScoped: true,
