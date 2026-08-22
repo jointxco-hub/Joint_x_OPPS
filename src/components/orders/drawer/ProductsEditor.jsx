@@ -6,8 +6,12 @@ import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
+import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
+import { computeStockDryRun } from "@/lib/stockDryRun";
+import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
+import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
+import ComponentFieldsForm, { emptyComponentForm } from "@/components/composition/ComponentFieldsForm";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -86,6 +90,28 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       .filter((cp) => cp.opps_product_id)
       .map((cp) => [cp.opps_product_id, cp])
   );
+  const clientProductIdsForOrder = Array.from(new Set(
+    (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => cp.id)
+  ));
+  const { data: currentArtworkRows = [] } = useQuery({
+    queryKey: ["clientProductArtworkForOrder", clientProductIdsForOrder.join(",")],
+    queryFn: async () => {
+      const rows = await Promise.all(
+        clientProductIdsForOrder.map((id) => dataClient.entities.ClientProductArtwork.filter(
+          { client_product_id: id, is_current: true }, undefined, 50
+        ))
+      );
+      return rows.flatMap((r) => (Array.isArray(r) ? r : []));
+    },
+    enabled: clientProductIdsForOrder.length > 0,
+    staleTime: 30_000,
+  });
+  const artworkByClientProductId = new Map();
+  for (const row of (Array.isArray(currentArtworkRows) ? currentArtworkRows : [])) {
+    const list = artworkByClientProductId.get(row.client_product_id) || [];
+    list.push(row);
+    artworkByClientProductId.set(row.client_product_id, list);
+  }
   const snapshotsByLineId = new Map();
   for (const snapshot of (Array.isArray(lineSnapshots) ? lineSnapshots : [])) {
     const list = snapshotsByLineId.get(snapshot.line_id) || [];
@@ -120,6 +146,36 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const availabilityByVariantId = new Map(
     (Array.isArray(availabilityRows) ? availabilityRows : []).map((a) => [a.inventory_variant_id, a])
   );
+
+  // inventory_variant_availability_v's reserved_qty is a per-variant GLOBAL
+  // total across every order - it does not say how much of that belongs to
+  // THIS order. Fetched separately, scoped by order_line_component_snapshot_id,
+  // so the dry-run display (src/lib/stockDryRun.js) can tell "reserved for
+  // this order" apart from "reserved elsewhere" instead of double-counting
+  // this order's own reservation as a competing claim against itself.
+  const resolvedSnapshotIds = Array.from(new Set(
+    (Array.isArray(lineSnapshots) ? lineSnapshots : [])
+      .filter((s) => s.resolved_inventory_variant_id)
+      .map((s) => s.id)
+  ));
+  const { data: thisOrderReservationRows = [] } = useQuery({
+    queryKey: ["inventoryVariantReservationsForOrder", order.id, resolvedSnapshotIds.join(",")],
+    queryFn: async () => {
+      const rows = await Promise.all(
+        resolvedSnapshotIds.map((id) => dataClient.entities.InventoryVariantReservation.filter(
+          { order_line_component_snapshot_id: id, status: "active" }, undefined, 50
+        ))
+      );
+      return rows.flatMap((r) => (Array.isArray(r) ? r : []));
+    },
+    enabled: resolvedSnapshotIds.length > 0,
+    staleTime: 15_000,
+  });
+  const thisOrderReservedBySnapshotId = new Map();
+  for (const reservation of (Array.isArray(thisOrderReservationRows) ? thisOrderReservationRows : [])) {
+    const key = reservation.order_line_component_snapshot_id;
+    thisOrderReservedBySnapshotId.set(key, (thisOrderReservedBySnapshotId.get(key) || 0) + (Number(reservation.quantity) || 0));
+  }
 
   const logProductionActivity = async (snapshot, field, fromValue, toValue) => {
     if (!currentUser?.email) return;
@@ -188,6 +244,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         toast.error("This client product has no active components yet");
         return;
       }
+      // Current artwork revisions for this client product, keyed by
+      // placement - frozen into each snapshot's artwork_revision_ids at
+      // confirm time below. Fetched once per attach, not per component.
+      const currentArtwork = await dataClient.entities.ClientProductArtwork.filter(
+        { client_product_id: clientProductId, is_current: true }, undefined, 50
+      );
+      const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
+
       const resolutions = [];
       for (const component of active) {
         const resolution = await resolveBlankComponentVariant(component, orderLine);
@@ -200,6 +264,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           ...resolution,
           staffPickedVariantId: "",
           staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
+          artwork: component.placement ? artworkByPlacement.get(component.placement) || null : null,
         });
       }
       setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
@@ -267,7 +332,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           sort_order: c.sort_order,
           inventory_product_id: c.inventory_product_id,
           resolved_inventory_variant_id: finalVariantId,
-          artwork_revision_ids: [],
+          // Frozen at attach time from whatever client_product_artwork
+          // revision was current for this component's placement when
+          // beginAttach ran - later revisions (new uploads, approvals)
+          // never retroactively change an already-created snapshot.
+          artwork_revision_ids: resolveArtworkRevisionIds(r.artwork),
         }));
       }
       return created;
@@ -280,16 +349,124 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     onError: (err) => toast.error(err?.message || "Could not attach composition"),
   });
 
+  const [addingPrintOptionLineId, setAddingPrintOptionLineId] = useState("");
+  const [printOptionForm, setPrintOptionForm] = useState(emptyComponentForm());
+
   const { data: internalProductsForLabels = [] } = useQuery({
     queryKey: ["inventoryProductsForVariantLabels"],
     queryFn: () => dataClient.entities.InventoryProduct.list("internal_name", 200),
-    enabled: Boolean(pendingResolution),
+    enabled: Boolean(pendingResolution) || Boolean(addingPrintOptionLineId),
     staleTime: 300_000,
   });
   const internalProductLabelFor = (id) => (Array.isArray(internalProductsForLabels) ? internalProductsForLabels : [])
     .find((p) => p.id === id)?.internal_name || "";
   const variantLabel = (variant) => [internalProductLabelFor(variant.inventory_product_id), variant.colour_name, variant.size_name]
     .filter(Boolean).join(" · ");
+
+  // Master/default pricing tier - staff-editable, tenant-scoped,
+  // production_pricing_defaults - used only to prefill new components,
+  // same as CatalogManagement's identical query.
+  const { data: pricingDefaults = [] } = useQuery({
+    queryKey: ["productionPricingDefaults"],
+    queryFn: () => dataClient.entities.ProductionPricingDefault.filter({ is_active: true }, "production_method", 100),
+    enabled: Boolean(addingPrintOptionLineId),
+    staleTime: 60_000,
+  });
+  const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
+
+  // Unified "+ Add print option": the pill picker's replacement for NEW
+  // work (legacy products.print_options stays readable, untouched, for
+  // existing lines that already used it). One action creates/reuses the
+  // client_products row for this client+catalog pairing (never
+  // requiring a prior Catalog Management visit), the reusable
+  // product_components row (+ optional once_per_order setup-fee
+  // companion), and an immutable order_line_component_snapshots row
+  // using the same pricing hierarchy as the existing attach flow -
+  // orderPrice overrides only ever affect the snapshot, never
+  // default_sell_price.
+  const addPrintOptionMutation = useMutation({
+    mutationFn: async ({ lineId, orderLine, form }) => {
+      let clientProduct = clientProductByCatalogItemId.get(orderLine.catalog_item_id);
+      if (!clientProduct && orderLine.catalog_item_id) {
+        clientProduct = await dataClient.entities.ClientProduct.create({
+          client_id: order.client_id,
+          opps_product_id: orderLine.catalog_item_id,
+          client_facing_name: orderLine.name || "Untitled product",
+        });
+      }
+      if (!clientProduct) {
+        throw new Error("This line has no catalog product to compose against");
+      }
+
+      const existingCount = (Array.isArray(lineSnapshots) ? lineSnapshots : []).filter((s) => s.line_id === lineId).length;
+      const component = await dataClient.entities.ProductComponent.create(
+        buildComponentPayload(form, { clientProductId: clientProduct.id, sortOrder: existingCount })
+      );
+
+      let setupComponent = null;
+      if (form.component_type === "print_service" && form.setupRequired && form.production_method) {
+        const methodLabel = PRINT_COMPONENT_METHODS.find((m) => m.value === form.production_method)?.label || form.production_method;
+        setupComponent = await dataClient.entities.ProductComponent.create(buildSetupFeeCompanionPayload(form, {
+          clientProductId: clientProduct.id,
+          sortOrder: existingCount + 1,
+          methodLabel,
+          productionDefault: pricingDefaultFor(form.production_method),
+        }));
+      }
+
+      const currentArtwork = component.placement
+        ? await dataClient.entities.ClientProductArtwork.filter({ client_product_id: clientProduct.id, is_current: true }, undefined, 50)
+        : [];
+      const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
+
+      const created = [];
+      created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
+        order_id: order.id,
+        line_id: lineId,
+        client_product_id: clientProduct.id,
+        source_product_component_id: component.id,
+        component_type: component.component_type,
+        label: component.label,
+        production_method: component.production_method,
+        placement: component.placement,
+        production_colour: component.production_colour,
+        specification: component.specification,
+        production_instructions: component.production_instructions,
+        sell_price: resolveOrderPrice(form.orderPrice, component.default_sell_price),
+        billing_mode: component.billing_mode || "per_unit",
+        quantity_per_unit: component.quantity_per_unit,
+        sort_order: component.sort_order,
+        inventory_product_id: component.inventory_product_id,
+        artwork_revision_ids: resolveArtworkRevisionIds(component.placement ? artworkByPlacement.get(component.placement) : null),
+      }));
+
+      if (setupComponent) {
+        created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
+          order_id: order.id,
+          line_id: lineId,
+          client_product_id: clientProduct.id,
+          source_product_component_id: setupComponent.id,
+          component_type: setupComponent.component_type,
+          label: setupComponent.label,
+          production_method: setupComponent.production_method,
+          sell_price: setupComponent.default_sell_price,
+          billing_mode: setupComponent.billing_mode,
+          quantity_per_unit: setupComponent.quantity_per_unit,
+          sort_order: setupComponent.sort_order,
+        }));
+      }
+
+      return { clientProductCreated: !clientProductByCatalogItemId.has(orderLine.catalog_item_id), created };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
+      setAddingPrintOptionLineId("");
+      setPrintOptionForm(emptyComponentForm());
+      toast.success("Print option added");
+    },
+    onError: (err) => toast.error(err?.message || "Could not add print option"),
+  });
 
   const saveLineProduction = useMutation({
     mutationFn: async ({ snapshot, field, value }) => {
@@ -636,13 +813,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 <p className="mt-0.5 truncate text-xs text-amber-700">Add-ons: {p.selected_addons.map(optionLabel).join(", ")}</p>
               )}
               {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
-              {p.catalog_item_id && p.line_id && clientProductByCatalogItemId.has(p.catalog_item_id) && (
+              {p.catalog_item_id && p.line_id && (
                 <LineProduction
-                  clientProduct={clientProductByCatalogItemId.get(p.catalog_item_id)}
+                  clientProduct={clientProductByCatalogItemId.get(p.catalog_item_id) || null}
                   snapshots={snapshotsByLineId.get(p.line_id) || []}
                   trackingBySnapshotId={trackingBySnapshotId}
                   lineQuantity={Number(p.quantity) || 0}
                   availabilityByVariantId={availabilityByVariantId}
+                  thisOrderReservedBySnapshotId={thisOrderReservedBySnapshotId}
                   expanded={expandedProductionLineId === p.line_id}
                   onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
                   onChange={(snapshot, field, value) => saveLineProduction.mutate({ snapshot, field, value })}
@@ -658,6 +836,21 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   variantLabel={variantLabel}
                   confirming={confirmAttach.isPending}
                   saving={saveLineProduction.isPending}
+                  isAddingPrintOption={addingPrintOptionLineId === p.line_id}
+                  printOptionForm={printOptionForm}
+                  setPrintOptionForm={setPrintOptionForm}
+                  internalProducts={internalProductsForLabels}
+                  pricingDefaultFor={pricingDefaultFor}
+                  currentArtworkForClientProduct={
+                    clientProductByCatalogItemId.get(p.catalog_item_id)
+                      ? artworkByClientProductId.get(clientProductByCatalogItemId.get(p.catalog_item_id).id) || []
+                      : []
+                  }
+                  onStartAddPrintOption={() => { setAddingPrintOptionLineId(p.line_id); setPrintOptionForm(emptyComponentForm()); }}
+                  onCancelAddPrintOption={() => setAddingPrintOptionLineId("")}
+                  onConfirmAddPrintOption={() => addPrintOptionMutation.mutate({ lineId: p.line_id, orderLine: p, form: printOptionForm })}
+                  addingPrintOption={addPrintOptionMutation.isPending}
+                  onArtworkLinked={() => queryClient.invalidateQueries({ queryKey: ["clientProductArtworkForOrder"] })}
                 />
               )}
               </div>
@@ -979,7 +1172,10 @@ function LineProduction({
   clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange,
   onBeginAttach, resolving, pendingResolution, onPickVariant, onSetComponentPrice, onConfirmAttach, onCancelAttach,
   attachIsBlocked, needsStaffPick, variantLabel, confirming, saving,
-  lineQuantity, availabilityByVariantId,
+  lineQuantity, availabilityByVariantId, thisOrderReservedBySnapshotId,
+  isAddingPrintOption, printOptionForm, setPrintOptionForm, internalProducts, pricingDefaultFor,
+  onStartAddPrintOption, onCancelAddPrintOption, onConfirmAddPrintOption, addingPrintOption,
+  currentArtworkForClientProduct, onArtworkLinked,
 }) {
   const hasSnapshots = snapshots.length > 0;
   return (
@@ -1009,14 +1205,51 @@ function LineProduction({
         )}
       </button>
 
-      {expanded && !hasSnapshots && !pendingResolution && (
+      {expanded && !pendingResolution && !isAddingPrintOption && (
         <div className="mt-1.5 space-y-1">
-          <p className="text-[11px] text-muted-foreground">
-            {clientProduct?.client_facing_name || "This client product"} has a composition defined, but this order line hasn't captured a frozen snapshot of it yet.
-          </p>
-          <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onBeginAttach} disabled={resolving}>
-            {resolving ? "Resolving…" : "Attach composition to this line"}
+          {!hasSnapshots && (
+            clientProduct ? (
+              <>
+                <p className="text-[11px] text-muted-foreground">
+                  {clientProduct.client_facing_name || "This client product"} has a composition defined, but this order line hasn't captured a frozen snapshot of it yet.
+                </p>
+                <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onBeginAttach} disabled={resolving}>
+                  {resolving ? "Resolving…" : "Attach composition to this line"}
+                </Button>
+              </>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">No composition yet for this product.</p>
+            )
+          )}
+          <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onStartAddPrintOption}>
+            <Plus className="mr-1 h-3 w-3" /> Add print option
           </Button>
+        </div>
+      )}
+
+      {expanded && isAddingPrintOption && (
+        <div className="mt-1.5 space-y-2">
+          <ComponentFieldsForm
+            form={printOptionForm}
+            setForm={setPrintOptionForm}
+            internalProducts={internalProducts}
+            pricingDefaultFor={pricingDefaultFor}
+            clientProduct={clientProduct}
+            currentArtwork={currentArtworkForClientProduct}
+            onArtworkLinked={onArtworkLinked}
+            showOrderPrice
+          />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="h-7 flex-1 rounded-lg text-[11px]" onClick={onCancelAddPrintOption}>Cancel</Button>
+            <Button
+              size="sm"
+              className="h-7 flex-1 rounded-lg text-[11px]"
+              disabled={addingPrintOption || (printOptionForm.component_type === "blank_garment" && !printOptionForm.inventory_product_id)}
+              onClick={onConfirmAddPrintOption}
+            >
+              {addingPrintOption ? "Adding…" : "Add to order"}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -1031,6 +1264,11 @@ function LineProduction({
                 {r.component.label || r.component.component_type}
                 {r.component.placement && <span className="text-slate-400"> · {r.component.placement}</span>}
               </p>
+              {r.component.placement && (
+                <p className="mb-1 text-[10px] text-slate-500">
+                  Artwork: {r.artwork ? (r.artwork.file_name || "linked file") : "none linked yet - set in Catalog Management"}
+                </p>
+              )}
               {r.status === "resolved" && (
                 <p className="text-[10px] text-emerald-700">✓ resolved automatically: {variantLabel(r.options.find((o) => o.id === r.resolvedVariantId) || {})}</p>
               )}
@@ -1144,19 +1382,24 @@ function LineProduction({
                 {snapshot.resolved_inventory_variant_id && (() => {
                   const availability = availabilityByVariantId.get(snapshot.resolved_inventory_variant_id);
                   const required = (Number(snapshot.quantity_per_unit) || 0) * (Number(lineQuantity) || 0);
-                  const onHand = Number(availability?.on_hand_qty) || 0;
-                  const reserved = Number(availability?.reserved_qty) || 0;
-                  const available = availability ? Number(availability.available_qty) || 0 : onHand - reserved;
-                  const short = Math.max(0, required - available);
                   const verified = Boolean(availability?.balance_verified_at);
+                  const dryRun = computeStockDryRun({
+                    required,
+                    onHandQty: availability?.on_hand_qty,
+                    totalActiveReserved: availability?.reserved_qty,
+                    thisOrderReserved: thisOrderReservedBySnapshotId?.get(snapshot.id),
+                    verified,
+                  });
                   return (
                     <div className="mb-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] text-slate-600">
                       <span className="font-semibold text-slate-700">Stock (dry-run)</span>
-                      {" — "}Required {required} · On hand {onHand} · Reserved elsewhere {reserved} · Available {available}
-                      {short > 0 && <span className="font-semibold text-red-700"> · Short {short}</span>}
+                      {" — "}Required {dryRun.required} · Reserved for this order {dryRun.thisOrderReserved} · Reserved elsewhere {dryRun.reservedElsewhere}
+                      {" · "}{verified ? `On hand ${dryRun.onHandQty}` : "On hand: Not verified"}
+                      {verified && <> · Available {dryRun.availableToThisOrder}</>}
+                      {verified && dryRun.short > 0 && <span className="font-semibold text-red-700"> · Short {dryRun.short}</span>}
                       <br />
-                      <span className={verified ? "text-emerald-700" : "text-amber-700"}>
-                        Stock status: {verified ? "VERIFIED" : "UNVERIFIED — informational only, not enforced"}
+                      <span className={verified ? (dryRun.short > 0 ? "text-red-700" : "text-emerald-700") : (dryRun.fullyReservedForThisOrder ? "text-emerald-700" : "text-amber-700")}>
+                        {dryRun.status}
                       </span>
                     </div>
                   );

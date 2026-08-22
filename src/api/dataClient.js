@@ -582,6 +582,31 @@ const ENTITY_CONFIG = {
     normalize(row) {
       return row;
     },
+    // Previously had no serialize function at all, which made
+    // ClientProduct.create() throw (runInsert calls
+    // entityConfig.serialize(payload) unconditionally) - only ever
+    // read/filtered before now. Needed so ProductsEditor's "+ Add print
+    // option" flow can safely create a client_products row on demand
+    // when none exists yet for a client+catalog pairing, without
+    // requiring staff to pre-visit Catalog Management. New rows default
+    // to visible_in_account: false via the column default (never
+    // implicitly exposed in the X LAB "My Products" portal).
+    serialize(payload) {
+      return compactObject({
+        client_id: payload.client_id,
+        opps_product_id: payload.opps_product_id,
+        xlab_product_id: payload.xlab_product_id,
+        client_facing_name: payload.client_facing_name,
+        internal_name: payload.internal_name,
+        status: payload.status,
+        client_price: numberOrUndefined(payload.client_price),
+        currency: payload.currency,
+        print_method: payload.print_method,
+        placement: payload.placement,
+        primary_mockup_url: payload.primary_mockup_url,
+        visible_in_account: payload.visible_in_account,
+      });
+    },
   },
   ClientProductArtwork: {
     table: 'client_product_artwork',
@@ -595,6 +620,18 @@ const ENTITY_CONFIG = {
     // always derived, never a second stored balance. See
     // supabase/migrations/202608220001_inventory_phase2a_reservation_schema.sql.
     table: 'inventory_variant_availability_v',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+  },
+  InventoryVariantReservation: {
+    // Read-only: used only to compute how much of a variant's globally
+    // reserved quantity belongs to THIS order line's own component
+    // snapshot, so the dry-run display can separate "reserved for this
+    // order" from "reserved elsewhere" instead of double-counting this
+    // order's own reservation as a competing claim. See src/lib/stockDryRun.js.
+    table: 'inventory_variant_reservations',
     tenantScoped: true,
     normalize(row) {
       return row;

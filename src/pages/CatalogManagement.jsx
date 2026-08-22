@@ -9,44 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory } from "lucide-react";
 import { toast } from "sonner";
-import { SearchSelect } from "@/pages/Inventory";
-import { PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
-
-const COMPONENT_TYPES = [
-  { value: "blank_garment", label: "Blank garment" },
-  { value: "print_service", label: "Print option" },
-  { value: "setup_fee", label: "Setup fee" },
-  { value: "material", label: "Material" },
-  { value: "packaging", label: "Packaging" },
-  { value: "labour", label: "Labour" },
-  { value: "other", label: "Other" },
-];
-
-const BILLING_MODES = [
-  { value: "per_unit", label: "Per unit (× quantity)" },
-  { value: "once_per_order", label: "Once-off (not multiplied)" },
-];
-
-function emptyComponentForm() {
-  return {
-    component_type: "blank_garment",
-    inventory_product_id: "",
-    fixed_inventory_variant_id: "",
-    quantity_per_unit: 1,
-    default_sell_price: "",
-    billing_mode: "per_unit",
-    production_method: "",
-    placement: "",
-    placementCustom: "",
-    production_colour: "",
-    specification: "",
-    production_instructions: "",
-    label: "",
-    notes: "",
-    setupRequired: false,
-    setupFee: "",
-  };
-}
+import { PLACEMENT_PRESETS, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
+import { buildComponentPayload, buildSetupFeeCompanionPayload } from "@/lib/productComposition";
+import ComponentFieldsForm, { COMPONENT_TYPES, emptyComponentForm } from "@/components/composition/ComponentFieldsForm";
 
 const CATEGORIES = [
   { value: "tshirts", label: "T-Shirts" },
@@ -57,172 +22,6 @@ const CATEGORIES = [
   { value: "printing", label: "Printing" },
   { value: "labels", label: "Labels" }
 ];
-
-// Shared by both the "Add component" and inline "Edit component" flows
-// so the two never drift apart. Field visibility is driven by
-// component_type: blank_garment needs an internal-product picker;
-// print_service/setup_fee need a method; only print_service gets a
-// placement (per the explicit instruction that sleeve/neck/front/back
-// are placements, not production methods, so they never appear as
-// method choices). "Custom" placement always falls through to free
-// text since placement itself stays an unconstrained column.
-function ComponentFieldsForm({ form, setForm, internalProducts, pricingDefaultFor }) {
-  const set = (patch) => setForm((c) => ({ ...c, ...patch }));
-  const methodDefault = pricingDefaultFor(form.production_method);
-
-  return (
-    <div className="space-y-2 rounded-lg border border-slate-200 p-3">
-      <Select
-        value={form.component_type}
-        onValueChange={(v) => set({
-          component_type: v,
-          inventory_product_id: v === "blank_garment" ? form.inventory_product_id : "",
-          // UI strongly prefers once-off for setup fees (not forced at
-          // the DB level - staff can still change it below).
-          billing_mode: v === "setup_fee" && form.component_type !== "setup_fee" ? "once_per_order" : form.billing_mode,
-        })}
-      >
-        <SelectTrigger><SelectValue /></SelectTrigger>
-        <SelectContent>
-          {COMPONENT_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-        </SelectContent>
-      </Select>
-
-      {form.component_type === "blank_garment" && (
-        <SearchSelect
-          options={internalProducts}
-          value={form.inventory_product_id}
-          onChange={(id) => set({ inventory_product_id: id })}
-          getLabel={(p) => p.internal_name || p.internal_code}
-          placeholder="Search internal product (e.g. JET)"
-        />
-      )}
-
-      {(form.component_type === "print_service" || form.component_type === "setup_fee") && (
-        <div className="grid grid-cols-2 gap-2">
-          <Select
-            value={form.production_method || "__none"}
-            onValueChange={(v) => {
-              const method = v === "__none" ? "" : v;
-              const def = pricingDefaultFor(method);
-              set({
-                production_method: method,
-                default_sell_price: form.default_sell_price === "" && def?.default_sell_price != null ? String(def.default_sell_price) : form.default_sell_price,
-                setupFee: form.setupFee === "" && def?.default_setup_fee != null ? String(def.default_setup_fee) : form.setupFee,
-              });
-            }}
-          >
-            <SelectTrigger><SelectValue placeholder="Method" /></SelectTrigger>
-            <SelectContent>
-              {PRINT_COMPONENT_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {form.component_type === "print_service" ? (
-            <Select value={form.placement || "__none"} onValueChange={(v) => set({ placement: v === "__none" ? "" : v })}>
-              <SelectTrigger><SelectValue placeholder="Placement" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none">No placement</SelectItem>
-                {PLACEMENT_PRESETS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                <SelectItem value="__custom">Custom…</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : (
-            methodDefault?.default_setup_fee != null && (
-              <p className="flex items-center text-xs text-slate-500">Suggested setup: R{methodDefault.default_setup_fee}</p>
-            )
-          )}
-        </div>
-      )}
-      {form.component_type === "print_service" && form.placement === "__custom" && (
-        <Input
-          placeholder="Custom placement"
-          value={form.placementCustom}
-          onChange={(e) => set({ placementCustom: e.target.value })}
-        />
-      )}
-
-      <div className="grid grid-cols-[1fr_80px] gap-2">
-        <Input
-          placeholder="Label (e.g. Front DTF print)"
-          value={form.label}
-          onChange={(e) => set({ label: e.target.value })}
-        />
-        <Input
-          type="number"
-          min="1"
-          placeholder="Qty"
-          value={form.quantity_per_unit}
-          onChange={(e) => set({ quantity_per_unit: e.target.value })}
-          disabled={form.billing_mode === "once_per_order"}
-          title={form.billing_mode === "once_per_order" ? "Once-off components are always ×1" : undefined}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <Input
-          type="number"
-          min="0"
-          step="0.01"
-          placeholder="Sell price"
-          value={form.default_sell_price}
-          onChange={(e) => set({ default_sell_price: e.target.value })}
-        />
-        <Select value={form.billing_mode} onValueChange={(v) => set({ billing_mode: v, quantity_per_unit: v === "once_per_order" ? 1 : form.quantity_per_unit })}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {BILLING_MODES.map((b) => <SelectItem key={b.value} value={b.value}>{b.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Input
-        placeholder="Production colour (optional)"
-        value={form.production_colour}
-        onChange={(e) => set({ production_colour: e.target.value })}
-      />
-      <Textarea
-        placeholder="Specification (optional)"
-        value={form.specification}
-        onChange={(e) => set({ specification: e.target.value })}
-        className="min-h-[50px] text-sm"
-      />
-      <Textarea
-        placeholder="Production instructions (optional)"
-        value={form.production_instructions}
-        onChange={(e) => set({ production_instructions: e.target.value })}
-        className="min-h-[50px] text-sm"
-      />
-      <Textarea
-        placeholder="Internal notes (optional)"
-        value={form.notes}
-        onChange={(e) => set({ notes: e.target.value })}
-        className="min-h-[40px] text-sm"
-      />
-
-      {form.component_type === "print_service" && (
-        <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-          <input
-            type="checkbox"
-            checked={form.setupRequired}
-            onChange={(e) => set({ setupRequired: e.target.checked })}
-          />
-          Setup required for this method
-          {form.setupRequired && (
-            <Input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder={methodDefault?.default_setup_fee != null ? `Suggested R${methodDefault.default_setup_fee}` : "Setup fee"}
-              value={form.setupFee}
-              onChange={(e) => set({ setupFee: e.target.value })}
-              className="h-7 w-28"
-            />
-          )}
-        </label>
-      )}
-    </div>
-  );
-}
 
 export default function CatalogManagement() {
   const [editingItem, setEditingItem] = useState(null);
@@ -298,28 +97,6 @@ export default function CatalogManagement() {
   });
   const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
 
-  const resolvePlacement = (form) => {
-    if (form.placement === "__custom") return (form.placementCustom || "").trim() || null;
-    if (!form.placement || form.placement === "__none") return null;
-    return form.placement;
-  };
-
-  const buildComponentPayload = (form) => ({
-    component_type: form.component_type,
-    inventory_product_id: form.component_type === "blank_garment" ? (form.inventory_product_id || null) : null,
-    fixed_inventory_variant_id: form.fixed_inventory_variant_id || null,
-    quantity_per_unit: Number(form.quantity_per_unit) || 1,
-    default_sell_price: form.default_sell_price === "" ? null : Number(form.default_sell_price),
-    billing_mode: form.billing_mode || "per_unit",
-    production_method: (form.component_type === "print_service" || form.component_type === "setup_fee") ? (form.production_method || null) : null,
-    placement: form.component_type === "print_service" ? resolvePlacement(form) : null,
-    production_colour: form.production_colour || null,
-    specification: form.specification || null,
-    production_instructions: form.production_instructions || null,
-    label: form.label || null,
-    notes: form.notes || null,
-  });
-
   // Explicit staff action, not automatic "new client = setup required".
   // Creates a sibling setup_fee component defaulted to once_per_order,
   // prefilled from production_pricing_defaults for the chosen method but
@@ -327,26 +104,19 @@ export default function CatalogManagement() {
   const createSetupFeeCompanion = async (printForm) => {
     const method = printForm.production_method;
     const methodLabel = PRINT_COMPONENT_METHODS.find((m) => m.value === method)?.label || method;
-    const suggested = printForm.setupFee !== "" ? Number(printForm.setupFee) : pricingDefaultFor(method)?.default_setup_fee;
-    await dataClient.entities.ProductComponent.create({
-      client_product_id: selectedClientProductId,
-      component_type: "setup_fee",
-      production_method: method || null,
-      billing_mode: "once_per_order",
-      default_sell_price: Number.isFinite(suggested) ? suggested : null,
-      quantity_per_unit: 1,
-      label: `${methodLabel} setup`,
-      sort_order: activeComponents.length + 1,
-    });
+    await dataClient.entities.ProductComponent.create(buildSetupFeeCompanionPayload(printForm, {
+      clientProductId: selectedClientProductId,
+      sortOrder: activeComponents.length + 1,
+      methodLabel,
+      productionDefault: pricingDefaultFor(method),
+    }));
   };
 
   const createComponentMutation = useMutation({
     mutationFn: async (form) => {
-      const created = await dataClient.entities.ProductComponent.create({
-        ...buildComponentPayload(form),
-        client_product_id: selectedClientProductId,
-        sort_order: activeComponents.length,
-      });
+      const created = await dataClient.entities.ProductComponent.create(
+        buildComponentPayload(form, { clientProductId: selectedClientProductId, sortOrder: activeComponents.length })
+      );
       if (form.component_type === "print_service" && form.setupRequired && form.production_method) {
         await createSetupFeeCompanion(form);
       }
@@ -362,7 +132,9 @@ export default function CatalogManagement() {
   });
 
   const updateComponentMutation = useMutation({
-    mutationFn: ({ id, form }) => dataClient.entities.ProductComponent.update(id, buildComponentPayload(form)),
+    mutationFn: ({ id, form }) => dataClient.entities.ProductComponent.update(
+      id, buildComponentPayload(form, { clientProductId: selectedClientProductId, sortOrder: undefined })
+    ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['productComponents', selectedClientProductId] });
       setEditingComponentId("");
@@ -404,6 +176,8 @@ export default function CatalogManagement() {
   };
 
   const activeComponents = (Array.isArray(productComponents) ? productComponents : []).filter((c) => c.is_active !== false);
+  const selectedClientProduct = (Array.isArray(linkedClientProducts) ? linkedClientProducts : []).find((cp) => cp.id === selectedClientProductId) || null;
+  const invalidateCurrentArtwork = () => queryClient.invalidateQueries({ queryKey: ['clientProductArtworkCurrent', selectedClientProductId] });
   const internalProductLabel = (id) => internalProducts.find((p) => p.id === id)?.internal_name || internalProducts.find((p) => p.id === id)?.internal_code || "Unmapped";
   const hasApprovedArtwork = (placement) => !placement
     ? null
@@ -876,6 +650,9 @@ export default function CatalogManagement() {
                                     setForm={setEditComponentForm}
                                     internalProducts={internalProducts}
                                     pricingDefaultFor={pricingDefaultFor}
+                                    clientProduct={selectedClientProduct}
+                                    currentArtwork={currentArtwork}
+                                    onArtworkLinked={invalidateCurrentArtwork}
                                   />
                                   <div className="mt-2 flex gap-2">
                                     <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingComponentId("")}>Cancel</Button>
@@ -946,6 +723,9 @@ export default function CatalogManagement() {
                               setForm={setNewComponent}
                               internalProducts={internalProducts}
                               pricingDefaultFor={pricingDefaultFor}
+                              clientProduct={selectedClientProduct}
+                              currentArtwork={currentArtwork}
+                              onArtworkLinked={invalidateCurrentArtwork}
                             />
                             <div className="mt-2 flex gap-2">
                               <Button variant="outline" size="sm" className="flex-1" onClick={() => { setAddingComponent(false); setNewComponent(emptyComponentForm()); }}>Cancel</Button>
