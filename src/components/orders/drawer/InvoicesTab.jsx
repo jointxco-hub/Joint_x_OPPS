@@ -615,8 +615,8 @@ function OppsInvoiceCard({
         <StatusPill label={`Zoho: ${states.zoho.label}`} />
       </div>
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <Button type="button" variant="outline" size="sm" onClick={onOpen} className="h-8 rounded-xl">
-          <ExternalLink className="h-3.5 w-3.5" /> Open invoice
+        <Button type="button" variant="outline" size="sm" onClick={onOpen} className="h-8 rounded-xl" title="Sync order → invoice / Sync invoice → order both live on the invoice's own page">
+          <ExternalLink className="h-3.5 w-3.5" /> Open invoice to sync/review
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={onDownload} className="h-8 rounded-xl">
           <FileDown className="h-3.5 w-3.5" /> Client invoice

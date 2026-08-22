@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { buildInvoiceOrderSyncPlan, buildOrderInvoiceSyncPlan, buildShippingDiff } from '../src/features/invoices/orderToInvoiceItems.js';
+
+const orderLine = (overrides = {}) => ({
+  line_id: 'line-1',
+  name: 'T-Shirt',
+  quantity: 2,
+  price: 100,
+  size: 'M',
+  color: 'Black',
+  notes: '',
+  category: '',
+  image_url: '',
+  catalog_item_id: '',
+  inventory_item_id: '',
+  source: 'catalog',
+  selected_print_options: [],
+  selected_addons: [],
+  ...overrides,
+});
+
+const invoiceItem = (overrides = {}) => ({
+  source_order_item_id: 'line-1',
+  item_name: 'T-Shirt',
+  quantity: 2,
+  rate: 100,
+  item_description: '',
+  source_metadata: { size: 'M', color: 'Black' },
+  ...overrides,
+});
+
+test('invoice -> order: a new invoice-only line becomes a new commercial order line', () => {
+  const items = [
+    invoiceItem(),
+    invoiceItem({ source_order_item_id: null, item_name: 'A4 Colour Prints', quantity: 2, rate: 20, source_metadata: {} }),
+  ];
+  const { products, diff } = buildInvoiceOrderSyncPlan(items, [orderLine()]);
+
+  assert.equal(products.length, 2);
+  const added = products.find((p) => p.name === 'A4 Colour Prints');
+  assert.ok(added, 'the new line must be present in the returned products');
+  assert.deepEqual(diff.added, ['A4 Colour Prints']);
+  assert.equal(added.added_from_invoice, true, 'must be flagged for the "Added from invoice" UI treatment');
+  assert.equal(added.catalog_item_id, '', 'must never fabricate a catalog/inventory identity');
+  assert.equal(added.inventory_item_id, '');
+});
+
+test('invoice-only line gets a fresh, stable line_id - never null, never reused, never derived from description text', () => {
+  const items = [invoiceItem({ source_order_item_id: null, item_name: 'Business Cards', quantity: 1, rate: 50, source_metadata: {} })];
+  const { products } = buildInvoiceOrderSyncPlan(items, []);
+  assert.ok(products[0].line_id, 'must have a line_id');
+  assert.notEqual(products[0].line_id, null);
+  assert.notEqual(products[0].line_id, 'Business Cards');
+});
+
+test('invoice -> order: quantity change is detected and applied, before/after reported', () => {
+  const items = [invoiceItem({ quantity: 3 })];
+  const { products, diff } = buildInvoiceOrderSyncPlan(items, [orderLine({ quantity: 2 })]);
+  assert.equal(products[0].quantity, 3);
+  assert.equal(diff.updated.length, 1);
+  assert.equal(diff.updated[0].before.quantity, 2);
+  assert.equal(diff.updated[0].after.quantity, 3);
+});
+
+test('invoice -> order: sell price change is detected and applied, before/after reported', () => {
+  const items = [invoiceItem({ rate: 150 })];
+  const { products, diff } = buildInvoiceOrderSyncPlan(items, [orderLine({ price: 100 })]);
+  assert.equal(products[0].price, 150);
+  assert.equal(diff.updated.length, 1);
+  assert.equal(diff.updated[0].before.price, 100);
+  assert.equal(diff.updated[0].after.price, 150);
+});
+
+test('invoice -> order: matching an existing line never fabricates inventory/composition identity, and preserves what was already there', () => {
+  const order = orderLine({ catalog_item_id: 'cat-1', inventory_item_id: 'inv-1', selected_print_options: [{ name: 'DTF' }] });
+  const items = [invoiceItem({ quantity: 5 })];
+  const { products } = buildInvoiceOrderSyncPlan(items, [order]);
+  assert.equal(products[0].catalog_item_id, 'cat-1', 'existing catalog identity must survive a commercial-only sync');
+  assert.equal(products[0].inventory_item_id, 'inv-1');
+  assert.deepEqual(products[0].selected_print_options, [{ name: 'DTF' }]);
+});
+
+test('an order line whose invoice counterpart is gone defaults to Keep - never silently dropped', () => {
+  const order = orderLine({ line_id: 'line-1' });
+  const otherOrder = orderLine({ line_id: 'line-2', name: 'Business Cards' });
+  const items = [invoiceItem({ source_order_item_id: 'line-1' })]; // line-2 has no invoice counterpart
+  const { products, diff } = buildInvoiceOrderSyncPlan(items, [order, otherOrder]);
+
+  assert.equal(products.length, 2, 'line-2 must still be present (kept), not removed');
+  assert.ok(products.some((p) => p.line_id === 'line-2'));
+  assert.deepEqual(diff.missingFromInvoice, [{ line_id: 'line-2', name: 'Business Cards' }]);
+});
+
+test('repeated invoice -> order sync with no changes is idempotent (no-op)', () => {
+  const order = orderLine();
+  const items = [invoiceItem()];
+  const first = buildInvoiceOrderSyncPlan(items, [order]);
+  assert.deepEqual(first.diff.added, []);
+  assert.deepEqual(first.diff.updated, []);
+  assert.deepEqual(first.diff.missingFromInvoice, []);
+
+  const second = buildInvoiceOrderSyncPlan(items, first.products);
+  assert.deepEqual(second.diff.added, []);
+  assert.deepEqual(second.diff.updated, []);
+  assert.deepEqual(second.diff.missingFromInvoice, []);
+});
+
+test('shipping diff: ON with an amount vs a different invoice charge differs', () => {
+  const diff = buildShippingDiff({ orderApplyShippingFee: true, orderShippingFee: 120, invoiceShippingCharge: 0 });
+  assert.equal(diff.orderAmount, 120);
+  assert.equal(diff.invoiceAmount, 0);
+  assert.equal(diff.differs, true);
+});
+
+test('shipping diff: OFF always reports zero regardless of a stale shipping_fee value', () => {
+  const diff = buildShippingDiff({ orderApplyShippingFee: false, orderShippingFee: 120, invoiceShippingCharge: 0 });
+  assert.equal(diff.orderAmount, 0);
+  assert.equal(diff.differs, false);
+});
+
+test('shipping diff: matching amounts do not differ', () => {
+  const diff = buildShippingDiff({ orderApplyShippingFee: true, orderShippingFee: 120, invoiceShippingCharge: 120 });
+  assert.equal(diff.differs, false);
+});
+
+test('order -> invoice sync plan also carries a shipping diff when shipping context is passed', () => {
+  const { diff } = buildOrderInvoiceSyncPlan([orderLine()], [invoiceItem()], {
+    orderApplyShippingFee: true,
+    orderShippingFee: 120,
+    invoiceShippingCharge: 0,
+  });
+  assert.ok(diff.shipping);
+  assert.equal(diff.shipping.differs, true);
+  assert.equal(diff.shipping.orderAmount, 120);
+});
+
+test('order -> invoice sync plan omits shipping diff when no shipping context is passed (backward compatible)', () => {
+  const { diff } = buildOrderInvoiceSyncPlan([orderLine()], [invoiceItem()]);
+  assert.equal(diff.shipping, undefined);
+});

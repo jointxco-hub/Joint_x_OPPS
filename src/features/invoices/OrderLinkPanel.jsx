@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link2, RefreshCw, Unlink } from "lucide-react";
+import { ArrowLeftRight, ArrowRightLeft, Link2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { dataClient } from "@/api/dataClient";
 import { buildOrderInvoiceSyncPlan } from "./orderToInvoiceItems";
+import { previewInvoiceOrderSync } from "@/api/invoices";
+import SyncDiffSummary from "./SyncDiffSummary";
 
 // Legacy/untyped boundaries, isolated locally so the rest of this file stays
 // checked. dataClient.entities has no static shape under checkJs, and the
@@ -26,36 +28,14 @@ const UIDialogTitle = /** @type {any} */ (DialogTitle);
 const UIDialogDescription = /** @type {any} */ (DialogDescription);
 const UIDialogFooter = /** @type {any} */ (DialogFooter);
 
-function DiffSummary({ diff }) {
-  const rows = [
-    ["Will be added from the order", diff.added],
-    ["Will be updated to match the order", diff.updated],
-    ["No longer on the order — will be removed", diff.removedFromOrder],
-    ["Kept as-is (not from this order)", diff.keptInvoiceOnly],
-  ].filter(([, names]) => names.length > 0);
-
-  if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">No changes — invoice lines already match the order.</p>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {rows.map(([label, names]) => (
-        <div key={label}>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label} ({names.length})</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-foreground">
-            {names.map((name, index) => <li key={`${name}-${index}`}>{name}</li>)}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onSync, isPending }) {
+export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onSync, onSyncFromInvoice, isPending }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [confirmAction, setConfirmAction] = useState(null); // { mode: 'link'|'sync', order, diff }
+  const [reverseConfirm, setReverseConfirm] = useState(null); // { order, diff, products } from previewInvoiceOrderSync
+  const [removalChoices, setRemovalChoices] = useState(/** @type {Set<string>} */ (new Set()));
+  const [productionConfirmed, setProductionConfirmed] = useState(/** @type {Set<string>} */ (new Set()));
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const linkedOrderQuery = useQuery({
     queryKey: ["invoiceLinkedOrder", invoice?.source_order_id],
@@ -91,7 +71,11 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
 
   const openSyncPreview = () => {
     if (!linkedOrderQuery.data) return;
-    const diff = buildOrderInvoiceSyncPlan(linkedOrderQuery.data.products, invoice.items || []).diff;
+    const diff = buildOrderInvoiceSyncPlan(linkedOrderQuery.data.products, invoice.items || [], {
+      orderApplyShippingFee: linkedOrderQuery.data.apply_shipping_fee,
+      orderShippingFee: linkedOrderQuery.data.shipping_fee,
+      invoiceShippingCharge: invoice.shipping_charge,
+    }).diff;
     setConfirmAction({ mode: "sync", order: linkedOrderQuery.data, diff });
   };
 
@@ -102,17 +86,63 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
     setConfirmAction(null);
   };
 
-  if (!isDraft) {
-    return (
-      <div className="rounded-xl border border-border bg-card px-3 py-2.5 md:px-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Order link</p>
-        <p className="mt-1 text-sm text-foreground">
-          {invoice.source_order_id ? `Linked to order ${linkedOrderQuery.data?.order_number || invoice.source_order_id}` : "Not linked to an order"}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">Linking, syncing, and unlinking are only available while the invoice is a draft.</p>
-      </div>
-    );
-  }
+  // PHASE 11: invoice -> order never mutates the invoice, so it is not
+  // gated behind isDraft the way order -> invoice (and link/unlink) are -
+  // only a paid or void source invoice blocks it. Do not create a hidden
+  // bypass: this exact rule is enforced again, independently, server-side
+  // in syncOrderItemsFromInvoice.
+  const canSyncInvoiceToOrder = invoice.status !== "paid" && invoice.status !== "void";
+  const orderProductsLocked = Boolean(
+    linkedOrderQuery.data && ((linkedOrderQuery.data.status && linkedOrderQuery.data.status !== "confirmed") || linkedOrderQuery.data.products_locked_at)
+  );
+
+  const openReverseSyncPreview = async () => {
+    if (!linkedOrderQuery.data) return;
+    setPreviewLoading(true);
+    try {
+      const preview = await previewInvoiceOrderSync(linkedOrderQuery.data, invoice);
+      setRemovalChoices(new Set());
+      setProductionConfirmed(new Set());
+      setReverseConfirm({ order: linkedOrderQuery.data, ...preview });
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const toggleRemoval = (lineId) => {
+    setRemovalChoices((current) => {
+      const next = new Set(current);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  };
+
+  const toggleProductionConfirmed = (lineId) => {
+    setProductionConfirmed((current) => {
+      const next = new Set(current);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+  };
+
+  // A removal choice on a production-data-bearing line requires its own
+  // stronger confirmation checkbox before it counts (PHASE 9) - unchecked
+  // removal choices on protected lines are dropped, not silently applied.
+  const removalChoicesReady = Array.from(removalChoices).every((lineId) => {
+    const entry = reverseConfirm?.diff?.missingFromInvoice?.find((row) => row.line_id === lineId);
+    return !entry?.hasProductionData || productionConfirmed.has(lineId);
+  });
+
+  const confirmReverseApply = () => {
+    if (!reverseConfirm) return;
+    onSyncFromInvoice?.(reverseConfirm.order, invoice, {
+      productsLocked: orderProductsLocked,
+      removeLineIds: Array.from(removalChoices),
+    });
+    setReverseConfirm(null);
+  };
 
   return (
     <div className="rounded-xl border border-border bg-card px-3 py-2.5 md:px-4">
@@ -124,22 +154,41 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {invoice.source_order_id ? (
+          {!invoice.source_order_id && isDraft && (
+            <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
+              <Link2 className="h-3.5 w-3.5" /> Link to order
+            </UIButton>
+          )}
+          {invoice.source_order_id && isDraft && (
             <>
               <UIButton type="button" variant="outline" size="sm" onClick={openSyncPreview} disabled={isPending || !linkedOrderQuery.data} className="h-8 rounded-xl text-xs">
-                <RefreshCw className="h-3.5 w-3.5" /> Sync from order
+                <ArrowRightLeft className="h-3.5 w-3.5" /> Sync order → invoice
               </UIButton>
               <UIButton type="button" variant="outline" size="sm" onClick={() => onUnlink?.()} disabled={isPending} className="h-8 rounded-xl text-xs text-destructive hover:text-destructive">
                 <Unlink className="h-3.5 w-3.5" /> Unlink
               </UIButton>
             </>
-          ) : (
-            <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
-              <Link2 className="h-3.5 w-3.5" /> Link to order
+          )}
+          {invoice.source_order_id && canSyncInvoiceToOrder && (
+            <UIButton type="button" variant="outline" size="sm" onClick={openReverseSyncPreview} disabled={isPending || previewLoading || !linkedOrderQuery.data} className="h-8 rounded-xl text-xs">
+              <ArrowLeftRight className="h-3.5 w-3.5" /> Sync invoice → order
             </UIButton>
           )}
         </div>
       </div>
+      {invoice.source_order_id && !isDraft && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {invoice.status === "paid" || invoice.status === "void"
+            ? "This invoice is settled - sync in either direction is blocked."
+            : "Linking, unlinking, and syncing order → invoice need the invoice to be a draft (use Reopen for corrections). Invoice → order sync does not change this invoice, so it stays available."}
+        </p>
+      )}
+      {!invoice.source_order_id && !isDraft && (
+        <p className="mt-2 text-xs text-muted-foreground">Linking is only available while the invoice is a draft.</p>
+      )}
+      {orderProductsLocked && canSyncInvoiceToOrder && (
+        <p className="mt-2 text-xs text-amber-700">This order's products are locked - applying an invoice → order sync will be blocked until it is unlocked.</p>
+      )}
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <UIDialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
@@ -192,11 +241,50 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
                 : `Pulling the latest items from order ${confirmAction?.order?.order_number}.`}
             </UIDialogDescription>
           </UIDialogHeader>
-          {confirmAction && <DiffSummary diff={confirmAction.diff} />}
+          {confirmAction && <SyncDiffSummary diff={confirmAction.diff} direction="orderToInvoice" />}
           <UIDialogFooter>
             <UIButton variant="outline" onClick={() => setConfirmAction(null)} className="rounded-xl">Cancel</UIButton>
             <UIButton onClick={confirmApply} disabled={isPending} className="rounded-xl">
               {confirmAction?.mode === "link" ? "Link and apply" : "Apply sync"}
+            </UIButton>
+          </UIDialogFooter>
+        </UIDialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(reverseConfirm)} onOpenChange={(open) => !open && setReverseConfirm(null)}>
+        <UIDialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
+          <UIDialogHeader>
+            <UIDialogTitle>Sync invoice → order?</UIDialogTitle>
+            <UIDialogDescription>
+              Pulling the latest commercial line items from invoice {invoice.invoice_number} into order {reverseConfirm?.order?.order_number}. Inventory identity, Product Composition, artwork, and production tracking are never touched by this.
+            </UIDialogDescription>
+          </UIDialogHeader>
+          {reverseConfirm && <SyncDiffSummary diff={reverseConfirm.diff} direction="invoiceToOrder" />}
+          {reverseConfirm?.diff?.missingFromInvoice?.length > 0 && (
+            <div className="rounded-xl border border-border bg-secondary/20 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Choose what to do with removed lines</p>
+              <div className="mt-2 space-y-2">
+                {reverseConfirm.diff.missingFromInvoice.map((entry) => (
+                  <div key={entry.line_id} className="rounded-lg border border-border bg-card p-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={removalChoices.has(entry.line_id)} onChange={() => toggleRemoval(entry.line_id)} />
+                      Remove &quot;{entry.name}&quot; from the order (default: keep)
+                    </label>
+                    {entry.hasProductionData && removalChoices.has(entry.line_id) && (
+                      <label className="mt-1.5 flex items-center gap-2 pl-6 text-xs font-semibold text-red-700">
+                        <input type="checkbox" checked={productionConfirmed.has(entry.line_id)} onChange={() => toggleProductionConfirmed(entry.line_id)} />
+                        I understand this line has snapshots/reservations/tracking and will use the release workflow separately
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <UIDialogFooter>
+            <UIButton variant="outline" onClick={() => setReverseConfirm(null)} className="rounded-xl">Cancel</UIButton>
+            <UIButton onClick={confirmReverseApply} disabled={isPending || !removalChoicesReady || orderProductsLocked} className="rounded-xl">
+              Apply sync
             </UIButton>
           </UIDialogFooter>
         </UIDialogContent>
