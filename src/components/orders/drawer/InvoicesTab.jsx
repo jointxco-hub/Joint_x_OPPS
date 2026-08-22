@@ -4,6 +4,7 @@ import { Download, ExternalLink, FileDown, Paperclip, Printer, X } from "lucide-
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import MediaPreview from "@/components/common/MediaPreview";
@@ -16,7 +17,11 @@ import {
   listInvoices,
   markInvoiceExported,
   markInvoiceImportedToZoho,
+  syncOrderItemsFromInvoice,
 } from "@/api/invoices";
+import { buildInvoiceOrderSyncPlan } from "@/features/invoices/orderToInvoiceItems";
+import SyncDiffSummary from "@/features/invoices/SyncDiffSummary";
+import InvoiceOrderSyncAction from "@/features/invoices/InvoiceOrderSyncAction";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "@/features/invoices/zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "@/features/invoices/invoiceDisplayStatus";
 import {
@@ -170,6 +175,25 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
     },
     onError: (error) => toast.error(error?.message || "Could not mark imported"),
+  });
+
+  // Same shared implementation InvoiceOrderSyncAction/OrderLinkPanel use
+  // on the invoice's own page - no separate sync logic here.
+  const syncFromInvoiceMutation = useMutation({
+    mutationFn: ({ order: targetOrder, invoice, options }) => syncOrderItemsFromInvoice(targetOrder, invoice, options),
+    onSuccess: () => {
+      toast.success("Order synced from invoice");
+      queryClient.invalidateQueries({ queryKey: ["order", orderId] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error) => {
+      const messages = {
+        PAID_INVOICE_SYNC_BLOCKED: "This invoice is paid - sync into the order is blocked.",
+        VOID_INVOICE_SYNC_BLOCKED: "This invoice is void - sync into the order is blocked.",
+        ORDER_PRODUCTS_LOCKED: "This order's products are locked - unlock it first.",
+      };
+      toast.error(messages[error?.message] || error?.message || "Could not sync from this invoice");
+    },
   });
 
   const saveInvoiceAmount = (idx) => {
@@ -354,6 +378,7 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
             {linkedOppsInvoices.map((invoice) => (
               <OppsInvoiceCard
                 key={invoice.id}
+                order={order}
                 invoice={invoice}
                 onOpen={() => openInvoice(invoice)}
                 onPrint={() => openClientInvoice(invoice, true)}
@@ -362,6 +387,8 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
                 onMarkImported={() => markImportedMutation.mutate(invoice)}
                 isExporting={exportOppsInvoiceMutation.isPending}
                 isMarkingImported={markImportedMutation.isPending}
+                onSyncFromInvoice={(targetOrder, sourceInvoice, options) => syncFromInvoiceMutation.mutate({ order: targetOrder, invoice: sourceInvoice, options })}
+                isSyncPending={syncFromInvoiceMutation.isPending}
               />
             ))}
           </div>
@@ -575,7 +602,76 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
   );
 }
 
+// Order Drawer's own linked-invoice status card - "Linked invoice: ...",
+// "Order and invoice match/differ", "Review differences", and the actual
+// sync action. Computes its diff with the exact same buildInvoiceOrderSyncPlan
+// used everywhere else and renders InvoiceOrderSyncAction for the apply
+// step - no separate sync implementation lives here.
+function LinkedInvoiceSyncStatus({ order, invoice, onSyncFromInvoice, isPending }) {
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const fullInvoiceQuery = useQuery({
+    queryKey: ["invoiceForOrderSyncDiff", invoice.id],
+    queryFn: () => getInvoice(invoice.id, { includeItems: true }),
+    staleTime: 15_000,
+  });
+
+  const diff = fullInvoiceQuery.data
+    ? buildInvoiceOrderSyncPlan(fullInvoiceQuery.data.items || [], order?.products || [], {
+        orderApplyShippingFee: order?.apply_shipping_fee,
+        orderShippingFee: order?.shipping_fee,
+        invoiceShippingCharge: fullInvoiceQuery.data.shipping_charge,
+      }).diff
+    : null;
+
+  const differs = Boolean(
+    diff && (diff.added.length || diff.updated.length || diff.missingFromInvoice.length || diff.shipping?.differs)
+  );
+
+  return (
+    <div className="mt-3 rounded-xl border border-border bg-card p-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold text-foreground">Linked invoice: {invoice.invoice_number}</p>
+          {fullInvoiceQuery.isLoading ? (
+            <p className="text-xs text-muted-foreground">Checking...</p>
+          ) : (
+            <p className={`text-xs font-medium ${differs ? "text-amber-700" : "text-emerald-700"}`}>
+              {differs ? "Order and invoice differ" : "Order and invoice match"}
+            </p>
+          )}
+        </div>
+        {differs && (
+          <Button type="button" variant="outline" size="sm" onClick={() => setReviewOpen(true)} className="h-7 rounded-xl text-xs">
+            Review differences
+          </Button>
+        )}
+      </div>
+      {differs && (
+        <div className="mt-2">
+          <InvoiceOrderSyncAction
+            order={order}
+            invoice={fullInvoiceQuery.data}
+            onSyncFromInvoice={onSyncFromInvoice}
+            isPending={isPending}
+            triggerLabel="Sync invoice → order"
+          />
+        </div>
+      )}
+
+      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Order vs. invoice differences</DialogTitle>
+          </DialogHeader>
+          {diff && <SyncDiffSummary diff={diff} direction="invoiceToOrder" />}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function OppsInvoiceCard({
+  order,
   invoice,
   onOpen,
   onPrint,
@@ -584,6 +680,8 @@ function OppsInvoiceCard({
   onMarkImported,
   isExporting,
   isMarkingImported,
+  onSyncFromInvoice,
+  isSyncPending,
 }) {
   const states = getInvoiceDisplayStates(invoice);
   const canExport = ["approved", "exported", "imported_to_zoho"].includes(invoice.status);
@@ -614,9 +712,12 @@ function OppsInvoiceCard({
         <StatusPill label={`Payment: ${states.payment.label}`} />
         <StatusPill label={`Zoho: ${states.zoho.label}`} />
       </div>
+
+      <LinkedInvoiceSyncStatus order={order} invoice={invoice} onSyncFromInvoice={onSyncFromInvoice} isPending={isSyncPending} />
+
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <Button type="button" variant="outline" size="sm" onClick={onOpen} className="h-8 rounded-xl" title="Sync order → invoice / Sync invoice → order both live on the invoice's own page">
-          <ExternalLink className="h-3.5 w-3.5" /> Open invoice to sync/review
+        <Button type="button" variant="outline" size="sm" onClick={onOpen} className="h-8 rounded-xl">
+          <ExternalLink className="h-3.5 w-3.5" /> Open invoice
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={onDownload} className="h-8 rounded-xl">
           <FileDown className="h-3.5 w-3.5" /> Client invoice

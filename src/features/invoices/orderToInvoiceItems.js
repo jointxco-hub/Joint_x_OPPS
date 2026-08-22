@@ -1,3 +1,19 @@
+// PHASE 11 lifecycle rule for invoice -> order sync, confirmed not
+// assumed: draft invoice -> allowed; approved invoice -> allowed (this
+// direction never mutates the invoice itself, so reopen_invoice is not
+// required - the UI must still say the order is being aligned to an
+// approved financial record); paid/void -> blocked entirely. Order ->
+// invoice mutation of an approved invoice is a separate action and still
+// requires the existing reopen flow - untouched here. Plain JS (not the
+// .jsx component file) so it stays importable from plain node --test.
+export function canSyncInvoiceToOrder(invoiceStatus) {
+  return invoiceStatus !== "paid" && invoiceStatus !== "void";
+}
+
+export function isOrderProductsLocked(order) {
+  return Boolean(order && ((order.status && order.status !== "confirmed") || order.products_locked_at));
+}
+
 // Shared mapping between an order's products and OPPS invoice line items.
 // Used both when creating an invoice from an order (one-time snapshot) and
 // when linking/syncing an existing invoice to an order (ongoing reconciliation).

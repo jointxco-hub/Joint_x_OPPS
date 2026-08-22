@@ -1,6 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildInvoiceOrderSyncPlan, buildOrderInvoiceSyncPlan, buildShippingDiff } from '../src/features/invoices/orderToInvoiceItems.js';
+import { buildInvoiceOrderSyncPlan, buildOrderInvoiceSyncPlan, buildShippingDiff, canSyncInvoiceToOrder, isOrderProductsLocked } from '../src/features/invoices/orderToInvoiceItems.js';
+
+// ─────────────────────────────────────────────────────────────────────
+// PHASE 11 lifecycle distinction: draft/approved allowed, paid/void
+// blocked, for invoice -> order specifically (order -> invoice keeps its
+// own, unchanged, draft-only rule elsewhere in OrderLinkPanel.jsx).
+// ─────────────────────────────────────────────────────────────────────
+
+test('canSyncInvoiceToOrder: draft invoice is allowed', () => {
+  assert.equal(canSyncInvoiceToOrder('draft'), true);
+});
+
+test('canSyncInvoiceToOrder: approved invoice is allowed - this direction never mutates the invoice', () => {
+  assert.equal(canSyncInvoiceToOrder('approved'), true);
+});
+
+test('canSyncInvoiceToOrder: paid invoice is blocked', () => {
+  assert.equal(canSyncInvoiceToOrder('paid'), false);
+});
+
+test('canSyncInvoiceToOrder: void invoice is blocked', () => {
+  assert.equal(canSyncInvoiceToOrder('void'), false);
+});
+
+test('isOrderProductsLocked: a confirmed order with no manual lock is unlocked', () => {
+  assert.equal(isOrderProductsLocked({ status: 'confirmed', products_locked_at: null }), false);
+});
+
+test('isOrderProductsLocked: a past-confirmed order is locked', () => {
+  assert.equal(isOrderProductsLocked({ status: 'in_production', products_locked_at: null }), true);
+});
+
+test('isOrderProductsLocked: a manually-locked order is locked regardless of status', () => {
+  assert.equal(isOrderProductsLocked({ status: 'confirmed', products_locked_at: '2026-08-01T00:00:00Z' }), true);
+});
 
 const orderLine = (overrides = {}) => ({
   line_id: 'line-1',
