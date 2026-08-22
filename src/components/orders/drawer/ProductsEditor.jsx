@@ -11,7 +11,7 @@ import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
 import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
-import ComponentFieldsForm, { emptyComponentForm } from "@/components/composition/ComponentFieldsForm";
+import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -350,7 +350,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   });
 
   const [addingPrintOptionLineId, setAddingPrintOptionLineId] = useState("");
-  const [printOptionForm, setPrintOptionForm] = useState(emptyComponentForm());
+  const [printOptionForm, setPrintOptionForm] = useState(emptyPrintOptionForm());
 
   const { data: internalProductsForLabels = [] } = useQuery({
     queryKey: ["inventoryProductsForVariantLabels"],
@@ -462,7 +462,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
       setAddingPrintOptionLineId("");
-      setPrintOptionForm(emptyComponentForm());
+      setPrintOptionForm(emptyPrintOptionForm());
       toast.success("Print option added");
     },
     onError: (err) => toast.error(err?.message || "Could not add print option"),
@@ -846,7 +846,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                       ? artworkByClientProductId.get(clientProductByCatalogItemId.get(p.catalog_item_id).id) || []
                       : []
                   }
-                  onStartAddPrintOption={() => { setAddingPrintOptionLineId(p.line_id); setPrintOptionForm(emptyComponentForm()); }}
+                  onStartAddPrintOption={() => { setAddingPrintOptionLineId(p.line_id); setPrintOptionForm(emptyPrintOptionForm()); }}
                   onCancelAddPrintOption={() => setAddingPrintOptionLineId("")}
                   onConfirmAddPrintOption={() => addPrintOptionMutation.mutate({ lineId: p.line_id, orderLine: p, form: printOptionForm })}
                   addingPrintOption={addPrintOptionMutation.isPending}
@@ -1238,6 +1238,7 @@ function LineProduction({
             currentArtwork={currentArtworkForClientProduct}
             onArtworkLinked={onArtworkLinked}
             showOrderPrice
+            excludeComponentTypes={["blank_garment"]}
           />
           <div className="flex gap-2">
             <Button variant="outline" size="sm" className="h-7 flex-1 rounded-lg text-[11px]" onClick={onCancelAddPrintOption}>Cancel</Button>
