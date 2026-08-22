@@ -222,6 +222,8 @@ const ENTITY_CONFIG = {
         products: sanitizedProducts,
         total_amount: numberOrUndefined(payload.total_amount ?? payload.quoted_price),
         deposit_paid: numberOrUndefined(payload.deposit_paid),
+        apply_shipping_fee: payload.apply_shipping_fee,
+        shipping_fee: payload.shipping_fee === null ? null : numberOrUndefined(payload.shipping_fee),
         notes: payload.notes ?? payload.description,
         special_instructions: payload.special_instructions,
         due_date: payload.due_date,

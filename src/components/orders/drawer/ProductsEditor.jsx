@@ -12,6 +12,7 @@ import { computeStockDryRun } from "@/lib/stockDryRun";
 import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
+import { computeOrderTotal } from "@/lib/orderTotal";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -671,7 +672,12 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     return sum + Number(product.quantity || 0);
   }, 0);
   const orderTotal = Number(order.total_amount || 0);
-  const canApplyProductTotal = productLineTotal > 0 && Math.abs(productLineTotal - orderTotal) > 0.009;
+  const orderTotalWithShipping = computeOrderTotal({
+    itemsSubtotal: productLineTotal,
+    applyShippingFee: order.apply_shipping_fee,
+    shippingFee: order.shipping_fee,
+  });
+  const canApplyProductTotal = orderTotalWithShipping.total > 0 && Math.abs(orderTotalWithShipping.total - orderTotal) > 0.009;
 
   const updateQuantity = (idx, delta) => {
     if (locked) return;
@@ -714,8 +720,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           {canApplyProductTotal && (
             <button
               type="button"
-              onClick={() => onUpdate(order.id, { total_amount: Number(productLineTotal.toFixed(2)) })}
+              onClick={() => onUpdate(order.id, { total_amount: Number(orderTotalWithShipping.total.toFixed(2)) })}
               className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/15"
+              title={orderTotalWithShipping.chargedShipping > 0
+                ? `Items ${formatMoney(orderTotalWithShipping.itemsSubtotal)} + shipping ${formatMoney(orderTotalWithShipping.chargedShipping)}`
+                : undefined}
             >
               Apply total
             </button>
