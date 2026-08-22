@@ -11,6 +11,8 @@ import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory } f
 import { toast } from "sonner";
 import { SearchSelect } from "@/pages/Inventory";
 import { PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
+import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
+import { findOrCreateClientProductArtworkFromAsset } from "@/api/artworkLinking";
 
 const COMPONENT_TYPES = [
   { value: "blank_garment", label: "Blank garment" },
@@ -48,6 +50,15 @@ function emptyComponentForm() {
   };
 }
 
+// Module-scope (not a CatalogManagement() closure) so ComponentFieldsForm
+// can resolve the same effective placement text for artwork linking
+// without duplicating the __custom/__none handling.
+function resolvePlacement(form) {
+  if (form.placement === "__custom") return (form.placementCustom || "").trim() || null;
+  if (!form.placement || form.placement === "__none") return null;
+  return form.placement;
+}
+
 const CATEGORIES = [
   { value: "tshirts", label: "T-Shirts" },
   { value: "hoodies", label: "Hoodies" },
@@ -66,9 +77,32 @@ const CATEGORIES = [
 // are placements, not production methods, so they never appear as
 // method choices). "Custom" placement always falls through to free
 // text since placement itself stays an unconstrained column.
-function ComponentFieldsForm({ form, setForm, internalProducts, pricingDefaultFor }) {
+function ComponentFieldsForm({ form, setForm, internalProducts, pricingDefaultFor, clientProduct, currentArtwork, onArtworkLinked }) {
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const methodDefault = pricingDefaultFor(form.production_method);
+  const [showArtworkPicker, setShowArtworkPicker] = useState(false);
+  const effectivePlacement = resolvePlacement(form);
+  const linkedArtwork = effectivePlacement
+    ? (Array.isArray(currentArtwork) ? currentArtwork : []).find((a) => a.placement === effectivePlacement)
+    : null;
+  const artworkMutation = useMutation({
+    mutationFn: async (asset) => {
+      const { data, error } = await findOrCreateClientProductArtworkFromAsset({
+        tenantId: clientProduct?.tenant_id,
+        clientProductId: clientProduct?.id,
+        clientAssetId: asset.id,
+        placement: effectivePlacement,
+      });
+      if (error) throw new Error(error);
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Artwork linked");
+      setShowArtworkPicker(false);
+      onArtworkLinked?.();
+    },
+    onError: (error) => toast.error(error.message || "Could not link artwork"),
+  });
 
   return (
     <div className="space-y-2 rounded-lg border border-slate-200 p-3">
@@ -220,6 +254,46 @@ function ComponentFieldsForm({ form, setForm, internalProducts, pricingDefaultFo
           )}
         </label>
       )}
+
+      {form.component_type === "print_service" && effectivePlacement && (
+        <div className="rounded-lg border border-dashed border-slate-300 p-2 text-xs">
+          {linkedArtwork ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-slate-700">
+                Artwork: {linkedArtwork.file_name || "linked file"}
+                <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                  linkedArtwork.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                }`}>
+                  {linkedArtwork.status}
+                </span>
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => setShowArtworkPicker(true)} disabled={!clientProduct?.id}>
+                Change
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-500">No artwork linked for {effectivePlacement}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => setShowArtworkPicker(true)} disabled={!clientProduct?.id}>
+                Select artwork
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {showArtworkPicker && (
+        <ClientAssetPickerModal
+          clientId={clientProduct?.client_id}
+          selectionMode="single"
+          defaultCategory="Artwork"
+          showApprovalBadge
+          title="Select artwork"
+          description={`Browsing this client's approved/current files. The selected file becomes the current revision for ${effectivePlacement || "this placement"} - nothing is re-uploaded.`}
+          confirmVerb="Use"
+          onClose={() => setShowArtworkPicker(false)}
+          onConfirm={([asset]) => asset && artworkMutation.mutate(asset)}
+        />
+      )}
     </div>
   );
 }
@@ -297,12 +371,6 @@ export default function CatalogManagement() {
     staleTime: 60_000,
   });
   const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
-
-  const resolvePlacement = (form) => {
-    if (form.placement === "__custom") return (form.placementCustom || "").trim() || null;
-    if (!form.placement || form.placement === "__none") return null;
-    return form.placement;
-  };
 
   const buildComponentPayload = (form) => ({
     component_type: form.component_type,
@@ -404,6 +472,8 @@ export default function CatalogManagement() {
   };
 
   const activeComponents = (Array.isArray(productComponents) ? productComponents : []).filter((c) => c.is_active !== false);
+  const selectedClientProduct = (Array.isArray(linkedClientProducts) ? linkedClientProducts : []).find((cp) => cp.id === selectedClientProductId) || null;
+  const invalidateCurrentArtwork = () => queryClient.invalidateQueries({ queryKey: ['clientProductArtworkCurrent', selectedClientProductId] });
   const internalProductLabel = (id) => internalProducts.find((p) => p.id === id)?.internal_name || internalProducts.find((p) => p.id === id)?.internal_code || "Unmapped";
   const hasApprovedArtwork = (placement) => !placement
     ? null
@@ -876,6 +946,9 @@ export default function CatalogManagement() {
                                     setForm={setEditComponentForm}
                                     internalProducts={internalProducts}
                                     pricingDefaultFor={pricingDefaultFor}
+                                    clientProduct={selectedClientProduct}
+                                    currentArtwork={currentArtwork}
+                                    onArtworkLinked={invalidateCurrentArtwork}
                                   />
                                   <div className="mt-2 flex gap-2">
                                     <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingComponentId("")}>Cancel</Button>
@@ -946,6 +1019,9 @@ export default function CatalogManagement() {
                               setForm={setNewComponent}
                               internalProducts={internalProducts}
                               pricingDefaultFor={pricingDefaultFor}
+                              clientProduct={selectedClientProduct}
+                              currentArtwork={currentArtwork}
+                              onArtworkLinked={invalidateCurrentArtwork}
                             />
                             <div className="mt-2 flex gap-2">
                               <Button variant="outline" size="sm" className="flex-1" onClick={() => { setAddingComponent(false); setNewComponent(emptyComponentForm()); }}>Cancel</Button>

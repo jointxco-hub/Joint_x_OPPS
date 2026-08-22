@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
+import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -219,6 +220,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         toast.error("This client product has no active components yet");
         return;
       }
+      // Current artwork revisions for this client product, keyed by
+      // placement - frozen into each snapshot's artwork_revision_ids at
+      // confirm time below. Fetched once per attach, not per component.
+      const currentArtwork = await dataClient.entities.ClientProductArtwork.filter(
+        { client_product_id: clientProductId, is_current: true }, undefined, 50
+      );
+      const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
+
       const resolutions = [];
       for (const component of active) {
         const resolution = await resolveBlankComponentVariant(component, orderLine);
@@ -231,6 +240,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           ...resolution,
           staffPickedVariantId: "",
           staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
+          artwork: component.placement ? artworkByPlacement.get(component.placement) || null : null,
         });
       }
       setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
@@ -298,7 +308,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           sort_order: c.sort_order,
           inventory_product_id: c.inventory_product_id,
           resolved_inventory_variant_id: finalVariantId,
-          artwork_revision_ids: [],
+          // Frozen at attach time from whatever client_product_artwork
+          // revision was current for this component's placement when
+          // beginAttach ran - later revisions (new uploads, approvals)
+          // never retroactively change an already-created snapshot.
+          artwork_revision_ids: resolveArtworkRevisionIds(r.artwork),
         }));
       }
       return created;
@@ -1063,6 +1077,11 @@ function LineProduction({
                 {r.component.label || r.component.component_type}
                 {r.component.placement && <span className="text-slate-400"> · {r.component.placement}</span>}
               </p>
+              {r.component.placement && (
+                <p className="mb-1 text-[10px] text-slate-500">
+                  Artwork: {r.artwork ? (r.artwork.file_name || "linked file") : "none linked yet - set in Catalog Management"}
+                </p>
+              )}
               {r.status === "resolved" && (
                 <p className="text-[10px] text-emerald-700">✓ resolved automatically: {variantLabel(r.options.find((o) => o.id === r.resolvedVariantId) || {})}</p>
               )}

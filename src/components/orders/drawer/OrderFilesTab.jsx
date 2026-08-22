@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight,
@@ -10,7 +10,6 @@ import {
   Paperclip,
   Pencil,
   Printer,
-  Search,
   Star,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -18,9 +17,9 @@ import { dataClient } from "@/api/dataClient";
 import { getInternalClientFileLibrary, saveInternalClientFileLink } from "@/api/clientRequests";
 import FileLightbox from "@/components/files/FileLightbox";
 import MediaPreview from "@/components/common/MediaPreview";
+import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import { getSignedFileUrl, isPrivateFileReference } from "@/lib/privateFiles";
-import { ORDER_ASSET_CATEGORIES } from "@/lib/orderAssetFolders";
-import { resolveClientCategoryFromFolder, determineAlreadyLinkedState, buildBulkOrderFileLinkPatch } from "@/lib/clientAssetOrderLink";
+import { buildBulkOrderFileLinkPatch } from "@/lib/clientAssetOrderLink";
 import { INVOICE_FOLDER_ID, normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, syncOrderFileCategoryToClientAsset } from "./OrderDrawerShared";
 import { buildLightboxItems, fileNameFromReference, isVisualFile, resolveLightboxIndex } from "@/lib/filePresentation";
 import { resolveUnlinkPrimaryImagePatch } from "@/lib/orderPrimaryImage";
@@ -1026,11 +1025,12 @@ export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, 
         />
       )}
       {showLibraryPicker && (
-        <ClientLibraryPickerModal
+        <ClientAssetPickerModal
           clientId={safeOrder.client_id}
           currentOrderUrls={fileUrls}
           onClose={() => setShowLibraryPicker(false)}
-          onLink={linkExistingClientAssets}
+          onConfirm={linkExistingClientAssets}
+          confirmVerb="Link"
         />
       )}
     </div>
@@ -1201,210 +1201,6 @@ function ClientAccountFilesPanel({ library, loading, currentOrderUrls, onLink, o
             </div>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// The canonical Phase 1A.1 reuse flow: browse/search this client's own
-// canonical File Manager library (folders/client_assets — NOT the
-// email-keyed client_file_links API ClientAccountFilesPanel above still
-// uses) and bulk-link many existing files into this order in one action,
-// with zero UploadFile calls and zero new ClientAsset rows.
-function ClientLibraryPickerModal({ clientId, currentOrderUrls, onClose, onLink }) {
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [selectedIds, setSelectedIds] = useState(() => new Set());
-
-  // dataClient.entities is built dynamically (see src/api/dataClient.js),
-  // so TS can't statically resolve its keys — same local `any` boundary
-  // used throughout this codebase (e.g. OrderLinkPanel.jsx's orderEntity,
-  // OrderDrawerShared.jsx's clientAssetEntity()).
-  const folderEntity = /** @type {any} */ (dataClient.entities).Folder;
-  const clientAssetEntity = /** @type {any} */ (dataClient.entities).ClientAsset;
-
-  const { data: clientFolders = [], isLoading: foldersLoading } = useQuery({
-    queryKey: ["clientLibraryFolders", clientId],
-    queryFn: () => folderEntity.filter({ client_id: clientId }, undefined, 500),
-    enabled: Boolean(clientId),
-    staleTime: 30_000,
-  });
-
-  const { data: clientAssets = [], isLoading: assetsLoading } = useQuery({
-    queryKey: ["clientLibraryAssets", clientId],
-    queryFn: () => clientAssetEntity.filter({ client_id: clientId }, "-created_date", 500),
-    enabled: Boolean(clientId),
-    staleTime: 30_000,
-  });
-
-  const categoryByFolderId = useMemo(() => {
-    const map = {};
-    for (const folder of clientFolders) {
-      map[folder.id] = resolveClientCategoryFromFolder(folder);
-    }
-    return map;
-  }, [clientFolders]);
-
-  const selectableAssets = useMemo(() => {
-    const withLinkState = determineAlreadyLinkedState(
-      clientAssets.filter((asset) => !asset.is_archived && categoryByFolderId[asset.folder_id] !== "Invoices & Quotes"),
-      currentOrderUrls
-    );
-    return withLinkState;
-  }, [clientAssets, categoryByFolderId, currentOrderUrls]);
-
-  const availableCategories = useMemo(() => {
-    const present = new Set(selectableAssets.map((asset) => categoryByFolderId[asset.folder_id] || "General"));
-    return ORDER_ASSET_CATEGORIES.filter((category) => category !== "Invoices & Quotes" && present.has(category));
-  }, [selectableAssets, categoryByFolderId]);
-
-  const filteredAssets = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return selectableAssets.filter((asset) => {
-      if (categoryFilter && (categoryByFolderId[asset.folder_id] || "General") !== categoryFilter) return false;
-      if (term && !String(asset.title || "").toLowerCase().includes(term)) return false;
-      return true;
-    });
-  }, [selectableAssets, categoryFilter, categoryByFolderId, search]);
-
-  const toggleSelected = (assetId) => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(assetId)) next.delete(assetId);
-      else next.add(assetId);
-      return next;
-    });
-  };
-
-  const allFilteredSelected = filteredAssets.length > 0 && filteredAssets.every((asset) => selectedIds.has(asset.id));
-  const toggleSelectAllFiltered = () => {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (allFilteredSelected) {
-        filteredAssets.forEach((asset) => next.delete(asset.id));
-      } else {
-        filteredAssets.forEach((asset) => next.add(asset.id));
-      }
-      return next;
-    });
-  };
-
-  const selectedCount = selectedIds.size;
-  const loading = foldersLoading || assetsLoading;
-
-  const handleLinkClick = () => {
-    const selected = clientAssets.filter((asset) => selectedIds.has(asset.id));
-    onLink(selected, categoryByFolderId);
-  };
-
-  return (
-    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
-      <div
-        className="flex h-[92vh] w-full max-w-3xl flex-col rounded-t-3xl border border-border bg-card shadow-2xl sm:h-[85vh] sm:rounded-3xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Add from client library</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              Select any of this client's existing files. The same stored file is linked into this order — nothing
-              is re-uploaded.
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
-            Close
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search files..."
-              className="h-9 w-full rounded-full border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary/50"
-            />
-          </div>
-          <select
-            value={categoryFilter}
-            onChange={(event) => setCategoryFilter(event.target.value)}
-            className="h-9 rounded-full border border-border bg-background px-3 text-xs outline-none focus:border-primary/50"
-          >
-            <option value="">All categories</option>
-            {availableCategories.map((category) => (
-              <option key={category} value={category}>{category}</option>
-            ))}
-          </select>
-          {filteredAssets.length > 0 && (
-            <button
-              type="button"
-              onClick={toggleSelectAllFiltered}
-              className="rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-foreground"
-            >
-              {allFilteredSelected ? "Clear selection" : `Select all (${filteredAssets.length})`}
-            </button>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5">
-          {!clientId ? (
-            <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              This order has no linked client yet.
-            </p>
-          ) : loading ? (
-            <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              Loading client library...
-            </p>
-          ) : filteredAssets.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-              {selectableAssets.length === 0 ? "This client has no library files yet." : "No files match your search."}
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-              {filteredAssets.map((asset) => {
-                const isSelected = selectedIds.has(asset.id);
-                return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => toggleSelected(asset.id)}
-                    className={`relative overflow-hidden rounded-2xl border p-2 text-left transition-all ${
-                      isSelected ? "border-primary bg-primary/5 ring-2 ring-primary/20" : "border-border bg-card hover:border-primary/40"
-                    }`}
-                  >
-                    <div className="absolute right-3 top-3 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-card">
-                      {isSelected && <div className="h-2.5 w-2.5 rounded-full bg-primary" />}
-                    </div>
-                    <MediaPreview url={asset.file_url} title={asset.title || "Client file"} className="h-24 w-full rounded-xl" interactive={false} />
-                    <p className="mt-2 truncate text-xs font-semibold text-foreground" title={asset.title}>
-                      {asset.title || "Client file"}
-                    </p>
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      {categoryByFolderId[asset.folder_id] || "General"}
-                    </p>
-                    {asset.alreadyLinkedToOrder && (
-                      <span className="mt-1 inline-block rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                        Already on this order
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-border p-4">
-          <button
-            type="button"
-            onClick={handleLinkClick}
-            disabled={selectedCount === 0}
-            className="w-full rounded-2xl bg-primary py-3 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {selectedCount === 0 ? "Select files to link" : `Link ${selectedCount} file${selectedCount === 1 ? "" : "s"}`}
-          </button>
-        </div>
       </div>
     </div>
   );

@@ -345,11 +345,17 @@ test("the old email-keyed X LAB account file panel is preserved, not removed", a
 test("the new canonical picker is a separate action from the old X LAB account panel, not a replacement of it", async () => {
   const source = await readSource("src/components/orders/drawer/OrderFilesTab.jsx");
   assert.ok(source.includes("Add from client library"), "the new bulk-reuse action must exist");
-  assert.ok(source.includes("function ClientLibraryPickerModal("), "it must be its own component");
-  const pickerStart = source.indexOf("function ClientLibraryPickerModal(");
-  const pickerBody = source.slice(pickerStart);
-  assert.ok(pickerBody.includes(").ClientAsset;") && pickerBody.includes("clientAssetEntity.filter("), "the new picker must read the canonical ClientAsset table");
-  assert.ok(!pickerBody.includes("getInternalClientFileLibrary"), "the new picker must not use the old email-keyed API");
+  // Extracted into its own shared module (src/components/files/ClientAssetPickerModal.jsx)
+  // so the artwork-linking flow can reuse the exact same canonical-asset
+  // browser in single-select mode instead of duplicating it - it remains
+  // its own component, just no longer a local function in this file.
+  assert.ok(source.includes('import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal"'), "it must be its own, separately-imported component");
+  assert.ok(source.includes("<ClientAssetPickerModal"), "it must still be rendered as a distinct action from ClientAccountFilesPanel");
+  assert.ok(source.includes("getInternalClientFileLibrary"), "OrderFilesTab's own email-keyed ClientAccountFilesPanel query must remain untouched");
+
+  const pickerSource = await readSource("src/components/files/ClientAssetPickerModal.jsx");
+  assert.ok(pickerSource.includes(").ClientAsset;") && pickerSource.includes("clientAssetEntity.filter("), "the new picker must read the canonical ClientAsset table");
+  assert.ok(!pickerSource.includes("getInternalClientFileLibrary"), "the new picker must not use the old email-keyed API");
 });
 
 // ─────────────────────────────────────────────────────────────────────
