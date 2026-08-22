@@ -61,6 +61,69 @@ test("a setup-fee companion, when requested, is always once_per_order and gets i
 
 test("ComponentFieldsForm is reused rather than a second/duplicate form implementation", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
-  assert.ok(source.includes('import ComponentFieldsForm, { emptyComponentForm } from "@/components/composition/ComponentFieldsForm"'));
+  assert.ok(source.includes('import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm"'));
   assert.ok(source.includes("<ComponentFieldsForm"), "the shared form component must actually be rendered");
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Manual testing found the real defect this covers: "+ Add print
+// option" opened with component_type defaulted to blank_garment (the
+// shared form's general-purpose default), which silently made the
+// resulting component inventory-bearing - it required an internal
+// product pick and later variant resolution that a print service was
+// never meant to need, and hid the method/placement/setup-fee/artwork
+// controls entirely (all gated on component_type === "print_service").
+// ─────────────────────────────────────────────────────────────────────
+
+test("+ Add print option defaults to print_service, never blank_garment", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  assert.ok(source.includes("emptyPrintOptionForm()"), "the print-option form must initialize via the print_service-defaulting factory");
+  assert.ok(!source.includes("setPrintOptionForm(emptyComponentForm())"), "must never reset back to the general-purpose (blank_garment-defaulting) factory");
+});
+
+test("emptyPrintOptionForm defaults component_type to print_service and leaves production_method unselected", async () => {
+  const source = await readSource("src/components/composition/ComponentFieldsForm.jsx");
+  const start = source.indexOf("export function emptyPrintOptionForm()");
+  assert.notEqual(start, -1);
+  const body = source.slice(start, start + 200);
+  assert.ok(body.includes('component_type: "print_service"'));
+  // production_method is never re-set here - it must still come from
+  // emptyComponentForm()'s own "" default, i.e. no silent method default
+  // (e.g. DTF) is layered on top for the print-option entry point.
+  assert.ok(!body.includes("production_method:"), "must not override production_method with any specific default");
+});
+
+test("blank_garment is excluded from the + Add print option component-type choices", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  assert.ok(source.includes('excludeComponentTypes={["blank_garment"]}'), "staff must not be able to pick blank_garment from this entry point at all");
+});
+
+test("Catalog Management's general Add component flow is unaffected - blank_garment stays available there", async () => {
+  const source = await readSource("src/pages/CatalogManagement.jsx");
+  assert.ok(source.includes("emptyComponentForm()"), "Catalog Management still uses the general-purpose (blank_garment-defaulting) factory");
+  assert.ok(!source.includes("excludeComponentTypes"), "Catalog Management must not restrict component types - it is the general composition editor");
+});
+
+test("a print_service component created via + Add print option never carries an inventory identity", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const start = source.indexOf("const addPrintOptionMutation = useMutation({");
+  const body = source.slice(start, start + 6000);
+  // buildComponentPayload (shared, tested separately in
+  // product-composition-form.test.mjs) already nulls inventory_product_id
+  // for every component_type except blank_garment - this just confirms
+  // the mutation still routes through that shared builder rather than
+  // constructing its own payload that could reintroduce the bug.
+  assert.ok(body.includes("buildComponentPayload(form, { clientProductId: clientProduct.id, sortOrder: existingCount })"));
+});
+
+test("a genuine blank_garment component (added via Catalog Management) still requires an internal inventory identity, unchanged", async () => {
+  const source = await readSource("src/pages/CatalogManagement.jsx");
+  assert.ok(
+    source.includes('createComponentMutation.isPending || (newComponent.component_type === "blank_garment" && !newComponent.inventory_product_id)'),
+    "the add-component submit button must still be disabled for an unresolved blank_garment"
+  );
+  assert.ok(
+    source.includes('updateComponentMutation.isPending || (editComponentForm.component_type === "blank_garment" && !editComponentForm.inventory_product_id)'),
+    "the edit-component submit button must still enforce the same rule"
+  );
 });

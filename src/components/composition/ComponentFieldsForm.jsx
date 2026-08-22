@@ -26,6 +26,14 @@ export const BILLING_MODES = [
   { value: "once_per_order", label: "Once-off (not multiplied)" },
 ];
 
+// component_type defaults to blank_garment here because this is the
+// general-purpose form (Catalog Management's "Add component" covers
+// every type, garments included). ProductsEditor's "+ Add print
+// option" entry point is print-service-specific - it must never default
+// here, or reuse this default without overriding component_type, since
+// blank_garment silently makes the resulting component inventory-bearing
+// (requires an internal-product pick + later variant resolution), which
+// a print option was never meant to need. See emptyPrintOptionForm below.
 export function emptyComponentForm() {
   return {
     component_type: "blank_garment",
@@ -48,6 +56,15 @@ export function emptyComponentForm() {
   };
 }
 
+// ProductsEditor's "+ Add print option" entry point - staff are
+// configuring a print service (DTF/vinyl/embroidery/screen/sublimation/
+// custom), never picking an inventory component type, so this defaults
+// to print_service. production_method itself stays empty - staff must
+// choose it explicitly, no silent default to any one method.
+export function emptyPrintOptionForm() {
+  return { ...emptyComponentForm(), component_type: "print_service" };
+}
+
 // Shared by CatalogManagement's "Add component"/inline "Edit component"
 // flows AND ProductsEditor's "+ Add print option" flow, so all three
 // never drift apart on what fields exist or how they behave. Field
@@ -64,8 +81,9 @@ export function emptyComponentForm() {
 // override -> frozen snapshot).
 export default function ComponentFieldsForm({
   form, setForm, internalProducts, pricingDefaultFor, clientProduct, currentArtwork, onArtworkLinked,
-  showOrderPrice = false,
+  showOrderPrice = false, excludeComponentTypes = [],
 }) {
+  const availableComponentTypes = COMPONENT_TYPES.filter((t) => !excludeComponentTypes.includes(t.value));
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const methodDefault = pricingDefaultFor(form.production_method);
   const [showArtworkPicker, setShowArtworkPicker] = useState(false);
@@ -109,7 +127,7 @@ export default function ComponentFieldsForm({
       >
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
-          {COMPONENT_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+          {availableComponentTypes.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
         </SelectContent>
       </Select>
 
