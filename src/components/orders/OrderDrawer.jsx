@@ -1353,6 +1353,34 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
               </div>
 
               <div className="rounded-2xl border border-border bg-card p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Fulfillment &amp; shipping</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Fulfillment: <span className="font-medium text-foreground capitalize">{(order.fulfillment_type || 'courier').replace(/_/g, ' ')}</span>
+                  {' '}- courier delivery does not automatically mean the client is billed for shipping.
+                </p>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">Charge client for shipping</span>
+                  <button
+                    type="button"
+                    onClick={() => onUpdate(order.id, { apply_shipping_fee: !order.apply_shipping_fee })}
+                    className={`h-6 w-11 rounded-full transition-colors ${order.apply_shipping_fee ? 'bg-primary' : 'bg-secondary'}`}
+                  >
+                    <span className={`block h-5 w-5 rounded-full bg-white shadow transition-transform ${order.apply_shipping_fee ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {order.apply_shipping_fee ? (
+                  <div className="mt-2">
+                    <EditField label="Shipping Fee" field="shipping_fee" value={order.shipping_fee != null ? `R${Number(order.shipping_fee).toLocaleString()}` : '-'}
+                      editing={editingField === 'shipping_fee'} editValue={fieldValue}
+                      onEdit={() => startEdit('shipping_fee', order.shipping_fee)}
+                      onChange={setFieldValue} onSave={saveEdit} inputType="number" />
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground">Shipping not charged</p>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-border bg-card p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Before dispatch - client delivery info</p>
                 <div className="mt-3 space-y-3">
                   <EditField label="PEP / Courier Pickup Code" field="pep_code" value={order.pep_code}

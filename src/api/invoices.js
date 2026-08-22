@@ -12,7 +12,7 @@ import {
   ZOHO_INVOICE_EXPORT_TYPE,
   ZOHO_INVOICE_TEMPLATE_VERSION,
 } from "@/features/invoices/zohoInvoiceExportConfig";
-import { buildOrderInvoiceSyncPlan } from "@/features/invoices/orderToInvoiceItems";
+import { buildOrderInvoiceSyncPlan, buildInvoiceOrderSyncPlan, buildShippingDiff, annotateProductionDataConflicts } from "@/features/invoices/orderToInvoiceItems";
 import {
   INVOICE_SETTING_KEYS,
   defaultCustomerMappingSetting,
@@ -792,11 +792,19 @@ export async function refreshInvoiceContactDetails(id, fields = {}) {
 
 // Re-pulls an already-linked invoice's order-sourced lines from the order's
 // current products. Same matching/preservation rules as linkInvoiceToOrder.
+// Shipping (PHASE 10): apply_shipping_fee ? shipping_fee : 0 becomes the
+// invoice's shipping_charge - never both, never left stale.
 export async function syncInvoiceItemsFromOrder(invoice, order) {
-  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || []);
+  const shippingContext = {
+    orderApplyShippingFee: order?.apply_shipping_fee,
+    orderShippingFee: order?.shipping_fee,
+    invoiceShippingCharge: invoice?.shipping_charge,
+  };
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], shippingContext);
   const saved = await updateInvoice(invoice.id, {
     ...invoice,
     items: plan.items,
+    shipping_charge: plan.diff.shipping.orderAmount,
     expected_updated_at: invoice.updated_at,
     expected_item_count: (invoice.items || []).length,
   }, { templateSyncMode: "preserve" });
@@ -806,6 +814,131 @@ export async function syncInvoiceItemsFromOrder(invoice, order) {
     metadata: { order_id: order.id, ...plan.diff },
   });
   return saved;
+}
+
+async function getAuthUserEmail() {
+  ensureSupabase();
+  const { data } = await supabase.auth.getUser();
+  return data?.user?.email || null;
+}
+
+// Order-side audit trail - opps_activity_events, the same table/shape
+// order production-tracking changes already log to (ProductsEditor.jsx's
+// logProductionActivity). No parallel audit table.
+async function createOrderActivity(orderId, tenantId, input = {}) {
+  if (!orderId) return null;
+  ensureSupabase();
+  const email = await getAuthUserEmail();
+  const { error } = await supabase.from("opps_activity_events").insert({
+    tenant_id: tenantId,
+    actor_email: email,
+    actor_name: email,
+    event_type: input.event_type,
+    entity_type: "order",
+    entity_id: orderId,
+    summary: input.summary || null,
+    metadata: input.metadata || {},
+  });
+  if (error) throw new Error(error.message);
+  return true;
+}
+
+// Read-only - computes the invoice -> order plan and flags which changed/
+// removal-candidate lines already have frozen production data, so the UI
+// can show the PHASE 8 warning in the preview, before staff ever confirms
+// an apply. Never writes anything.
+export async function previewInvoiceOrderSync(order, invoice) {
+  ensureSupabase();
+  const shippingContext = {
+    orderApplyShippingFee: order?.apply_shipping_fee,
+    orderShippingFee: order?.shipping_fee,
+    invoiceShippingCharge: invoice?.shipping_charge,
+  };
+  const plan = buildInvoiceOrderSyncPlan(invoice?.items || [], order?.products || [], shippingContext);
+
+  const candidateLineIds = [
+    ...plan.diff.updated.map((entry) => entry.line_id),
+    ...plan.diff.missingFromInvoice.map((entry) => entry.line_id),
+  ].filter(Boolean);
+
+  let lineIdsWithProductionData = [];
+  if (candidateLineIds.length && order?.id) {
+    const [snapshots, reservations, tracking] = await Promise.all([
+      supabase.from("order_line_component_snapshots").select("line_id").eq("order_id", order.id).in("line_id", candidateLineIds),
+      supabase.from("inventory_variant_reservations").select("line_id").eq("order_id", order.id).eq("status", "active").in("line_id", candidateLineIds),
+      supabase.from("order_line_production_tracking").select("line_id").eq("order_id", order.id).in("line_id", candidateLineIds),
+    ]);
+    const ids = new Set();
+    [snapshots, reservations, tracking].forEach((result) => {
+      (result.data || []).forEach((row) => ids.add(row.line_id));
+    });
+    lineIdsWithProductionData = Array.from(ids);
+  }
+
+  return {
+    products: plan.products,
+    diff: annotateProductionDataConflicts(plan.diff, lineIdsWithProductionData),
+  };
+}
+
+// Pulls an already-linked invoice's current line items into the order's
+// commercial product representation - the reverse of syncInvoiceItemsFromOrder.
+// Blocked for paid/void invoices (PHASE 11 - a source invoice that is
+// settled/void must never drive further sync in either direction); draft
+// and approved invoices may be read from here without requiring
+// reopen_invoice, since this direction never mutates the invoice itself.
+// Respects isProductsLocked (PHASE 8) exactly like every other order
+// product edit - no sync-specific bypass.
+export async function syncOrderItemsFromInvoice(order, invoice, { productsLocked = false, removeLineIds = [] } = {}) {
+  ensureSupabase();
+  if (!order?.id) throw new Error("No order to sync into.");
+  if (invoice?.status === "paid") throw new Error("PAID_INVOICE_SYNC_BLOCKED");
+  if (invoice?.status === "void") throw new Error("VOID_INVOICE_SYNC_BLOCKED");
+  if (productsLocked) throw new Error("ORDER_PRODUCTS_LOCKED");
+
+  const shippingContext = {
+    orderApplyShippingFee: order?.apply_shipping_fee,
+    orderShippingFee: order?.shipping_fee,
+    invoiceShippingCharge: invoice?.shipping_charge,
+  };
+  const plan = buildInvoiceOrderSyncPlan(invoice?.items || [], order?.products || [], shippingContext);
+  // Default to Keep (PHASE 9) - buildInvoiceOrderSyncPlan already carries
+  // every missingFromInvoice line forward unchanged; only a line_id staff
+  // explicitly opted into removing (via the confirm dialog) is dropped
+  // here, never as an implicit side effect of the plan itself.
+  const removeSet = new Set(removeLineIds);
+  const finalProducts = removeSet.size
+    ? plan.products.filter((product) => !removeSet.has(product.line_id))
+    : plan.products;
+  const shippingPatch = plan.diff.shipping.differs
+    ? {
+        apply_shipping_fee: plan.diff.shipping.invoiceAmount > 0,
+        shipping_fee: plan.diff.shipping.invoiceAmount > 0 ? plan.diff.shipping.invoiceAmount : order.shipping_fee,
+      }
+    : {};
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ products: finalProducts, ...shippingPatch, updated_at: new Date().toISOString() })
+    .eq("id", order.id)
+    .select("*")
+    .single();
+  if (error) throw new Error(error.message);
+
+  await createOrderActivity(order.id, order.tenant_id, {
+    event_type: "order_synced_from_invoice",
+    summary: `Synced from invoice ${invoice.invoice_number || invoice.id}`,
+    metadata: { invoice_id: invoice.id, ...plan.diff, removedLineIds: Array.from(removeSet) },
+  });
+  if (plan.diff.shipping.differs) {
+    await createOrderActivity(order.id, order.tenant_id, {
+      event_type: "order_shipping_charge_changed",
+      summary: `Shipping changed via invoice sync: R${plan.diff.shipping.orderAmount} -> R${plan.diff.shipping.invoiceAmount}`,
+      metadata: { invoice_id: invoice.id, before: { apply_shipping_fee: order.apply_shipping_fee, shipping_fee: order.shipping_fee }, after: shippingPatch },
+    });
+  }
+
+  return data;
 }
 
 export async function getInvoice(id, options = {}) {

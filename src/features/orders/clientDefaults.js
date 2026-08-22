@@ -1,3 +1,5 @@
+import { defaultApplyShippingFeeForFulfillment } from '../../lib/orderTotal.js';
+
 function valueOrEmpty(value) {
   return value == null ? '' : String(value);
 }
@@ -7,7 +9,12 @@ function clearable(value) {
   return clean || null;
 }
 
+// apply_shipping_fee is computed here, alongside fulfillment_type, so it
+// is set exactly once at order-creation time (this function only runs
+// when composing a new order's initial state) and never recomputed
+// reactively if fulfillment_type is edited later - see orderTotal.js.
 export function hydrateOrderClientDefaults(client = {}) {
+  const fulfillmentType = valueOrEmpty(client.fulfillment_type) || 'courier';
   return {
     client_id: client.id || '',
     client_name: valueOrEmpty(client.name),
@@ -18,7 +25,8 @@ export function hydrateOrderClientDefaults(client = {}) {
     pep_code: valueOrEmpty(client.pep_code),
     delivery_note: valueOrEmpty(client.delivery_note || client.delivery_address),
     courier: valueOrEmpty(client.preferred_courier),
-    fulfillment_type: valueOrEmpty(client.fulfillment_type) || 'courier',
+    fulfillment_type: fulfillmentType,
+    apply_shipping_fee: defaultApplyShippingFeeForFulfillment(fulfillmentType),
   };
 }
 

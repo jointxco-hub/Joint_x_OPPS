@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link2, RefreshCw, Unlink } from "lucide-react";
+import { ArrowRightLeft, Link2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { dataClient } from "@/api/dataClient";
 import { buildOrderInvoiceSyncPlan } from "./orderToInvoiceItems";
+import SyncDiffSummary from "./SyncDiffSummary";
+import InvoiceOrderSyncAction, { canSyncInvoiceToOrder } from "./InvoiceOrderSyncAction";
 
 // Legacy/untyped boundaries, isolated locally so the rest of this file stays
 // checked. dataClient.entities has no static shape under checkJs, and the
@@ -26,33 +28,7 @@ const UIDialogTitle = /** @type {any} */ (DialogTitle);
 const UIDialogDescription = /** @type {any} */ (DialogDescription);
 const UIDialogFooter = /** @type {any} */ (DialogFooter);
 
-function DiffSummary({ diff }) {
-  const rows = [
-    ["Will be added from the order", diff.added],
-    ["Will be updated to match the order", diff.updated],
-    ["No longer on the order — will be removed", diff.removedFromOrder],
-    ["Kept as-is (not from this order)", diff.keptInvoiceOnly],
-  ].filter(([, names]) => names.length > 0);
-
-  if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">No changes — invoice lines already match the order.</p>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {rows.map(([label, names]) => (
-        <div key={label}>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label} ({names.length})</p>
-          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-foreground">
-            {names.map((name, index) => <li key={`${name}-${index}`}>{name}</li>)}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onSync, isPending }) {
+export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onSync, onSyncFromInvoice, isPending }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [confirmAction, setConfirmAction] = useState(null); // { mode: 'link'|'sync', order, diff }
@@ -91,7 +67,11 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
 
   const openSyncPreview = () => {
     if (!linkedOrderQuery.data) return;
-    const diff = buildOrderInvoiceSyncPlan(linkedOrderQuery.data.products, invoice.items || []).diff;
+    const diff = buildOrderInvoiceSyncPlan(linkedOrderQuery.data.products, invoice.items || [], {
+      orderApplyShippingFee: linkedOrderQuery.data.apply_shipping_fee,
+      orderShippingFee: linkedOrderQuery.data.shipping_fee,
+      invoiceShippingCharge: invoice.shipping_charge,
+    }).diff;
     setConfirmAction({ mode: "sync", order: linkedOrderQuery.data, diff });
   };
 
@@ -102,17 +82,14 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
     setConfirmAction(null);
   };
 
-  if (!isDraft) {
-    return (
-      <div className="rounded-xl border border-border bg-card px-3 py-2.5 md:px-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Order link</p>
-        <p className="mt-1 text-sm text-foreground">
-          {invoice.source_order_id ? `Linked to order ${linkedOrderQuery.data?.order_number || invoice.source_order_id}` : "Not linked to an order"}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">Linking, syncing, and unlinking are only available while the invoice is a draft.</p>
-      </div>
-    );
-  }
+  // PHASE 11: invoice -> order never mutates the invoice, so it is not
+  // gated behind isDraft the way order -> invoice (and link/unlink) are -
+  // only a paid or void source invoice blocks it. Do not create a hidden
+  // bypass: this exact rule is enforced again, independently, server-side
+  // in syncOrderItemsFromInvoice. Shared with the Order Drawer's own
+  // linked-invoice status card via InvoiceOrderSyncAction, never
+  // recomputed differently in two places.
+  const invoiceToOrderEligible = canSyncInvoiceToOrder(invoice.status);
 
   return (
     <div className="rounded-xl border border-border bg-card px-3 py-2.5 md:px-4">
@@ -124,22 +101,39 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {invoice.source_order_id ? (
+          {!invoice.source_order_id && isDraft && (
+            <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
+              <Link2 className="h-3.5 w-3.5" /> Link to order
+            </UIButton>
+          )}
+          {invoice.source_order_id && isDraft && (
             <>
               <UIButton type="button" variant="outline" size="sm" onClick={openSyncPreview} disabled={isPending || !linkedOrderQuery.data} className="h-8 rounded-xl text-xs">
-                <RefreshCw className="h-3.5 w-3.5" /> Sync from order
+                <ArrowRightLeft className="h-3.5 w-3.5" /> Sync order → invoice
               </UIButton>
               <UIButton type="button" variant="outline" size="sm" onClick={() => onUnlink?.()} disabled={isPending} className="h-8 rounded-xl text-xs text-destructive hover:text-destructive">
                 <Unlink className="h-3.5 w-3.5" /> Unlink
               </UIButton>
             </>
-          ) : (
-            <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
-              <Link2 className="h-3.5 w-3.5" /> Link to order
-            </UIButton>
+          )}
+          {invoice.source_order_id && linkedOrderQuery.data && (
+            <InvoiceOrderSyncAction
+              order={linkedOrderQuery.data}
+              invoice={invoice}
+              onSyncFromInvoice={onSyncFromInvoice}
+              isPending={isPending}
+            />
           )}
         </div>
       </div>
+      {invoice.source_order_id && !isDraft && invoiceToOrderEligible && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Linking, unlinking, and syncing order → invoice need the invoice to be a draft (use Reopen for corrections).
+        </p>
+      )}
+      {!invoice.source_order_id && !isDraft && (
+        <p className="mt-2 text-xs text-muted-foreground">Linking is only available while the invoice is a draft.</p>
+      )}
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <UIDialogContent className="max-h-[80vh] overflow-y-auto rounded-2xl">
@@ -192,7 +186,7 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
                 : `Pulling the latest items from order ${confirmAction?.order?.order_number}.`}
             </UIDialogDescription>
           </UIDialogHeader>
-          {confirmAction && <DiffSummary diff={confirmAction.diff} />}
+          {confirmAction && <SyncDiffSummary diff={confirmAction.diff} direction="orderToInvoice" />}
           <UIDialogFooter>
             <UIButton variant="outline" onClick={() => setConfirmAction(null)} className="rounded-xl">Cancel</UIButton>
             <UIButton onClick={confirmApply} disabled={isPending} className="rounded-xl">
@@ -201,6 +195,7 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
           </UIDialogFooter>
         </UIDialogContent>
       </Dialog>
+
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
   refreshInvoiceContactDetails,
   reopenInvoice,
   syncInvoiceItemsFromOrder,
+  syncOrderItemsFromInvoice,
   unlinkInvoiceFromOrder,
   updateInvoice,
 } from "@/api/invoices";
@@ -323,6 +324,24 @@ export default function Invoices() {
     onError: (error) => toast.error(error?.message || "Could not sync from this order"),
   });
 
+  const syncOrderFromInvoiceMutation = useMutation({
+    mutationFn: ({ order, invoice, options }) => syncOrderItemsFromInvoice(order, invoice, options),
+    onSuccess: (savedOrder, variables) => {
+      toast.success("Order synced from invoice");
+      queryClient.invalidateQueries({ queryKey: ["invoiceLinkedOrder", variables.invoice.source_order_id] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      if (savedOrder?.id) queryClient.invalidateQueries({ queryKey: ["order", savedOrder.id] });
+    },
+    onError: (error) => {
+      const messages = {
+        PAID_INVOICE_SYNC_BLOCKED: "This invoice is paid - sync into the order is blocked.",
+        VOID_INVOICE_SYNC_BLOCKED: "This invoice is void - sync into the order is blocked.",
+        ORDER_PRODUCTS_LOCKED: "This order's products are locked - unlock it first.",
+      };
+      toast.error(messages[error?.message] || error?.message || "Could not sync from this invoice");
+    },
+  });
+
   if (userQuery.isLoading) {
     return <div className="min-h-screen bg-background p-8 text-sm text-muted-foreground">Checking invoice access...</div>;
   }
@@ -446,7 +465,8 @@ export default function Invoices() {
         onLinkOrder={(invoice, order) => linkOrderMutation.mutate({ invoice, order })}
         onUnlinkOrder={(invoice) => unlinkOrderMutation.mutate(invoice)}
         onSyncFromOrder={(invoice, order) => syncOrderMutation.mutate({ invoice, order })}
-        isOrderLinkPending={linkOrderMutation.isPending || unlinkOrderMutation.isPending || syncOrderMutation.isPending}
+        onSyncFromInvoice={(order, invoice, options) => syncOrderFromInvoiceMutation.mutate({ order, invoice, options })}
+        isOrderLinkPending={linkOrderMutation.isPending || unlinkOrderMutation.isPending || syncOrderMutation.isPending || syncOrderFromInvoiceMutation.isPending}
       />
     </div>
   );

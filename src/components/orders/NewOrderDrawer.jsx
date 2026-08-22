@@ -11,6 +11,7 @@ import FileLightbox from "@/components/files/FileLightbox";
 import { isPrivateFileReference } from "@/lib/privateFiles";
 import { toast } from "sonner";
 import { buildClientDefaultsUpdate, hydrateOrderClientDefaults } from "@/features/orders/clientDefaults";
+import { computeOrderTotal } from "@/lib/orderTotal";
 
 /**
  * Fuzzy score between query and target string.
@@ -89,6 +90,8 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     print_type: 'none',
     notes: '',
     total_amount: '',
+    apply_shipping_fee: true,
+    shipping_fee: '',
     due_date: '',
     linked_po_id: '',
     file_urls: [],
@@ -313,6 +316,11 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   };
 
   const calcTotal = () => form.products.reduce((s, p) => s + (parseFloat(p.price || 0) * (parseInt(p.quantity) || 1)), 0);
+  const orderTotalSuggestion = computeOrderTotal({
+    itemsSubtotal: calcTotal(),
+    applyShippingFee: form.apply_shipping_fee,
+    shippingFee: form.shipping_fee,
+  }).total;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -927,13 +935,33 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
           </div>
 
+          {/* Shipping */}
+          <div className="rounded-xl border border-border p-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-muted-foreground">Charge client for shipping</label>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, apply_shipping_fee: !form.apply_shipping_fee })}
+                className={`h-6 w-11 rounded-full transition-colors ${form.apply_shipping_fee ? 'bg-primary' : 'bg-secondary'}`}
+              >
+                <span className={`block h-5 w-5 rounded-full bg-white shadow transition-transform ${form.apply_shipping_fee ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+            {form.apply_shipping_fee ? (
+              <Input value={form.shipping_fee || ''} onChange={e => setForm({ ...form, shipping_fee: e.target.value })}
+                placeholder="Shipping fee (R)" type="number" className="mt-2 rounded-xl" />
+            ) : (
+              <p className="mt-1.5 text-xs text-muted-foreground">Shipping not charged</p>
+            )}
+          </div>
+
           {/* Total */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
-              Total Amount{calcTotal() > 0 && <span className="text-primary ml-1">(auto: R{calcTotal().toLocaleString()})</span>}
+              Total Amount{orderTotalSuggestion > 0 && <span className="text-primary ml-1">(auto: R{orderTotalSuggestion.toLocaleString()})</span>}
             </label>
             <Input value={form.total_amount} onChange={e => setForm({ ...form, total_amount: e.target.value })}
-              placeholder={`R${calcTotal() || '0'}`} type="number" className="rounded-xl" />
+              placeholder={`R${orderTotalSuggestion || '0'}`} type="number" className="rounded-xl" />
           </div>
 
           {/* Notes */}

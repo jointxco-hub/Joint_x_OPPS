@@ -96,6 +96,7 @@ export default function InvoiceDetailDrawer({
   onLinkOrder,
   onUnlinkOrder,
   onSyncFromOrder,
+  onSyncFromInvoice,
   isOrderLinkPending,
   canReopen = false,
   onReopen,
@@ -305,6 +306,7 @@ export default function InvoiceDetailDrawer({
                 onLink={(order) => onLinkOrder?.(invoice, order)}
                 onUnlink={() => onUnlinkOrder?.(invoice)}
                 onSync={(order) => onSyncFromOrder?.(invoice, order)}
+                onSyncFromInvoice={(order, sourceInvoice, options) => onSyncFromInvoice?.(order, sourceInvoice, options)}
               />
 
               <div className="overflow-hidden rounded-xl border border-border bg-card">
