@@ -4,7 +4,8 @@ import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
   Archive, AlertTriangle, Copy, Check,
-  User, Plus, Trash2, Pencil, Printer
+  User, Plus, Trash2, Pencil, Printer,
+  ChevronDown, ChevronUp, PanelRight, Maximize2, Maximize, MoreVertical
 } from "lucide-react";
 
 const DEFAULT_COURIERS = [
@@ -55,6 +56,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { dataClient } from "@/api/dataClient";
 import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { saveInternalClientFileLink } from "@/api/clientRequests";
@@ -93,6 +100,15 @@ const statusConfig = {
 };
 
 const ORDER_STATUSES = ["confirmed", "in_production", "ready", "shipped", "delivered", "cancelled"];
+
+// Per-device staff preference for drawer width - deliberately NOT scoped
+// per order (the drawer fully remounts per order via key={order.id} in
+// Orders.jsx, so without persistence a mode chosen for one order would
+// silently reset on the next). Mobile always renders full-viewport
+// regardless of this value - it only governs desktop Standard/Focus/
+// Fullscreen and is otherwise untouched.
+const VIEW_MODE_STORAGE_KEY = "opps_order_drawer_view_mode";
+const MOBILE_BREAKPOINT_PX = 768;
 
 const progressStages = ["confirmed", "in_production", "ready", "shipped", "delivered"];
 
@@ -206,6 +222,43 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
   const [lockInterceptOpen, setLockInterceptOpen] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+
+  // Desktop-only Standard/Focus/Fullscreen preference, persisted per
+  // device (localStorage), independent of which order is open.
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window === "undefined") return "standard";
+    try {
+      const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+      return stored === "focus" || stored === "fullscreen" ? stored : "standard";
+    } catch {
+      return "standard";
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    } catch {
+      // Storage can be unavailable (private mode, quota) - the mode still
+      // works for this session, it just won't persist across reloads.
+    }
+  }, [viewMode]);
+
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT_PX : false
+  );
+  useEffect(() => {
+    const handleResize = () => setIsMobileViewport(window.innerWidth < MOBILE_BREAKPOINT_PX);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Collapsed by default on mobile (compact summary first), expanded by
+  // default on desktop (Standard and Focus/Fullscreen alike) - a one-time
+  // default at mount, not re-forced on every resize, so a manual toggle
+  // is never silently overridden mid-session.
+  const [headerExpanded, setHeaderExpanded] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth >= MOBILE_BREAKPOINT_PX
+  );
 
   const currentUserQuery = useQuery({
     queryKey: ["currentUser", "orderDrawer"],
@@ -532,6 +585,15 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
   };
 
   const currentStageIndex = progressStages.indexOf(order.status);
+  const currentPipelineStageKey = localPipelineStage ?? order.pipeline_stage ?? "received";
+  const currentPipelineStageLabel = Array.isArray(stages)
+    ? (stages.find(s => s.key === currentPipelineStageKey)?.label || currentPipelineStageKey.replace(/_/g, " "))
+    : currentPipelineStageKey.replace(/_/g, " ");
+  const panelWidthClass = isMobileViewport || viewMode === "fullscreen"
+    ? "inset-0 w-full max-w-none"
+    : viewMode === "focus"
+      ? "right-0 top-0 w-full max-w-[min(70vw,1100px)] min-w-[420px]"
+      : "right-0 top-0 w-full max-w-xl";
   const statusValue = ORDER_STATUSES.includes(String(order.status || ""))
     ? String(order.status)
     : "confirmed";
@@ -584,116 +646,193 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
       <div className="fixed inset-0 z-[55]" onClick={onClose}>
         <div className="absolute inset-0 bg-black/20 backdrop-blur-sm pointer-events-none" />
       </div>
-      <div className="fixed right-0 top-0 h-full w-full max-w-xl bg-card shadow-apple-xl z-[60] flex flex-col animate-slide-in-right" onClick={e => e.stopPropagation()}>
+      <div className={`fixed h-full bg-card shadow-apple-xl z-[60] flex flex-col animate-slide-in-right ${panelWidthClass}`} onClick={e => e.stopPropagation()}>
         <DrawerSectionBoundary label="Order workspace" resetKey={`${order.id}-workspace-${tab}`}>
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-border">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-0.5">
-              <h2 className="font-bold text-foreground">{order.display_name || clientDisplay.name}</h2>
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusConfig[order.status]?.color || 'bg-secondary'}`}>
-                {statusConfig[order.status]?.label || order.status}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground mb-1.5">
-              #{order.order_number || order.id?.slice(0,8)}
-              {displayWhatsappName ? <span> / WhatsApp: {displayWhatsappName}</span> : null}
-            </p>
-            <DrawerSectionBoundary label="Order tags" resetKey={`${order.id}-tags`}>
-              <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
-            </DrawerSectionBoundary>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all ml-3 flex-shrink-0">
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        </div>
-
-        {/* 5-stage legacy progress bar */}
-        <div className="px-5 py-4 border-b border-border bg-secondary/30">
-          <div className="flex items-center justify-between">
-            {progressStages.map((stage, i) => (
-              <React.Fragment key={stage}>
-                <div className="flex flex-col items-center gap-1">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all
-                    ${i <= currentStageIndex ? 'bg-primary text-white' : 'bg-border text-muted-foreground'}`}>
-                    {i < currentStageIndex ? (
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                    ) : (
-                      <span className="text-xs font-bold">{i + 1}</span>
-                    )}
-                  </div>
-                  <span className={`text-xs font-medium capitalize ${i <= currentStageIndex ? 'text-primary' : 'text-muted-foreground'}`}>
-                    {stage.replace('_', ' ')}
-                  </span>
+        <div className="border-b border-border">
+          <div className="flex items-center justify-between p-5 pb-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-0.5">
+                <h2 className="font-bold text-foreground truncate">{order.display_name || clientDisplay.name}</h2>
+                <span className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${statusConfig[order.status]?.color || 'bg-secondary'}`}>
+                  {statusConfig[order.status]?.label || order.status}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mb-1.5">
+                #{order.order_number || order.id?.slice(0,8)}
+                {displayWhatsappName ? <span> / WhatsApp: {displayWhatsappName}</span> : null}
+              </p>
+              {headerExpanded ? (
+                <DrawerSectionBoundary label="Order tags" resetKey={`${order.id}-tags`}>
+                  <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />
+                </DrawerSectionBoundary>
+              ) : (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                  <span className="font-medium text-foreground capitalize">{currentPipelineStageLabel}</span>
+                  {shippingGapReason && (
+                    <span className="inline-flex items-center gap-1 font-medium text-amber-700">
+                      <AlertTriangle className="w-3 h-3" /> Delivery details incomplete
+                    </span>
+                  )}
                 </div>
-                {i < progressStages.length - 1 && (
-                  <div className={`flex-1 h-0.5 mx-1 rounded-full ${i < currentStageIndex ? 'bg-primary' : 'bg-border'}`} />
-                )}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
-
-        {/* 13-stage detailed pipeline strip */}
-        <DrawerSectionBoundary label="Pipeline" resetKey={`${order.id}-pipeline`}>
-          <PipelineStrip
-            order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
-            stages={stages}
-            onStageChange={setLocalPipelineStage}
-          />
-        </DrawerSectionBoundary>
-
-        {shippingGapReason && (
-          <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-            <div>
-              <p className="font-semibold">Delivery details incomplete</p>
-              <p className="mt-0.5 text-amber-800">{shippingGapReason}.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0 ml-3">
+              {!isMobileViewport && (
+                <div className="hidden sm:flex items-center gap-0.5 rounded-lg border border-border p-0.5 mr-1">
+                  <button
+                    type="button"
+                    title="Standard"
+                    onClick={() => setViewMode("standard")}
+                    className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${viewMode === "standard" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    <PanelRight className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Focus"
+                    onClick={() => setViewMode("focus")}
+                    className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${viewMode === "focus" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Full screen"
+                    onClick={() => setViewMode("fullscreen")}
+                    className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${viewMode === "fullscreen" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    <Maximize className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" title="More actions" className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all">
+                    <MoreVertical className="w-4 h-4 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      if (window.confirm('Archive this order? It can be restored from the Archive page.')) {
+                        onArchive && onArchive();
+                      }
+                    }}
+                  >
+                    <Archive className="w-4 h-4 mr-2" /> Archive order
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <button onClick={onClose} className="w-8 h-8 rounded-xl bg-secondary flex items-center justify-center hover:bg-border transition-all flex-shrink-0">
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
             </div>
           </div>
-        )}
-
-        {/* Quick Actions */}
-        <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
-          {ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled').map(s => (
-            <button
-              key={s}
-              onClick={() => onUpdate(order.id, { status: s })}
-              className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full bg-secondary hover:bg-border transition-all capitalize"
-            >
-              Next: {statusConfig[s]?.label || s}
-            </button>
-          ))}
           <button
-            onClick={() => {
-              setEditingPaymentId(null);
-              if (!showPayment && balance > 0) {
-                setPaymentForm(pf => ({
-                  ...pf,
-                  amount: pf.amount || String(balance),
-                  status: pf.status || 'completed',
-                  date: pf.date || new Date().toISOString().split('T')[0],
-                }));
-              }
-              setShowPayment(v => !v);
-            }}
-            className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 transition-all"
+            type="button"
+            onClick={() => setHeaderExpanded(v => !v)}
+            className="flex w-full items-center justify-center gap-1 border-t border-border/60 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-all"
           >
-            <CreditCard className="w-3 h-3" /> Add Payment
-          </button>
-          <label className="flex-shrink-0 cursor-pointer">
-            <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all">
-              <Paperclip className="w-3 h-3" /> {uploading ? 'Uploading...' : 'Upload File'}
-            </span>
-            <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
-          </label>
-          <button
-            onClick={() => setShowException(true)}
-            className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 transition-all"
-          >
-            <AlertTriangle className="w-3 h-3" /> Flag Exception
+            {headerExpanded ? (
+              <>Hide order status <ChevronUp className="w-3.5 h-3.5" /></>
+            ) : (
+              <>Show order status <ChevronDown className="w-3.5 h-3.5" /></>
+            )}
           </button>
         </div>
+
+        {headerExpanded && (
+          <>
+            {/* 5-stage legacy progress bar */}
+            <div className="px-5 py-4 border-b border-border bg-secondary/30">
+              <div className="flex items-center justify-between">
+                {progressStages.map((stage, i) => (
+                  <React.Fragment key={stage}>
+                    <div className="flex flex-col items-center gap-1">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all
+                        ${i <= currentStageIndex ? 'bg-primary text-white' : 'bg-border text-muted-foreground'}`}>
+                        {i < currentStageIndex ? (
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        ) : (
+                          <span className="text-xs font-bold">{i + 1}</span>
+                        )}
+                      </div>
+                      <span className={`text-xs font-medium capitalize ${i <= currentStageIndex ? 'text-primary' : 'text-muted-foreground'}`}>
+                        {stage.replace('_', ' ')}
+                      </span>
+                    </div>
+                    {i < progressStages.length - 1 && (
+                      <div className={`flex-1 h-0.5 mx-1 rounded-full ${i < currentStageIndex ? 'bg-primary' : 'bg-border'}`} />
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            {/* 13-stage detailed pipeline strip */}
+            <DrawerSectionBoundary label="Pipeline" resetKey={`${order.id}-pipeline`}>
+              <PipelineStrip
+                order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
+                stages={stages}
+                onStageChange={setLocalPipelineStage}
+              />
+            </DrawerSectionBoundary>
+
+            {shippingGapReason && (
+              <div className="mx-5 mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+                <div>
+                  <p className="font-semibold">Delivery details incomplete</p>
+                  <p className="mt-0.5 text-amber-800">{shippingGapReason}.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Actions */}
+            <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
+              {ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled').map(s => (
+                <button
+                  key={s}
+                  onClick={() => onUpdate(order.id, { status: s })}
+                  className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full bg-secondary hover:bg-border transition-all capitalize"
+                >
+                  Next: {statusConfig[s]?.label || s}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  setEditingPaymentId(null);
+                  if (!showPayment && balance > 0) {
+                    setPaymentForm(pf => ({
+                      ...pf,
+                      amount: pf.amount || String(balance),
+                      status: pf.status || 'completed',
+                      date: pf.date || new Date().toISOString().split('T')[0],
+                    }));
+                  }
+                  setShowPayment(v => !v);
+                }}
+                className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 transition-all"
+              >
+                <CreditCard className="w-3 h-3" /> Add Payment
+              </button>
+              <label className="flex-shrink-0 cursor-pointer">
+                <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all">
+                  <Paperclip className="w-3 h-3" /> {uploading ? 'Uploading...' : 'Upload File'}
+                </span>
+                <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
+              </label>
+              <button
+                onClick={() => setShowException(true)}
+                className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 transition-all"
+              >
+                <AlertTriangle className="w-3 h-3" /> Flag Exception
+              </button>
+            </div>
+          </>
+        )}
 
         {/* Add Payment Form */}
         {showPayment && (
@@ -749,8 +888,9 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex min-w-0 gap-1 overflow-x-auto border-b border-border px-3 md:px-5">
+        {/* Tabs - sticky above the single scrollable content region below,
+            not a second scroll container */}
+        <div className="sticky top-0 z-10 flex min-w-0 gap-1 overflow-x-auto border-b border-border bg-card px-3 md:px-5">
           {['details', 'readiness', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices', 'portal'].map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`shrink-0 px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all whitespace-nowrap
@@ -1302,21 +1442,6 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
             </React.Suspense>
           )}
           </DrawerSectionBoundary>
-        </div>
-
-        {/* Archive */}
-        <div className="p-4 border-t border-border">
-          <button
-            type="button"
-            className="w-full flex items-center justify-center gap-2 rounded-xl border border-border py-2 text-sm text-muted-foreground hover:text-destructive hover:border-destructive transition-all"
-            onClick={() => {
-              if (window.confirm('Archive this order? It can be restored from the Archive page.')) {
-                onArchive && onArchive();
-              }
-            }}
-          >
-            <Archive className="w-4 h-4" /> Archive order
-          </button>
         </div>
         </DrawerSectionBoundary>
       </div>
