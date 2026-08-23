@@ -37,6 +37,23 @@ function formatDate(value) {
   return new Date(time).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+function capitalize(value) {
+  const s = String(value || "");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+// Commerce onboarding requires a genuine modern tenant identity - XOS 3B
+// derives the Commerce tenant from public.clients.tenant_id, and every
+// legacy-only row's client still belongs to the Joint X tenant (they were
+// never migrated to a dedicated tenant - see the migration's header
+// note). Exposing "Add product" for a legacy-only row would create/link
+// Commerce/client_product state under Joint X, which is architecturally
+// wrong (post-review blocker fix). A row is Commerce-eligible only when
+// it carries a real tenant_id, i.e. source is 'modern' or 'both'.
+function isCommerceEligible(row) {
+  return Boolean(row.tenant_id) && (row.source === "modern" || row.source === "both");
+}
+
 // Frontend-only derived signals - deliberately not baked into the RPC as
 // permanent stored state, since both are fully deterministic from fields
 // the RPC already returns (matches the "derive, don't duplicate" pattern
@@ -244,7 +261,14 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
             <StatusField label="Client type" value={row.client_type} />
             <StatusField label="Site type" value={row.site_type} />
             <StatusField label="Tenant" value={row.tenant_slug} />
-            <StatusField label="Status" value={row.site_status} />
+            {/* Tenant status (the modern tenant's own active/inactive
+                state) and Site status (the legacy workspace's site
+                readiness) are two different concepts - conflating them
+                under one "Status" field would misrepresent a modern
+                tenant like GSB, whose tenant IS active even though it has
+                no site/workspace status yet (post-review fix). */}
+            <StatusField label="Tenant status" value={row.tenant_status ? capitalize(row.tenant_status) : null} />
+            <StatusField label="Site status" value={row.site_status} />
             <StatusField label="Onboarding stage" value={row.onboarding_stage} />
           </div>
         </section>
@@ -326,7 +350,16 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
           )}
         </section>
 
-        {row.client_id && <CommerceProductsSection clientId={row.client_id} />}
+        {isCommerceEligible(row) ? (
+          row.client_id && <CommerceProductsSection clientId={row.client_id} />
+        ) : (
+          <section className="rounded-lg border border-slate-200 p-4">
+            <h3 className="font-semibold mb-2">Commerce Products</h3>
+            <p className="text-sm text-slate-500">
+              Commerce onboarding becomes available after this legacy workspace is reconciled to a dedicated managed tenant.
+            </p>
+          </section>
+        )}
       </DialogContent>
     </Dialog>
   );
