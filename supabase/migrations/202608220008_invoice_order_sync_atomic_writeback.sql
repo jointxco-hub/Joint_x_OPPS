@@ -122,14 +122,31 @@ begin
     -- Scoped to invoice_id + tenant_id, not just id, so a stale or
     -- malicious pairing can never write source_order_item_id onto an
     -- invoice item belonging to a different invoice or tenant.
+    --
+    -- source_order_item_id is uuid, not text (confirmed live via
+    -- disposable rollback verification - a plain v_new_line_id
+    -- assignment fails with "column is of type uuid but expression is
+    -- of type text"). Every line_id ever reaching this point is already
+    -- a well-formed UUID string - the enforce_order_product_line_identity
+    -- trigger on orders.products rejects anything else - so this cast
+    -- can never fail in practice, only make explicit what was
+    -- previously an implicit, incorrect assumption.
     update public.opps_invoice_items
-    set source_order_item_id = v_new_line_id
+    set source_order_item_id = v_new_line_id::uuid
     where id = v_invoice_item_id
       and invoice_id = p_invoice_id
       and tenant_id = v_order.tenant_id;
   end loop;
 
-  v_actor := auth.email();
+  -- auth.email() reads only the JWT's email claim, which is not
+  -- guaranteed present on every session shape (confirmed via disposable
+  -- verification: a session authenticated only via sub/role, with no
+  -- email claim, left auth.email() null and broke the NOT NULL
+  -- actor_email column below). Falls back to the same public.users
+  -- lookup is_opps_staff() itself already relies on to identify the
+  -- caller - a genuine OPPS staff member who just passed that check is
+  -- guaranteed to have a row there.
+  v_actor := coalesce(auth.email(), (select u.user_email from public.users u where u.auth_user_id = auth.uid()));
 
   insert into public.opps_activity_events (
     tenant_id, actor_email, actor_name, event_type, entity_type, entity_id, summary, metadata
