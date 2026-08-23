@@ -1991,6 +1991,59 @@ async function runSelect(entityName, filter = {}, sort, limit) {
   return rows;
 }
 
+// Staff-visible read path for internal OPPS admin surfaces (e.g. the
+// Clients management screen) that must be able to see managed-tenant
+// rows - unlike runSelect(), this deliberately does NOT inject
+// tenant_id = getCurrentTenantId() into the query. Existing production RLS
+// (xos1_require_opps_staff: USING is_opps_staff()) is the sole
+// authorization boundary here, the same way it already is for direct
+// table access - this only removes a browser-side filter that RLS never
+// required, it does not grant any access RLS wouldn't already allow.
+// Deliberately does not read from or write to the shared local entity
+// cache (readCachedRows/cacheEntityRows): that cache is populated by
+// runSelect's TENANT-SCOPED results elsewhere in the app, and mixing
+// cross-tenant staff reads into it (or serving stale tenant-scoped reads
+// out of it as if they were staff-visible) risks a confusing data leak
+// via localStorage. Offline/error simply returns an empty array.
+async function runStaffSelect(entityName, filter = {}, sort, limit) {
+  if (!supabase) {
+    return [];
+  }
+
+  const entityConfig = ENTITY_CONFIG[entityName];
+  if (!entityConfig) {
+    return [];
+  }
+
+  let query = supabase.from(entityConfig.table).select('*');
+  const combinedFilter = {
+    ...(entityConfig.baseFilter ?? {}),
+    ...mapFilter(entityConfig, filter),
+  };
+
+  for (const [key, value] of Object.entries(combinedFilter)) {
+    query = query.eq(key, value);
+  }
+
+  const sortConfig = getSortColumn(entityConfig, sort);
+  if (sortConfig) {
+    query = query.order(sortConfig.column, { ascending: sortConfig.ascending });
+  }
+
+  if (typeof limit === 'number') {
+    query = query.limit(limit);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.warn(`[dataClient] staff ${entityName} query failed:`, error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => entityConfig.normalize(row));
+}
+
 function supabaseErrorMessage(error) {
   if (!error) return 'Unknown error';
   const msg = error.message || error.hint || JSON.stringify(error);
@@ -2053,6 +2106,41 @@ async function runUpdate(entityName, id, payload = {}) {
   if (error) {
     const msg = supabaseErrorMessage(error);
     console.error(`[dataClient] ${entityName} update failed:`, msg, error);
+    throw new Error(msg);
+  }
+
+  return entityConfig.normalize(data);
+}
+
+// Staff-safe update path for internal OPPS admin surfaces - the write
+// counterpart to runStaffSelect(). Unlike runUpdate(), does NOT filter by
+// the current Joint X tenant_id - it is scoped by the exact row id only,
+// relying on the same RLS (is_opps_staff()) that already governs direct
+// table access for this role. This exists specifically so editing/archiving
+// an already-visible managed-tenant client (e.g. GSB, seen via
+// runStaffSelect) doesn't silently no-op because of a tenant filter that
+// would never match a managed tenant's rows.
+async function runStaffUpdate(entityName, id, payload = {}) {
+  if (!supabase) {
+    return null;
+  }
+
+  const entityConfig = ENTITY_CONFIG[entityName];
+  if (!entityConfig) {
+    return null;
+  }
+
+  const record = entityConfig.serialize(payload);
+  const { data, error } = await supabase
+    .from(entityConfig.table)
+    .update(record)
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) {
+    const msg = supabaseErrorMessage(error);
+    console.error(`[dataClient] staff ${entityName} update failed:`, msg, error);
     throw new Error(msg);
   }
 
@@ -2276,6 +2364,29 @@ async function getCurrentUser() {
 
 export const dataClient = {
   entities,
+  // Narrow internal staff-access data path (OPPS Clients management screen
+  // and similar internal surfaces only) - reads/updates clients and orders
+  // across managed tenants by relying on existing Supabase RLS
+  // (xos1_require_opps_staff: USING is_opps_staff()) instead of the
+  // browser-side current-tenant filter that entities.Client/entities.Order
+  // apply for normal tenant-scoped app flows. Does not change
+  // ENTITY_CONFIG.Client/Order.tenantScoped, and does not add or weaken
+  // any RLS policy - a normal authenticated tenant user calling these
+  // still only gets back whatever RLS already lets them see (i.e.
+  // effectively nothing useful, since is_opps_staff() gates the clients/
+  // orders policies), so this grants no access beyond what the database
+  // already allows.
+  staff: {
+    async listVisibleClients(sort, limit = 200) {
+      return runStaffSelect('Client', {}, sort, limit);
+    },
+    async listVisibleOrders(sort, limit = 2000) {
+      return runStaffSelect('Order', {}, sort, limit);
+    },
+    async updateVisibleClient(id, payload = {}) {
+      return runStaffUpdate('Client', id, payload);
+    },
+  },
   auth: {
     async me() {
       return getCurrentUser();
