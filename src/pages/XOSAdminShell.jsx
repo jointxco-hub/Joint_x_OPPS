@@ -7,6 +7,7 @@ import XOSSignIn from './xos/XOSSignIn';
 import XOSWorkspaceLayout from './xos/XOSWorkspaceLayout';
 import XOSOverview from './xos/XOSOverview';
 import XOSOrders from './xos/XOSOrders';
+import XOSProducts from './xos/XOSProducts';
 import XOSRequests from './xos/XOSRequests';
 import XOSFiles from './xos/XOSFiles';
 
@@ -62,6 +63,7 @@ export default function XOSAdminShell() {
         <Route element={<XOSWorkspaceLayout gate={gate} />}>
           <Route index element={<XOSOverview gate={gate} />} />
           <Route path="orders" element={<XOSOrders gate={gate} />} />
+          <Route path="products" element={<XOSProducts gate={gate} />} />
           <Route path="requests" element={<XOSRequests gate={gate} />} />
           <Route path="files" element={<XOSFiles gate={gate} />} />
           <Route

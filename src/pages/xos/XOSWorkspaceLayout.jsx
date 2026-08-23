@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { FileText, FolderOpen, LayoutGrid, LogOut, Menu, Package, ShieldCheck } from 'lucide-react';
+import { FileText, FolderOpen, LayoutGrid, LogOut, Menu, Package, ShieldCheck, ShoppingBag } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
+import { useXosCapabilities } from '@/lib/useXosData';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,9 +14,15 @@ import {
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import XOSErrorBoundary from './XOSErrorBoundary';
 
+// Products is capability-gated - the nav item only appears once
+// get_xos_capabilities_for_host reports it enabled for this tenant. Note
+// that hiding the nav item is convenience only, not the security
+// boundary: XOSProducts.jsx's own RPC call independently denies access
+// server-side even if this item were somehow reachable directly.
 const NAV_ITEMS = [
   { to: '/', label: 'Overview', icon: LayoutGrid, end: true },
   { to: '/orders', label: 'Orders', icon: Package },
+  { to: '/products', label: 'Products', icon: ShoppingBag, capabilityKey: 'products' },
   { to: '/requests', label: 'Requests', icon: FileText },
   { to: '/files', label: 'Files', icon: FolderOpen },
 ];
@@ -28,10 +35,11 @@ function initialsFor(name, email) {
   return source.slice(0, 2).toUpperCase();
 }
 
-function NavLinks({ onNavigate }) {
+function NavLinks({ onNavigate, capabilities }) {
+  const items = NAV_ITEMS.filter((item) => !item.capabilityKey || capabilities?.[item.capabilityKey]?.enabled);
   return (
     <nav className="flex flex-col gap-0.5">
-      {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
+      {items.map(({ to, label, icon: Icon, end }) => (
         <NavLink
           key={to}
           to={to}
@@ -84,6 +92,7 @@ export default function XOSWorkspaceLayout({ gate }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const { data: capabilities } = useXosCapabilities({ hostname: gate.hostname });
 
   const handleLogout = async () => {
     await logout();
@@ -106,7 +115,7 @@ export default function XOSWorkspaceLayout({ gate }) {
           </div>
         </div>
         <div className="mt-6 flex-1">
-          <NavLinks />
+          <NavLinks capabilities={capabilities} />
         </div>
         <p className="px-2 text-[11px] text-zinc-400">Powered by Joint X</p>
       </aside>
@@ -153,7 +162,7 @@ export default function XOSWorkspaceLayout({ gate }) {
             </div>
           </div>
           <div className="px-3 py-4">
-            <NavLinks onNavigate={() => setMobileNavOpen(false)} />
+            <NavLinks onNavigate={() => setMobileNavOpen(false)} capabilities={capabilities} />
           </div>
         </SheetContent>
       </Sheet>
