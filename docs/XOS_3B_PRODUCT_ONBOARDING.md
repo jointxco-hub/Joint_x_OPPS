@@ -19,15 +19,27 @@ those; XOS's own Products page is unmodified.
 | System | Owns |
 |---|---|
 | **Commerce** (`commerce.products`) | Canonical commercial product identity, retail name/description/price/sale price, public variants, draft/published/archived state, storefront-facing primary image. |
-| **`public.client_products`** | Managed client-account relationship, client-specific reorder setup, approval/revision lifecycle, artwork, managed-service price, production instructions tied to the managed relationship. |
-| **`public.products` (OPPS)** | Operational product identity, production-facing config, operational status. |
+| **`public.client_products`** | Managed client-account relationship, client-specific reorder setup, approval/revision lifecycle, artwork, managed-service price, production instructions tied to the managed relationship. One-to-one identity mapping: one managed relationship belongs to exactly one Commerce product tenant-wide. |
+| **`public.products` (OPPS)** | Operational product identity, production-facing config, operational status. **Tenant-scoped but reusable**: production data proves one OPPS product ("JET T-Shirt") already backs two different `client_products` ("JET T-Shirt" and "SFR T-Shirt") - several Commerce products in the same tenant may legitimately share one underlying OPPS base product. Each Commerce product still carries at most one OPPS mapping; the reuse runs the other direction (one OPPS product, many Commerce products). |
 | **OPPS Inventory** | Physical stock truth. Never touched by this phase. |
-| **`public.xlab_products`** | Reusable/shared X LAB catalog identity — no `tenant_id`, not owned by any one tenant. |
+| **`public.xlab_products`** | Reusable/shared X LAB catalog/production template identity — no `tenant_id`, not owned by any one tenant or client. Same reuse shape as OPPS: one template, many Commerce products; each Commerce product still carries at most one X LAB mapping. |
 
 Commerce retail price and `client_products.client_price` are deliberately
 independent — neither is ever silently copied into the other. Commerce
 never becomes an inventory ledger; `client_products` never becomes the
 universal retail catalog; X LAB templates never become tenant-owned.
+
+**Cardinality, precisely** (this matters for future inventory integration
+- Commerce products/designs must not force creation of duplicate OPPS base
+products merely because their branding/retail identity differs):
+- `client_product` → Commerce product: **one-to-one**, tenant-wide.
+- OPPS product → Commerce product: **one-to-many**, same tenant only (many
+  Commerce products may reference the same OPPS base product; each
+  Commerce product still has at most one OPPS mapping).
+- X LAB template → Commerce product: **one-to-many**, no tenant scope at
+  all (many Commerce products across any tenant may reference the same
+  shared template; each Commerce product still has at most one X LAB
+  mapping).
 
 ## Post-review corrections (PR #32)
 
@@ -80,6 +92,21 @@ one on top):
 8. **The suite now fails the command** on any failed assertion (previously
    it only recorded `passed = false` in a result table without surfacing
    failure to the caller).
+
+**Round 2:** a follow-up independent live-data reconciliation found `3.`
+above did not go far enough. It corrected `xlab_product` cardinality but
+still treated `opps_product` as a one-to-one identity mapping, requiring
+`UNIQUE (tenant_id, system_key, external_id)` for it too via
+`p_identity_unique = true`. Production disproves that: one real OPPS
+product ("JET T-Shirt") already backs two different `client_products`
+("JET T-Shirt" and "SFR T-Shirt"). `opps_product` now gets the same
+reusable-external-identity treatment as `xlab_product`
+(`p_identity_unique = false`), moved out of constraint B into the
+"reusable" set - see "Product link identity and conflicts" below. Tenant
+safety is unaffected: `public.products.tenant_id` must still equal the
+tenant derived from the selected client before any OPPS link is allowed;
+only the *count* of Commerce products one same-tenant OPPS product may
+back has changed, not which tenant may reach it.
 
 ## Identity path (unchanged, reused)
 
@@ -167,30 +194,42 @@ nothing to preserve yet).
 ## Product link identity and conflicts
 
 `commerce.product_links` carries three constraints (replacing XOS 3A's
-single `UNIQUE (tenant_id, system_key, external_id)`, which was too strong
-for `xlab_product` - see "Post-review corrections"):
+single `UNIQUE (tenant_id, system_key, external_id)`, which assumed every
+`system_key` was a one-to-one identity mapping - see "Post-review
+corrections" for the two separate production findings that disproved
+that, for `xlab_product` and then for `opps_product`):
 
 - **A** `UNIQUE (commerce_product_id, system_key, external_id)` - exact
   duplicate protection, any `system_key`.
 - **B** `UNIQUE (tenant_id, system_key, external_id) WHERE system_key IN
-  ('client_product', 'opps_product', 'legacy_gsb_product')` - external
-  identity uniqueness, identity systems only. Deliberately excludes
-  `xlab_product`: the same X LAB template may legitimately back many
-  Commerce products in one tenant (`GSB Product A -> JET 240g`,
-  `GSB Product B -> JET 240g`).
+  ('client_product', 'legacy_gsb_product')` - external identity uniqueness,
+  *true* identity systems only. Deliberately excludes both `opps_product`
+  and `xlab_product`: production data proves `public.products` is a
+  tenant-scoped, reusable operational/base-product identity (one real OPPS
+  product legitimately backs several `client_products`/Commerce products
+  in that tenant), and X LAB templates are reusable across tenants
+  entirely (`GSB Product A -> JET 240g`, `GSB Product B -> JET 240g`).
 - **C** `UNIQUE (commerce_product_id, system_key) WHERE system_key IN
   ('client_product', 'opps_product', 'xlab_product')` - one mapping of a
-  given integration type per Commerce product; a single product can never
-  ambiguously carry two different X LAB templates (or two different OPPS
-  products, or two different client_products).
+  given integration type *per Commerce product*; a single Commerce product
+  can never ambiguously carry two different OPPS products, two different
+  X LAB templates, or two different client_products. Reuse only ever runs
+  the other direction (one external identity, many Commerce products) -
+  never a Commerce product fanning in to several identities of the same
+  type.
 
 `commerce.ensure_product_link(commerce_product_id, tenant_id, system_key,
 external_id, identity_unique)` is the deterministic helper both RPCs use to
 write these links: create if absent, no-op success if the link already
 points at this Commerce product, raise `ONBOARD_LINK_CONFLICT` (aborting
-the whole onboarding call) if the identity is already linked elsewhere.
-`identity_unique` is `true` for `client_product`/`opps_product`, `false`
-for `xlab_product` (reuse is expected, not a conflict).
+the whole onboarding call) if the identity is already linked elsewhere (for
+`client_product`/`legacy_gsb_product`) or if THIS Commerce product already
+carries a different mapping of that type (all four system_keys, via
+constraint C). `identity_unique` is `true` only for
+`client_product`/`legacy_gsb_product`, `false` for `opps_product` and
+`xlab_product` (external-identity reuse is expected for both, not a
+conflict) - constraint C still caps each Commerce product at one mapping
+per type regardless.
 
 ## Idempotency
 
@@ -260,11 +299,17 @@ three thin RPC wrappers, matching `src/api/artworkLinking.js`.
 (`begin; ... rollback;`), covering the full corrected XOS 3B test matrix:
 the corrected authority contract (staff succeeds across tenants without
 membership; a real tenant owner and a bare authenticated user are both
-still denied), core onboarding/idempotency/non-duplication, OPPS tenant
-integrity and deterministic link-conflict rejection, X LAB template reuse
-across products plus one-mapping-per-product rejection, non-destructive
-mapping-only updates (byte-level field/variant preservation), the
-inventory/XOS-client-RPC boundary, and a fixture-provenance check. Every
+still denied), core onboarding/idempotency/non-duplication, OPPS
+same-tenant reuse across two Commerce products with both mappings
+verified to coexist, one Commerce product rejected from carrying two
+different OPPS products, cross-tenant OPPS still rejected, X LAB template
+reuse across products plus one-mapping-per-product rejection,
+`legacy_gsb_product`/`client_product` external-identity conflict still
+rejected deterministically, the integration-health RPC returning the
+correct per-product OPPS/X LAB link without row multiplication,
+non-destructive mapping-only updates (byte-level field/variant
+preservation), the inventory/XOS-client-RPC boundary, and a
+fixture-provenance check. Every
 simulated identity (including the "is_opps_staff() staff" one) is a fresh
 disposable `auth.users`/`public.users` row created and rolled back inside
 the transaction - no real production account is read or relied upon. A

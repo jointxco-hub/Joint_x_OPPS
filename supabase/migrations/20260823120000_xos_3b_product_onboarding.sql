@@ -78,28 +78,52 @@ revoke all on commerce.onboarding_operations from anon;
 revoke all on commerce.onboarding_operations from authenticated;
 
 -- =====================================================================
--- 2. commerce.product_links cardinality correction (post-review).
+-- 2. commerce.product_links cardinality correction (post-review, twice).
 --
 -- The original XOS 3A constraint - UNIQUE (tenant_id, system_key,
--- external_id) - is too strong for system_key = 'xlab_product'.
--- Production inspection confirms X LAB templates (JET tees, hoodies,
--- caps, etc.) are reusable catalog identities: many Commerce products in
--- the same tenant legitimately reference the same template (GSB Product A
--- -> JET 240g, GSB Product B -> JET 240g must both be representable).
--- Replaced with three narrower, explicit constraints:
+-- external_id) - assumed every system_key was a one-to-one identity
+-- mapping. Two rounds of production reconciliation disproved that for two
+-- different system_keys, for two different reasons:
+--
+--   xlab_product: X LAB templates (JET tees, hoodies, caps, etc.) are
+--   reusable CATALOG identities - many Commerce products in the same
+--   tenant legitimately reference the same template (GSB Product A ->
+--   JET 240g, GSB Product B -> JET 240g must both be representable).
+--
+--   opps_product: live production data proves public.products is a
+--   tenant-scoped, reusable OPERATIONAL/BASE-PRODUCT identity, not a
+--   one-commerce-product identity either - one existing OPPS product
+--   ("JET T-Shirt") is already referenced by TWO public.client_products
+--   ("JET T-Shirt" and "SFR T-Shirt"). Several Commerce/client-specific
+--   products (different branding/retail identity, different retail price)
+--   legitimately share one underlying OPPS base product - forcing a new
+--   OPPS product per Commerce product would fragment inventory instead of
+--   sharing it, which is precisely the wrong direction for future
+--   inventory integration.
+--
+--   client_product remains the one true identity mapping here: one
+--   managed client-account relationship belongs to exactly one Commerce
+--   product tenant-wide - that is what "managed" means.
+--
+-- Three narrower, explicit constraints:
 --
 --   A. exact duplicate protection (any system_key) - the same commerce
 --      product can never carry two rows for the same (system_key,
 --      external_id) pair.
 --   B. external identity uniqueness, identity systems only - a given
---      client_product/opps_product/legacy_gsb_product external id maps
---      to exactly one commerce product tenant-wide. Deliberately excludes
---      xlab_product for the reuse reason above.
+--      client_product/legacy_gsb_product external id maps to exactly one
+--      commerce product tenant-wide. Deliberately excludes opps_product
+--      AND xlab_product - both are reusable, for the two separate reasons
+--      above.
 --   C. one mapping of a given integration type per commerce product - a
 --      single commerce product can never ambiguously carry two different
---      client_product/opps_product/xlab_product mappings. This is also
---      what makes admin_get_client_commerce_products' per-system_key
---      joins structurally safe (at most one matching row each), not just
+--      client_product/opps_product/xlab_product mappings (i.e. at most
+--      one OPPS base product, at most one X LAB template, per Commerce
+--      product - reuse is about the external identity fanning OUT to
+--      several Commerce products, never a Commerce product fanning IN to
+--      several external identities of the same type). This is also what
+--      makes admin_get_client_commerce_products' per-system_key joins
+--      structurally safe (at most one matching row each), not just
 --      empirically safe.
 --
 -- Confirmed against production (read-only): commerce.product_links has 0
@@ -115,7 +139,7 @@ create unique index commerce_product_links_product_system_external_unique
 
 create unique index commerce_product_links_identity_unique
   on commerce.product_links (tenant_id, system_key, external_id)
-  where system_key in ('client_product', 'opps_product', 'legacy_gsb_product');
+  where system_key in ('client_product', 'legacy_gsb_product');
 
 create unique index commerce_product_links_one_mapping_per_type_unique
   on commerce.product_links (commerce_product_id, system_key)
@@ -134,7 +158,13 @@ create unique index commerce_product_links_one_mapping_per_type_unique
 --    the whole call, including nested invoker-mode calls like this one).
 --    p_identity_unique controls whether the (tenant_id, system_key,
 --    external_id) uniqueness check (constraint B, identity systems only)
---    applies - false for xlab_product, true otherwise.
+--    applies - true only for client_product/legacy_gsb_product; false for
+--    xlab_product AND opps_product (both are reusable external identities,
+--    per section 2's cardinality note above). Either way, constraint C
+--    (enforced structurally by the table, not by this function) still
+--    caps THIS commerce product at one mapping of a given type - the
+--    "already linked to a different X" branch below is what surfaces that
+--    as ONBOARD_LINK_CONFLICT rather than a bare constraint-violation error.
 -- =====================================================================
 
 create function commerce.ensure_product_link(
@@ -464,7 +494,16 @@ begin
   perform commerce.ensure_product_link(v_commerce_product_id, v_tenant_id, 'client_product', v_client_product.id::text, true);
 
   if v_effective_opps_id is not null then
-    perform commerce.ensure_product_link(v_commerce_product_id, v_tenant_id, 'opps_product', v_effective_opps_id::text, true);
+    -- opps_product is deliberately NOT identity-unique - live production
+    -- data proves public.products is a tenant-scoped, reusable
+    -- operational/base-product identity (one real OPPS product, "JET
+    -- T-Shirt", already backs two different client_products, "JET
+    -- T-Shirt" and "SFR T-Shirt"); several Commerce products in this
+    -- tenant may legitimately reference the same OPPS base product. Tenant
+    -- safety (v_opps_tenant = v_tenant_id) was already enforced above,
+    -- independent of this call - that check is about WHICH tenant may
+    -- link the product at all, not how many Commerce products may.
+    perform commerce.ensure_product_link(v_commerce_product_id, v_tenant_id, 'opps_product', v_effective_opps_id::text, false);
   end if;
 
   if v_effective_xlab_id is not null then

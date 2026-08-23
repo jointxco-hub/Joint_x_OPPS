@@ -24,6 +24,18 @@
 -- owner/client still cannot call the admin RPCs; tenant and external
 -- mapping integrity still cannot be overridden by supplied IDs.
 --
+-- Round 2 correction: a prior revision of both this file and the migration
+-- still treated 'opps_product' as a one-commerce-product identity (a
+-- unit test named "OPPS external id already linked to another Commerce
+-- product -> rejected" asserted exactly that). Live production data
+-- disproves it - one real OPPS product already backs two different
+-- client_products - so that test has been replaced with an OPPS-reuse
+-- matrix: the same OPPS product legitimately links to two different
+-- Commerce products in the same tenant (both mappings coexisting), while
+-- one Commerce product still cannot carry two different OPPS products,
+-- cross-tenant OPPS is still rejected, and the integration-health RPC is
+-- checked for correct per-product OPPS linkage without row duplication.
+--
 -- NOT executed as part of this task (production access here is read-only
 -- per the XOS 3B brief) - ready to run once write access is authorized:
 --   supabase db query --linked --file supabase/tests/xos_3b_product_onboarding.sql
@@ -332,24 +344,80 @@ begin
     'checked absence for xos3b-test-key-opps-crosstenant'
   );
 
-  -- ---- OPPS external id already linked to a DIFFERENT commerce product -> ONBOARD_LINK_CONFLICT ----
+  -- ---- OPPS reuse: production proves public.products is NOT a
+  -- one-commerce-product identity (one real OPPS product, "JET T-Shirt",
+  -- already backs two different client_products, "JET T-Shirt" and "SFR
+  -- T-Shirt") - the SAME OPPS product must be linkable to TWO different
+  -- Commerce products in the same tenant, both mappings coexisting. ----
   v_result3 := public.admin_onboard_client_commerce_product(
-    v_client_a, jsonb_build_object('name', 'XOS 3B OPPS Conflict Source Product'), '[]'::jsonb,
-    null, v_opps_product_a2, null, 'xos3b-test-key-opps-conflict-source'
+    v_client_a, jsonb_build_object('name', 'XOS 3B OPPS Reuse Commerce A'), '[]'::jsonb,
+    null, v_opps_product_a2, null, 'xos3b-test-key-opps-reuse-a'
   );
-  begin
-    perform public.admin_onboard_client_commerce_product(
-      v_client_a, jsonb_build_object('name', 'XOS 3B OPPS Conflict Target Product'), '[]'::jsonb,
-      null, v_opps_product_a2, null, 'xos3b-test-key-opps-conflict-target'
-    );
-    insert into test_results (test_name, passed, detail) values ('opps_link_conflict_rejected', false, 'call unexpectedly succeeded');
-  exception when others then
-    insert into test_results (test_name, passed, detail) values ('opps_link_conflict_rejected', sqlerrm like 'ONBOARD_LINK_CONFLICT%', sqlerrm);
-  end;
   insert into test_results (test_name, passed, detail) values (
-    'opps_link_conflict_left_no_rows',
-    not exists (select 1 from public.client_products where client_facing_name = 'XOS 3B OPPS Conflict Target Product'),
-    'checked absence for the rejected target product'
+    'opps_product_links_to_commerce_a',
+    v_result3->>'opps_linked' = 'true'
+      and exists (
+        select 1 from commerce.product_links
+        where commerce_product_id = (v_result3->>'commerce_product_id')::uuid
+          and system_key = 'opps_product' and external_id = v_opps_product_a2::text
+      ),
+    v_result3::text
+  );
+
+  v_result2 := public.admin_onboard_client_commerce_product(
+    v_client_a, jsonb_build_object('name', 'XOS 3B OPPS Reuse Commerce B'), '[]'::jsonb,
+    null, v_opps_product_a2, null, 'xos3b-test-key-opps-reuse-b'
+  );
+  insert into test_results (test_name, passed, detail) values (
+    'same_opps_product_also_links_to_commerce_b',
+    v_result2->>'opps_linked' = 'true'
+      and v_result2->>'commerce_product_id' <> v_result3->>'commerce_product_id'
+      and exists (
+        select 1 from commerce.product_links
+        where commerce_product_id = (v_result2->>'commerce_product_id')::uuid
+          and system_key = 'opps_product' and external_id = v_opps_product_a2::text
+      ),
+    v_result2::text
+  );
+
+  insert into test_results (test_name, passed, detail) values (
+    'both_opps_mappings_coexist',
+    (
+      select count(distinct commerce_product_id) from commerce.product_links
+      where system_key = 'opps_product' and external_id = v_opps_product_a2::text
+    ) = 2,
+    'expected 2 distinct commerce products linked to the reused OPPS product'
+  );
+
+  -- ---- one Commerce product still cannot carry two DIFFERENT OPPS products ----
+  -- (direct unit test of commerce.ensure_product_link/constraint C, same
+  -- reasoning as the analogous X LAB test below - the full RPC's
+  -- ensure-mapping semantics never re-target an already-set
+  -- client_products.opps_product_id, so this state is only reachable by
+  -- exercising the underlying helper/constraint directly)
+  begin
+    perform commerce.ensure_product_link(
+      (v_result3->>'commerce_product_id')::uuid, v_tenant_a, 'opps_product', v_opps_product_a3::text, false
+    );
+    insert into test_results (test_name, passed, detail) values ('one_commerce_product_rejects_second_opps_product', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('one_commerce_product_rejects_second_opps_product', sqlerrm like 'ONBOARD_LINK_CONFLICT%', sqlerrm);
+  end;
+
+  -- ---- integration-health RPC returns the correct OPPS link per product, no row multiplication ----
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_staff, 'role', 'authenticated', 'email', 'xos3b-staff@disposable.test')::text, true);
+  v_result := public.admin_get_client_commerce_products(v_client_a);
+  insert into test_results (test_name, passed, detail) values (
+    'integration_health_no_row_multiplication',
+    (select count(*) from jsonb_array_elements(v_result) e where e->'commerce_product'->>'id' = v_result3->>'commerce_product_id') = 1
+      and (select count(*) from jsonb_array_elements(v_result) e where e->'commerce_product'->>'id' = v_result2->>'commerce_product_id') = 1,
+    'checked exactly-one-row-each for both reuse products'
+  );
+  insert into test_results (test_name, passed, detail) values (
+    'integration_health_correct_opps_link_per_product',
+    (select (e->'opps'->>'id') from jsonb_array_elements(v_result) e where e->'commerce_product'->>'id' = v_result3->>'commerce_product_id') = v_opps_product_a2::text
+      and (select (e->'opps'->>'id') from jsonb_array_elements(v_result) e where e->'commerce_product'->>'id' = v_result2->>'commerce_product_id') = v_opps_product_a2::text,
+    'both reuse products should report opps.id = ' || v_opps_product_a2::text
   );
 
   ---- ================================================================
