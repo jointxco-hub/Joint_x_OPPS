@@ -93,6 +93,31 @@ test("client_products lookup covers all three identities: catalog, inventory/sto
   assert.ok(resolverBody.includes("clientProductByInventoryItemId.get"));
 });
 
+// Runtime safety: isProductionCapableLine(p) can be true (stock/inventory
+// or standalone client_product identity present) before any
+// client_products row has actually been created for that identity yet -
+// e.g. a stock-matched line before staff ever clicks "+ Add print
+// option". clientProductForLine(p) resolves to null in that window, and
+// LineProduction is rendered with clientProduct: null. This guards the
+// one raw `.id` dereference against that null and confirms beginAttach
+// itself refuses to run with no clientProductId, rather than relying
+// only on the render-conditional button that currently makes it
+// unreachable in practice.
+test("beginAttach never dereferences a null client product's .id, and guards itself independently of the caller", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  assert.ok(
+    source.includes("beginAttach(p.line_id, clientProductForLine(p)?.id, p)"),
+    "the call site must use optional chaining, not a raw .id dereference"
+  );
+  const fnStart = source.indexOf("const beginAttach = async (lineId, clientProductId, orderLine) => {");
+  assert.notEqual(fnStart, -1);
+  const fnBody = source.slice(fnStart, fnStart + 700);
+  assert.ok(
+    /if\s*\(\s*!clientProductId\s*\)\s*\{/.test(fnBody),
+    "beginAttach must guard against a missing clientProductId on its own terms, not just via the caller's render structure"
+  );
+});
+
 test("dataClient's ClientProduct.create serializer includes inventory_item_id - otherwise it would be silently dropped on write", async () => {
   const source = await readSource("src/api/dataClient.js");
   const start = source.indexOf("ClientProduct: {");

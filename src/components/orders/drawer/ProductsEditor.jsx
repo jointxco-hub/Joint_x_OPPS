@@ -283,6 +283,15 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [resolvingLineId, setResolvingLineId] = useState("");
 
   const beginAttach = async (lineId, clientProductId, orderLine) => {
+    // Structural guard, not just render-conditional: the "Attach
+    // composition" button that calls this is only ever rendered when
+    // clientProductForLine(p) is truthy, so this is unreachable today -
+    // but beginAttach must stay safe on its own terms rather than
+    // depending on every future caller re-deriving that invariant.
+    if (!clientProductId) {
+      toast.error("This line has no client product yet - add a print option first.");
+      return;
+    }
     setResolvingLineId(lineId);
     try {
       const components = await dataClient.entities.ProductComponent.filter({ client_product_id: clientProductId, is_active: true }, "sort_order", 100);
@@ -1042,7 +1051,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   expanded={expandedProductionLineId === p.line_id}
                   onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
                   onChange={(snapshot, field, value) => saveLineProduction.mutate({ snapshot, field, value })}
-                  onBeginAttach={() => beginAttach(p.line_id, clientProductForLine(p).id, p)}
+                  onBeginAttach={() => beginAttach(p.line_id, clientProductForLine(p)?.id, p)}
                   resolving={resolvingLineId === p.line_id}
                   pendingResolution={pendingResolution && pendingResolution.lineId === p.line_id ? pendingResolution : null}
                   onPickVariant={pickVariantForComponent}
