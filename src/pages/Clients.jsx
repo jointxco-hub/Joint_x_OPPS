@@ -16,7 +16,7 @@ import SignedFileLink from "@/components/common/SignedFileLink";
 import { listInvoiceItemTemplates, listInvoiceItemVersions } from "@/api/invoices";
 import ClientInvoiceItemHistory from "@/features/invoices/ClientInvoiceItemHistory";
 import { SearchSelect } from "@/pages/Inventory";
-import { adminOnboardClientCommerceProduct, adminGetClientCommerceProducts } from "@/api/commerceOnboarding";
+import { adminOnboardClientCommerceProduct, adminGetClientCommerceProducts, adminGetClientCommerceOnboardingOptions } from "@/api/commerceOnboarding";
 
 const ACTIVE_ORDER_STATUSES = new Set(['confirmed', 'in_production', 'ready', 'shipped']);
 const DONE_ORDER_STATUSES = new Set(['delivered']);
@@ -562,7 +562,7 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
           </div>
         </div>
 
-        {clientId && <CommerceProductsSection clientId={clientId} tenantId={client.tenant_id} />}
+        {clientId && <CommerceProductsSection clientId={clientId} />}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <section className="rounded-lg border border-slate-200 p-4">
@@ -645,7 +645,7 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
 // (see supabase/migrations/20260823120000_xos_3b_product_onboarding.sql).
 // Read-only for XOS itself - nothing here is reachable outside this staff
 // admin surface.
-function CommerceProductsSection({ clientId, tenantId }) {
+function CommerceProductsSection({ clientId }) {
   const [onboarding, setOnboarding] = useState(false);
   const queryClient = useQueryClient();
 
@@ -701,7 +701,6 @@ function CommerceProductsSection({ clientId, tenantId }) {
       {onboarding && (
         <ProductOnboardingDialog
           clientId={clientId}
-          tenantId={tenantId}
           onClose={() => setOnboarding(false)}
           onSaved={() => {
             setOnboarding(false);
@@ -718,7 +717,7 @@ function emptyOnboardingForm() {
     name: "", description: "", price: "", sale_price: "", currency: "ZAR",
     primary_image_url: "", availability: "available", status: "draft",
     client_price: "", requires_quote: false, visible_in_account: false, reorder_enabled: true,
-    existing_opps_product_id: "", existing_xlab_product_id: "",
+    existing_client_product_id: "", existing_opps_product_id: "", existing_xlab_product_id: "",
   };
 }
 
@@ -726,22 +725,41 @@ function emptyOnboardingVariant(sortOrder) {
   return { title: "", size: "", color: "", sku: "", price_override: "", availability: "available", sort_order: sortOrder };
 }
 
-function ProductOnboardingDialog({ clientId, tenantId, onClose, onSaved }) {
+function ProductOnboardingDialog({ clientId, onClose, onSaved }) {
+  const [managedSource, setManagedSource] = useState("new"); // "new" | "existing"
   const [form, setForm] = useState(emptyOnboardingForm());
   const [variants, setVariants] = useState([]);
+  const [variantsTouched, setVariantsTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  // Generated ONCE when this dialog mounts and held for its whole
+  // lifetime (including retries after a transient failure) - regenerating
+  // per click would defeat idempotency, since a retry would then look like
+  // a brand new operation to the RPC instead of a safe replay. Closing and
+  // reopening the dialog unmounts/remounts this component, which is what
+  // gives the next onboarding session a fresh key.
+  const [idempotencyKey] = useState(() => (
+    typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `xos-onboard-${clientId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  ));
 
-  const { data: oppsProducts = [] } = useQuery({
-    queryKey: ['catalogItemsForTenant', tenantId],
-    queryFn: () => dataClient.entities.CatalogItem.filter({ tenant_id: tenantId }, 'name', 200),
-    enabled: Boolean(tenantId),
+  const { data: options } = useQuery({
+    queryKey: ['clientCommerceOnboardingOptions', clientId],
+    queryFn: async () => {
+      const { data, error } = await adminGetClientCommerceOnboardingOptions({ clientId });
+      if (error) throw new Error(error);
+      return data;
+    },
+    enabled: Boolean(clientId),
   });
+  const clientProducts = options?.client_products || [];
+  const oppsProducts = options?.opps_products || [];
+  const xlabTemplates = options?.xlab_templates || [];
+  const unlinkedClientProducts = clientProducts.filter((cp) => !cp.linked);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const addVariant = () => setVariants((v) => [...v, emptyOnboardingVariant(v.length)]);
-  const updateVariant = (idx, patch) => setVariants((v) => v.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
-  const removeVariant = (idx) => setVariants((v) => v.filter((_, i) => i !== idx));
+  const addVariant = () => { setVariantsTouched(true); setVariants((v) => [...v, emptyOnboardingVariant(v.length)]); };
+  const updateVariant = (idx, patch) => { setVariantsTouched(true); setVariants((v) => v.map((row, i) => (i === idx ? { ...row, ...patch } : row))); };
+  const removeVariant = (idx) => { setVariantsTouched(true); setVariants((v) => v.filter((_, i) => i !== idx)); };
 
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -762,9 +780,12 @@ function ProductOnboardingDialog({ clientId, tenantId, onClose, onSaved }) {
       toast.error("Product name is required");
       return;
     }
+    if (managedSource === "existing" && !form.existing_client_product_id) {
+      toast.error("Choose an existing managed product to link");
+      return;
+    }
     setSaving(true);
     try {
-      const idempotencyKey = `xos-onboard-${clientId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const { data, error } = await adminOnboardClientCommerceProduct({
         clientId,
         product: {
@@ -781,17 +802,22 @@ function ProductOnboardingDialog({ clientId, tenantId, onClose, onSaved }) {
           visible_in_account: form.visible_in_account,
           reorder_enabled: form.reorder_enabled,
         },
-        variants: variants.map((v, i) => ({
-          title: v.title || undefined,
-          size: v.size || undefined,
-          color: v.color || undefined,
-          sku: v.sku || undefined,
-          price_override: v.price_override === "" ? undefined : Number(v.price_override),
-          availability: v.availability,
-          sort_order: i,
-        })),
+        // Untouched variants -> undefined -> RPC NULL ("preserve") rather
+        // than an empty array, which would read as "deliberately clear".
+        variants: variantsTouched
+          ? variants.map((v, i) => ({
+              title: v.title || undefined,
+              size: v.size || undefined,
+              color: v.color || undefined,
+              sku: v.sku || undefined,
+              price_override: v.price_override === "" ? undefined : Number(v.price_override),
+              availability: v.availability,
+              sort_order: i,
+            }))
+          : undefined,
+        existingClientProductId: managedSource === "existing" ? form.existing_client_product_id : undefined,
         existingOppsProductId: form.existing_opps_product_id || undefined,
-        existingXlabProductId: form.existing_xlab_product_id.trim() || undefined,
+        existingXlabProductId: form.existing_xlab_product_id || undefined,
         idempotencyKey,
       });
       if (error || !data) {
@@ -817,6 +843,41 @@ function ProductOnboardingDialog({ clientId, tenantId, onClose, onSaved }) {
           </div>
 
           <div className="space-y-4">
+            <div className="space-y-2 rounded-xl border border-slate-200 p-4">
+              <Label className="mb-0">Managed Product Source</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={managedSource === "new" ? "default" : "outline"}
+                  className={managedSource === "new" ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+                  onClick={() => { setManagedSource("new"); set({ existing_client_product_id: "" }); }}
+                >
+                  Create new managed product
+                </Button>
+                <Button
+                  type="button"
+                  variant={managedSource === "existing" ? "default" : "outline"}
+                  className={managedSource === "existing" ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+                  onClick={() => setManagedSource("existing")}
+                >
+                  Link existing managed product
+                </Button>
+              </div>
+              {managedSource === "existing" && (
+                <div className="space-y-2 pt-1">
+                  <Label className="text-xs text-slate-500">Existing Managed Product</Label>
+                  <SearchSelect
+                    options={unlinkedClientProducts}
+                    value={form.existing_client_product_id}
+                    onChange={(id) => set({ existing_client_product_id: id })}
+                    getLabel={(cp) => cp.client_facing_name}
+                    placeholder={unlinkedClientProducts.length ? "Select a managed product to link" : "No unlinked managed products for this client"}
+                  />
+                  <p className="text-xs text-slate-500">Only managed products not already connected to a commerce product are shown.</p>
+                </div>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label>Product Name *</Label>
               <Input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="e.g. GSB Signature Hoodie" />
@@ -934,11 +995,13 @@ function ProductOnboardingDialog({ clientId, tenantId, onClose, onSaved }) {
                 />
               </div>
               <div className="space-y-2">
-                <Label className="text-xs text-slate-500">X LAB Template ID (optional)</Label>
-                <Input
+                <Label className="text-xs text-slate-500">X LAB Template (optional)</Label>
+                <SearchSelect
+                  options={xlabTemplates}
                   value={form.existing_xlab_product_id}
-                  onChange={(e) => set({ existing_xlab_product_id: e.target.value })}
-                  placeholder="Paste an existing xlab_products id, or leave blank"
+                  onChange={(id) => set({ existing_xlab_product_id: id })}
+                  getLabel={(x) => x.category ? `${x.name} (${x.category})` : x.name}
+                  placeholder="Not linked - reusable across multiple products in this tenant"
                 />
               </div>
             </div>

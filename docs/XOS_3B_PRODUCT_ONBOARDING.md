@@ -29,6 +29,58 @@ independent — neither is ever silently copied into the other. Commerce
 never becomes an inventory ledger; `client_products` never becomes the
 universal retail catalog; X LAB templates never become tenant-owned.
 
+## Post-review corrections (PR #32)
+
+An independent review of the first cut of this migration surfaced several
+pre-production blockers, all fixed in place (the migration was never
+applied to production, so it was safe to amend rather than layer a second
+one on top):
+
+1. **Staff authority.** The original RPCs gated on
+   `is_opps_staff() and can_access_tenant(target_tenant)`. Production
+   verification showed active Joint X OPPS staff hold **no**
+   `tenant_memberships` row in GSB (a real, active managed client tenant) -
+   that gate would have denied every real onboarding call. `public.clients`'
+   own RLS already treats `is_opps_staff()` alone as sufficient internal
+   authority. Both RPCs now match that contract: `is_opps_staff()` is the
+   actor gate, the tenant is always resolved server-side from
+   `public.clients`, and every supplied OPPS/client-product/X LAB identity
+   is still independently verified against that resolved tenant. This does
+   not touch or weaken any XOS client-facing RPC.
+2. **Deterministic link conflicts.** The original `exception when
+   unique_violation then null` pattern could silently succeed even when an
+   external identity was already mapped to a *different* Commerce product,
+   letting the result/audit event claim `linked: true` without a real row
+   backing it. Replaced with `commerce.ensure_product_link(...)`: create if
+   absent, no-op if it already points at this Commerce product, raise
+   `ONBOARD_LINK_CONFLICT` (rolling back the whole call) if it points
+   elsewhere.
+3. **X LAB template cardinality.** The original `UNIQUE (tenant_id,
+   system_key, external_id)` constraint was too strong for
+   `system_key = 'xlab_product'` - X LAB templates (JET tees, hoodies,
+   caps, etc.) are reusable catalog identities; many Commerce products in
+   one tenant legitimately reference the same template. Replaced with three
+   narrower constraints (below). Confirmed against production (read-only):
+   `commerce.product_links` has 0 rows, so this swap is compatible with
+   live data as-is.
+4. **Idempotency key generated once per UI session**, not per click - see
+   Idempotency below.
+5. **Both onboarding paths exposed in the UI**, plus searchable pickers
+   for existing managed products and X LAB templates (no more pasted
+   UUIDs) - see Internal UI below.
+6. **Non-destructive updates.** A mapping-only call (e.g. adding a missing
+   OPPS link to an already-onboarded product) no longer risks wiping
+   commercial fields/variants - see Idempotency/variant semantics below.
+7. **Genuinely disposable SQL test fixtures** - the earlier test file
+   inserted synthetic UUIDs directly into `tenant_memberships.auth_user_id`,
+   which has a real FK to `auth.users(id)` (confirmed via `pg_constraint`,
+   not the less reliable `information_schema.constraint_column_usage` view
+   the first verification pass used). The suite now creates disposable
+   `auth.users`/`public.users` rows for every simulated identity instead.
+8. **The suite now fails the command** on any failed assertion (previously
+   it only recorded `passed = false` in a result table without surfacing
+   failure to the caller).
+
 ## Identity path (unchanged, reused)
 
 ```
@@ -58,14 +110,25 @@ xlab_products     products
   product: `commerce_product`, `client_product.linked`, `xlab.linked`,
   `opps.linked`, `integration_status` (`complete` | `needs_opps_mapping`).
   Internal OPPS data only — never merged into `get_xos_products_for_host`.
+  The `opps`/`xlab` lookups use `LEFT JOIN LATERAL ... LIMIT 1` rather than
+  a plain join, so the query stays structurally safe against row
+  multiplication even if the one-mapping-per-type constraint were ever
+  bypassed, not just empirically safe because that constraint holds today.
+- **`admin_get_client_commerce_onboarding_options(p_client_id)`** — backs
+  the onboarding form's three pickers: this client's `client_products`
+  (with a `linked` flag), this tenant's OPPS products, and active X LAB
+  templates. No unrestricted browser table access is needed for any of the
+  three.
 
-Both RPCs are `SECURITY DEFINER`, revoke `EXECUTE` from `PUBLIC`/`anon`,
-grant to `authenticated`, and gate internally with
-`public.is_opps_staff() and public.can_access_tenant(<tenant resolved from
-public.clients server-side>)` — the same pattern already used by
-`find_or_create_client_product_artwork_from_asset` and the `client_products`
-"Staff manage client products" RLS policy. Tenant is always derived from
-`p_client_id` via `public.clients`, never trusted from caller input.
+All three RPCs are `SECURITY DEFINER`, revoke `EXECUTE` from
+`PUBLIC`/`anon`, grant to `authenticated`, and gate internally with
+`public.is_opps_staff()` alone — the same pattern already used by
+`find_or_create_client_product_artwork_from_asset`. Tenant is always
+derived from `p_client_id` via `public.clients` (and its `status` checked
+`= 'active'`), never trusted from caller input; every supplied
+OPPS/client-product/X LAB identity is still independently verified against
+that resolved tenant. See "Post-review corrections" above for why this is
+`is_opps_staff()` alone rather than also requiring `can_access_tenant()`.
 
 No OPPS product-creation RPC exists anywhere in this repo (confirmed by
 inspection — only a one-off demo-data seed insert). This phase does not add
@@ -88,8 +151,46 @@ one: `admin_onboard_client_commerce_product` may **link** an existing
 
 Either path locates-or-creates the Commerce product via the existing
 `client_product` link (never a second Commerce product for the same
-managed relationship), then atomically replaces its variant set from
-`p_variants`.
+managed relationship).
+
+**Non-destructive updates on an already-linked Commerce product.** When
+the call resolves an existing Commerce product (e.g. a mapping-only call
+adding a missing OPPS link), only a key **explicitly present** in
+`p_product` overwrites its column - an absent key preserves the current
+value, and an explicit JSON `null` on a nullable field is a deliberate
+clear. `p_variants` follows the same idea: `NULL` preserves the current
+variant set untouched, `[]` deliberately clears it, a non-empty array
+replaces it. A brand new Commerce product still requires `name` and
+establishes every field fresh (`NULL` variants there behaves like `[]` -
+nothing to preserve yet).
+
+## Product link identity and conflicts
+
+`commerce.product_links` carries three constraints (replacing XOS 3A's
+single `UNIQUE (tenant_id, system_key, external_id)`, which was too strong
+for `xlab_product` - see "Post-review corrections"):
+
+- **A** `UNIQUE (commerce_product_id, system_key, external_id)` - exact
+  duplicate protection, any `system_key`.
+- **B** `UNIQUE (tenant_id, system_key, external_id) WHERE system_key IN
+  ('client_product', 'opps_product', 'legacy_gsb_product')` - external
+  identity uniqueness, identity systems only. Deliberately excludes
+  `xlab_product`: the same X LAB template may legitimately back many
+  Commerce products in one tenant (`GSB Product A -> JET 240g`,
+  `GSB Product B -> JET 240g`).
+- **C** `UNIQUE (commerce_product_id, system_key) WHERE system_key IN
+  ('client_product', 'opps_product', 'xlab_product')` - one mapping of a
+  given integration type per Commerce product; a single product can never
+  ambiguously carry two different X LAB templates (or two different OPPS
+  products, or two different client_products).
+
+`commerce.ensure_product_link(commerce_product_id, tenant_id, system_key,
+external_id, identity_unique)` is the deterministic helper both RPCs use to
+write these links: create if absent, no-op success if the link already
+points at this Commerce product, raise `ONBOARD_LINK_CONFLICT` (aborting
+the whole onboarding call) if the identity is already linked elsewhere.
+`identity_unique` is `true` for `client_product`/`opps_product`, `false`
+for `xlab_product` (reuse is expected, not a conflict).
 
 ## Idempotency
 
@@ -105,6 +206,17 @@ that affects the outcome) is rejected with
 stamp `source_system = 'xos_onboarding'`, `source_ref = <idempotency key>`,
 reusing XOS 3A's existing `(tenant_id, source_system, source_ref)` unique
 identity contract as a second, defense-in-depth layer.
+
+The **browser** generates that key exactly once per onboarding session -
+`useState(() => crypto.randomUUID())` in `ProductOnboardingDialog`, so it
+is stable across retries after a transient failure (a regenerated key per
+click would defeat retry safety) and only changes when the dialog is
+closed and reopened (a fresh mount). The JS wrapper
+(`adminOnboardClientCommerceProduct`) also maps an `undefined` `variants`
+argument to RPC `NULL` (preserve), not `[]` (clear) - the UI only sends a
+concrete variants array once staff has actually touched the variants
+editor in that session (`variantsTouched`), so an untouched variants
+section on a "link existing managed product" flow can never wipe real data.
 
 ## Audit
 
@@ -123,24 +235,44 @@ Extends the existing client detail surface (`ClientAccountDialog` in
 Products" section lists onboarded products with an integration-status
 badge row (Commerce Connected / Client Account Connected / X LAB
 Connected-or-Not Linked / OPPS Connected-or-Mapping Pending) and an "Add
-product" button opening `ProductOnboardingDialog`: name, description,
-retail price, sale price, currency, primary image upload, availability,
-status, variants — plus a clearly separated "Managed Client Fields" section
-(client/service price, requires quote, account visibility, reorder
-enabled) and an "Integration" section (OPPS product search-select scoped to
-the client's tenant via the existing `CatalogItem`/`public.products` data
-path; X LAB template id as a plain optional field). `src/api/commerceOnboarding.js`
-is a thin RPC wrapper, matching `src/api/artworkLinking.js`.
+product" button opening `ProductOnboardingDialog`, which now exposes both
+onboarding paths as an explicit "Managed Product Source" choice:
+
+- **Create new managed product** (default): name, description, retail
+  price, sale price, currency, primary image upload, availability, status,
+  variants, plus a clearly separated "Managed Client Fields" section
+  (client/service price, requires quote, account visibility, reorder
+  enabled).
+- **Link existing managed product**: a searchable selector
+  (`admin_get_client_commerce_onboarding_options`, filtered to this
+  client's *unlinked* `client_products`) - staff picks a name, never pastes
+  a UUID.
+
+An "Integration" section offers an OPPS product search-select (same
+options RPC, tenant-scoped) and an X LAB template search-select (same RPC,
+active templates) - both optional, both searchable, no free-text UUID
+inputs anywhere in this form anymore. `src/api/commerceOnboarding.js` holds
+three thin RPC wrappers, matching `src/api/artworkLinking.js`.
 
 ## Test matrix
 
 `supabase/tests/xos_3b_product_onboarding.sql` — disposable, rollback-wrapped
-(`begin; ... rollback;`), covering items 1–21 of the 22-item XOS 3B test
-matrix (fresh fixture tenants/clients/products/xlab row, two real existing
-Joint X staff `auth_user_id`s reused read-only as JWT subs since
-`is_opps_staff()` authority is global and not fixture-creatable). Item 22
-("existing XOS 3A security matrix remains green") is intentionally not
-duplicated here — it is already covered by the separate, already-validated
+(`begin; ... rollback;`), covering the full corrected XOS 3B test matrix:
+the corrected authority contract (staff succeeds across tenants without
+membership; a real tenant owner and a bare authenticated user are both
+still denied), core onboarding/idempotency/non-duplication, OPPS tenant
+integrity and deterministic link-conflict rejection, X LAB template reuse
+across products plus one-mapping-per-product rejection, non-destructive
+mapping-only updates (byte-level field/variant preservation), the
+inventory/XOS-client-RPC boundary, and a fixture-provenance check. Every
+simulated identity (including the "is_opps_staff() staff" one) is a fresh
+disposable `auth.users`/`public.users` row created and rolled back inside
+the transaction - no real production account is read or relied upon. A
+failed assertion raises at the end of the script, so the command itself
+fails (non-zero/error) rather than silently recording `passed = false`.
+Item 22 of the original XOS 3B test matrix ("existing XOS 3A security
+matrix remains green") is intentionally not duplicated here — it is
+already covered by the separate, already-validated
 `supabase/tests/xos_products_foundation.sql`.
 
 **Not yet executed against production** — the XOS 3B task brief specifies
