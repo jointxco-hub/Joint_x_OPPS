@@ -129,14 +129,20 @@ export default function Clients() {
   const [selectedClient, setSelectedClient] = useState(null);
   const queryClient = useQueryClient();
 
+  // This is the internal OPPS staff management screen, not a tenant-scoped
+  // app flow - it must be able to see managed-tenant clients (e.g. GSB)
+  // that entities.Client/Order's browser-side current-tenant filter would
+  // otherwise strip out before RLS is even consulted. dataClient.staff
+  // relies on existing production RLS (is_opps_staff()) as the sole
+  // authorization boundary instead.
   const { data: clients = [], isLoading } = useQuery({
-    queryKey: ['clients'],
-    queryFn: () => dataClient.entities.Client.list('-created_date', 200)
+    queryKey: ['clients', 'staff-visible'],
+    queryFn: () => dataClient.staff.listVisibleClients('-created_date', 200)
   });
 
   const { data: orders = [], isLoading: ordersLoading } = useQuery({
-    queryKey: ['orders', 'client-rollups'],
-    queryFn: () => dataClient.entities.Order.list('-updated_date', 2000),
+    queryKey: ['orders', 'client-rollups', 'staff-visible'],
+    queryFn: () => dataClient.staff.listVisibleOrders('-updated_date', 2000),
     staleTime: 30000,
   });
 
@@ -172,8 +178,12 @@ export default function Clients() {
     }
   });
 
+  // entities.Client.update() would filter by the current Joint X
+  // tenant_id and silently no-op against a managed-tenant client like GSB
+  // (0 rows matched, no error) - dataClient.staff.updateVisibleClient
+  // scopes by exact id only, same RLS boundary as the read above.
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => dataClient.entities.Client.update(id, data),
+    mutationFn: ({ id, data }) => dataClient.staff.updateVisibleClient(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       setEditingClient(null);
@@ -183,7 +193,7 @@ export default function Clients() {
   });
 
   const archiveMutation = useMutation({
-    mutationFn: (id) => dataClient.entities.Client.update(id, { is_archived: true, archived_at: new Date().toISOString() }),
+    mutationFn: (id) => dataClient.staff.updateVisibleClient(id, { is_archived: true, archived_at: new Date().toISOString() }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       toast.success("Client archived");
