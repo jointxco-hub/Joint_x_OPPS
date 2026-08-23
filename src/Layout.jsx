@@ -6,7 +6,7 @@ import {
   Menu, X, ChevronRight, Boxes, Building2, Calculator,
   CreditCard, Archive, Settings, MoreHorizontal, Target,
   Search, Bell, User, ChevronDown, ShoppingCart, UserCircle,
-  LogOut, Sparkles, DollarSign, FolderOpen, Flag, Inbox
+  LogOut, Sparkles, DollarSign, FolderOpen, Flag, Inbox, Rocket
 } from "lucide-react";
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
@@ -32,6 +32,7 @@ const moreNav = [
   { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
   { name: "Clients", page: "Clients", icon: Building2 },
+  { name: "Managed Clients", page: "ManagedClients", icon: Rocket },
   { name: "Projects", page: "Projects", icon: FolderOpen },
   { name: "WhatsApp Inbox", page: "MetaWhatsAppInbox", icon: Inbox, adminOnly: true },
   { name: "Client Requests", page: "ClientRequests", icon: Inbox },
