@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import SecureImage from "@/components/common/SecureImage";
+import QuickImagePreview from "@/components/common/QuickImagePreview";
+import { isImageReference } from "@/lib/imageReference";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
@@ -55,6 +57,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // explicit thumbnail via ClientAssetPickerModal - this is the one and
   // only path allowed to overwrite a non-empty image_url.
   const [thumbnailPickerLineId, setThumbnailPickerLineId] = useState("");
+  // Quick image preview (view-only, Phase 5-12) - { value, title, subtitle }
+  // or null. Opening/closing this never touches the order, client_assets,
+  // client_product, activity events, or snapshots - purely a read/display
+  // action, entirely separate from "Set/Change thumbnail" above.
+  const [quickPreview, setQuickPreview] = useState(null);
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
@@ -1034,16 +1041,23 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   clientProduct: clientProductForLine(p),
                   catalogItem: allPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
                 });
+                const isRealImage = Boolean(resolvedThumb) && isImageReference(resolvedThumb);
                 return (
                   <div className="flex-shrink-0">
-                    <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50">
-                      <SecureImage
-                        value={resolvedThumb}
-                        alt=""
-                        className="h-full w-full object-cover"
-                        fallback={<Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
-                      />
-                    </div>
+                    {isRealImage ? (
+                      <button
+                        type="button"
+                        onClick={() => setQuickPreview({ value: resolvedThumb, title: p.name, subtitle: "Product image" })}
+                        className="block h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 transition-opacity hover:opacity-80"
+                        title="View image"
+                      >
+                        <SecureImage value={resolvedThumb} alt="" className="h-full w-full object-cover" fallback={null} />
+                      </button>
+                    ) : (
+                      <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50">
+                        <Package className="m-3 h-6 w-6 text-muted-foreground/50" />
+                      </div>
+                    )}
                     {!locked && (
                       <button
                         type="button"
@@ -1551,6 +1565,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           onConfirm={applyThumbnail}
         />
       )}
+
+      {/* Quick image preview (Phase 5-12) - view-only, no order/asset
+          writes of any kind. Available regardless of locked, since
+          viewing is never a mutation. */}
+      <QuickImagePreview
+        open={Boolean(quickPreview)}
+        onClose={() => setQuickPreview(null)}
+        value={quickPreview?.value}
+        title={quickPreview?.title}
+        subtitle={quickPreview?.subtitle}
+      />
     </div>
   );
 }
