@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   needsConfiguration,
+  needsConfigurationBannerText,
   applyMatchExistingProduct,
   applyKeepCommercialOnly,
   resolveLineThumbnail,
@@ -49,9 +50,43 @@ test("needsConfiguration: false once commercial_only_confirmed is set", () => {
   assert.equal(needsConfiguration(invoiceLine({ commercial_only_confirmed: true })), false);
 });
 
-test("needsConfiguration: false for a normal (non-invoice) line even with no catalog_item_id - a manually-added custom line never triggers the banner", () => {
-  const manualLine = invoiceLine({ added_from_invoice: false });
+// Generalization (this correction): eligibility no longer depends on
+// added_from_invoice at all - a stock/legacy line, an X LAB-checkout
+// line synced in via sync-to-opps, or a manually-typed custom line all
+// have the exact same underlying gap (a line_id with no production
+// identity) and must all be configurable, not just invoice-added ones.
+// Confirmed live: sync-to-opps never sets any identity field for ANY
+// line regardless of origin - this was never an invoice-specific
+// problem, just first discovered there.
+test("needsConfiguration: true for a non-invoice line with no identity - a manually-added or sync-to-opps custom line must also trigger the banner", () => {
+  const manualLine = invoiceLine({ added_from_invoice: false, name: "Custom Manual Item" });
+  assert.equal(needsConfiguration(manualLine), true);
+});
+
+test("needsConfiguration: true for a line with no added_from_invoice field at all (undefined, not false) - matches the real live shape from sync-to-opps", () => {
+  // The real live shape (order XL-260810-5822, line b760fc31-...): no
+  // added_from_invoice key at all, just name/size/color/price/line_id/
+  // quantity/image_url. Confirming undefined behaves the same as false.
+  const syncedLine = {
+    name: "X1 Crochet Wide Leg Pant", size: "M", color: "", price: 10,
+    line_id: "b760fc31-5f67-4bfd-8c05-7944dcf91b52", quantity: 1,
+    image_url: "private-upload://uploads/6d371f51-274c-4b49-8d59-2aeaf5e89088/uploads/2026/08/19/x.png",
+  };
+  assert.equal(needsConfiguration(syncedLine), true, "a real sync-to-opps line with no identity must be configurable");
+});
+
+test("needsConfiguration: false for a non-invoice line once it has any production identity", () => {
+  const manualLine = invoiceLine({ added_from_invoice: false, catalog_item_id: "cat-1" });
   assert.equal(needsConfiguration(manualLine), false);
+});
+
+test("needsConfigurationBannerText: invoice origin shows the provenance-labeled text", () => {
+  assert.equal(needsConfigurationBannerText(invoiceLine()), "Added from invoice · Production setup required");
+});
+
+test("needsConfigurationBannerText: non-invoice origin (or no added_from_invoice field at all) shows the generic text", () => {
+  assert.equal(needsConfigurationBannerText(invoiceLine({ added_from_invoice: false })), "Production setup required");
+  assert.equal(needsConfigurationBannerText({ name: "X" }), "Production setup required");
 });
 
 test("needsConfiguration: added_from_invoice is never required to be cleared - it can stay true forever once configured", () => {
