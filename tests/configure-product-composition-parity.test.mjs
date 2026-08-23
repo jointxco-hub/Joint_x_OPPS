@@ -170,7 +170,10 @@ test("order-line thumbnails render through SecureImage, not a raw <img>, and the
   assert.notEqual(secureImageUsageIndex, -1);
   const usageBlock = source.slice(secureImageUsageIndex, secureImageUsageIndex + 250);
   assert.ok(usageBlock.includes("value={resolvedThumb}"), "must resolve the same precedence-computed thumbnail value SecureImage is handed");
-  assert.ok(usageBlock.includes("fallback={<Package"), "must keep the existing generic-placeholder fallback for lines with no thumbnail at all");
+  // Package fallback moved to a sibling non-clickable branch (Phase 5-12
+  // quick-preview wiring: only a real, resolvable image is clickable) -
+  // still present, just no longer passed as SecureImage's own fallback prop.
+  assert.ok(source.includes("<Package className=\"m-3 h-6 w-6 text-muted-foreground/50\" />"), "must keep the existing generic-placeholder icon for lines with no thumbnail at all");
 });
 
 test("Set/Change thumbnail persists the durable raw reference (asset.file_url), never a resolved signed URL", async () => {
