@@ -15,7 +15,7 @@ import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artwor
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
-import { needsConfiguration, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail } from "@/features/orders/lineConfiguration";
+import { needsConfiguration, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -108,18 +108,33 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       .filter((cp) => cp.opps_product_id)
       .map((cp) => [cp.opps_product_id, cp])
   );
-  // Second lookup path (Phase 4-6, Configure Product): some order lines
-  // now point directly at a client_product with no catalog parent at all
-  // (opps_product_id null - e.g. custom labels created via "Create
-  // client product" with no catalog item linked). Wherever "the
-  // client_product for this line" is resolved, prefer the line's own
-  // client_product_id when set, falling back to the catalog_item_id map.
+  // Stock/inventory-sourced counterpart to the map above - a
+  // client_product can be backed by a raw `inventory` row instead of a
+  // `products` catalog row (client_products.inventory_item_id, added
+  // alongside this fix - opps_product_id's FK only ever pointed at
+  // products, so a stock item genuinely had no column to attach to
+  // before now). Never both on the same client_product row (DB check
+  // constraint), but a line only ever carries one of catalog_item_id/
+  // inventory_item_id anyway, so this map and the one above are always
+  // queried mutually exclusively per line.
+  const clientProductByInventoryItemId = new Map(
+    (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : [])
+      .filter((cp) => cp.inventory_item_id)
+      .map((cp) => [cp.inventory_item_id, cp])
+  );
+  // Third lookup path (Phase 4-6, Configure Product): some order lines
+  // now point directly at a client_product with no catalog/inventory
+  // parent at all (e.g. custom labels created via "Create client
+  // product" with no item linked). Wherever "the client_product for this
+  // line" is resolved, prefer the line's own client_product_id when set,
+  // then catalog_item_id, then inventory_item_id.
   const clientProductsById = new Map(
     (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => [cp.id, cp])
   );
   const clientProductForLine = (line) => (
     (line?.client_product_id ? clientProductsById.get(line.client_product_id) : null)
     || clientProductByCatalogItemId.get(line?.catalog_item_id)
+    || clientProductByInventoryItemId.get(line?.inventory_item_id)
     || null
   );
   const clientProductIdsForOrder = Array.from(new Set(
@@ -409,8 +424,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // Unified "+ Add print option": the pill picker's replacement for NEW
   // work (legacy products.print_options stays readable, untouched, for
   // existing lines that already used it). One action creates/reuses the
-  // client_products row for this client+catalog pairing (never
-  // requiring a prior Catalog Management visit), the reusable
+  // client_products row for this line's identity - catalog product,
+  // stock/inventory product, or an already-existing direct
+  // client_product link, in that order via clientProductForLine (never
+  // requiring a prior Catalog Management visit) - the reusable
   // product_components row (+ optional once_per_order setup-fee
   // companion), and an immutable order_line_component_snapshots row
   // using the same pricing hierarchy as the existing attach flow -
@@ -418,16 +435,28 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // default_sell_price.
   const addPrintOptionMutation = useMutation({
     mutationFn: async ({ lineId, orderLine, form }) => {
-      let clientProduct = clientProductByCatalogItemId.get(orderLine.catalog_item_id);
+      let clientProduct = clientProductForLine(orderLine);
+      let clientProductCreated = false;
       if (!clientProduct && orderLine.catalog_item_id) {
         clientProduct = await dataClient.entities.ClientProduct.create({
           client_id: order.client_id,
           opps_product_id: orderLine.catalog_item_id,
           client_facing_name: orderLine.name || "Untitled product",
         });
+        clientProductCreated = true;
+      } else if (!clientProduct && orderLine.inventory_item_id) {
+        // Preserves the exact inventory identity rather than fabricating
+        // a catalog_item_id - inventory_item_id is the column this
+        // client_product is keyed by, never products.id.
+        clientProduct = await dataClient.entities.ClientProduct.create({
+          client_id: order.client_id,
+          inventory_item_id: orderLine.inventory_item_id,
+          client_facing_name: orderLine.name || "Untitled product",
+        });
+        clientProductCreated = true;
       }
       if (!clientProduct) {
-        throw new Error("This line has no catalog product to compose against");
+        throw new Error("This line has no catalog or inventory product to compose against");
       }
 
       const existingCount = (Array.isArray(lineSnapshots) ? lineSnapshots : []).filter((s) => s.line_id === lineId).length;
@@ -488,7 +517,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         }));
       }
 
-      return { clientProductCreated: !clientProductByCatalogItemId.has(orderLine.catalog_item_id), created };
+      return { clientProductCreated, created };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
@@ -763,13 +792,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     closeConfigureDialog();
   };
 
-  // Optionally links a catalog product (behaves like Match Existing, plus
-  // eagerly creates/reuses the client_product the same way
-  // addPrintOptionMutation already does on first "+ Add print option" -
-  // this just saves staff a click). With no catalog item picked, creates a
-  // standalone client_product (opps_product_id: null) and points the line
-  // at it via the new client_product_id field - catalog_item_id is never
-  // set in that branch, so the Production panel correctly stays hidden.
+  // Optionally links a catalog OR stock/inventory product (behaves like
+  // Match Existing for whichever source was picked, plus eagerly
+  // creates/reuses the client_product the same way addPrintOptionMutation
+  // already does on first "+ Add print option" - this just saves staff a
+  // click). With no item picked, creates a standalone client_product
+  // (opps_product_id: null, inventory_item_id: null) and points the line
+  // at it via the client_product_id field. All three cases are
+  // production-capable via isProductionCapableLine (catalog_item_id /
+  // inventory_item_id / client_product_id respectively) - Production is
+  // never force-hidden here; "Keep commercial only" is the actual,
+  // separate opt-out for lines that genuinely shouldn't compose anything.
   const createClientProductMutation = useMutation({
     mutationFn: async ({ lineId, name, pickedItem }) => {
       const lineNow = products.map(cleanProduct).find((item) => item.line_id === lineId);
@@ -784,19 +817,32 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             client_facing_name: finalName,
           });
         }
-        return { clientProduct, matchedCatalog: true, pickedItem };
+        return { clientProduct, matchedItem: pickedItem };
+      }
+      if (pickedItem && pickedItem.source === "stock") {
+        // Preserves the exact inventory identity - never coerced into
+        // catalog_item_id, which points at a different table entirely.
+        let clientProduct = clientProductByInventoryItemId.get(pickedItem.id);
+        if (!clientProduct) {
+          clientProduct = await dataClient.entities.ClientProduct.create({
+            client_id: order.client_id,
+            inventory_item_id: pickedItem.id,
+            client_facing_name: finalName,
+          });
+        }
+        return { clientProduct, matchedItem: pickedItem };
       }
       const clientProduct = await dataClient.entities.ClientProduct.create({
         client_id: order.client_id,
         opps_product_id: null,
         client_facing_name: finalName,
       });
-      return { clientProduct, matchedCatalog: false, pickedItem: null };
+      return { clientProduct, matchedItem: null };
     },
-    onSuccess: ({ clientProduct, matchedCatalog, pickedItem }, variables) => {
+    onSuccess: ({ clientProduct, matchedItem }, variables) => {
       applyToLine(variables.lineId, (item) => (
-        matchedCatalog
-          ? applyMatchExistingProduct(item, pickedItem)
+        matchedItem
+          ? applyMatchExistingProduct(item, matchedItem)
           : { ...item, client_product_id: clientProduct.id }
       ));
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
@@ -936,7 +982,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               {(() => {
                 const resolvedThumb = resolveLineThumbnail(p, {
                   clientProduct: clientProductForLine(p),
-                  catalogItem: allPickerItems.find((item) => item.id === p.catalog_item_id),
+                  catalogItem: allPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
                 });
                 return (
                   <div className="flex-shrink-0">
@@ -985,7 +1031,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   )}
                 </div>
               )}
-              {p.catalog_item_id && p.line_id && (
+              {isProductionCapableLine(p) && (
                 <LineProduction
                   clientProduct={clientProductForLine(p)}
                   snapshots={snapshotsByLineId.get(p.line_id) || []}
@@ -1399,7 +1445,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 />
                 <div>
                   <p className="mb-1.5 text-xs text-muted-foreground">
-                    Link to an existing catalog product (optional) - leave blank for a custom item with no catalog parent, e.g. custom labels.
+                    Link to an existing catalog or stock product (optional) - leave blank for a custom item with no catalog/stock parent, e.g. custom labels.
                   </p>
                   {configureCreatePickedItem ? (
                     <PickedItemPreview item={configureCreatePickedItem} onClear={() => setConfigureCreatePickedItem(null)} />

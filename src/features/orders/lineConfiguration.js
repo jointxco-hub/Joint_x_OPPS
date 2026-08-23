@@ -5,21 +5,52 @@
 // precedence used by both the flat row render and (later) the
 // Configure Product dialog.
 
+// A line has a stable-enough identity to compose Product Composition
+// against when it carries any ONE of: a catalog product
+// (catalog_item_id), a normalized/stock inventory product
+// (inventory_item_id - audited against ProductsEditor.jsx's "Add
+// Product" picker and the `inventory` table: a flat stock row, source:
+// "stock" in the combined picker, distinct from the `products` catalog
+// table catalog_item_id references), or a direct client_product link
+// (client_product_id - set when "Create client product" has no catalog/
+// inventory item to attach to, e.g. a fully custom line). Shared by
+// needsConfiguration and isProductionCapableLine below so the two can
+// never drift apart the way the original catalog-only check did (a line
+// matched to a stock item via Configure Product kept showing "Production
+// setup required" forever, since the original needsConfiguration never
+// checked inventory_item_id).
+function hasProductionIdentity(product) {
+  return Boolean(product?.catalog_item_id || product?.inventory_item_id || product?.client_product_id);
+}
+
 // True when an invoice-synced order line has never been given a
 // production identity of any kind. `added_from_invoice` is permanent
 // provenance metadata - it is set once by the invoice sync and must
 // NEVER be cleared/overwritten by anything in this module or its
 // callers - so this function is the ONLY thing that decides whether
-// the warning banner is still shown. Once any of catalog_item_id /
-// client_product_id / commercial_only_confirmed becomes truthy, this
+// the warning banner is still shown. Once the line has any production
+// identity or is explicitly marked commercial_only_confirmed, this
 // flips to false and the banner stops appearing, even though
 // added_from_invoice itself is still true.
 export function needsConfiguration(product) {
   if (!product || product.added_from_invoice !== true) return false;
-  if (product.catalog_item_id) return false;
-  if (product.client_product_id) return false;
+  if (hasProductionIdentity(product)) return false;
   if (product.commercial_only_confirmed) return false;
   return true;
+}
+
+// The single gate for whether a line can show the Production panel,
+// "+ Add print option", artwork, thumbnail, and related-file controls -
+// replaces the earlier `p.catalog_item_id && p.line_id` check, which
+// incorrectly hid all of this from stock/inventory-sourced lines (never
+// fabricated a catalog_item_id, so they had nowhere to attach) and from
+// lines pointed directly at a standalone client_product with no catalog/
+// inventory parent at all. line_id is always required, independent of
+// which identity the line carries, since snapshots/tracking/artwork are
+// all keyed by it.
+export function isProductionCapableLine(line) {
+  if (!line?.line_id) return false;
+  return hasProductionIdentity(line);
 }
 
 // Mirrors the exact catalog-vs-inventory id convention already used by

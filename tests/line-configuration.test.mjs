@@ -5,6 +5,7 @@ import {
   applyMatchExistingProduct,
   applyKeepCommercialOnly,
   resolveLineThumbnail,
+  isProductionCapableLine,
 } from "../src/features/orders/lineConfiguration.js";
 
 const invoiceLine = (overrides = {}) => ({
@@ -35,6 +36,15 @@ test("needsConfiguration: false once client_product_id is set", () => {
   assert.equal(needsConfiguration(invoiceLine({ client_product_id: "cp-1" })), false);
 });
 
+// Regression for the drift bug this correction fixes: needsConfiguration
+// previously only checked catalog_item_id/client_product_id/
+// commercial_only_confirmed, so a line matched to a stock item via
+// Configure Product (inventory_item_id set, catalog_item_id still "")
+// kept showing "Added from invoice / Production setup required" forever.
+test("needsConfiguration: false once inventory_item_id is set - a stock-matched line must not keep showing the banner", () => {
+  assert.equal(needsConfiguration(invoiceLine({ inventory_item_id: "inv-1" })), false);
+});
+
 test("needsConfiguration: false once commercial_only_confirmed is set", () => {
   assert.equal(needsConfiguration(invoiceLine({ commercial_only_confirmed: true })), false);
 });
@@ -48,6 +58,44 @@ test("needsConfiguration: added_from_invoice is never required to be cleared - i
   const configured = applyMatchExistingProduct(invoiceLine(), { id: "cat-1", source: "catalog", image_url: "" });
   assert.equal(configured.added_from_invoice, true, "provenance must be preserved");
   assert.equal(needsConfiguration(configured), false, "banner must stop showing once catalog_item_id is set");
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// isProductionCapableLine - the single gate for Production/+ Add print
+// option/artwork/thumbnail/related-file controls. Replaces the earlier
+// `p.catalog_item_id && p.line_id` check, which incorrectly hid all of
+// this from stock/inventory-sourced lines (never fabricated a
+// catalog_item_id, so they had nowhere to attach) and from lines pointed
+// directly at a standalone client_product with no catalog/inventory
+// parent at all.
+// ─────────────────────────────────────────────────────────────────────
+
+test("isProductionCapableLine: true for a catalog-sourced line", () => {
+  assert.equal(isProductionCapableLine({ line_id: "line-1", catalog_item_id: "cat-1" }), true);
+});
+
+test("isProductionCapableLine: true for a stock/inventory-sourced line - no fabricated catalog_item_id required", () => {
+  const line = { line_id: "line-1", catalog_item_id: "", inventory_item_id: "inv-1" };
+  assert.equal(isProductionCapableLine(line), true);
+  assert.equal(line.catalog_item_id, "", "must never fabricate a catalog_item_id for a stock line");
+});
+
+test("isProductionCapableLine: true for a standalone client_product line (no catalog/inventory parent)", () => {
+  const line = { line_id: "line-1", catalog_item_id: "", inventory_item_id: "", client_product_id: "cp-1" };
+  assert.equal(isProductionCapableLine(line), true);
+});
+
+test("isProductionCapableLine: false with no identity at all, even with a line_id", () => {
+  assert.equal(isProductionCapableLine({ line_id: "line-1", catalog_item_id: "", inventory_item_id: "" }), false);
+});
+
+test("isProductionCapableLine: false with no line_id, even with a catalog identity - snapshots/tracking/artwork are all keyed by line_id", () => {
+  assert.equal(isProductionCapableLine({ line_id: "", catalog_item_id: "cat-1" }), false);
+});
+
+test("isProductionCapableLine: false for a commercial-only line with no identity - Keep commercial only stays the explicit opt-out, not a fourth identity type", () => {
+  const line = { line_id: "line-1", catalog_item_id: "", inventory_item_id: "", commercial_only_confirmed: true };
+  assert.equal(isProductionCapableLine(line), false);
 });
 
 // ─────────────────────────────────────────────────────────────────────

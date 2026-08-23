@@ -597,6 +597,7 @@ const ENTITY_CONFIG = {
       return compactObject({
         client_id: payload.client_id,
         opps_product_id: payload.opps_product_id,
+        inventory_item_id: payload.inventory_item_id,
         xlab_product_id: payload.xlab_product_id,
         client_facing_name: payload.client_facing_name,
         internal_name: payload.internal_name,
