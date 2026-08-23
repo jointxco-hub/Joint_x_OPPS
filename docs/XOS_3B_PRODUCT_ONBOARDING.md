@@ -357,14 +357,33 @@ matrix remains green") is intentionally not duplicated here — it is
 already covered by the separate, already-validated
 `supabase/tests/xos_products_foundation.sql`.
 
-**Not yet executed against production** — the XOS 3B task brief specifies
-read-only production access; every step of this implementation used only
-`SELECT`/`information_schema` queries. The migration, both RPCs, and the
-test suite are written and build-verified (`npm run build` succeeds) but
-have not been applied to or run against the live database. Run with:
+**Production status.** `supabase/migrations/20260823120000_xos_3b_product_onboarding.sql`
+is now applied to production. Rounds 1–3 above were developed and
+statically verified entirely under read-only production access, as the
+task scope required at the time; round 4 reconciled three test-fixture
+assumptions against live production (a `public.users` trigger that
+auto-creates the joint-x staff membership, and the real
+`clients_fulfillment_type_check`/`xlab_products_category_check` constraint
+value sets — none of them behavioral, all confirmed via `pg_constraint`/
+`pg_trigger` before editing) and then actually ran the disposable suite
+against production:
 
 ```
 supabase db query --linked --file supabase/tests/xos_3b_product_onboarding.sql
 ```
+
+**45/45 assertions passed, zero residue.** The file contains 55 `insert
+into test_results` statements, but 10 of those are the paired branches of
+a `begin ... exception` block where only one side executes per run — the
+actual runtime assertion count is 45 (55 − 10), and all 45 passed. A
+follow-up read-only check confirmed zero disposable rows left behind in
+any table the fixtures touched (tenants, `auth.users`, `public.users`,
+OPPS products, X LAB products, Commerce products,
+`commerce.onboarding_operations`), and GSB's own counts were unchanged
+before and after (`commerce.products`, `commerce.product_links`,
+`commerce.onboarding_operations`, and tenant-scoped `client_products` all
+0 both times) — **GSB still has zero Commerce products; no real GSB
+product has been onboarded.** Production cutover for actual GSB product
+onboarding still requires separate authorization.
 
 only once write access for this phase is explicitly authorized.

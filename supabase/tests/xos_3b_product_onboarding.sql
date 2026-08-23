@@ -36,8 +36,38 @@
 -- cross-tenant OPPS is still rejected, and the integration-health RPC is
 -- checked for correct per-product OPPS linkage without row duplication.
 --
--- NOT executed as part of this task (production access here is read-only
--- per the XOS 3B brief) - ready to run once write access is authorized:
+-- Round 3 correction: added ONBOARD_EXISTING_MAPPING_CONFLICT coverage for
+-- Path 1 (existing managed product) - see the migration's own header note.
+--
+-- Round 4 (production fixture reconciliation, after migration
+-- 20260823120000 was applied to production): three fixture assumptions no
+-- longer matched live production and were corrected here, behavior
+-- otherwise unchanged -
+--   1. public.users now carries trigger trg_internal_user_joint_x_membership,
+--      which auto-creates the joint-x tenant_memberships row for v_staff on
+--      insert - the explicit membership insert below is now `on conflict
+--      (tenant_id, auth_user_id) do nothing` against the real
+--      tenant_memberships_tenant_id_auth_user_id_key unique constraint,
+--      rather than assuming that row doesn't already exist. The trigger
+--      itself is untouched.
+--   2. clients_fulfillment_type_check only accepts ('courier', 'collection',
+--      'service_only') - both disposable client fixtures changed from
+--      'delivery' to 'courier'.
+--   3. xlab_products_category_check only accepts ('t-shirts', 'hoodies',
+--      'sweaters', 'hats', 'bottoms') - all four disposable X LAB fixtures
+--      changed from 'apparel' to 't-shirts'.
+-- All three confirmed against production (read-only) before this edit.
+--
+-- Test count note: this file contains 55 `insert into test_results`
+-- statements, but 10 of those are the paired try/exception branches of a
+-- `begin ... exception when others then ... end;` block (one branch for
+-- "call unexpectedly succeeded", one for the expected failure) - only ONE
+-- branch of each pair executes per run. The actual number of rows written
+-- to test_results, and asserted against, on any single run is 45
+-- (55 - 10), not 55 - do not conflate the static occurrence count in this
+-- file with the runtime assertion count when reporting results.
+--
+-- Run with:
 --   supabase db query --linked --file supabase/tests/xos_3b_product_onboarding.sql
 --
 -- Item 22 of the original XOS 3B test matrix ("existing XOS 3A security
@@ -126,8 +156,25 @@ begin
   -- v_staff's ONLY membership is the real joint-x tenant (is_opps_staff()
   -- authority) - deliberately NO membership in v_tenant_a/v_tenant_b, to
   -- prove staff can manage a managed tenant without belonging to it.
-  insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role, status)
-  values (v_joint_x_tenant_id, v_staff, 'member', 'active');
+  -- ON CONFLICT DO NOTHING (production reconciliation): public.users
+  -- carries trigger trg_internal_user_joint_x_membership, which already
+  -- auto-creates this exact membership row on the insert above - this
+  -- statement is otherwise a duplicate under the real
+  -- tenant_memberships_tenant_id_auth_user_id_key unique constraint.
+  -- Deliberately not disabling or modifying that trigger.
+  insert into public.tenant_memberships (
+    tenant_id,
+    auth_user_id,
+    tenant_role,
+    status
+  )
+  values (
+    v_joint_x_tenant_id,
+    v_staff,
+    'member',
+    'active'
+  )
+  on conflict (tenant_id, auth_user_id) do nothing;
 
   -- ---- fixtures: two disposable tenants + one client each ----
   insert into public.tenants (id, slug, name, status, settings)
@@ -148,8 +195,8 @@ begin
 
   insert into public.clients (id, name, status, tenant_id, portal_enabled, fulfillment_type)
   values
-    (v_client_a, 'XOS 3B Test Client A', 'active', v_tenant_a, false, 'delivery'),
-    (v_client_b, 'XOS 3B Test Client B', 'active', v_tenant_b, false, 'delivery');
+    (v_client_a, 'XOS 3B Test Client A', 'active', v_tenant_a, false, 'courier'),
+    (v_client_b, 'XOS 3B Test Client B', 'active', v_tenant_b, false, 'courier');
 
   insert into public.products (id, name, status, tenant_id)
   values
@@ -162,10 +209,10 @@ begin
 
   insert into public.xlab_products (id, name, category, base_price)
   values
-    (v_xlab_product, 'XOS 3B Test XLAB Product', 'apparel', 100),
-    (v_xlab_product_2, 'XOS 3B Test XLAB Product 2', 'apparel', 150),
-    (v_mapping_conflict_xlab_a, 'XOS 3B Test Mapping Conflict XLAB A', 'apparel', 120),
-    (v_mapping_conflict_xlab_b, 'XOS 3B Test Mapping Conflict XLAB B', 'apparel', 130);
+    (v_xlab_product, 'XOS 3B Test XLAB Product', 't-shirts', 100),
+    (v_xlab_product_2, 'XOS 3B Test XLAB Product 2', 't-shirts', 150),
+    (v_mapping_conflict_xlab_a, 'XOS 3B Test Mapping Conflict XLAB A', 't-shirts', 120),
+    (v_mapping_conflict_xlab_b, 'XOS 3B Test Mapping Conflict XLAB B', 't-shirts', 130);
 
   -- A managed product created OUTSIDE Commerce (e.g. via ProductsEditor in
   -- the order drawer) that already carries an established OPPS + X LAB
