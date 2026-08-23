@@ -200,6 +200,33 @@ test('invoice -> order: matching an existing line never fabricates inventory/com
   assert.deepEqual(products[0].selected_print_options, [{ name: 'DTF' }]);
 });
 
+// Configure Product correction: a line matched to a stock/inventory item
+// (inventory_item_id) or pointed at a standalone client_product
+// (client_product_id, no catalog/inventory parent) must survive a later
+// commercial-only invoice re-sync exactly like the catalog_item_id case
+// above - re-sync only ever updates the commercial fields it owns
+// (name/quantity/price/size/color/notes), so any production identity
+// already on the line is preserved by the existing spread-then-override
+// order in buildInvoiceOrderSyncPlan's matched branch, not by anything
+// new. Proven explicitly here since Configure Product introduced these
+// two fields after this test file was first written.
+test('invoice -> order: inventory_item_id and client_product_id both survive a commercial-only re-sync', () => {
+  const stockLine = orderLine({ line_id: 'line-stock', inventory_item_id: 'inv-42', catalog_item_id: '' });
+  const clientProductLine = orderLine({ line_id: 'line-cp', client_product_id: 'cp-99', catalog_item_id: '', inventory_item_id: '' });
+  const items = [
+    invoiceItem({ source_order_item_id: 'line-stock', quantity: 3 }),
+    invoiceItem({ source_order_item_id: 'line-cp', item_name: 'Custom Labels', rate: 20 }),
+  ];
+  const { products } = buildInvoiceOrderSyncPlan(items, [stockLine, clientProductLine]);
+
+  const stockAfter = products.find((p) => p.line_id === 'line-stock');
+  const cpAfter = products.find((p) => p.line_id === 'line-cp');
+  assert.equal(stockAfter.inventory_item_id, 'inv-42', 'inventory identity must survive re-sync');
+  assert.equal(stockAfter.catalog_item_id, '', 'must never fabricate a catalog_item_id for a stock line');
+  assert.equal(stockAfter.quantity, 3, 'commercial field the sync owns still updates');
+  assert.equal(cpAfter.client_product_id, 'cp-99', 'standalone client_product link must survive re-sync');
+});
+
 test('an order line whose invoice counterpart is gone defaults to Keep - never silently dropped', () => {
   const order = orderLine({ line_id: 'line-1' });
   const otherOrder = orderLine({ line_id: 'line-2', name: 'Business Cards' });

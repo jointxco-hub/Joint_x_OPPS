@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Copy, Factory, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
@@ -13,6 +15,7 @@ import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artwor
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
+import { needsConfiguration, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -37,6 +40,20 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [showPicker, setShowPicker] = useState(false);
   const [sizeRun, setSizeRun] = useState({});
   const [expandedProductionLineId, setExpandedProductionLineId] = useState("");
+
+  // Configure Product (Phase 4-6): dialog offering exactly three explicit,
+  // confirm-gated actions for an invoice-added line with no production
+  // identity yet. No option ever auto-runs.
+  const [configureLineId, setConfigureLineId] = useState("");
+  const [configureStep, setConfigureStep] = useState("menu"); // "menu" | "match" | "create" | "commercial"
+  const [configurePickedItem, setConfigurePickedItem] = useState(null);
+  const [configureCreateName, setConfigureCreateName] = useState("");
+  const [configureCreatePickedItem, setConfigureCreatePickedItem] = useState(null);
+
+  // "Set/Change thumbnail" (Phase 4-6): line_id currently choosing an
+  // explicit thumbnail via ClientAssetPickerModal - this is the one and
+  // only path allowed to overwrite a non-empty image_url.
+  const [thumbnailPickerLineId, setThumbnailPickerLineId] = useState("");
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
@@ -90,6 +107,35 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : [])
       .filter((cp) => cp.opps_product_id)
       .map((cp) => [cp.opps_product_id, cp])
+  );
+  // Stock/inventory-sourced counterpart to the map above - a
+  // client_product can be backed by a raw `inventory` row instead of a
+  // `products` catalog row (client_products.inventory_item_id, added
+  // alongside this fix - opps_product_id's FK only ever pointed at
+  // products, so a stock item genuinely had no column to attach to
+  // before now). Never both on the same client_product row (DB check
+  // constraint), but a line only ever carries one of catalog_item_id/
+  // inventory_item_id anyway, so this map and the one above are always
+  // queried mutually exclusively per line.
+  const clientProductByInventoryItemId = new Map(
+    (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : [])
+      .filter((cp) => cp.inventory_item_id)
+      .map((cp) => [cp.inventory_item_id, cp])
+  );
+  // Third lookup path (Phase 4-6, Configure Product): some order lines
+  // now point directly at a client_product with no catalog/inventory
+  // parent at all (e.g. custom labels created via "Create client
+  // product" with no item linked). Wherever "the client_product for this
+  // line" is resolved, prefer the line's own client_product_id when set,
+  // then catalog_item_id, then inventory_item_id.
+  const clientProductsById = new Map(
+    (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => [cp.id, cp])
+  );
+  const clientProductForLine = (line) => (
+    (line?.client_product_id ? clientProductsById.get(line.client_product_id) : null)
+    || clientProductByCatalogItemId.get(line?.catalog_item_id)
+    || clientProductByInventoryItemId.get(line?.inventory_item_id)
+    || null
   );
   const clientProductIdsForOrder = Array.from(new Set(
     (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => cp.id)
@@ -237,6 +283,15 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [resolvingLineId, setResolvingLineId] = useState("");
 
   const beginAttach = async (lineId, clientProductId, orderLine) => {
+    // Structural guard, not just render-conditional: the "Attach
+    // composition" button that calls this is only ever rendered when
+    // clientProductForLine(p) is truthy, so this is unreachable today -
+    // but beginAttach must stay safe on its own terms rather than
+    // depending on every future caller re-deriving that invariant.
+    if (!clientProductId) {
+      toast.error("This line has no client product yet - add a print option first.");
+      return;
+    }
     setResolvingLineId(lineId);
     try {
       const components = await dataClient.entities.ProductComponent.filter({ client_product_id: clientProductId, is_active: true }, "sort_order", 100);
@@ -378,8 +433,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // Unified "+ Add print option": the pill picker's replacement for NEW
   // work (legacy products.print_options stays readable, untouched, for
   // existing lines that already used it). One action creates/reuses the
-  // client_products row for this client+catalog pairing (never
-  // requiring a prior Catalog Management visit), the reusable
+  // client_products row for this line's identity - catalog product,
+  // stock/inventory product, or an already-existing direct
+  // client_product link, in that order via clientProductForLine (never
+  // requiring a prior Catalog Management visit) - the reusable
   // product_components row (+ optional once_per_order setup-fee
   // companion), and an immutable order_line_component_snapshots row
   // using the same pricing hierarchy as the existing attach flow -
@@ -387,16 +444,28 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // default_sell_price.
   const addPrintOptionMutation = useMutation({
     mutationFn: async ({ lineId, orderLine, form }) => {
-      let clientProduct = clientProductByCatalogItemId.get(orderLine.catalog_item_id);
+      let clientProduct = clientProductForLine(orderLine);
+      let clientProductCreated = false;
       if (!clientProduct && orderLine.catalog_item_id) {
         clientProduct = await dataClient.entities.ClientProduct.create({
           client_id: order.client_id,
           opps_product_id: orderLine.catalog_item_id,
           client_facing_name: orderLine.name || "Untitled product",
         });
+        clientProductCreated = true;
+      } else if (!clientProduct && orderLine.inventory_item_id) {
+        // Preserves the exact inventory identity rather than fabricating
+        // a catalog_item_id - inventory_item_id is the column this
+        // client_product is keyed by, never products.id.
+        clientProduct = await dataClient.entities.ClientProduct.create({
+          client_id: order.client_id,
+          inventory_item_id: orderLine.inventory_item_id,
+          client_facing_name: orderLine.name || "Untitled product",
+        });
+        clientProductCreated = true;
       }
       if (!clientProduct) {
-        throw new Error("This line has no catalog product to compose against");
+        throw new Error("This line has no catalog or inventory product to compose against");
       }
 
       const existingCount = (Array.isArray(lineSnapshots) ? lineSnapshots : []).filter((s) => s.line_id === lineId).length;
@@ -457,7 +526,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         }));
       }
 
-      return { clientProductCreated: !clientProductByCatalogItemId.has(orderLine.catalog_item_id), created };
+      return { clientProductCreated, created };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
@@ -690,6 +759,119 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     onUpdate(order.id, { products: updated });
   };
 
+  // --- Configure Product (Phase 4-6) --------------------------------
+  const configureLine = products.map(cleanProduct).find((item) => item.line_id === configureLineId) || null;
+
+  const closeConfigureDialog = () => {
+    setConfigureLineId("");
+    setConfigureStep("menu");
+    setConfigurePickedItem(null);
+    setConfigureCreateName("");
+    setConfigureCreatePickedItem(null);
+  };
+
+  const openConfigureDialog = (lineId, defaultName) => {
+    if (locked) return;
+    setConfigureLineId(lineId);
+    setConfigureStep("menu");
+    setConfigurePickedItem(null);
+    setConfigureCreateName(defaultName || "");
+    setConfigureCreatePickedItem(null);
+  };
+
+  const applyToLine = (lineId, updater) => {
+    const updated = products.map((raw) => {
+      const item = cleanProduct(raw);
+      return item.line_id === lineId ? updater(item) : item;
+    });
+    onUpdate(order.id, { products: updated });
+  };
+
+  const handleMatchExisting = (pickedItem) => {
+    if (locked || !configureLineId) return;
+    applyToLine(configureLineId, (item) => applyMatchExistingProduct(item, pickedItem));
+    toast.success("Product matched");
+    closeConfigureDialog();
+  };
+
+  const handleKeepCommercialOnly = () => {
+    if (locked || !configureLineId) return;
+    applyToLine(configureLineId, applyKeepCommercialOnly);
+    toast.success("Marked as commercial-only");
+    closeConfigureDialog();
+  };
+
+  // Optionally links a catalog OR stock/inventory product (behaves like
+  // Match Existing for whichever source was picked, plus eagerly
+  // creates/reuses the client_product the same way addPrintOptionMutation
+  // already does on first "+ Add print option" - this just saves staff a
+  // click). With no item picked, creates a standalone client_product
+  // (opps_product_id: null, inventory_item_id: null) and points the line
+  // at it via the client_product_id field. All three cases are
+  // production-capable via isProductionCapableLine (catalog_item_id /
+  // inventory_item_id / client_product_id respectively) - Production is
+  // never force-hidden here; "Keep commercial only" is the actual,
+  // separate opt-out for lines that genuinely shouldn't compose anything.
+  const createClientProductMutation = useMutation({
+    mutationFn: async ({ lineId, name, pickedItem }) => {
+      const lineNow = products.map(cleanProduct).find((item) => item.line_id === lineId);
+      if (!lineNow) throw new Error("Order line not found");
+      const finalName = (name || lineNow.name || "Untitled product").trim() || "Untitled product";
+      if (pickedItem && pickedItem.source === "catalog") {
+        let clientProduct = clientProductByCatalogItemId.get(pickedItem.id);
+        if (!clientProduct) {
+          clientProduct = await dataClient.entities.ClientProduct.create({
+            client_id: order.client_id,
+            opps_product_id: pickedItem.id,
+            client_facing_name: finalName,
+          });
+        }
+        return { clientProduct, matchedItem: pickedItem };
+      }
+      if (pickedItem && pickedItem.source === "stock") {
+        // Preserves the exact inventory identity - never coerced into
+        // catalog_item_id, which points at a different table entirely.
+        let clientProduct = clientProductByInventoryItemId.get(pickedItem.id);
+        if (!clientProduct) {
+          clientProduct = await dataClient.entities.ClientProduct.create({
+            client_id: order.client_id,
+            inventory_item_id: pickedItem.id,
+            client_facing_name: finalName,
+          });
+        }
+        return { clientProduct, matchedItem: pickedItem };
+      }
+      const clientProduct = await dataClient.entities.ClientProduct.create({
+        client_id: order.client_id,
+        opps_product_id: null,
+        client_facing_name: finalName,
+      });
+      return { clientProduct, matchedItem: null };
+    },
+    onSuccess: ({ clientProduct, matchedItem }, variables) => {
+      applyToLine(variables.lineId, (item) => (
+        matchedItem
+          ? applyMatchExistingProduct(item, matchedItem)
+          : { ...item, client_product_id: clientProduct.id }
+      ));
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
+      toast.success("Client product created");
+      closeConfigureDialog();
+    },
+    onError: (err) => toast.error(err?.message || "Could not create client product"),
+  });
+
+  // --- Set/Change thumbnail (Phase 4-6) ------------------------------
+  const applyThumbnail = (pickedAssets) => {
+    const asset = Array.isArray(pickedAssets) ? pickedAssets[0] : null;
+    if (locked || !thumbnailPickerLineId || !asset?.file_url) {
+      setThumbnailPickerLineId("");
+      return;
+    }
+    applyToLine(thumbnailPickerLineId, (item) => ({ ...item, image_url: asset.file_url }));
+    setThumbnailPickerLineId("");
+  };
+
   return (
     <div className="bg-secondary/30 rounded-xl p-4">
       {locked && (
@@ -806,9 +988,30 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             </div>
           ) : (
             <div key={i} className="flex flex-col gap-3 group px-2 py-2 rounded-xl hover:bg-card/70 transition-all sm:flex-row sm:items-center">
-              <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 flex-shrink-0">
-                {p.image_url ? <img src={p.image_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
-              </div>
+              {(() => {
+                const resolvedThumb = resolveLineThumbnail(p, {
+                  clientProduct: clientProductForLine(p),
+                  catalogItem: allPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
+                });
+                return (
+                  <div className="flex-shrink-0">
+                    <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50">
+                      {resolvedThumb ? <img src={resolvedThumb} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
+                    </div>
+                    {!locked && (
+                      <button
+                        type="button"
+                        onClick={() => setThumbnailPickerLineId(p.line_id)}
+                        className="mt-1 flex w-12 items-center justify-center gap-0.5 text-[9px] font-medium text-primary hover:underline"
+                        title={resolvedThumb ? "Change thumbnail" : "Set thumbnail"}
+                      >
+                        <ImagePlus className="h-2.5 w-2.5" />
+                        {resolvedThumb ? "Change" : "Set"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="min-w-0 flex-1">
               <span className="text-sm text-foreground flex-1 truncate">
                 {p.name}
@@ -822,9 +1025,24 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 <p className="mt-0.5 truncate text-xs text-amber-700">Add-ons: {p.selected_addons.map(optionLabel).join(", ")}</p>
               )}
               {p.notes && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{p.notes}</p>}
-              {p.catalog_item_id && p.line_id && (
+              {needsConfiguration(p) && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-medium text-amber-900">
+                  <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                  <span>Added from invoice · Production setup required</span>
+                  {!locked && (
+                    <button
+                      type="button"
+                      onClick={() => openConfigureDialog(p.line_id, p.name)}
+                      className="rounded-full bg-amber-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-amber-700"
+                    >
+                      Configure product
+                    </button>
+                  )}
+                </div>
+              )}
+              {isProductionCapableLine(p) && (
                 <LineProduction
-                  clientProduct={clientProductByCatalogItemId.get(p.catalog_item_id) || null}
+                  clientProduct={clientProductForLine(p)}
                   snapshots={snapshotsByLineId.get(p.line_id) || []}
                   trackingBySnapshotId={trackingBySnapshotId}
                   lineQuantity={Number(p.quantity) || 0}
@@ -833,7 +1051,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   expanded={expandedProductionLineId === p.line_id}
                   onToggle={() => setExpandedProductionLineId((current) => current === p.line_id ? "" : p.line_id)}
                   onChange={(snapshot, field, value) => saveLineProduction.mutate({ snapshot, field, value })}
-                  onBeginAttach={() => beginAttach(p.line_id, clientProductByCatalogItemId.get(p.catalog_item_id).id, p)}
+                  onBeginAttach={() => beginAttach(p.line_id, clientProductForLine(p)?.id, p)}
                   resolving={resolvingLineId === p.line_id}
                   pendingResolution={pendingResolution && pendingResolution.lineId === p.line_id ? pendingResolution : null}
                   onPickVariant={pickVariantForComponent}
@@ -851,8 +1069,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   internalProducts={internalProductsForLabels}
                   pricingDefaultFor={pricingDefaultFor}
                   currentArtworkForClientProduct={
-                    clientProductByCatalogItemId.get(p.catalog_item_id)
-                      ? artworkByClientProductId.get(clientProductByCatalogItemId.get(p.catalog_item_id).id) || []
+                    clientProductForLine(p)
+                      ? artworkByClientProductId.get(clientProductForLine(p).id) || []
                       : []
                   }
                   onStartAddPrintOption={() => { setAddingPrintOptionLineId(p.line_id); setPrintOptionForm(emptyPrintOptionForm()); }}
@@ -1163,6 +1381,211 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
           </div>
         </div>
+      )}
+
+      {/* Configure Product (Phase 4-6) - exactly three explicit,
+          confirm-gated actions for an invoice-added line with no
+          production identity yet. Entirely blocked when locked, same as
+          every other product edit in this file. */}
+      {!locked && configureLineId && (
+        <Dialog open={Boolean(configureLineId)} onOpenChange={(open) => { if (!open) closeConfigureDialog(); }}>
+          <DialogContent className="max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Configure product</DialogTitle>
+              <DialogDescription>
+                {configureLine?.name || "This order line"} was added from an invoice with no production identity yet. Choose one action below.
+              </DialogDescription>
+            </DialogHeader>
+
+            {configureStep === "menu" && (
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setConfigureStep("match")}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-3 text-left hover:border-primary/40 hover:bg-secondary/40"
+                >
+                  <p className="text-sm font-semibold text-foreground">Match existing product</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Link this line to a catalog or stock product already in the system.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfigureStep("create")}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-3 text-left hover:border-primary/40 hover:bg-secondary/40"
+                >
+                  <p className="text-sm font-semibold text-foreground">Create client product</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Set up a new client product for this line, optionally linked to a catalog product.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfigureStep("commercial")}
+                  className="w-full rounded-xl border border-border bg-card px-3 py-3 text-left hover:border-primary/40 hover:bg-secondary/40"
+                >
+                  <p className="text-sm font-semibold text-foreground">Keep commercial only</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">This line is a fee or service with nothing to map (e.g. custom labels, a setup fee).</p>
+                </button>
+              </div>
+            )}
+
+            {configureStep === "match" && (
+              <div className="space-y-3">
+                {!configurePickedItem ? (
+                  <CatalogPicker items={allPickerItems} onPick={setConfigurePickedItem} />
+                ) : (
+                  <div className="space-y-3">
+                    <PickedItemPreview item={configurePickedItem} onClear={() => setConfigurePickedItem(null)} />
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1" onClick={() => setConfigurePickedItem(null)}>Choose different item</Button>
+                      <Button className="flex-1" onClick={() => handleMatchExisting(configurePickedItem)}>Confirm match</Button>
+                    </div>
+                  </div>
+                )}
+                <Button variant="ghost" size="sm" onClick={() => setConfigureStep("menu")}>Back</Button>
+              </div>
+            )}
+
+            {configureStep === "create" && (
+              <div className="space-y-3">
+                <Input
+                  value={configureCreateName}
+                  onChange={(e) => setConfigureCreateName(e.target.value)}
+                  placeholder="Client-facing product name"
+                  className="h-9 text-sm rounded-xl"
+                  autoFocus
+                />
+                <div>
+                  <p className="mb-1.5 text-xs text-muted-foreground">
+                    Link to an existing catalog or stock product (optional) - leave blank for a custom item with no catalog/stock parent, e.g. custom labels.
+                  </p>
+                  {configureCreatePickedItem ? (
+                    <PickedItemPreview item={configureCreatePickedItem} onClear={() => setConfigureCreatePickedItem(null)} />
+                  ) : (
+                    <CatalogPicker items={allPickerItems} onPick={setConfigureCreatePickedItem} placeholder="Search catalog/stock to link (optional)..." />
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setConfigureStep("menu")}>Back</Button>
+                  <Button
+                    className="flex-1"
+                    disabled={!configureCreateName.trim() || createClientProductMutation.isPending}
+                    onClick={() => createClientProductMutation.mutate({ lineId: configureLineId, name: configureCreateName, pickedItem: configureCreatePickedItem })}
+                  >
+                    {createClientProductMutation.isPending ? "Creating…" : "Confirm & create client product"}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {configureStep === "commercial" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  This line will be marked as commercial-only. No catalog or composition mapping is applied - use this for fees and services (e.g. &quot;X1 - Satin Labels&quot;).
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setConfigureStep("menu")}>Back</Button>
+                  <Button className="flex-1" onClick={handleKeepCommercialOnly}>Confirm - keep commercial only</Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Set/Change thumbnail (Phase 4-6) - single-select, client-scoped,
+          explicit overwrite path per resolveLineThumbnail's design. */}
+      {!locked && thumbnailPickerLineId && (
+        <ClientAssetPickerModal
+          clientId={order.client_id}
+          selectionMode="single"
+          title="Set line thumbnail"
+          description="Pick a file from this client's library to use as this line's thumbnail. This replaces any current thumbnail."
+          confirmVerb="Use"
+          onClose={() => setThumbnailPickerLineId("")}
+          onConfirm={applyThumbnail}
+        />
+      )}
+    </div>
+  );
+}
+
+// Small search/filter picker reused by Configure Product's "Match
+// existing product" and "Create client product" flows - same
+// filter/list pattern as the Add Product picker above, packaged
+// standalone (with its own local search state) so it can be embedded
+// inside the dialog without touching addMode/newRow state.
+function CatalogPicker({ items, onPick, placeholder = "Search catalog or stock..." }) {
+  const [search, setSearch] = useState("");
+  const [source, setSource] = useState("all");
+  const [category, setCategory] = useState("all");
+  const categories = [...new Set(items.map((item) => item.category).filter(Boolean))].slice(0, 14);
+  const sourceFiltered = items.filter((item) => {
+    const sourceMatch = source === "all" || item.source === source;
+    const categoryMatch = category === "all" || item.category === category;
+    return sourceMatch && categoryMatch;
+  });
+  const filtered = search
+    ? sourceFiltered.filter((item) => item.name?.toLowerCase().includes(search.toLowerCase()))
+    : sourceFiltered.slice(0, 20);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {[["all", "All"], ["catalog", "Catalog"], ["stock", "Stock"]].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setSource(value)}
+            className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-all ${
+              source === value ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background text-muted-foreground hover:border-primary/40"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {categories.length > 0 && (
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="h-8 w-full rounded-xl border border-input bg-background px-3 text-xs text-foreground">
+          <option value="all">All categories</option>
+          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      )}
+      <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={placeholder} className="h-8 text-sm rounded-xl" autoFocus />
+      <div className="max-h-56 overflow-y-auto rounded-xl border border-border">
+        {filtered.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">No matching products.</p>}
+        {filtered.map((item) => (
+          <button
+            key={`${item.source}-${item.id}`}
+            type="button"
+            onClick={() => onPick(item)}
+            className="flex w-full items-center gap-3 border-b border-border px-3 py-2 text-left last:border-b-0 hover:bg-secondary transition-all"
+          >
+            <div className="h-10 w-10 overflow-hidden rounded-lg border border-border bg-secondary/60 flex-shrink-0">
+              {item.image_url ? <img src={item.image_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-2.5 h-5 w-5 text-muted-foreground/50" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm text-foreground">{item.name}</p>
+              <p className="truncate text-[10px] text-muted-foreground">{[item.category, item.source].filter(Boolean).join(" / ")}</p>
+            </div>
+            {item.price ? <span className="flex-shrink-0 text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PickedItemPreview({ item, onClear }) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-border bg-secondary/30 p-3">
+      <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-background flex-shrink-0">
+        {item.image_url ? <img src={item.image_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-foreground">{item.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{[item.category, item.source].filter(Boolean).join(" / ")}</p>
+      </div>
+      {onClear && (
+        <button type="button" onClick={onClear} className="flex-shrink-0 text-xs text-muted-foreground hover:text-destructive">
+          Remove
+        </button>
       )}
     </div>
   );
