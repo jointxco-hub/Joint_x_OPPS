@@ -46,24 +46,44 @@ test("isProductionCapableLine is imported from lineConfiguration, not reimplemen
   );
 });
 
-test("addPrintOptionMutation still exists and resolves via clientProductForLine first (catalog, stock, or standalone), not a catalog-only lookup", async () => {
+test("addPrintOptionMutation still exists and resolves via the shared helper (catalog, stock, or standalone), not a catalog-only lookup", async () => {
+  // The create-or-reuse logic was extracted into
+  // resolveOrCreateClientProductForLine (shared with Review for My
+  // Products, Phase 5) - addPrintOptionMutation now just calls it.
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   assert.ok(source.includes("const addPrintOptionMutation = useMutation("), "addPrintOptionMutation must still be the same function");
 
-  const start = source.indexOf("const addPrintOptionMutation = useMutation(");
-  const body = source.slice(start, start + 1600);
+  const mutationStart = source.indexOf("const addPrintOptionMutation = useMutation(");
+  const mutationBody = source.slice(mutationStart, mutationStart + 400);
   assert.ok(
-    body.includes("let clientProduct = clientProductForLine(orderLine);"),
+    mutationBody.includes("resolveOrCreateClientProductForLine(orderLine)"),
+    "must resolve via the shared helper, not reimplement the lookup inline"
+  );
+
+  const helperStart = source.indexOf("const resolveOrCreateClientProductForLine = async (orderLine) => {");
+  assert.notEqual(helperStart, -1, "the shared resolve-or-create helper must exist");
+  const helperBody = source.slice(helperStart, helperStart + 1600);
+  assert.ok(
+    helperBody.includes("let clientProduct = clientProductForLine(orderLine);"),
     "must resolve via the shared clientProductForLine (catalog -> stock -> standalone), not clientProductByCatalogItemId directly"
   );
   assert.ok(
-    body.includes("orderLine.inventory_item_id") && body.includes("inventory_item_id: orderLine.inventory_item_id"),
+    helperBody.includes("orderLine.inventory_item_id") && helperBody.includes("inventory_item_id: orderLine.inventory_item_id"),
     "must be able to on-demand-create a client_product from a stock line's inventory_item_id, preserving that identity"
   );
   assert.ok(
-    !/opps_product_id:\s*orderLine\.inventory_item_id/.test(body),
+    !/opps_product_id:\s*orderLine\.inventory_item_id/.test(helperBody),
     "must never write an inventory item's id into opps_product_id - that column references products, not inventory"
   );
+});
+
+test("Review for My Products reuses the exact same resolve-or-create helper as + Add print option", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const start = source.indexOf("const reviewForMyProductsMutation = useMutation(");
+  assert.notEqual(start, -1, "reviewForMyProductsMutation must exist");
+  const body = source.slice(start, start + 500);
+  assert.ok(body.includes("resolveOrCreateClientProductForLine(orderLine)"), "must reuse the shared helper, not a second identity model");
+  assert.ok(!/opps_product_id:\s*clientProduct/.test(body), "must never mutate the resolved client_product's own identity fields");
 });
 
 test("createClientProductMutation handles a stock-sourced pick without discarding it into a bare standalone client_product", async () => {
@@ -124,4 +144,67 @@ test("dataClient's ClientProduct.create serializer includes inventory_item_id - 
   assert.notEqual(start, -1);
   const body = source.slice(start, start + 1200);
   assert.ok(body.includes("inventory_item_id: payload.inventory_item_id"), "the serialize() allowlist must pass inventory_item_id through");
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Private-upload thumbnail fix (Phase 4): order-line thumbnails must
+// resolve private-upload://... references to a short-lived signed URL
+// at render time, reusing the existing src/lib/privateFiles.js /
+// SecureImage.jsx resolver already used in 13 other OPPS files - never
+// a new resolver, never a raw <img src="private-upload://..."> (which
+// renders as a broken image, exactly the live bug reported on order
+// XL-260810-5822 / line b760fc31-...).
+// ─────────────────────────────────────────────────────────────────────
+
+test("order-line thumbnails render through SecureImage, not a raw <img>, and the old raw-img ternary is gone", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  assert.ok(
+    source.includes('import SecureImage from "@/components/common/SecureImage";'),
+    "must reuse the existing SecureImage component, not build a new resolver"
+  );
+  assert.ok(
+    !source.includes('{resolvedThumb ? <img src={resolvedThumb} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}'),
+    "the old raw <img> ternary for the order-line thumbnail must be gone - it could never resolve a private-upload:// reference"
+  );
+  const secureImageUsageIndex = source.indexOf("<SecureImage");
+  assert.notEqual(secureImageUsageIndex, -1);
+  const usageBlock = source.slice(secureImageUsageIndex, secureImageUsageIndex + 250);
+  assert.ok(usageBlock.includes("value={resolvedThumb}"), "must resolve the same precedence-computed thumbnail value SecureImage is handed");
+  assert.ok(usageBlock.includes("fallback={<Package"), "must keep the existing generic-placeholder fallback for lines with no thumbnail at all");
+});
+
+test("Set/Change thumbnail persists the durable raw reference (asset.file_url), never a resolved signed URL", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const start = source.indexOf("const applyThumbnail = (pickedAssets) => {");
+  assert.notEqual(start, -1);
+  const body = source.slice(start, start + 400);
+  assert.ok(body.includes("image_url: asset.file_url"), "must store the asset's raw file_url (durable reference - private-upload://... or a normal URL), not a signed URL");
+  assert.ok(!/getSignedFileUrl|useSignedFileUrl|signedUrl/i.test(body), "must never resolve/persist a signed URL into orders.products - signing happens only at render time via SecureImage");
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Review for My Products (Phase 5)
+// ─────────────────────────────────────────────────────────────────────
+
+test("reviewForMyProductsMutation persists client_product_id onto the line without touching price/quantity, and never sets status/visible_in_account", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const start = source.indexOf("const reviewForMyProductsMutation = useMutation({");
+  assert.notEqual(start, -1);
+  const body = source.slice(start, start + 900);
+  assert.ok(body.includes("client_product_id: clientProduct.id"), "must persist client_product_id onto the order line");
+  assert.ok(!/\bprice\s*:|\bquantity\s*:/.test(body), "must never write price/quantity as part of this action");
+  assert.ok(!/\bstatus\s*:|\bvisible_in_account\s*:/.test(body), "must never set status/visible_in_account - the client_product stays on its draft/hidden column defaults, this action never publishes");
+  assert.ok(body.includes("if (!orderLine.client_product_id)"), "must not overwrite an already-set client_product_id on repeat use - reuse, not reassign");
+});
+
+test("reviewForMyProductsMutation deep-links to the existing X LAB Admin client-products page - does not build a second review/publish UI in OPPS", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const start = source.indexOf("const reviewForMyProductsMutation = useMutation({");
+  assert.notEqual(start, -1);
+  const body = source.slice(start, start + 1200);
+  assert.ok(body.includes("https://xlab.jointx.co.za/admin/client-products/"), "must deep-link to the authoritative X LAB Admin review/publish surface");
+  assert.ok(
+    !/import\s+\w+\s+from\s+["'].*AdminClientProductDetail|<ReadinessChecklist|<PublishForClientReview/.test(source),
+    "must not import or render any part of the X LAB Admin review UI inside OPPS - a comment referencing it by name for context is fine, an actual import/usage is not"
+  );
 });

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
+import SecureImage from "@/components/common/SecureImage";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
@@ -15,7 +16,7 @@ import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artwor
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
-import { needsConfiguration, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
+import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -430,40 +431,51 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   });
   const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
 
+  // Shared resolve-or-create: the client_products row for this line's
+  // identity - an already-existing link (client_product_id / catalog /
+  // inventory, via clientProductForLine) is always reused; otherwise one
+  // is created on demand from whichever identity the line actually has.
+  // Never fabricates a catalog_item_id for an inventory-backed line or
+  // vice versa - each is keyed by its own real column. Used by both
+  // "+ Add print option" and "Review for My Products" so there is
+  // exactly one place this decision is made, not two that could drift.
+  const resolveOrCreateClientProductForLine = async (orderLine) => {
+    let clientProduct = clientProductForLine(orderLine);
+    let clientProductCreated = false;
+    if (!clientProduct && orderLine.catalog_item_id) {
+      clientProduct = await dataClient.entities.ClientProduct.create({
+        client_id: order.client_id,
+        opps_product_id: orderLine.catalog_item_id,
+        client_facing_name: orderLine.name || "Untitled product",
+      });
+      clientProductCreated = true;
+    } else if (!clientProduct && orderLine.inventory_item_id) {
+      // Preserves the exact inventory identity rather than fabricating
+      // a catalog_item_id - inventory_item_id is the column this
+      // client_product is keyed by, never products.id.
+      clientProduct = await dataClient.entities.ClientProduct.create({
+        client_id: order.client_id,
+        inventory_item_id: orderLine.inventory_item_id,
+        client_facing_name: orderLine.name || "Untitled product",
+      });
+      clientProductCreated = true;
+    }
+    return { clientProduct, clientProductCreated };
+  };
+
   // Unified "+ Add print option": the pill picker's replacement for NEW
   // work (legacy products.print_options stays readable, untouched, for
   // existing lines that already used it). One action creates/reuses the
-  // client_products row for this line's identity - catalog product,
-  // stock/inventory product, or an already-existing direct
-  // client_product link, in that order via clientProductForLine (never
-  // requiring a prior Catalog Management visit) - the reusable
-  // product_components row (+ optional once_per_order setup-fee
-  // companion), and an immutable order_line_component_snapshots row
-  // using the same pricing hierarchy as the existing attach flow -
-  // orderPrice overrides only ever affect the snapshot, never
-  // default_sell_price.
+  // client_products row for this line's identity (via
+  // resolveOrCreateClientProductForLine, never requiring a prior Catalog
+  // Management visit), the reusable product_components row (+ optional
+  // once_per_order setup-fee companion), and an immutable
+  // order_line_component_snapshots row using the same pricing hierarchy
+  // as the existing attach flow - orderPrice overrides only ever affect
+  // the snapshot, never default_sell_price.
   const addPrintOptionMutation = useMutation({
     mutationFn: async ({ lineId, orderLine, form }) => {
-      let clientProduct = clientProductForLine(orderLine);
-      let clientProductCreated = false;
-      if (!clientProduct && orderLine.catalog_item_id) {
-        clientProduct = await dataClient.entities.ClientProduct.create({
-          client_id: order.client_id,
-          opps_product_id: orderLine.catalog_item_id,
-          client_facing_name: orderLine.name || "Untitled product",
-        });
-        clientProductCreated = true;
-      } else if (!clientProduct && orderLine.inventory_item_id) {
-        // Preserves the exact inventory identity rather than fabricating
-        // a catalog_item_id - inventory_item_id is the column this
-        // client_product is keyed by, never products.id.
-        clientProduct = await dataClient.entities.ClientProduct.create({
-          client_id: order.client_id,
-          inventory_item_id: orderLine.inventory_item_id,
-          client_facing_name: orderLine.name || "Untitled product",
-        });
-        clientProductCreated = true;
-      }
+      const { clientProduct, clientProductCreated } = await resolveOrCreateClientProductForLine(orderLine);
       if (!clientProduct) {
         throw new Error("This line has no catalog or inventory product to compose against");
       }
@@ -536,6 +548,35 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       toast.success("Print option added");
     },
     onError: (err) => toast.error(err?.message || "Could not add print option"),
+  });
+
+  // "Review for My Products" (Phase 5): resolves/creates the client_product
+  // for this line via the exact same shared path as "+ Add print option" -
+  // never a second identity model. Persists client_product_id back onto
+  // the order line only if it isn't already set (never touches price/
+  // quantity/any other commercial field). The client_product itself stays
+  // on its column defaults (status: draft, visible_in_account: false) -
+  // this action never publishes anything. X LAB Admin
+  // (AdminClientProductDetail.jsx) is the one authoritative review/
+  // publish surface - this deep-links to it rather than rebuilding any
+  // part of that UI inside OPPS.
+  const reviewForMyProductsMutation = useMutation({
+    mutationFn: async ({ lineId, orderLine }) => {
+      const { clientProduct } = await resolveOrCreateClientProductForLine(orderLine);
+      if (!clientProduct) {
+        throw new Error("This line has no catalog or inventory product to compose against");
+      }
+      return { clientProduct, lineId, orderLine };
+    },
+    onSuccess: ({ clientProduct, lineId, orderLine }) => {
+      if (!orderLine.client_product_id) {
+        applyToLine(lineId, (item) => ({ ...item, client_product_id: clientProduct.id }));
+      }
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
+      window.open(`https://xlab.jointx.co.za/admin/client-products/${clientProduct.id}`, "_blank", "noopener,noreferrer");
+      toast.success("Opening in X LAB Admin for review");
+    },
+    onError: (err) => toast.error(err?.message || "Could not prepare this product for review"),
   });
 
   const saveLineProduction = useMutation({
@@ -996,7 +1037,12 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 return (
                   <div className="flex-shrink-0">
                     <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50">
-                      {resolvedThumb ? <img src={resolvedThumb} alt="" loading="lazy" className="h-full w-full object-cover" /> : <Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
+                      <SecureImage
+                        value={resolvedThumb}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        fallback={<Package className="m-3 h-6 w-6 text-muted-foreground/50" />}
+                      />
                     </div>
                     {!locked && (
                       <button
@@ -1028,7 +1074,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               {needsConfiguration(p) && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-medium text-amber-900">
                   <AlertTriangle className="h-3 w-3 flex-shrink-0" />
-                  <span>Added from invoice · Production setup required</span>
+                  <span>{needsConfigurationBannerText(p)}</span>
                   {!locked && (
                     <button
                       type="button"
@@ -1078,6 +1124,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   onConfirmAddPrintOption={() => addPrintOptionMutation.mutate({ lineId: p.line_id, orderLine: p, form: printOptionForm })}
                   addingPrintOption={addPrintOptionMutation.isPending}
                   onArtworkLinked={() => queryClient.invalidateQueries({ queryKey: ["clientProductArtworkForOrder"] })}
+                  onReviewForMyProducts={() => reviewForMyProductsMutation.mutate({ lineId: p.line_id, orderLine: p })}
+                  reviewingForMyProducts={reviewForMyProductsMutation.isPending}
                 />
               )}
               </div>
@@ -1393,7 +1441,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             <DialogHeader>
               <DialogTitle>Configure product</DialogTitle>
               <DialogDescription>
-                {configureLine?.name || "This order line"} was added from an invoice with no production identity yet. Choose one action below.
+                {configureLine?.name || "This order line"} has no production identity yet{configureLine?.added_from_invoice ? " (added from an invoice)" : ""}. Choose one action below.
               </DialogDescription>
             </DialogHeader>
 
@@ -1608,6 +1656,7 @@ function LineProduction({
   isAddingPrintOption, printOptionForm, setPrintOptionForm, internalProducts, pricingDefaultFor,
   onStartAddPrintOption, onCancelAddPrintOption, onConfirmAddPrintOption, addingPrintOption,
   currentArtworkForClientProduct, onArtworkLinked,
+  onReviewForMyProducts, reviewingForMyProducts,
 }) {
   const hasSnapshots = snapshots.length > 0;
   return (
@@ -1655,6 +1704,15 @@ function LineProduction({
           )}
           <Button size="sm" variant="outline" className="h-7 w-full rounded-lg text-[11px]" onClick={onStartAddPrintOption}>
             <Plus className="mr-1 h-3 w-3" /> Add print option
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 w-full rounded-lg text-[11px]"
+            onClick={onReviewForMyProducts}
+            disabled={reviewingForMyProducts}
+          >
+            {reviewingForMyProducts ? "Preparing…" : (clientProduct ? "Open in X LAB Admin" : "Review for My Products")}
           </Button>
         </div>
       )}

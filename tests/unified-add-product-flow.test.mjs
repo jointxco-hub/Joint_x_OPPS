@@ -25,12 +25,20 @@ test("the new + Add print option action exists as a distinct entry point", async
 });
 
 test("a client_products row is created on demand when none exists yet, without requiring a Catalog Management visit first", async () => {
+  // Extracted into resolveOrCreateClientProductForLine (shared with
+  // Review for My Products) - addPrintOptionMutation now calls it
+  // rather than inlining the create-or-reuse logic itself.
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
-  const start = source.indexOf("const addPrintOptionMutation = useMutation({");
-  assert.notEqual(start, -1);
-  const body = source.slice(start, start + 2000);
-  assert.ok(body.includes("dataClient.entities.ClientProduct.create("), "must create a client_products row when clientProductByCatalogItemId has no match");
-  assert.ok(body.includes("if (!clientProduct"), "creation must be conditional on none already existing, not unconditional");
+  const helperStart = source.indexOf("const resolveOrCreateClientProductForLine = async (orderLine) => {");
+  assert.notEqual(helperStart, -1, "the shared resolve-or-create helper must exist");
+  const helperBody = source.slice(helperStart, helperStart + 1200);
+  assert.ok(helperBody.includes("dataClient.entities.ClientProduct.create("), "must create a client_products row when none already exists");
+  assert.ok(helperBody.includes("if (!clientProduct"), "creation must be conditional on none already existing, not unconditional");
+
+  const mutationStart = source.indexOf("const addPrintOptionMutation = useMutation({");
+  assert.notEqual(mutationStart, -1);
+  const mutationBody = source.slice(mutationStart, mutationStart + 500);
+  assert.ok(mutationBody.includes("resolveOrCreateClientProductForLine(orderLine)"), "addPrintOptionMutation must reuse the shared helper, not a second copy");
 });
 
 test("adding a print option creates both a reusable product_components row and an immutable order snapshot", async () => {
