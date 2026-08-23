@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getXosOrderDetail, listXosFiles, listXosOrders, listXosRequests } from '@/lib/xosModules';
+import { getXosOrderDetail, getXosProductSummary, listXosCapabilities, listXosFiles, listXosOrders, listXosProducts, listXosRequests } from '@/lib/xosModules';
 
 // Each hook is its own query with its own limit, so Overview's small
 // summary fetch and a module page's full list fetch are independently
@@ -26,6 +26,41 @@ export function useXosOrderDetail({ hostname, orderNumber, enabled = true }) {
     queryKey: ['xos-order-detail', hostname, orderNumber],
     queryFn: () => getXosOrderDetail({ hostname, orderNumber }).then(unwrap),
     enabled: enabled && Boolean(hostname) && Boolean(orderNumber),
+    staleTime: 30_000,
+  });
+}
+
+// Gates nav/route visibility, so this fails closed rather than throwing -
+// any error resolving capabilities is treated as "nothing enabled"
+// rather than breaking the workspace shell.
+export function useXosCapabilities({ hostname, enabled = true }) {
+  return useQuery({
+    queryKey: ['xos-capabilities', hostname],
+    queryFn: async () => {
+      const result = await listXosCapabilities({ hostname });
+      return result.error ? {} : result.data;
+    },
+    enabled: enabled && Boolean(hostname),
+    staleTime: 30_000,
+  });
+}
+
+export function useXosProducts({ hostname, limit, enabled = true }) {
+  return useQuery({
+    queryKey: ['xos-products', hostname, limit],
+    queryFn: () => listXosProducts({ hostname, limit }).then(unwrap),
+    enabled: enabled && Boolean(hostname),
+    staleTime: 30_000,
+  });
+}
+
+// Aggregate counts, not a capped list - see getXosProductSummary(). Used
+// by Overview instead of useXosProducts()'s .data.length.
+export function useXosProductSummary({ hostname, enabled = true }) {
+  return useQuery({
+    queryKey: ['xos-product-summary', hostname],
+    queryFn: () => getXosProductSummary({ hostname }).then(unwrap),
+    enabled: enabled && Boolean(hostname),
     staleTime: 30_000,
   });
 }
