@@ -1,18 +1,26 @@
 -- XOS 3A — Product Authority Foundation.
 --
--- Introduces a generic, tenant-scoped commerce product contract for XOS,
--- deliberately separate from public.client_products (the existing
--- managed/B2B/client-approval product system: xlab_product_id/
--- opps_product_id linkage, print_method/placement/garment_* production
+-- Introduces a generic, tenant-wide commercial/B2C catalog contract for
+-- XOS, deliberately separate from public.client_products - the existing
+-- managed client-account/reorder/approval product layer (xlab_product_id/
+-- opps_product_id linkage, visible_in_account, reorder_enabled,
+-- client_price, available_variants, primary_mockup, artwork/revision/
+-- order-link relationships, print_method/placement/garment_* production
 -- fields, requires_quote, internal_notes, approved_by/approved_at
--- approval workflow). client_products models Joint X producing a custom
--- item for one client with staff approval at every step - it has no
--- concept of a client-browsable catalog, availability, or per-tenant
--- publish state, and retrofitting those onto it would conflate two
--- different authority models. XOS 3A's commerce.products is additive,
--- capability-gated, and fully reversible (drop the two new functions,
--- the three commerce tables and their schema, and tenant_capabilities -
--- nothing else references them yet).
+-- approval workflow). client_products already has real client-facing
+-- catalog/account concepts (visible_in_account, reorder_enabled) - it is
+-- not made the universal Commerce authority not because it lacks those
+-- concepts, but because it is client_id-scoped (one client's approved
+-- relationship to one product) rather than tenant-wide, and is
+-- production/approval-centric, tied to managed Joint X service/product
+-- workflows rather than a generic draft/published/archived catalog
+-- state. commerce.products is the tenant-wide commercial/B2C catalog
+-- authority; client_products remains the managed/B2B layer. This
+-- distinction matters because XOS must integrate with X LAB Account, not
+-- unknowingly rebuild it - see commerce.product_links below. XOS 3A's
+-- commerce.products is additive, capability-gated, and fully reversible
+-- (drop the new functions, the three commerce tables and their schema,
+-- and tenant_capabilities - nothing else references them yet).
 --
 -- commerce.product_links is the identity bridge to the rest of the
 -- ecosystem (X LAB Account / client_products, OPPS, future adapters) -
@@ -219,11 +227,36 @@ revoke all on commerce.product_links from authenticated;
 -- Same tenant-forcing pattern as commerce.sync_variant_tenant_id():
 -- tenant_id is derived from the parent commerce product, never trusted
 -- from input, so a cross-tenant link is structurally impossible on the
--- commerce side. Additionally, for system_key = 'client_product'
--- (the preferred first ecosystem path - see docs), the linked
--- public.client_products row's own tenant_id must independently match,
--- so a client_product cannot be borrowed across tenants even though both
--- sides individually resolve to a real row.
+-- commerce side regardless of system_key.
+--
+-- Per-system_key referential/tenant integrity (all internal integrity
+-- exceptions below are deliberately generic - this is never client-facing
+-- metadata, so the exact failure reason is not worth exposing):
+--
+-- client_product (the preferred first ecosystem path - see docs): three
+-- tenants must agree - commerce.products.tenant_id, client_products.
+-- tenant_id, AND the linked clients.tenant_id. client_products' own
+-- client_products_set_tenant_id() trigger only *derives* tenant_id when
+-- it is null on insert - it never corrects or rejects a caller-supplied
+-- value that disagrees with the client's own tenant, so
+-- client_products.tenant_id alone cannot be trusted as a stand-in for
+-- "the client actually belongs to this tenant." Both the client_product
+-- row and its linked client are independently re-resolved and checked
+-- here rather than assumed consistent.
+--
+-- opps_product: public.products.tenant_id is nullable at the schema
+-- level but confirmed tenant-scoped in production data - a null or
+-- mismatched tenant is rejected, never silently accepted.
+--
+-- xlab_product: public.xlab_products has no tenant_id column at all - it
+-- represents a reusable/shared X LAB catalog identity, not a
+-- tenant-scoped record, so only existence is validated, deliberately no
+-- tenant equality check (there is no tenant to check against).
+--
+-- legacy_gsb_product intentionally remains opaque in this phase - its
+-- source system is outside this canonical production schema and needs
+-- its own adapter contract later; only the structural tenant_id-forcing
+-- above applies to it.
 create function commerce.sync_product_link_tenant_id()
 returns trigger
 language plpgsql
@@ -231,6 +264,10 @@ as $function$
 declare
   v_product_tenant uuid;
   v_client_product_tenant uuid;
+  v_client_product_client_id uuid;
+  v_client_tenant uuid;
+  v_opps_product_tenant uuid;
+  v_external_uuid uuid;
 begin
   select tenant_id into v_product_tenant
   from commerce.products
@@ -244,19 +281,56 @@ begin
 
   if new.system_key = 'client_product' then
     begin
-      select tenant_id into v_client_product_tenant
-      from public.client_products
-      where id = new.external_id::uuid;
+      v_external_uuid := new.external_id::uuid;
     exception when invalid_text_representation then
-      raise exception 'commerce.product_links: external_id "%" is not a valid client_products id.', new.external_id;
+      raise exception 'commerce.product_links: invalid client_product identity.';
     end;
 
+    select tenant_id, client_id
+    into v_client_product_tenant, v_client_product_client_id
+    from public.client_products
+    where id = v_external_uuid;
+
     if v_client_product_tenant is null then
-      raise exception 'commerce.product_links: client_product % does not exist.', new.external_id;
+      raise exception 'commerce.product_links: client_product identity not found.';
     end if;
 
-    if v_client_product_tenant <> v_product_tenant then
-      raise exception 'commerce.product_links: client_product % belongs to a different tenant than commerce product %.', new.external_id, new.commerce_product_id;
+    select tenant_id into v_client_tenant
+    from public.clients
+    where id = v_client_product_client_id;
+
+    if v_client_tenant is null then
+      raise exception 'commerce.product_links: linked client not found.';
+    end if;
+
+    if v_client_product_tenant <> v_product_tenant or v_client_tenant <> v_product_tenant then
+      raise exception 'commerce.product_links: client_product tenant integrity mismatch.';
+    end if;
+
+  elsif new.system_key = 'opps_product' then
+    begin
+      v_external_uuid := new.external_id::uuid;
+    exception when invalid_text_representation then
+      raise exception 'commerce.product_links: invalid opps_product identity.';
+    end;
+
+    select tenant_id into v_opps_product_tenant
+    from public.products
+    where id = v_external_uuid;
+
+    if v_opps_product_tenant is null or v_opps_product_tenant <> v_product_tenant then
+      raise exception 'commerce.product_links: opps_product tenant integrity mismatch.';
+    end if;
+
+  elsif new.system_key = 'xlab_product' then
+    begin
+      v_external_uuid := new.external_id::uuid;
+    exception when invalid_text_representation then
+      raise exception 'commerce.product_links: invalid xlab_product identity.';
+    end;
+
+    if not exists (select 1 from public.xlab_products where id = v_external_uuid) then
+      raise exception 'commerce.product_links: xlab_product identity not found.';
     end if;
   end if;
 
@@ -444,6 +518,64 @@ revoke all on function public.get_xos_products_for_host(text, integer) from anon
 grant execute on function public.get_xos_products_for_host(text, integer) to authenticated;
 
 -- =====================================================================
+-- 8. get_xos_product_summary_for_host(p_hostname) - authenticated only
+--    Narrow aggregate-only RPC so Overview can show an accurate total
+--    without pulling a capped page of product rows just to count them
+--    (get_xos_products_for_host is capped defensively - .length on a
+--    capped list silently reads as a total once a tenant exceeds the
+--    cap, which this RPC exists specifically to avoid).
+-- =====================================================================
+
+create function public.get_xos_product_summary_for_host(p_hostname text)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path to 'public'
+as $function$
+declare
+  resolved_tenant_id uuid;
+  products_enabled boolean;
+  result jsonb;
+begin
+  select tenant_id
+  into resolved_tenant_id
+  from public.resolve_authenticated_tenant_host(p_hostname, 'xos_admin')
+  limit 1;
+
+  if resolved_tenant_id is null then
+    raise exception 'XOS access denied.';
+  end if;
+
+  select coalesce(tc.enabled, false)
+  into products_enabled
+  from public.tenant_capabilities tc
+  where tc.tenant_id = resolved_tenant_id
+    and tc.capability_key = 'products';
+
+  if not coalesce(products_enabled, false) then
+    raise exception 'Products are not available for this workspace.';
+  end if;
+
+  select jsonb_build_object(
+    'total', count(*) filter (where status <> 'archived'),
+    'published', count(*) filter (where status = 'published'),
+    'draft', count(*) filter (where status = 'draft'),
+    'unavailable', count(*) filter (where status <> 'archived' and availability = 'unavailable')
+  )
+  into result
+  from commerce.products
+  where tenant_id = resolved_tenant_id;
+
+  return result;
+end;
+$function$;
+
+revoke all on function public.get_xos_product_summary_for_host(text) from public;
+revoke all on function public.get_xos_product_summary_for_host(text) from anon;
+grant execute on function public.get_xos_product_summary_for_host(text) to authenticated;
+
+-- =====================================================================
 -- Post-apply verification (run manually, not part of this script):
 --   select has_function_privilege('anon', 'public.get_xos_capabilities_for_host(text)', 'EXECUTE'); -- expect false
 --   select has_function_privilege('anon', 'public.get_xos_products_for_host(text,integer)', 'EXECUTE'); -- expect false
@@ -452,4 +584,5 @@ grant execute on function public.get_xos_products_for_host(text, integer) to aut
 --   select has_table_privilege('authenticated', 'public.tenant_capabilities', 'SELECT'); -- expect false
 --   select has_table_privilege('anon', 'commerce.product_links', 'SELECT'); -- expect false
 --   select has_table_privilege('authenticated', 'commerce.product_links', 'SELECT'); -- expect false
+--   select has_function_privilege('anon', 'public.get_xos_product_summary_for_host(text)', 'EXECUTE'); -- expect false
 -- =====================================================================

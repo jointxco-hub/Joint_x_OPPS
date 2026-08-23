@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getXosOrderDetail, listXosCapabilities, listXosFiles, listXosOrders, listXosProducts, listXosRequests } from '@/lib/xosModules';
+import { getXosOrderDetail, getXosProductSummary, listXosCapabilities, listXosFiles, listXosOrders, listXosProducts, listXosRequests } from '@/lib/xosModules';
 
 // Each hook is its own query with its own limit, so Overview's small
 // summary fetch and a module page's full list fetch are independently
@@ -49,6 +49,17 @@ export function useXosProducts({ hostname, limit, enabled = true }) {
   return useQuery({
     queryKey: ['xos-products', hostname, limit],
     queryFn: () => listXosProducts({ hostname, limit }).then(unwrap),
+    enabled: enabled && Boolean(hostname),
+    staleTime: 30_000,
+  });
+}
+
+// Aggregate counts, not a capped list - see getXosProductSummary(). Used
+// by Overview instead of useXosProducts()'s .data.length.
+export function useXosProductSummary({ hostname, enabled = true }) {
+  return useQuery({
+    queryKey: ['xos-product-summary', hostname],
+    queryFn: () => getXosProductSummary({ hostname }).then(unwrap),
     enabled: enabled && Boolean(hostname),
     staleTime: 30_000,
   });

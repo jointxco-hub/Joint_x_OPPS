@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { FileText, FolderOpen, Package, ShoppingBag } from 'lucide-react';
-import { useXosCapabilities, useXosFiles, useXosOrders, useXosProducts, useXosRequests } from '@/lib/useXosData';
+import { useXosCapabilities, useXosFiles, useXosOrders, useXosProductSummary, useXosRequests } from '@/lib/useXosData';
 import { getClientSafeOrderStatus } from '@/lib/xosOrderStatus';
 import { getClientSafeRequestStatus } from '@/lib/xosRequestStatus';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader, StatusBadge, formatCurrency, formatDate } from './xosUi';
@@ -12,9 +12,10 @@ import { EmptyState, ErrorState, ListSkeleton, PageHeader, StatusBadge, formatCu
 const OVERVIEW_ORDERS_LIMIT = 10;
 const OVERVIEW_REQUESTS_LIMIT = 10;
 const OVERVIEW_FILES_LIMIT = 5;
-// Narrow, count-only use - no revenue/payment analytics, no full catalog
-// pull just to show a card.
-const OVERVIEW_PRODUCTS_LIMIT = 10;
+// Products intentionally does NOT use a capped list + .length here - see
+// useXosProductSummary(). A capped list's length silently reads as an
+// accurate total once a tenant exceeds the cap, which get_xos_product_
+// summary_for_host's dedicated aggregate avoids by construction.
 
 function greeting() {
   const hour = new Date().getHours();
@@ -46,10 +47,10 @@ export default function XOSOverview({ gate }) {
   const files = useXosFiles({ hostname: gate.hostname, limit: OVERVIEW_FILES_LIMIT });
   const capabilities = useXosCapabilities({ hostname: gate.hostname });
   const productsEnabled = Boolean(capabilities.data?.products?.enabled);
-  const products = useXosProducts({ hostname: gate.hostname, limit: OVERVIEW_PRODUCTS_LIMIT, enabled: productsEnabled });
+  const productSummary = useXosProductSummary({ hostname: gate.hostname, enabled: productsEnabled });
 
-  const loading = orders.isLoading || requests.isLoading || files.isLoading || capabilities.isLoading || (productsEnabled && products.isLoading);
-  const anyError = orders.error || requests.error || files.error || (productsEnabled && products.error);
+  const loading = orders.isLoading || requests.isLoading || files.isLoading || capabilities.isLoading || (productsEnabled && productSummary.isLoading);
+  const anyError = orders.error || requests.error || files.error || (productsEnabled && productSummary.error);
 
   const openRequests = (requests.data || []).filter((r) => r.status !== 'actioned' && r.status !== 'closed');
   const onHoldOrders = (orders.data || []).filter((o) => getClientSafeOrderStatus(o).key === 'on_hold');
@@ -74,7 +75,7 @@ export default function XOSOverview({ gate }) {
             <section className={`grid gap-3 sm:grid-cols-2 ${productsEnabled ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
               <MetricCard icon={Package} label="Orders" value={orders.data?.length ?? 0} to="/orders" />
               {productsEnabled && (
-                <MetricCard icon={ShoppingBag} label="Products" value={products.data?.length ?? 0} to="/products" />
+                <MetricCard icon={ShoppingBag} label="Products" value={productSummary.data?.total ?? 0} to="/products" />
               )}
               <MetricCard icon={FileText} label="Open requests" value={openRequests.length} to="/requests" />
               <MetricCard icon={FolderOpen} label="Files" value={files.data?.length ?? 0} to="/files" />

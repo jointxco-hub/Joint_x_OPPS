@@ -17,10 +17,22 @@ historical X LAB ↔ OPPS pattern of building systems independently and
 retrofitting identity/sync later. See "XOS / X LAB / OPPS Interoperability
 Contract" below.
 
+**Second amendment**, from independent pre-production review, before
+this PR was pushed for merge: strengthened `client_product` tenant
+integrity to check all three tenants (commerce product, `client_products`,
+and its linked `clients` row) rather than two; added real referential/
+tenant validation for `opps_product` and `xlab_product` links instead of
+leaving them entirely to future adapter code; replaced Overview's
+capped-list-length Products count with a dedicated
+`get_xos_product_summary_for_host` aggregate RPC; and corrected this
+document's earlier, inaccurate claim that `client_products` has "no
+concept of a client-browsable catalog" (it does — see below).
+
 ## Authority model — why `client_products` was not repurposed
 
 `public.client_products` (audited before writing any code — see column
-list below) is the existing managed/B2B/client-approval product system:
+list below) is the existing **managed, client-account/reorder/approval
+product layer**:
 
 ```
 xlab_product_id, opps_product_id, client_facing_name, internal_name,
@@ -33,16 +45,34 @@ last_ordered_at, revision, created_by, updated_by, approved_by,
 approved_at, primary_mockup_asset_id
 ```
 
-It models Joint X producing one custom, quoted item for one client, with
-staff approval and production configuration baked into every row. It has
-no concept of a client-browsable catalog, no `availability` state, no
-per-tenant publish/draft lifecycle, and its `client_id` scoping is
-one-client-at-a-time, not the tenant-wide "everyone at this workspace can
-see this" model a catalog needs. Retrofitting a generic browsable-catalog
-concept onto it would conflate two genuinely different authority models —
-bespoke-quoted-production vs. tenant-catalog-browsing — for the sake of
-reusing a table. `client_products` is untouched by this phase and remains
-exactly what it already was.
+**Correction from an earlier draft of this document:** `client_products`
+is *not* missing client-facing catalog concepts — it already has
+`visible_in_account`, `reorder_enabled`, `client_price`,
+`available_variants`, `primary_mockup_url`, and artwork/revision/order-link
+relationships (`created_from_order_id`, `revision`,
+`primary_mockup_asset_id`). It is not repurposed as the universal
+Commerce authority not because it lacks those concepts, but because of
+what it's scoped and centered on:
+
+- **`client_id`-scoped**, not tenant-wide — it models one client's
+  specific approved relationship to one product, not "every customer at
+  this workspace can browse this."
+- **Production/approval-centric** — `requires_quote`, `approved_by`/
+  `approved_at`, `revision`, `internal_notes`, `production_instructions`
+  are all live parts of its data model; a generic draft/published/archived
+  catalog item has no equivalent concept.
+- **Tied to managed Joint X service/product workflows** — it exists
+  because Joint X staff produce and approve a specific item for a
+  specific client, not because a tenant is running a self-service catalog.
+
+`commerce.products` is the generic **tenant-wide commercial/B2C catalog
+authority** — every customer at a tenant sees the same published catalog,
+with no per-client approval step. `client_products` remains exactly what
+it already was, untouched by this phase. This distinction matters
+because XOS must integrate with X LAB Account, not unknowingly rebuild
+it — see `commerce.product_links` below, which is the bridge that lets
+a commerce product reference an existing `client_products` relationship
+rather than duplicating what it already models.
 
 `public.products` and `public.orders` were also explicitly *not* made the
 universal commerce authority, per the architectural decision handed down
@@ -156,12 +186,37 @@ bridge rather than creating a second, disconnected one — `client_products`
 already carries `xlab_product_id`/`opps_product_id`, so a single
 `client_product` link transitively reaches both X LAB and OPPS identity
 without `commerce.product_links` needing to know about either directly.
+
 Direct `opps_product`/`xlab_product` links are supported by the schema
-(the `system_key` check constraint allows them) for cases where no
-`client_products` row exists yet, but are not implemented or exercised by
-anything in this phase — when they are used by a future adapter, that
-adapter is responsible for not creating conflicting duplicate authority
-with an existing `client_product` link for the same commerce product.
+for cases where no `client_products` row exists yet — their referential
+integrity is enforced by the trigger, not left entirely to future adapter
+code, but their semantics differ per system because the underlying data
+does:
+
+- **`opps_product`**: `external_id` must be a valid UUID referencing an
+  existing `public.products` row, **and that row's `tenant_id` must equal
+  the commerce product's tenant** — confirmed via preflight that
+  `public.products.tenant_id` is tenant-scoped in production data (the
+  column is nullable at the schema level, so a `null` tenant is rejected
+  just as firmly as a mismatched one, never silently accepted).
+- **`xlab_product`**: `external_id` must be a valid UUID referencing an
+  existing `public.xlab_products` row. **No tenant equality check** —
+  confirmed via preflight that `public.xlab_products` has no `tenant_id`
+  column at all, because it represents a reusable/shared X LAB catalog
+  identity rather than a tenant-scoped record. `product_links.tenant_id`
+  is still forced to the commerce product's tenant regardless (see below)
+  — only the *existence* of the xlab_product is checked, not a tenant
+  match that the underlying data has no way to express.
+- **`legacy_gsb_product`** intentionally remains opaque in this phase —
+  its source system is outside this canonical production schema and will
+  need its own adapter contract later.
+
+A future adapter using `opps_product`/`xlab_product` directly is
+responsible for not creating conflicting duplicate authority with an
+existing `client_product` link for the same commerce product — the
+schema does not currently prevent one commerce product from holding both
+a `client_product` link and a direct `opps_product`/`xlab_product` link
+simultaneously.
 
 ### Uniqueness and tenant protections
 
@@ -169,15 +224,31 @@ with an existing `client_product` link for the same commerce product.
   from input** — a `BEFORE INSERT OR UPDATE` trigger
   (`commerce.sync_product_link_tenant_id`) overwrites it from the parent
   `commerce_product_id` on every write, identical in spirit to the
-  variant-tenant-forcing trigger. Verified live: inserting a link with an
-  explicitly wrong `tenant_id` still lands with the correct one.
-- For `system_key = 'client_product'` specifically, the same trigger
-  additionally resolves the linked `client_products` row and rejects the
-  write outright if that row's own `tenant_id` doesn't match — so a
-  `client_products` row cannot be borrowed across tenants even though
-  both the commerce product and the client_products row individually
-  resolve to real rows. Verified live: Tenant A's commerce product
-  cannot link to Tenant B's `client_products` row.
+  variant-tenant-forcing trigger, for every `system_key`. Verified live:
+  inserting a link with an explicitly wrong `tenant_id` still lands with
+  the correct one.
+- For `system_key = 'client_product'`, the same trigger independently
+  re-resolves **both** the linked `client_products` row **and** its
+  linked `clients` row, and requires all three tenants (commerce product,
+  `client_products.tenant_id`, `clients.tenant_id`) to agree.
+  `client_products`' own `client_products_set_tenant_id()` trigger only
+  *derives* `tenant_id` when it is `null` on insert — it never corrects
+  or rejects a caller-supplied value that disagrees with the client's own
+  tenant, so `client_products.tenant_id` alone cannot be trusted as a
+  stand-in for "the client actually belongs to this tenant." Rejected:
+  an invalid UUID, a missing `client_products` row, a missing linked
+  `clients` row, or either tenant disagreeing with the commerce product's
+  — all via generic internal-integrity exceptions (never client-facing,
+  so the exact failure reason isn't exposed). Verified live: Tenant A's
+  commerce product cannot link to Tenant B's `client_products` row.
+- For `system_key = 'opps_product'`, the trigger requires a valid UUID,
+  an existing `public.products` row, and that row's `tenant_id` to equal
+  the commerce product's tenant. Verified live: Tenant A → Tenant B OPPS
+  product rejected; a non-existent `opps_product` id rejected.
+- For `system_key = 'xlab_product'`, the trigger requires a valid UUID
+  and an existing `public.xlab_products` row — no tenant check (see
+  above for why). Verified live: existing xlab_product accepted;
+  non-existent id rejected.
 - `UNIQUE (tenant_id, system_key, external_id)` is the single constraint
   that both (a) prevents an exact duplicate mapping and (b) prevents one
   external identity (e.g. one `client_products` row) from silently
@@ -257,11 +328,12 @@ distinguish "off" from "never set up."
 
 ## XOS safe RPC contract
 
-Both new RPCs follow the exact pattern already established by
-`get_xos_orders_for_host` / `get_xos_requests_for_host` /
-`get_xos_files_for_host` / `create_xos_request_for_host` /
-`get_xos_order_detail_for_host` (all read-audited before writing this
-migration, all unmodified by it):
+All three new RPCs (`get_xos_capabilities_for_host`,
+`get_xos_products_for_host`, `get_xos_product_summary_for_host`) follow
+the exact pattern already established by `get_xos_orders_for_host` /
+`get_xos_requests_for_host` / `get_xos_files_for_host` /
+`create_xos_request_for_host` / `get_xos_order_detail_for_host` (all
+read-audited before writing this migration, all unmodified by it):
 
 - `SECURITY DEFINER`, `SET search_path TO 'public'`, tenant resolved
   *only* via `resolve_authenticated_tenant_host(p_hostname, 'xos_admin')`
@@ -273,18 +345,41 @@ migration, all unmodified by it):
   with a protocol, path, query string, fragment, or port before it ever
   reaches a domain lookup — confirmed live: `host/../other-host` and
   `host?tenant=other-host` both denied, not partially matched).
-- `get_xos_products_for_host` additionally requires the `products`
-  capability to be `enabled` for the resolved tenant, raising a second,
-  equally generic `'Products are not available for this workspace.'`
-  otherwise — the same message whether the capability is explicitly
-  disabled or was never configured, and it never reveals anything about
-  any *other* tenant's capability state.
+- `get_xos_products_for_host` and `get_xos_product_summary_for_host` both
+  additionally require the `products` capability to be `enabled` for the
+  resolved tenant, raising a second, equally generic `'Products are not
+  available for this workspace.'` otherwise — the same message whether
+  the capability is explicitly disabled or was never configured, and it
+  never reveals anything about any *other* tenant's capability state.
 - `EXECUTE` explicitly revoked from `PUBLIC` and `anon`, granted only to
   `authenticated` — written this way specifically because of the XOS 2.5
   discovery that a fresh `CREATE FUNCTION` on this project auto-grants
   `EXECUTE` to `PUBLIC` (which `anon`/`authenticated` both inherit)
   unless revoked from `PUBLIC` by name; naming individual roles in a
   revoke does not remove a separate `PUBLIC` grant.
+
+### `get_xos_product_summary_for_host` — accurate counts, not a capped length
+
+Overview originally showed `useXosProducts(...).data.length` under a
+"Products" metric card, using the same `limit`-capped
+`get_xos_products_for_host` the Products module itself uses. That reads
+as an exact total right up until a tenant has more products than the
+cap, at which point it silently under-counts with no visual indication.
+Fixed by adding a dedicated, narrow aggregate RPC instead of trying to
+make the list-based count "close enough":
+
+```json
+{ "total": <non-archived count>, "published": <count>, "draft": <count>, "unavailable": <non-archived, availability='unavailable' count> }
+```
+
+No product rows, no `tenant_id`, no pagination — just four `count(*)
+filter (...)` aggregates over `commerce.products` for the resolved
+tenant. Overview now calls this instead of pulling any product rows at
+all; the Products module page itself is unaffected and continues to use
+`get_xos_products_for_host` for its list. Verified live with more than
+10 products for one tenant (exceeding the list RPC's default page size)
+that the summary's `total` stays accurate while a capped list's `.length`
+would not.
 
 ### Client-visible vs. Joint X–only fields
 
@@ -307,13 +402,17 @@ list unconditionally.
 
 ## Test matrix
 
-`supabase/tests/xos_products_foundation.sql` — 32 checks, disposable
-fixtures (five brand-new tenants across both fixture blocks, never
-touching Demo/GSB/Joint X real data), wrapped in one transaction ending
-`rollback;`. Validated live 2026-08-23 (original 24, then re-validated
-together with the 8 interoperability additions below): **32/32 pass**,
-confirmed zero rows/schema persisted afterward (`commerce` schema absent,
-zero `xos3a-test%` tenant rows, zero `XOS 3A Link Test%` client rows).
+`supabase/tests/xos_products_foundation.sql` — 48 checks, disposable
+fixtures (nine brand-new tenants across four fixture blocks, plus
+read-only references to two real, existing QA fixture tenants and one
+real `public.products` row — never mutated, never touching Demo/GSB/
+Joint X real data otherwise), wrapped in one transaction ending
+`rollback;`. Validated live 2026-08-23 (original 24, then 32 with the
+interoperability amendment, then re-validated together with the 16
+review-amendment additions below): **48/48 pass**, confirmed zero
+rows/schema persisted afterward (`commerce` schema absent, zero
+`xos3a-test%` tenant rows, zero `XOS 3A%`-named client/client_products
+rows).
 
 | # | Check | Result |
 |---|---|---|
@@ -350,11 +449,28 @@ omits disabled ones) — also PASS.
 | 9 | Deleting a commerce product cascades and removes its mapping rows | PASS |
 | 10 | All of the above rolls back completely | PASS (confirmed via post-run persistence check, not an in-transaction assertion) |
 
+### Review amendment tests (strengthened tenant integrity + product summary)
+
+| # | Check | Result |
+|---|---|---|
+| A | `client_products.tenant_id` = commerce tenant, but linked `clients.tenant_id` differs → rejected | PASS |
+| B | Fully consistent chain (commerce = `client_products.tenant_id` = `clients.tenant_id`) succeeds | PASS |
+| C | Direct `opps_product`, same tenant (real Demo XOS product, read-only reference) → succeeds | PASS |
+| D | Tenant A QA commerce product → Demo XOS's real OPPS product (different tenant) → rejected | PASS |
+| E | Nonexistent `opps_product` id → rejected | PASS |
+| F | Existing `xlab_product` (real, tenant-less catalog identity, read-only reference) → succeeds | PASS |
+| G | Nonexistent `xlab_product` id → rejected | PASS |
+| H | `get_xos_product_summary_for_host` total (11, excluding 1 archived of 12 inserted) stays accurate while a `limit=5` list call returns only 5 | PASS |
+| I | Summary RPC: wrong host → `XOS access denied.`; capability disabled → `Products are not available for this workspace.` (matches the products RPC's exact contract) | PASS |
+| J | `anon`/`authenticated` have no `SELECT`/`INSERT`/`UPDATE`/`DELETE` on `commerce.product_links` | PASS |
+| K | `anon`/`authenticated` have no `SELECT`/`INSERT`/`UPDATE`/`DELETE` on `commerce.products`/`commerce.product_variants` (not SELECT-only) | PASS |
+
 ## Rollback
 
 Everything in this phase is additive and reversible:
 
 ```sql
+drop function if exists public.get_xos_product_summary_for_host(text);
 drop function if exists public.get_xos_products_for_host(text, integer);
 drop function if exists public.get_xos_capabilities_for_host(text);
 drop table if exists public.tenant_capabilities;

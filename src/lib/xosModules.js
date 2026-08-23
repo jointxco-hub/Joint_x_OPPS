@@ -9,6 +9,7 @@ function missingRpc(message = "") {
     || lower.includes("create_xos_request_for_host")
     || lower.includes("get_xos_capabilities_for_host")
     || lower.includes("get_xos_products_for_host")
+    || lower.includes("get_xos_product_summary_for_host")
     || lower.includes("could not find the function")
     || lower.includes("does not exist");
 }
@@ -112,6 +113,29 @@ export async function listXosProducts({ hostname, limit = 50 } = {}) {
     return { data: Array.isArray(data) ? data : [], error: null };
   } catch {
     return { data: [], error: "Could not load XOS products." };
+  }
+}
+
+// Aggregate-only counts (total/published/draft/unavailable) - Overview
+// uses this instead of the length of a capped listXosProducts() page, so
+// the displayed total never silently reads as accurate once a tenant
+// exceeds that cap.
+export async function getXosProductSummary({ hostname } = {}) {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+
+  try {
+    const { data, error } = await supabase.rpc("get_xos_product_summary_for_host", {
+      p_hostname: hostname,
+    });
+
+    if (error) {
+      if (missingRpc(error.message)) return { data: null, error: "Product summary is not deployed yet." };
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || null, error: null };
+  } catch {
+    return { data: null, error: "Could not load product summary." };
   }
 }
 

@@ -2,22 +2,26 @@
 --
 -- Assumes migration 20260823111500_xos_3a_products_foundation.sql has
 -- already been applied (does not create commerce.*, tenant_capabilities,
--- or any of the three RPCs/triggers itself). Entirely self-contained and
--- disposable: wrapped in one transaction, every fixture (five brand-new
--- disposable tenants across two fixture blocks, domains, memberships,
+-- or any of the four RPCs/triggers itself). Entirely self-contained and
+-- disposable: wrapped in one transaction, every fixture (nine brand-new
+-- disposable tenants across four fixture blocks, domains, memberships,
 -- capabilities, clients, client_products, commerce products, variants,
 -- product_links) is created and torn down by the final `rollback;` -
--- nothing here persists, and nothing here touches real production data
--- (Demo XOS, GSB, or any other real tenant/client/client_products/
--- membership row).
+-- nothing here persists. Two tests (opps_product same/cross-tenant link)
+-- reference two REAL, existing, long-established QA fixture tenants
+-- (Demo XOS, Tenant A QA) and one REAL existing public.products row
+-- belonging to Demo XOS, read-only - only the id is ever read, never
+-- mutated. Nothing here touches any real GSB row.
 --
 -- Run with: supabase db query --linked --file supabase/tests/xos_products_foundation.sql
 --
 -- Validated 2026-08-23 against production (read-only from the
--- perspective of anything outside this transaction): 32/32 checks pass
--- (24 original + 8 added by the interoperability amendment covering
--- commerce.product_links). Confirmed zero rows/schema persisted
--- afterward.
+-- perspective of anything outside this transaction, and read-only
+-- against the two real reference rows noted above): 48/48 checks pass
+-- (24 original + 8 from the interoperability amendment + 16 from the
+-- review-amendment strengthening client_product/opps_product/xlab_product
+-- validation and the product-summary fix). Confirmed zero rows/schema
+-- persisted afterward.
 
 begin;
 
@@ -340,7 +344,7 @@ begin
     values (v_tenant_a, v_commerce_product_a2, 'client_product', v_client_product_b::text);
     insert into test_results (test_name, passed, detail) values ('cross_tenant_client_product_link_rejected', false, 'insert unexpectedly succeeded');
   exception when others then
-    insert into test_results (test_name, passed, detail) values ('cross_tenant_client_product_link_rejected', sqlerrm like '%different tenant%', sqlerrm);
+    insert into test_results (test_name, passed, detail) values ('cross_tenant_client_product_link_rejected', sqlerrm ilike '%tenant integrity mismatch%', sqlerrm);
   end;
 
   -- ---- Test 4: exact duplicate mapping (same commerce product too) rejected ----
@@ -383,6 +387,241 @@ insert into test_results (test_name, passed, detail)
 select 'anon_no_select_product_links', not has_table_privilege('anon', 'commerce.product_links', 'SELECT'), '';
 insert into test_results (test_name, passed, detail)
 select 'authenticated_no_select_product_links', not has_table_privilege('authenticated', 'commerce.product_links', 'SELECT'), '';
+
+-- =====================================================================
+-- Review amendment: strengthened client_product tenant integrity,
+-- opps_product/xlab_product validation, and product-summary tests. Own
+-- disposable fixtures throughout. Tests C/D reference two REAL, existing,
+-- long-established QA fixture tenants (Demo XOS, Tenant A QA) and one
+-- REAL existing public.products row belonging to Demo XOS, read-only -
+-- never mutated, only referenced by id, and every disposable row created
+-- against those tenant ids is rolled back with everything else. Never
+-- touches any real GSB row.
+-- =====================================================================
+
+do $$
+declare
+  v_tenant_p uuid := gen_random_uuid();
+  v_tenant_q uuid := gen_random_uuid();
+  v_client_q uuid;
+  v_client_product_mismatched uuid;
+  v_client_product_ok uuid;
+  v_commerce_product_p uuid;
+  v_commerce_product_p2 uuid;
+  v_link_id uuid;
+  v_demo_xos_tenant uuid := '8d4496f1-7c39-4f30-b6d4-45bded18a421';
+  v_tenant_a_qa uuid := 'fb3d7741-901f-4bc7-bbc5-1010c39d540d';
+  v_real_opps_product uuid := 'c4be558b-591c-4a85-826b-b5426c4dd798'; -- real, existing, Demo XOS tenant - read-only reference
+  v_real_xlab_product uuid := 'd3e4f872-9666-4173-b4a4-d4c98ef2c42c'; -- real, existing, tenant-less X LAB catalog identity - read-only reference
+  v_commerce_product_demo uuid;
+  v_commerce_product_tenant_a_qa uuid;
+  v_commerce_product_xlab_host uuid;
+begin
+  insert into public.tenants (id, slug, name, status, settings)
+  values
+    (v_tenant_p, 'xos3a-test-integrity-p', 'XOS 3A Integrity Test Tenant P', 'active', '{}'::jsonb),
+    (v_tenant_q, 'xos3a-test-integrity-q', 'XOS 3A Integrity Test Tenant Q', 'active', '{}'::jsonb);
+
+  insert into public.clients (tenant_id, name)
+  values (v_tenant_q, 'XOS 3A Integrity Test Client Q') returning id into v_client_q;
+
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_p, 'integrity-test-product-p', 'Integrity Test Product P', 100, 'available', 'published')
+  returning id into v_commerce_product_p;
+
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_p, 'integrity-test-product-p2', 'Integrity Test Product P2', 100, 'available', 'published')
+  returning id into v_commerce_product_p2;
+
+  -- ---- Test A: client_products.tenant_id explicitly set to match the
+  -- commerce product's tenant (P), but its linked client actually belongs
+  -- to a DIFFERENT tenant (Q). client_products_set_tenant_id() only
+  -- derives tenant_id when null, so this inconsistent state is directly
+  -- constructible - exactly what the strengthened trigger must catch. ----
+  insert into public.client_products (tenant_id, client_id, client_facing_name, status)
+  values (v_tenant_p, v_client_q, 'Integrity Test Mismatched Client Product', 'draft')
+  returning id into v_client_product_mismatched;
+
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_p, v_commerce_product_p, 'client_product', v_client_product_mismatched::text);
+    insert into test_results (test_name, passed, detail) values ('client_product_linked_client_tenant_mismatch_rejected', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('client_product_linked_client_tenant_mismatch_rejected', sqlerrm ilike '%tenant integrity mismatch%', sqlerrm);
+  end;
+
+  -- ---- Test B: fully consistent same-tenant chain (commerce = client_products.tenant_id = clients.tenant_id) succeeds ----
+  insert into public.clients (tenant_id, name)
+  values (v_tenant_p, 'XOS 3A Integrity Test Client P') returning id into v_client_q; -- reuse var, new client under tenant P this time
+  insert into public.client_products (tenant_id, client_id, client_facing_name, status)
+  values (v_tenant_p, v_client_q, 'Integrity Test Consistent Client Product', 'draft')
+  returning id into v_client_product_ok;
+
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_p, v_commerce_product_p2, 'client_product', v_client_product_ok::text)
+    returning id into v_link_id;
+    insert into test_results (test_name, passed, detail)
+    select 'client_product_fully_consistent_chain_succeeds', tenant_id = v_tenant_p, ''
+    from commerce.product_links where id = v_link_id;
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('client_product_fully_consistent_chain_succeeds', false, sqlerrm);
+  end;
+
+  -- ---- Test C: direct opps_product, same tenant (Demo XOS), succeeds ----
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_demo_xos_tenant, 'integrity-test-opps-link-product', 'Integrity Test OPPS Link Product', 100, 'available', 'published')
+  returning id into v_commerce_product_demo;
+
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_demo_xos_tenant, v_commerce_product_demo, 'opps_product', v_real_opps_product::text)
+    returning id into v_link_id;
+    insert into test_results (test_name, passed, detail)
+    select 'opps_product_same_tenant_link_succeeds', tenant_id = v_demo_xos_tenant, ''
+    from commerce.product_links where id = v_link_id;
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('opps_product_same_tenant_link_succeeds', false, sqlerrm);
+  end;
+
+  -- ---- Test D: Tenant A QA commerce product -> Demo XOS's real OPPS product (different tenant) rejected ----
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_a_qa, 'integrity-test-opps-cross-tenant-product', 'Integrity Test OPPS Cross-Tenant Product', 100, 'available', 'published')
+  returning id into v_commerce_product_tenant_a_qa;
+
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_a_qa, v_commerce_product_tenant_a_qa, 'opps_product', v_real_opps_product::text);
+    insert into test_results (test_name, passed, detail) values ('opps_product_cross_tenant_rejected', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('opps_product_cross_tenant_rejected', sqlerrm ilike '%tenant integrity mismatch%', sqlerrm);
+  end;
+
+  -- ---- Test E: nonexistent opps_product rejected ----
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_p, v_commerce_product_p, 'opps_product', gen_random_uuid()::text);
+    insert into test_results (test_name, passed, detail) values ('opps_product_nonexistent_rejected', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('opps_product_nonexistent_rejected', sqlerrm ilike '%tenant integrity mismatch%', sqlerrm);
+  end;
+
+  -- ---- Test F: existing xlab_product mapping succeeds, no tenant check applies ----
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_p, 'integrity-test-xlab-link-product', 'Integrity Test X LAB Link Product', 100, 'available', 'published')
+  returning id into v_commerce_product_xlab_host;
+
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_p, v_commerce_product_xlab_host, 'xlab_product', v_real_xlab_product::text)
+    returning id into v_link_id;
+    insert into test_results (test_name, passed, detail)
+    select 'xlab_product_existing_link_succeeds', tenant_id = v_tenant_p, ''
+    from commerce.product_links where id = v_link_id;
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('xlab_product_existing_link_succeeds', false, sqlerrm);
+  end;
+
+  -- ---- Test G: nonexistent xlab_product rejected ----
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_p, v_commerce_product_p2, 'xlab_product', gen_random_uuid()::text);
+    insert into test_results (test_name, passed, detail) values ('xlab_product_nonexistent_rejected', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('xlab_product_nonexistent_rejected', sqlerrm ilike '%not found%', sqlerrm);
+  end;
+end $$;
+
+-- =====================================================================
+-- Test H/I: product summary accuracy beyond a capped list, and its
+-- security contract matching get_xos_products_for_host exactly.
+-- =====================================================================
+
+do $$
+declare
+  v_tenant_s uuid := gen_random_uuid();
+  v_tenant_t uuid := gen_random_uuid();
+  v_host_s text := 'xos3a-test-summary-s.xos.jointx.co.za';
+  v_host_t text := 'xos3a-test-summary-t.xos.jointx.co.za';
+  v_user_s uuid := '2e7f49f6-1bee-456a-8d3b-a623a8df0dec';
+  v_user_t uuid := '792b41b0-0df3-474e-8095-290598d91891';
+  v_capped_list jsonb;
+  v_summary jsonb;
+  i int;
+begin
+  insert into public.tenants (id, slug, name, status, settings)
+  values
+    (v_tenant_s, 'xos3a-test-summary-tenant-s', 'XOS 3A Summary Test Tenant S', 'active', '{}'::jsonb),
+    (v_tenant_t, 'xos3a-test-summary-tenant-t', 'XOS 3A Summary Test Tenant T', 'active', '{}'::jsonb);
+
+  insert into public.tenant_domains (tenant_id, hostname, surface, status, is_primary)
+  values
+    (v_tenant_s, v_host_s, 'xos_admin', 'active', true),
+    (v_tenant_t, v_host_t, 'xos_admin', 'active', true);
+
+  insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role, status)
+  values
+    (v_tenant_s, v_user_s, 'owner', 'active'),
+    (v_tenant_t, v_user_t, 'owner', 'active');
+
+  insert into public.tenant_capabilities (tenant_id, capability_key, enabled, config)
+  values
+    (v_tenant_s, 'products', true, '{}'::jsonb),
+    (v_tenant_t, 'products', false, '{}'::jsonb);
+
+  -- 12 products for tenant S - more than a small capped list would show
+  for i in 1..12 loop
+    insert into commerce.products (tenant_id, slug, name, price, availability, status)
+    values (v_tenant_s, 'summary-test-product-' || i, 'Summary Test Product ' || i, 100, 'available',
+      case when i <= 8 then 'published' when i <= 11 then 'draft' else 'archived' end);
+  end loop;
+
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_user_s, 'role', 'authenticated')::text, true);
+
+  -- ---- Test H: summary total stays accurate even though the list RPC is capped ----
+  v_capped_list := public.get_xos_products_for_host(v_host_s, 5);
+  v_summary := public.get_xos_product_summary_for_host(v_host_s);
+  insert into test_results (test_name, passed, detail) values (
+    'summary_total_accurate_beyond_capped_list_length',
+    jsonb_array_length(v_capped_list) = 5
+      and (v_summary->>'total')::int = 11  -- 12 inserted, 1 archived excluded
+      and (v_summary->>'published')::int = 8
+      and (v_summary->>'draft')::int = 3,
+    'capped_list_len=' || jsonb_array_length(v_capped_list) || ' summary=' || v_summary::text
+  );
+
+  -- ---- Test I: summary RPC matches the products RPC's exact security contract ----
+  begin
+    perform public.get_xos_product_summary_for_host(v_host_t); -- tenant S member on tenant T host
+    insert into test_results (test_name, passed, detail) values ('summary_wrong_host_denied', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('summary_wrong_host_denied', sqlerrm = 'XOS access denied.', sqlerrm);
+  end;
+
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_user_t, 'role', 'authenticated')::text, true);
+  begin
+    perform public.get_xos_product_summary_for_host(v_host_t); -- tenant T member, capability disabled
+    insert into test_results (test_name, passed, detail) values ('summary_capability_disabled_denied', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('summary_capability_disabled_denied', sqlerrm = 'Products are not available for this workspace.', sqlerrm);
+  end;
+end $$;
+
+-- ---- Test J: product_links - anon/authenticated have no SELECT/INSERT/UPDATE/DELETE ----
+insert into test_results (test_name, passed, detail)
+select 'anon_no_crud_product_links', not has_table_privilege('anon', 'commerce.product_links', 'SELECT,INSERT,UPDATE,DELETE'), '';
+insert into test_results (test_name, passed, detail)
+select 'authenticated_no_crud_product_links', not has_table_privilege('authenticated', 'commerce.product_links', 'SELECT,INSERT,UPDATE,DELETE'), '';
+
+-- ---- Test K: commerce.products/product_variants - same, full CRUD check not just SELECT ----
+insert into test_results (test_name, passed, detail)
+select 'anon_no_crud_commerce_products', not has_table_privilege('anon', 'commerce.products', 'SELECT,INSERT,UPDATE,DELETE'), '';
+insert into test_results (test_name, passed, detail)
+select 'authenticated_no_crud_commerce_products', not has_table_privilege('authenticated', 'commerce.products', 'SELECT,INSERT,UPDATE,DELETE'), '';
+insert into test_results (test_name, passed, detail)
+select 'anon_no_crud_commerce_variants', not has_table_privilege('anon', 'commerce.product_variants', 'SELECT,INSERT,UPDATE,DELETE'), '';
+insert into test_results (test_name, passed, detail)
+select 'authenticated_no_crud_commerce_variants', not has_table_privilege('authenticated', 'commerce.product_variants', 'SELECT,INSERT,UPDATE,DELETE'), '';
 
 -- ---- Final report ----
 select n, test_name, passed, detail from test_results order by n;
