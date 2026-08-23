@@ -278,6 +278,12 @@ export function buildInvoiceOrderSyncPlan(invoiceItems = [], orderProducts = [],
   const matchedKeys = new Set();
   const merged = [];
   const diff = { added: [], updated: [], missingFromInvoice: [] };
+  // Every newly-minted line_id must be written back onto the invoice item
+  // it came from (source_order_item_id) so a later sync recognizes it as
+  // already-matched instead of minting another duplicate. This function
+  // only computes the pairing - persisting it is the caller's job
+  // (apply_invoice_order_sync), atomically alongside the order write.
+  const linePairings = [];
 
   items.forEach((item) => {
     const key = item.source_order_item_id || null;
@@ -309,15 +315,17 @@ export function buildInvoiceOrderSyncPlan(invoiceItems = [], orderProducts = [],
         });
       }
     } else {
+      const newLineId = newOrderLineId();
       merged.push({
         ...mapped,
-        line_id: newOrderLineId(),
+        line_id: newLineId,
         catalog_item_id: "",
         inventory_item_id: "",
         source: "custom",
         added_from_invoice: true,
       });
       diff.added.push(mapped.name);
+      if (item.id) linePairings.push({ invoiceItemId: item.id, newLineId });
     }
   });
 
@@ -342,7 +350,7 @@ export function buildInvoiceOrderSyncPlan(invoiceItems = [], orderProducts = [],
 
   if (shipping) diff.shipping = buildShippingDiff(shipping);
 
-  return { products: merged, diff };
+  return { products: merged, diff, linePairings };
 }
 
 // PHASE 8: a quantity/price change or a removal candidate on a line that
