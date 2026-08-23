@@ -108,6 +108,29 @@ tenant derived from the selected client before any OPPS link is allowed;
 only the *count* of Commerce products one same-tenant OPPS product may
 back has changed, not which tenant may reach it.
 
+**Round 3 - existing managed product mapping consistency.** Path 1's
+ensure-mapping logic - `coalesce(v_client_product.opps_product_id,
+p_existing_opps_product_id)` - correctly preserves an already-established
+mapping when the caller passes nothing, but a bare `coalesce()` also
+silently *ignored* a caller-supplied id that actively disagreed with the
+established one: staff picking a different OPPS/X LAB product in the UI
+for an already-mapped managed product would see the call succeed while the
+stored mapping quietly stayed unchanged. `admin_onboard_client_commerce_product`
+now raises `ONBOARD_EXISTING_MAPPING_CONFLICT` before any write when
+`client_product.opps_product_id`/`xlab_product_id` is non-null AND the
+caller supplies a different non-null id for that field. Passing `NULL`
+still retains the existing mapping; passing the *same* id is a no-op
+continue; an existing `NULL` field may still be filled by a supplied id,
+subject to the same tenant/existence checks as always. Changing an
+established operational mapping is meant to be a separate, deliberate
+reconciliation action later, not an accidental side effect of onboarding.
+`admin_get_client_commerce_onboarding_options` now also returns each
+`client_products` entry's own `opps_product_id`/`opps_product_name`/
+`xlab_product_id`/`xlab_product_name`, and the UI prefills the product
+name and both pickers from the selected existing managed product, locking
+(rather than allowing edits to) any picker that already has an established
+mapping - see Internal UI below.
+
 ## Identity path (unchanged, reused)
 
 ```
@@ -143,9 +166,10 @@ xlab_products     products
   bypassed, not just empirically safe because that constraint holds today.
 - **`admin_get_client_commerce_onboarding_options(p_client_id)`** — backs
   the onboarding form's three pickers: this client's `client_products`
-  (with a `linked` flag), this tenant's OPPS products, and active X LAB
-  templates. No unrestricted browser table access is needed for any of the
-  three.
+  (with a `linked` flag, and its own `opps_product_id`/`opps_product_name`/
+  `xlab_product_id`/`xlab_product_name` if already established), this
+  tenant's OPPS products, and active X LAB templates. No unrestricted
+  browser table access is needed for any of the three.
 
 All three RPCs are `SECURITY DEFINER`, revoke `EXECUTE` from
 `PUBLIC`/`anon`, grant to `authenticated`, and gate internally with
@@ -169,8 +193,10 @@ one: `admin_onboard_client_commerce_product` may **link** an existing
   Verified against the selected client and its tenant. The row is never
   duplicated; an already-set `opps_product_id`/`xlab_product_id` on it is
   re-verified and its `product_links` row ensured (self-healing). A param
-  only fills a currently-null field — it never silently overwrites an
-  already-different established mapping.
+  only fills a currently-null field. A param that actively **disagrees**
+  with an already-different established mapping is rejected outright with
+  `ONBOARD_EXISTING_MAPPING_CONFLICT` (not silently ignored - see "Round 3"
+  above) - the same id, or no id at all, both proceed normally.
 - **Path 2 — new managed product**: no existing `client_products` row is
   passed. A shell is created with safe defaults (`status: draft`,
   `visible_in_account: false`, `reorder_enabled: true`, no approval
@@ -285,7 +311,13 @@ onboarding paths as an explicit "Managed Product Source" choice:
 - **Link existing managed product**: a searchable selector
   (`admin_get_client_commerce_onboarding_options`, filtered to this
   client's *unlinked* `client_products`) - staff picks a name, never pastes
-  a UUID.
+  a UUID. Selecting one prefills the product name from
+  `client_facing_name` and, if that managed product already carries an
+  OPPS and/or X LAB mapping, prefills those pickers too - and **locks**
+  them (shown as read-only "Existing managed-product mapping" instead of
+  an editable selector) rather than letting a staff pick silently conflict
+  with the established mapping. Changing an already-established mapping is
+  a separate reconciliation action, not part of onboarding.
 
 An "Integration" section offers an OPPS product search-select (same
 options RPC, tenant-scoped) and an X LAB template search-select (same RPC,
@@ -307,9 +339,14 @@ reuse across products plus one-mapping-per-product rejection,
 `legacy_gsb_product`/`client_product` external-identity conflict still
 rejected deterministically, the integration-health RPC returning the
 correct per-product OPPS/X LAB link without row multiplication,
-non-destructive mapping-only updates (byte-level field/variant
-preservation), the inventory/XOS-client-RPC boundary, and a
-fixture-provenance check. Every
+existing-managed-product mapping consistency (NULL retains the
+established OPPS/X LAB mapping, the same id is a no-op, a *different* id
+is rejected with `ONBOARD_EXISTING_MAPPING_CONFLICT` and leaves no partial
+writes, for both OPPS and X LAB independently, plus the onboarding-options
+RPC surfacing those established mappings and no duplicate managed product
+appearing across any of these calls), non-destructive mapping-only updates
+(byte-level field/variant preservation), the inventory/XOS-client-RPC
+boundary, and a fixture-provenance check. Every
 simulated identity (including the "is_opps_staff() staff" one) is a fresh
 disposable `auth.users`/`public.users` row created and rolled back inside
 the transaction - no real production account is read or relied upon. A

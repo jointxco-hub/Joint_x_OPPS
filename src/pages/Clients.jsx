@@ -755,6 +755,14 @@ function ProductOnboardingDialog({ clientId, onClose, onSaved }) {
   const oppsProducts = options?.opps_products || [];
   const xlabTemplates = options?.xlab_templates || [];
   const unlinkedClientProducts = clientProducts.filter((cp) => !cp.linked);
+  // The picked managed product's own established OPPS/X LAB mapping, if
+  // any - prefilled and locked below so a staff selection can never
+  // silently conflict with it (see ONBOARD_EXISTING_MAPPING_CONFLICT).
+  const selectedExistingClientProduct = managedSource === "existing"
+    ? clientProducts.find((cp) => cp.id === form.existing_client_product_id) || null
+    : null;
+  const oppsLocked = Boolean(selectedExistingClientProduct?.opps_product_id);
+  const xlabLocked = Boolean(selectedExistingClientProduct?.xlab_product_id);
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const addVariant = () => { setVariantsTouched(true); setVariants((v) => [...v, emptyOnboardingVariant(v.length)]); };
@@ -850,7 +858,10 @@ function ProductOnboardingDialog({ clientId, onClose, onSaved }) {
                   type="button"
                   variant={managedSource === "new" ? "default" : "outline"}
                   className={managedSource === "new" ? "bg-emerald-600 hover:bg-emerald-700" : ""}
-                  onClick={() => { setManagedSource("new"); set({ existing_client_product_id: "" }); }}
+                  onClick={() => {
+                    setManagedSource("new");
+                    set({ existing_client_product_id: "", name: "", existing_opps_product_id: "", existing_xlab_product_id: "" });
+                  }}
                 >
                   Create new managed product
                 </Button>
@@ -869,7 +880,15 @@ function ProductOnboardingDialog({ clientId, onClose, onSaved }) {
                   <SearchSelect
                     options={unlinkedClientProducts}
                     value={form.existing_client_product_id}
-                    onChange={(id) => set({ existing_client_product_id: id })}
+                    onChange={(id) => {
+                      const cp = unlinkedClientProducts.find((c) => c.id === id);
+                      set({
+                        existing_client_product_id: id,
+                        name: cp?.client_facing_name || "",
+                        existing_opps_product_id: cp?.opps_product_id || "",
+                        existing_xlab_product_id: cp?.xlab_product_id || "",
+                      });
+                    }}
                     getLabel={(cp) => cp.client_facing_name}
                     placeholder={unlinkedClientProducts.length ? "Select a managed product to link" : "No unlinked managed products for this client"}
                   />
@@ -986,23 +1005,41 @@ function ProductOnboardingDialog({ clientId, onClose, onSaved }) {
               <Label className="mb-0">Integration</Label>
               <div className="space-y-2">
                 <Label className="text-xs text-slate-500">OPPS Product (optional)</Label>
-                <SearchSelect
-                  options={oppsProducts}
-                  value={form.existing_opps_product_id}
-                  onChange={(id) => set({ existing_opps_product_id: id })}
-                  getLabel={(p) => p.name}
-                  placeholder="Not linked - onboarding will show 'OPPS mapping pending'"
-                />
+                {oppsLocked ? (
+                  <>
+                    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                      {selectedExistingClientProduct?.opps_product_name || selectedExistingClientProduct?.opps_product_id}
+                    </div>
+                    <p className="text-xs text-slate-500">Existing managed-product mapping - changing an already-established OPPS mapping is a separate reconciliation action, not part of onboarding.</p>
+                  </>
+                ) : (
+                  <SearchSelect
+                    options={oppsProducts}
+                    value={form.existing_opps_product_id}
+                    onChange={(id) => set({ existing_opps_product_id: id })}
+                    getLabel={(p) => p.name}
+                    placeholder="Not linked - onboarding will show 'OPPS mapping pending'"
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label className="text-xs text-slate-500">X LAB Template (optional)</Label>
-                <SearchSelect
-                  options={xlabTemplates}
-                  value={form.existing_xlab_product_id}
-                  onChange={(id) => set({ existing_xlab_product_id: id })}
-                  getLabel={(x) => x.category ? `${x.name} (${x.category})` : x.name}
-                  placeholder="Not linked - reusable across multiple products in this tenant"
-                />
+                {xlabLocked ? (
+                  <>
+                    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                      {selectedExistingClientProduct?.xlab_product_name || selectedExistingClientProduct?.xlab_product_id}
+                    </div>
+                    <p className="text-xs text-slate-500">Existing managed-product mapping - changing an already-established X LAB mapping is a separate reconciliation action, not part of onboarding.</p>
+                  </>
+                ) : (
+                  <SearchSelect
+                    options={xlabTemplates}
+                    value={form.existing_xlab_product_id}
+                    onChange={(id) => set({ existing_xlab_product_id: id })}
+                    getLabel={(x) => x.category ? `${x.name} (${x.category})` : x.name}
+                    placeholder="Not linked - reusable across multiple products in this tenant"
+                  />
+                )}
               </div>
             </div>
 

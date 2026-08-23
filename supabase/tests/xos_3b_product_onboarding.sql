@@ -84,6 +84,13 @@ declare
   v_xlab_product_2 uuid := gen_random_uuid();
   v_existing_cp uuid := gen_random_uuid();
 
+  -- existing-managed-product mapping-consistency fixtures (round 3)
+  v_mapping_conflict_opps_a uuid := gen_random_uuid();
+  v_mapping_conflict_opps_b uuid := gen_random_uuid();
+  v_mapping_conflict_xlab_a uuid := gen_random_uuid();
+  v_mapping_conflict_xlab_b uuid := gen_random_uuid();
+  v_cp_with_established_mapping uuid := gen_random_uuid();
+
   v_result jsonb;
   v_result2 jsonb;
   v_result3 jsonb;
@@ -149,12 +156,23 @@ begin
     (v_opps_product_a, 'XOS 3B Test OPPS Product A', 'active', v_tenant_a),
     (v_opps_product_a2, 'XOS 3B Test OPPS Product A2', 'active', v_tenant_a),
     (v_opps_product_a3, 'XOS 3B Test OPPS Product A3', 'active', v_tenant_a),
-    (v_opps_product_b, 'XOS 3B Test OPPS Product B', 'active', v_tenant_b);
+    (v_opps_product_b, 'XOS 3B Test OPPS Product B', 'active', v_tenant_b),
+    (v_mapping_conflict_opps_a, 'XOS 3B Test Mapping Conflict OPPS A', 'active', v_tenant_a),
+    (v_mapping_conflict_opps_b, 'XOS 3B Test Mapping Conflict OPPS B', 'active', v_tenant_a);
 
   insert into public.xlab_products (id, name, category, base_price)
   values
     (v_xlab_product, 'XOS 3B Test XLAB Product', 'apparel', 100),
-    (v_xlab_product_2, 'XOS 3B Test XLAB Product 2', 'apparel', 150);
+    (v_xlab_product_2, 'XOS 3B Test XLAB Product 2', 'apparel', 150),
+    (v_mapping_conflict_xlab_a, 'XOS 3B Test Mapping Conflict XLAB A', 'apparel', 120),
+    (v_mapping_conflict_xlab_b, 'XOS 3B Test Mapping Conflict XLAB B', 'apparel', 130);
+
+  -- A managed product created OUTSIDE Commerce (e.g. via ProductsEditor in
+  -- the order drawer) that already carries an established OPPS + X LAB
+  -- mapping before it is ever onboarded into Commerce - exactly the
+  -- real-world shape the mapping-conflict fix protects.
+  insert into public.client_products (id, tenant_id, client_id, client_facing_name, status, opps_product_id, xlab_product_id)
+  values (v_cp_with_established_mapping, v_tenant_a, v_client_a, 'XOS 3B Established Mapping Product', 'draft', v_mapping_conflict_opps_a, v_mapping_conflict_xlab_a);
 
   insert into public.client_products (id, tenant_id, client_id, client_facing_name, status)
   values (v_existing_cp, v_tenant_a, v_client_a, 'XOS 3B Pre-existing Managed Product', 'draft');
@@ -483,6 +501,104 @@ begin
   exception when others then
     insert into test_results (test_name, passed, detail) values ('one_commerce_product_rejects_second_xlab_template', sqlerrm like 'ONBOARD_LINK_CONFLICT%', sqlerrm);
   end;
+
+  ---- ================================================================
+  ---- Existing managed product - mapping consistency (round 3)
+  ---- ================================================================
+
+  -- A/D-null: caller supplies NULL for both -> established OPPS_A/XLAB_A
+  -- mappings are retained (this is also the first-ever Commerce onboarding
+  -- of this client_product, so name is required).
+  v_result3 := public.admin_onboard_client_commerce_product(
+    v_client_a, jsonb_build_object('name', 'XOS 3B Established Mapping Product'), '[]'::jsonb,
+    v_cp_with_established_mapping, null, null, 'xos3b-test-key-mapping-null'
+  );
+  insert into test_results (test_name, passed, detail) values (
+    'existing_mapping_null_retains_opps',
+    v_result3->>'opps_linked' = 'true'
+      and (select opps_product_id from public.client_products where id = v_cp_with_established_mapping) = v_mapping_conflict_opps_a,
+    v_result3::text
+  );
+  insert into test_results (test_name, passed, detail) values (
+    'existing_mapping_null_retains_xlab',
+    v_result3->>'xlab_linked' = 'true'
+      and (select xlab_product_id from public.client_products where id = v_cp_with_established_mapping) = v_mapping_conflict_xlab_a,
+    v_result3::text
+  );
+
+  -- B/D-same: caller supplies the SAME id for both -> succeeds, no
+  -- duplicate commerce product or client_product, idempotent in effect.
+  v_result2 := public.admin_onboard_client_commerce_product(
+    v_client_a, '{}'::jsonb, null,
+    v_cp_with_established_mapping, v_mapping_conflict_opps_a, v_mapping_conflict_xlab_a, 'xos3b-test-key-mapping-same'
+  );
+  insert into test_results (test_name, passed, detail) values (
+    'existing_mapping_same_id_succeeds',
+    v_result2->>'commerce_product_id' = v_result3->>'commerce_product_id'
+      and v_result2->>'client_product_id' = v_result3->>'client_product_id'
+      and v_result2->>'opps_linked' = 'true' and v_result2->>'xlab_linked' = 'true'
+      and (select count(*) from public.client_products where id = v_cp_with_established_mapping) = 1,
+    v_result2::text
+  );
+
+  -- C: caller supplies a DIFFERENT OPPS id -> ONBOARD_EXISTING_MAPPING_CONFLICT, no write at all.
+  begin
+    perform public.admin_onboard_client_commerce_product(
+      v_client_a, jsonb_build_object('name', 'Should Not Apply'), '[]'::jsonb,
+      v_cp_with_established_mapping, v_mapping_conflict_opps_b, null, 'xos3b-test-key-mapping-conflict-opps'
+    );
+    insert into test_results (test_name, passed, detail) values ('existing_mapping_different_opps_rejected', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('existing_mapping_different_opps_rejected', sqlerrm like 'ONBOARD_EXISTING_MAPPING_CONFLICT%', sqlerrm);
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'existing_mapping_opps_conflict_left_no_partial_writes',
+    (select opps_product_id from public.client_products where id = v_cp_with_established_mapping) = v_mapping_conflict_opps_a
+      and (select name from commerce.products where id = (v_result3->>'commerce_product_id')::uuid) = 'XOS 3B Established Mapping Product'
+      and not exists (select 1 from commerce.onboarding_operations where idempotency_key = 'xos3b-test-key-mapping-conflict-opps'),
+    'checked opps_product_id/name/operations-row unchanged after rejected conflict'
+  );
+
+  -- D-different: same, but for X LAB.
+  begin
+    perform public.admin_onboard_client_commerce_product(
+      v_client_a, '{}'::jsonb, null,
+      v_cp_with_established_mapping, null, v_mapping_conflict_xlab_b, 'xos3b-test-key-mapping-conflict-xlab'
+    );
+    insert into test_results (test_name, passed, detail) values ('existing_mapping_different_xlab_rejected', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('existing_mapping_different_xlab_rejected', sqlerrm like 'ONBOARD_EXISTING_MAPPING_CONFLICT%', sqlerrm);
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'existing_mapping_xlab_conflict_left_no_partial_writes',
+    (select xlab_product_id from public.client_products where id = v_cp_with_established_mapping) = v_mapping_conflict_xlab_a
+      and not exists (select 1 from commerce.onboarding_operations where idempotency_key = 'xos3b-test-key-mapping-conflict-xlab'),
+    'checked xlab_product_id/operations-row unchanged after rejected conflict'
+  );
+
+  -- E: onboarding-options RPC surfaces the established mappings.
+  v_result := public.admin_get_client_commerce_onboarding_options(v_client_a);
+  insert into test_results (test_name, passed, detail) values (
+    'onboarding_options_returns_existing_mappings',
+    (
+      select e->>'opps_product_id' = v_mapping_conflict_opps_a::text
+        and e->>'xlab_product_id' = v_mapping_conflict_xlab_a::text
+        and e->>'opps_product_name' = 'XOS 3B Test Mapping Conflict OPPS A'
+        and e->>'xlab_product_name' = 'XOS 3B Test Mapping Conflict XLAB A'
+      from jsonb_array_elements(v_result->'client_products') e
+      where e->>'id' = v_cp_with_established_mapping::text
+    ),
+    (select e::text from jsonb_array_elements(v_result->'client_products') e where e->>'id' = v_cp_with_established_mapping::text)
+  );
+
+  -- F: across every call above (success, idempotent-same, two rejected
+  -- conflicts), the managed product row was never duplicated.
+  insert into test_results (test_name, passed, detail) values (
+    'existing_mapping_flow_creates_no_duplicate_managed_product',
+    (select count(*) from public.client_products where id = v_cp_with_established_mapping) = 1
+      and (select count(*) from public.client_products where client_facing_name = 'XOS 3B Established Mapping Product') = 1,
+    'checked exactly-one row for the established-mapping client_product'
+  );
 
   ---- ================================================================
   ---- Non-destructive mapping-only update (item 6)

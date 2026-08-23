@@ -249,6 +249,20 @@ revoke all on function commerce.ensure_product_link(uuid, uuid, text, text, bool
 -- mapping-only call), an empty array [] deliberately clears it, and a
 -- non-empty array atomically replaces the full set. For a brand new
 -- commerce product, NULL behaves like [] (nothing to preserve yet).
+--
+-- Existing managed product (Path 1) mapping conflicts (post-review): if
+-- p_existing_client_product_id's row already has a non-null
+-- opps_product_id/xlab_product_id AND the caller also supplies a
+-- DIFFERENT non-null p_existing_opps_product_id/p_existing_xlab_product_id,
+-- this raises ONBOARD_EXISTING_MAPPING_CONFLICT before any write - a
+-- caller-supplied id that disagrees with an already-established mapping
+-- is never silently dropped in favor of the old value (which is what a
+-- bare coalesce() would otherwise do). Passing NULL keeps the existing
+-- mapping; passing the SAME id is a no-op continue; an existing NULL
+-- field may still be filled by the supplied id, subject to the same
+-- tenant/existence checks as always. Changing an already-established
+-- operational mapping is a separate, deliberate reconciliation action,
+-- not a side effect of onboarding.
 -- =====================================================================
 
 create function public.admin_onboard_client_commerce_product(
@@ -353,7 +367,26 @@ begin
     -- Ensure-mapping semantics: prefer whatever is already established on
     -- the row so a replay/edit call can never silently override a
     -- different existing mapping; only fall back to the passed param when
-    -- the row's own field is null.
+    -- the row's own field is null. But a caller-supplied id that actively
+    -- DISAGREES with an already-established mapping must never be
+    -- silently dropped in favor of the old value (post-review: this was
+    -- previously exactly what coalesce() did - staff selecting a
+    -- different OPPS/X LAB product in the UI would appear to succeed
+    -- while the stored mapping quietly stayed unchanged). Reject that
+    -- explicitly instead; changing an established operational mapping is
+    -- a separate, deliberate reconciliation action, not a side effect of
+    -- onboarding.
+    if v_client_product.opps_product_id is not null
+       and p_existing_opps_product_id is not null
+       and v_client_product.opps_product_id <> p_existing_opps_product_id then
+      raise exception using errcode = 'P0001', message = 'ONBOARD_EXISTING_MAPPING_CONFLICT: existing managed product already has a different OPPS mapping';
+    end if;
+    if v_client_product.xlab_product_id is not null
+       and p_existing_xlab_product_id is not null
+       and v_client_product.xlab_product_id <> p_existing_xlab_product_id then
+      raise exception using errcode = 'P0001', message = 'ONBOARD_EXISTING_MAPPING_CONFLICT: existing managed product already has a different X LAB mapping';
+    end if;
+
     v_effective_opps_id := coalesce(v_client_product.opps_product_id, p_existing_opps_product_id);
     v_effective_xlab_id := coalesce(v_client_product.xlab_product_id, p_existing_xlab_product_id);
   else
@@ -672,7 +705,12 @@ grant execute on function public.admin_get_client_commerce_products(uuid) to aut
 --      - client_products: this client's managed products, with a
 --        `linked` flag (already has a commerce_product_id via
 --        product_links) so the UI can default to showing unlinked
---        candidates for the "link existing managed product" path.
+--        candidates for the "link existing managed product" path, and
+--        (post-review) its own opps_product_id/xlab_product_id plus
+--        human-readable names where set, so the UI can prefill and lock
+--        those pickers instead of letting a staff selection silently
+--        conflict with an already-established mapping (see
+--        ONBOARD_EXISTING_MAPPING_CONFLICT above).
 --      - opps_products: this client's tenant's OPPS products.
 --      - xlab_templates: active, tenant-agnostic shared X LAB templates.
 -- =====================================================================
@@ -714,11 +752,17 @@ begin
           'linked', exists (
             select 1 from commerce.product_links pl
             where pl.system_key = 'client_product' and pl.external_id = cp.id::text
-          )
+          ),
+          'opps_product_id', cp.opps_product_id,
+          'opps_product_name', opps.name,
+          'xlab_product_id', cp.xlab_product_id,
+          'xlab_product_name', xlab.name
         )
         order by cp.client_facing_name
       )
       from public.client_products cp
+      left join public.products opps on opps.id = cp.opps_product_id
+      left join public.xlab_products xlab on xlab.id = cp.xlab_product_id
       where cp.client_id = p_client_id
     ), '[]'::jsonb),
     'opps_products', coalesce((
