@@ -454,6 +454,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         client_id: order.client_id,
         opps_product_id: orderLine.catalog_item_id,
         client_facing_name: orderLine.name || "Untitled product",
+        // Set only on genuine creation - reusing an already-existing
+        // client_product (the branch above) never touches this, so an
+        // already-set source order is never overwritten.
+        created_from_order_id: order.id,
       });
       clientProductCreated = true;
     } else if (!clientProduct && orderLine.inventory_item_id) {
@@ -464,6 +468,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         client_id: order.client_id,
         inventory_item_id: orderLine.inventory_item_id,
         client_facing_name: orderLine.name || "Untitled product",
+        created_from_order_id: order.id,
       });
       clientProductCreated = true;
     }
@@ -872,6 +877,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             client_id: order.client_id,
             opps_product_id: pickedItem.id,
             client_facing_name: finalName,
+            created_from_order_id: order.id,
           });
         }
         return { clientProduct, matchedItem: pickedItem };
@@ -885,6 +891,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             client_id: order.client_id,
             inventory_item_id: pickedItem.id,
             client_facing_name: finalName,
+            created_from_order_id: order.id,
           });
         }
         return { clientProduct, matchedItem: pickedItem };
@@ -893,6 +900,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         client_id: order.client_id,
         opps_product_id: null,
         client_facing_name: finalName,
+        created_from_order_id: order.id,
       });
       return { clientProduct, matchedItem: null };
     },
