@@ -23,20 +23,41 @@ function hasProductionIdentity(product) {
   return Boolean(product?.catalog_item_id || product?.inventory_item_id || product?.client_product_id);
 }
 
-// True when an invoice-synced order line has never been given a
-// production identity of any kind. `added_from_invoice` is permanent
-// provenance metadata - it is set once by the invoice sync and must
-// NEVER be cleared/overwritten by anything in this module or its
-// callers - so this function is the ONLY thing that decides whether
-// the warning banner is still shown. Once the line has any production
+// True when a line has never been given a production identity of any
+// kind, regardless of where it came from. Originally gated on
+// added_from_invoice === true, which meant any other unconfigured line
+// (a stock/legacy line, a line synced in directly from an X LAB
+// checkout via sync-to-opps, a manually-typed custom line) never showed
+// this at all, even though it has the exact same underlying gap - a
+// line_id with no catalog_item_id/inventory_item_id/client_product_id
+// to compose against. Confirmed live: sync-to-opps's oppsProducts
+// mapping (X LAB repo, supabase/functions/sync-to-opps/index.ts) never
+// sets any of the three identity fields for ANY line, invoice-origin or
+// not - this is a structural gap in that path, not specific to invoice
+// sync.
+//
+// `added_from_invoice` remains permanent provenance metadata - it is
+// set once by the invoice sync and must NEVER be cleared/overwritten by
+// anything in this module or its callers - it now only changes which
+// banner text is shown (see needsConfigurationBannerText below), not
+// whether the banner shows at all. Once the line has any production
 // identity or is explicitly marked commercial_only_confirmed, this
-// flips to false and the banner stops appearing, even though
-// added_from_invoice itself is still true.
+// flips to false and the banner stops appearing.
 export function needsConfiguration(product) {
-  if (!product || product.added_from_invoice !== true) return false;
+  if (!product?.line_id) return false;
   if (hasProductionIdentity(product)) return false;
   if (product.commercial_only_confirmed) return false;
   return true;
+}
+
+// Provenance-only text for the banner needsConfiguration(p) gates -
+// "Added from invoice" is shown when true, a generic label otherwise.
+// Never used to decide eligibility - that's needsConfiguration's job
+// alone.
+export function needsConfigurationBannerText(product) {
+  return product?.added_from_invoice
+    ? "Added from invoice · Production setup required"
+    : "Production setup required";
 }
 
 // The single gate for whether a line can show the Production panel,
