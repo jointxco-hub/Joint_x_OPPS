@@ -32,7 +32,7 @@ const moreNav = [
   { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
   { name: "Clients", page: "Clients", icon: Building2 },
-  { name: "Managed Clients", page: "ManagedClients", icon: Rocket },
+  { name: "Managed Clients", page: "ManagedClients", icon: Rocket, adminOnly: true },
   { name: "Projects", page: "Projects", icon: FolderOpen },
   { name: "WhatsApp Inbox", page: "MetaWhatsAppInbox", icon: Inbox, adminOnly: true },
   { name: "Client Requests", page: "ClientRequests", icon: Inbox },
