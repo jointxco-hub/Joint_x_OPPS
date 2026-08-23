@@ -2,18 +2,22 @@
 --
 -- Assumes migration 20260823111500_xos_3a_products_foundation.sql has
 -- already been applied (does not create commerce.*, tenant_capabilities,
--- or either RPC itself). Entirely self-contained and disposable: wrapped
--- in one transaction, every fixture (two/three brand-new disposable
--- tenants, domains, memberships, capabilities, products, variants) is
--- created and torn down by the final `rollback;` - nothing here persists,
--- and nothing here touches real production data (Demo XOS, GSB, or any
--- other real tenant/client/membership row).
+-- or any of the three RPCs/triggers itself). Entirely self-contained and
+-- disposable: wrapped in one transaction, every fixture (five brand-new
+-- disposable tenants across two fixture blocks, domains, memberships,
+-- capabilities, clients, client_products, commerce products, variants,
+-- product_links) is created and torn down by the final `rollback;` -
+-- nothing here persists, and nothing here touches real production data
+-- (Demo XOS, GSB, or any other real tenant/client/client_products/
+-- membership row).
 --
 -- Run with: supabase db query --linked --file supabase/tests/xos_products_foundation.sql
 --
 -- Validated 2026-08-23 against production (read-only from the
--- perspective of anything outside this transaction): 24/24 checks pass.
--- Confirmed zero rows/schema persisted afterward.
+-- perspective of anything outside this transaction): 32/32 checks pass
+-- (24 original + 8 added by the interoperability amendment covering
+-- commerce.product_links). Confirmed zero rows/schema persisted
+-- afterward.
 
 begin;
 
@@ -253,6 +257,132 @@ select 'existing_xos_functions_still_present',
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in ('get_xos_orders_for_host','get_xos_requests_for_host','get_xos_files_for_host','create_xos_request_for_host','get_internal_client_requests');
+
+-- =====================================================================
+-- Interoperability amendment - commerce.product_links tests. Own
+-- disposable fixtures (distinct tenants/clients/client_products from the
+-- block above), reusing real existing production clients/client_products
+-- rows NOT AT ALL - these are brand-new disposable rows in both tables,
+-- never touching any real GSB/Demo/Joint X client_products row.
+-- =====================================================================
+
+do $$
+declare
+  v_tenant_a uuid := gen_random_uuid();
+  v_tenant_b uuid := gen_random_uuid();
+  v_host_a text := 'xos3a-test-link-a.xos.jointx.co.za';
+  v_user_a uuid := 'defdceab-cddf-4863-9f2e-7473b6e2818d';
+  v_client_a uuid;
+  v_client_b uuid;
+  v_client_product_a uuid;
+  v_client_product_b uuid;
+  v_commerce_product_a uuid;
+  v_commerce_product_a2 uuid;
+  v_commerce_product_a3 uuid;
+  v_link_id uuid;
+  v_result jsonb;
+begin
+  insert into public.tenants (id, slug, name, status, settings)
+  values
+    (v_tenant_a, 'xos3a-test-link-tenant-a', 'XOS 3A Link Test Tenant A', 'active', '{}'::jsonb),
+    (v_tenant_b, 'xos3a-test-link-tenant-b', 'XOS 3A Link Test Tenant B', 'active', '{}'::jsonb);
+
+  insert into public.tenant_domains (tenant_id, hostname, surface, status, is_primary)
+  values (v_tenant_a, v_host_a, 'xos_admin', 'active', true);
+
+  insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role, status)
+  values (v_tenant_a, v_user_a, 'owner', 'active');
+
+  insert into public.tenant_capabilities (tenant_id, capability_key, enabled, config)
+  values (v_tenant_a, 'products', true, '{}'::jsonb);
+
+  insert into public.clients (tenant_id, name)
+  values (v_tenant_a, 'XOS 3A Link Test Client A') returning id into v_client_a;
+
+  insert into public.clients (tenant_id, name)
+  values (v_tenant_b, 'XOS 3A Link Test Client B') returning id into v_client_b;
+
+  insert into public.client_products (tenant_id, client_id, client_facing_name, status)
+  values (v_tenant_a, v_client_a, 'Link Test Client Product A', 'draft') returning id into v_client_product_a;
+
+  insert into public.client_products (tenant_id, client_id, client_facing_name, status)
+  values (v_tenant_b, v_client_b, 'Link Test Client Product B', 'draft') returning id into v_client_product_b;
+
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_a, 'link-test-product-a', 'Link Test Product A', 100, 'available', 'published')
+  returning id into v_commerce_product_a;
+
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_a, 'link-test-product-a2', 'Link Test Product A2', 100, 'available', 'published')
+  returning id into v_commerce_product_a2;
+
+  insert into commerce.products (tenant_id, slug, name, price, availability, status)
+  values (v_tenant_a, 'link-test-product-a3', 'Link Test Product A3', 100, 'available', 'published')
+  returning id into v_commerce_product_a3;
+
+  -- ---- Test 3: correct same-tenant client_product link succeeds, and
+  --      Test 1: link tenant is forced to the commerce product's tenant
+  --      even though v_tenant_b was deliberately passed in ----
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_b, v_commerce_product_a, 'client_product', v_client_product_a::text)
+    returning id into v_link_id;
+    insert into test_results (test_name, passed, detail)
+    select 'link_tenant_forced_to_commerce_product_tenant', tenant_id = v_tenant_a, 'link.tenant_id=' || tenant_id
+    from commerce.product_links where id = v_link_id;
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('link_tenant_forced_to_commerce_product_tenant', false, sqlerrm);
+  end;
+
+  -- ---- Test 2: Tenant A commerce product cannot link to Tenant B's client_product ----
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_a, v_commerce_product_a2, 'client_product', v_client_product_b::text);
+    insert into test_results (test_name, passed, detail) values ('cross_tenant_client_product_link_rejected', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('cross_tenant_client_product_link_rejected', sqlerrm like '%different tenant%', sqlerrm);
+  end;
+
+  -- ---- Test 4: exact duplicate mapping (same commerce product too) rejected ----
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_a, v_commerce_product_a, 'client_product', v_client_product_a::text);
+    insert into test_results (test_name, passed, detail) values ('exact_duplicate_mapping_rejected', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('exact_duplicate_mapping_rejected', sqlerrm ilike '%duplicate key%' or sqlerrm ilike '%unique%', sqlerrm);
+  end;
+
+  -- ---- Test 5: same client_product cannot map to a second, different commerce product in the same tenant ----
+  begin
+    insert into commerce.product_links (tenant_id, commerce_product_id, system_key, external_id)
+    values (v_tenant_a, v_commerce_product_a3, 'client_product', v_client_product_a::text);
+    insert into test_results (test_name, passed, detail) values ('client_product_cannot_map_to_second_commerce_product', false, 'insert unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('client_product_cannot_map_to_second_commerce_product', sqlerrm ilike '%duplicate key%' or sqlerrm ilike '%unique%', sqlerrm);
+  end;
+
+  -- ---- Test 6: products RPC never exposes product_links or external ids ----
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_user_a, 'role', 'authenticated')::text, true);
+  v_result := public.get_xos_products_for_host(v_host_a, 50);
+  insert into test_results (test_name, passed, detail) values (
+    'products_rpc_omits_links_and_external_ids',
+    not (v_result::text ilike '%product_links%')
+      and not (v_result::text ilike '%external_id%')
+      and not (v_result::text ilike '%' || v_client_product_a::text || '%'),
+    v_result::text
+  );
+
+  -- ---- Test 9: deleting a commerce product safely removes its mapping rows ----
+  delete from commerce.products where id = v_commerce_product_a;
+  insert into test_results (test_name, passed, detail)
+  select 'delete_commerce_product_removes_link', not exists (select 1 from commerce.product_links where id = v_link_id), '';
+end $$;
+
+-- ---- Test 7/8: anon/authenticated cannot directly touch product_links ----
+insert into test_results (test_name, passed, detail)
+select 'anon_no_select_product_links', not has_table_privilege('anon', 'commerce.product_links', 'SELECT'), '';
+insert into test_results (test_name, passed, detail)
+select 'authenticated_no_select_product_links', not has_table_privilege('authenticated', 'commerce.product_links', 'SELECT'), '';
 
 -- ---- Final report ----
 select n, test_name, passed, detail from test_results order by n;

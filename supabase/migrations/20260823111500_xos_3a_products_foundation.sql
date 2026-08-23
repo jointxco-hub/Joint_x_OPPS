@@ -11,10 +11,18 @@
 -- publish state, and retrofitting those onto it would conflate two
 -- different authority models. XOS 3A's commerce.products is additive,
 -- capability-gated, and fully reversible (drop the two new functions,
--- the two commerce tables and their schema, and tenant_capabilities -
+-- the three commerce tables and their schema, and tenant_capabilities -
 -- nothing else references them yet).
 --
--- Full detail: docs/XOS_3A_PRODUCTS_FOUNDATION.md
+-- commerce.product_links is the identity bridge to the rest of the
+-- ecosystem (X LAB Account / client_products, OPPS, future adapters) -
+-- it references the existing client_products bridge (which itself
+-- already carries xlab_product_id/opps_product_id), it does not
+-- duplicate it. Internal integration metadata only, never exposed
+-- through get_xos_products_for_host or any client-facing RPC.
+--
+-- Full detail: docs/XOS_3A_PRODUCTS_FOUNDATION.md, "XOS / X LAB / OPPS
+-- Interoperability Contract"
 
 -- =====================================================================
 -- 1. commerce schema - never exposed to PostgREST (not in the exposed
@@ -159,7 +167,113 @@ create trigger commerce_product_variants_set_updated_at
   for each row execute function public.update_updated_at();
 
 -- =====================================================================
--- 4. public.tenant_capabilities
+-- 4. commerce.product_links - identity bridge to the rest of the
+--    ecosystem (X LAB Account / client_products, OPPS, and any future
+--    adapter), NOT a second inventory/production ledger. Commerce owns
+--    commercial/customer-facing identity only; OPPS remains authoritative
+--    for production/inventory/supplier/cost data, and client_products
+--    remains the existing managed/B2B/client-approval bridge to X LAB and
+--    OPPS product identities (xlab_product_id/opps_product_id) - this
+--    table does not duplicate that bridge, it references it.
+--    Full contract: docs/XOS_3A_PRODUCTS_FOUNDATION.md, "XOS / X LAB /
+--    OPPS Interoperability Contract".
+-- =====================================================================
+
+create table commerce.product_links (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references public.tenants(id),
+  commerce_product_id uuid not null references commerce.products(id) on delete cascade,
+  system_key text not null,
+  external_id text not null,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint commerce_product_links_system_key_check
+    check (system_key in ('client_product', 'opps_product', 'xlab_product', 'legacy_gsb_product')),
+  -- One external identity maps to exactly one commerce product within a
+  -- given tenant/system boundary - this single constraint both prevents
+  -- duplicate mappings (the same external id linked twice) AND prevents
+  -- one external record (e.g. one client_products row) from silently
+  -- fanning out to multiple commerce products, since (tenant_id,
+  -- system_key, external_id) can only ever point at one row.
+  constraint commerce_product_links_identity_unique
+    unique (tenant_id, system_key, external_id)
+);
+
+create index commerce_product_links_product_idx
+  on commerce.product_links (commerce_product_id);
+create index commerce_product_links_tenant_system_idx
+  on commerce.product_links (tenant_id, system_key);
+
+alter table commerce.product_links enable row level security;
+-- Same "RLS enabled, zero policies, SECURITY DEFINER RPCs only" pattern
+-- as commerce.products/commerce.product_variants. This is internal
+-- integration metadata - no browser ever selects a sync target, and it
+-- is deliberately never exposed through get_xos_products_for_host or any
+-- other client-facing RPC.
+
+revoke all on commerce.product_links from public;
+revoke all on commerce.product_links from anon;
+revoke all on commerce.product_links from authenticated;
+
+-- Same tenant-forcing pattern as commerce.sync_variant_tenant_id():
+-- tenant_id is derived from the parent commerce product, never trusted
+-- from input, so a cross-tenant link is structurally impossible on the
+-- commerce side. Additionally, for system_key = 'client_product'
+-- (the preferred first ecosystem path - see docs), the linked
+-- public.client_products row's own tenant_id must independently match,
+-- so a client_product cannot be borrowed across tenants even though both
+-- sides individually resolve to a real row.
+create function commerce.sync_product_link_tenant_id()
+returns trigger
+language plpgsql
+as $function$
+declare
+  v_product_tenant uuid;
+  v_client_product_tenant uuid;
+begin
+  select tenant_id into v_product_tenant
+  from commerce.products
+  where id = new.commerce_product_id;
+
+  if v_product_tenant is null then
+    raise exception 'commerce.product_links.commerce_product_id must reference an existing product.';
+  end if;
+
+  new.tenant_id := v_product_tenant;
+
+  if new.system_key = 'client_product' then
+    begin
+      select tenant_id into v_client_product_tenant
+      from public.client_products
+      where id = new.external_id::uuid;
+    exception when invalid_text_representation then
+      raise exception 'commerce.product_links: external_id "%" is not a valid client_products id.', new.external_id;
+    end;
+
+    if v_client_product_tenant is null then
+      raise exception 'commerce.product_links: client_product % does not exist.', new.external_id;
+    end if;
+
+    if v_client_product_tenant <> v_product_tenant then
+      raise exception 'commerce.product_links: client_product % belongs to a different tenant than commerce product %.', new.external_id, new.commerce_product_id;
+    end if;
+  end if;
+
+  return new;
+end;
+$function$;
+
+create trigger commerce_product_links_sync_tenant
+  before insert or update of commerce_product_id, system_key, external_id on commerce.product_links
+  for each row execute function commerce.sync_product_link_tenant_id();
+
+create trigger commerce_product_links_set_updated_at
+  before update on commerce.product_links
+  for each row execute function public.update_updated_at();
+
+-- =====================================================================
+-- 5. public.tenant_capabilities
 -- =====================================================================
 
 create table if not exists public.tenant_capabilities (
@@ -189,7 +303,7 @@ create trigger tenant_capabilities_set_updated_at
   for each row execute function public.update_updated_at();
 
 -- =====================================================================
--- 5. get_xos_capabilities_for_host(p_hostname) - authenticated only
+-- 6. get_xos_capabilities_for_host(p_hostname) - authenticated only
 -- =====================================================================
 
 create function public.get_xos_capabilities_for_host(p_hostname text)
@@ -234,7 +348,9 @@ revoke all on function public.get_xos_capabilities_for_host(text) from anon;
 grant execute on function public.get_xos_capabilities_for_host(text) to authenticated;
 
 -- =====================================================================
--- 6. get_xos_products_for_host(p_hostname, p_limit) - authenticated only
+-- 7. get_xos_products_for_host(p_hostname, p_limit) - authenticated only
+--    (unchanged by the interoperability amendment - product_links is
+--    deliberately never referenced here; see requirement G)
 -- =====================================================================
 
 create function public.get_xos_products_for_host(p_hostname text, p_limit integer default 50)
@@ -334,4 +450,6 @@ grant execute on function public.get_xos_products_for_host(text, integer) to aut
 --   select has_table_privilege('anon', 'commerce.products', 'SELECT'); -- expect false
 --   select has_table_privilege('authenticated', 'commerce.products', 'SELECT'); -- expect false
 --   select has_table_privilege('authenticated', 'public.tenant_capabilities', 'SELECT'); -- expect false
+--   select has_table_privilege('anon', 'commerce.product_links', 'SELECT'); -- expect false
+--   select has_table_privilege('authenticated', 'commerce.product_links', 'SELECT'); -- expect false
 -- =====================================================================
