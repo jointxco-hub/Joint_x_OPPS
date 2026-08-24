@@ -8,17 +8,28 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Globe, ExternalLink, Github, Plus, RefreshCw, Rocket, Search, Users } from "lucide-react";
 import { adminListManagedClients } from "@/api/managedClients";
 import { CommerceProductsSection } from "@/components/commerce/CommerceProductsSection";
+import {
+  WorkspaceFormDialog,
+  ProductsCapabilityCard,
+  XosActivationCard,
+  AddManagedBrandWizard,
+} from "@/components/managedClients/ManagedClientOperations";
 
 // OPPS internal control plane for Joint X-operated brands/sites/workspaces
 // - reconciles two generations of managed-brand data (the surviving
 // public.managed_client_workspaces table and the modern tenant/client/XOS
 // architecture) into one unified view via admin_list_managed_clients (see
 // supabase/migrations/20260823140000_managed_clients_control_plane.sql for
-// the full reconciliation identity rule). This is Phase 0/1: recovery and
-// read/reconciliation, not a rewrite of either underlying data source -
-// nothing here migrates, rewrites, or deletes a historical workspace row,
-// and "Add Managed Brand" does not provision anything yet (see
-// AddManagedBrandDialog below).
+// the full reconciliation identity rule). Phase 0/1 was read-only
+// recovery/reconciliation; Phase 2 (see
+// supabase/migrations/20260824090000_managed_clients_phase2_operations.sql
+// and src/components/managedClients/ManagedClientOperations.jsx) makes it
+// operational - editing an existing legacy workspace, initializing a
+// workspace for a modern tenant with none yet (GSB today), a real Add
+// Managed Brand provisioning wizard, products capability control, and the
+// explicit Vercel/XOS activation gate. Legacy modernization (migrating
+// the 3 historical workspace clients to their own dedicated tenants) is
+// still explicitly out of scope - see docs/MANAGED_CLIENTS_CONTROL_PLANE.md.
 //
 // This is a SEPARATE page from Clients.jsx (Normal Clients = CRM/customer
 // records) - it does not replace it. The Commerce Products section is
@@ -208,7 +219,7 @@ export default function ManagedClients() {
       </div>
 
       {selected && <ManagedClientDetailDialog row={selected} open={Boolean(selected)} onOpenChange={(open) => !open && setSelectedKey(null)} />}
-      {addingBrand && <AddManagedBrandDialog open={addingBrand} onOpenChange={setAddingBrand} />}
+      {addingBrand && <AddManagedBrandWizard open={addingBrand} onOpenChange={setAddingBrand} />}
     </div>
   );
 }
@@ -239,20 +250,43 @@ function LinkField({ label, url, icon: Icon = ExternalLink }) {
 
 function ManagedClientDetailDialog({ row, open, onOpenChange }) {
   const xosUrl = row.xos_hostname ? `https://${row.xos_hostname}` : null;
+  const [editingWorkspace, setEditingWorkspace] = useState(false);
+  const isLegacyOnly = row.source === "legacy";
+  const isModern = row.source === "modern" || row.source === "both";
+  const hasWorkspace = Boolean(row.workspace_id);
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{row.brand_name}</DialogTitle>
-          <p className="text-sm text-slate-500">
-            {row.source === "legacy"
-              ? "Legacy workspace record - not yet migrated to a dedicated XOS tenant."
-              : row.source === "both"
-                ? "Modern managed tenant with a linked legacy workspace record."
-                : "Modern managed tenant - no legacy workspace record yet (expected for a newly provisioned brand)."}
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <DialogTitle>{row.brand_name}</DialogTitle>
+              <p className="text-sm text-slate-500">
+                {row.source === "legacy"
+                  ? "Legacy workspace record - not yet migrated to a dedicated XOS tenant."
+                  : row.source === "both"
+                    ? "Modern managed tenant with a linked legacy workspace record."
+                    : "Modern managed tenant - no legacy workspace record yet (expected for a newly provisioned brand)."}
+              </p>
+            </div>
+            {(isLegacyOnly || hasWorkspace) && (
+              <Button size="sm" variant="outline" onClick={() => setEditingWorkspace(true)}>Edit Workspace</Button>
+            )}
+            {isModern && !hasWorkspace && (
+              <Button size="sm" onClick={() => setEditingWorkspace(true)}>Set up workspace</Button>
+            )}
+          </div>
         </DialogHeader>
+
+        {isLegacyOnly && (
+          <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm text-slate-600">
+              Legacy tenant reconciliation is a separate migration phase. This workspace's own site/readiness/work fields can be edited here, but it stays legacy-only - no Commerce onboarding, no XOS activation controls.
+            </p>
+          </section>
+        )}
 
         <section className="rounded-lg border border-slate-200 p-4">
           <h3 className="font-semibold mb-3">Overview</h3>
@@ -331,6 +365,9 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
           </div>
         </section>
 
+        {isModern && <XosActivationCard row={row} />}
+        {isModern && <ProductsCapabilityCard row={row} />}
+
         <section className="rounded-lg border border-slate-200 p-4">
           <h3 className="font-semibold mb-3">Access</h3>
           {(row.access || []).length === 0 ? (
@@ -362,35 +399,15 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
         )}
       </DialogContent>
     </Dialog>
-  );
-}
 
-function AddManagedBrandDialog({ open, onOpenChange }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add Managed Brand</DialogTitle>
-        </DialogHeader>
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-medium text-amber-900">Provisioning workflow not activated yet</p>
-          <p className="text-sm text-amber-800 mt-1">
-            A reviewed, staff-safe provisioning path does not exist in this
-            phase. Real managed-brand provisioning already has a template
-            contract - tenant → client → XOS domain → owner membership, see{" "}
-            <code className="text-xs bg-white/60 px-1 py-0.5 rounded">
-              supabase/provisioning/xos_tenant_provisioning_template.sql
-            </code>
-            {" "}- and may optionally link or create a{" "}
-            <code className="text-xs bg-white/60 px-1 py-0.5 rounded">managed_client_workspaces</code>{" "}
-            row afterward, once the modern tenant identity already exists.
-            Turning that template into a staff-facing button is a separate,
-            explicitly reviewed later phase - not something this screen does
-            automatically.
-          </p>
-        </div>
-        <Button variant="outline" className="w-full" onClick={() => onOpenChange(false)}>Close</Button>
-      </DialogContent>
-    </Dialog>
+    {editingWorkspace && (
+      <WorkspaceFormDialog
+        open={editingWorkspace}
+        onOpenChange={setEditingWorkspace}
+        mode={hasWorkspace ? "edit" : "init"}
+        row={row}
+      />
+    )}
+    </>
   );
 }

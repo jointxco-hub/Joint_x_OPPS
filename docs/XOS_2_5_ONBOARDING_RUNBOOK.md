@@ -6,6 +6,23 @@ current volume (a handful of tenants total, ever) building admin UI for
 this now would be speculative. See docs/XOS_CONTROLLED_ONBOARDING_READINESS.md
 for prior related context.
 
+**Superseded for new brands once Managed Clients Phase 2 is live** (see
+docs/MANAGED_CLIENTS_CONTROL_PLANE.md's "Phase 2" section) - the "at
+current volume, building admin UI would be speculative" premise above no
+longer holds once that reviewed, staff-safe provisioning wizard
+(`admin_provision_managed_brand` + the Add Managed Brand wizard) ships.
+New managed brands should go through that workflow instead: it derives
+the XOS hostname server-side, enforces the same owner-auth-account
+invariant documented below, is idempotent, and leaves the XOS domain
+`pending` until the operator explicitly confirms the Vercel attachment
+and activates it (this runbook's script instead inserts the domain as
+`active` directly, on the assumption a human is running it by hand after
+already verifying Vercel themselves - safe for a manually-run script, not
+safe to copy into a UI-driven flow, which is exactly why Phase 2 changed
+it). This template and runbook are kept as legacy/fallback documentation
+- for a one-off scenario Phase 2's wizard doesn't yet cover, or for
+understanding the underlying provisioning contract - not deleted.
+
 Script: `supabase/provisioning/xos_tenant_provisioning_template.sql`
 (template — copy per onboarding, never run unfilled, never added to
 `supabase/migrations/`).

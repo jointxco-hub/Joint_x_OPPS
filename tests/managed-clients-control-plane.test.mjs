@@ -73,23 +73,24 @@ test("tenant_status is part of the allowlisted projection for both modern and le
   assert.match(source, /'tenant_status',\s*null::text/i, "legacy-only rows have no tenant, so tenant_status must be null there too");
 });
 
-test("admin_update_managed_client_workspace was removed - Phase 0/1 ships read-only, no unused write RPC", async () => {
+test("the already-applied Phase 0/1 migration (20260823140000) still never defines admin_update_managed_client_workspace", async () => {
+  // Phase 2 (see supabase/migrations/20260824090000_managed_clients_phase2_operations.sql
+  // and tests/managed-clients-phase2-operations.test.mjs) deliberately
+  // REINTRODUCES this RPC as a NEW migration, once a real caller (the
+  // "Edit Workspace" dialog) exists - so this test no longer asserts the
+  // RPC is absent from the whole codebase (that's now false and correct
+  // to be false). What must remain true forever is that the ALREADY-
+  // APPLIED Phase 0/1 file itself was never retroactively edited to add
+  // it - production migrations are immutable once applied.
   const source = await readSource(MIGRATION);
-  // The function must not be CREATED - a comment explaining that it was
-  // deliberately removed (and why) is legitimate documentation, not the
-  // same thing as shipping the write surface, so this checks for a
-  // `create function` definition specifically, not a blanket string ban.
   assert.ok(
     !/create (or replace )?function public\.admin_update_managed_client_workspace/i.test(source),
-    "the write RPC must not be defined in this phase's migration"
+    "the write RPC must not be defined in the Phase 0/1 migration file itself"
   );
   assert.ok(
     !/grant execute on function public\.admin_update_managed_client_workspace/i.test(source),
-    "no grant for the write RPC should remain either"
+    "no grant for the write RPC should be present in the Phase 0/1 migration file either"
   );
-
-  const apiSource = await readSource("src/api/managedClients.js");
-  assert.ok(!/export async function adminUpdateManagedClientWorkspace/i.test(apiSource), "the unused frontend wrapper must not be present either");
 });
 
 test("the detail page never renders CommerceProductsSection for a row without a genuine modern tenant identity", async () => {
