@@ -13,7 +13,8 @@
 -- untouched by this migration, not silently converted into the new
 -- model.
 --
--- Four integrity hardenings required on review, before any UI/RPC work:
+-- Four integrity hardenings required on first review, before any UI/RPC
+-- work:
 --   1. Namespace simple vs treatment-scoped artwork so existing Phase 1
 --      readiness can never be satisfied by treatment-specific artwork.
 --   2. Same-family referential integrity via composite (id,
@@ -24,8 +25,55 @@
 --   4. No ON DELETE SET NULL anywhere that could silently convert scoped
 --      configuration into family-level configuration -- particularly
 --      client_product_artwork.treatment_id, which uses RESTRICT.
+--
+-- Second review pass added tenant-family integrity, since (2) proved
+-- family membership but not that the duplicated tenant_id columns on
+-- these tables agree with it -- and RLS on the new tables authorizes by
+-- their OWN tenant_id, so a mismatch would be a real hole:
+--   5. client_products gets a new UNIQUE(id, tenant_id); the three new
+--      tables' composite FKs are extended to (id, client_product_id,
+--      tenant_id) so every scoped row proves id + family + tenant all
+--      agree, not just id + family.
+--   6. client_product_garment_variants.inventory_product_id gets a
+--      composite (tenant_id, inventory_product_id) FK against
+--      inventory_products(tenant_id, id) -- reusing the EXACT pattern
+--      already established and live for inventory_variants/inventory_
+--      supplier_products (inventory_products_tenant_id_id_key), not a
+--      new convention.
+--   7. client_product_treatments.id gets a CHECK forbidding the all-zero
+--      UUID, removing the theoretical (astronomically unlikely but not
+--      formally impossible) collision with the coalesce() sentinel used
+--      by the artwork current-uniqueness indexes. NULLS NOT DISTINCT
+--      (PG15+, this project runs PG17) was evaluated and NOT used here:
+--      grepped the full migration history, it is not an established
+--      pattern anywhere in this codebase, and the instruction was to
+--      remove the collision, not change approach for style.
+--
+-- Pre-existing gap found, NOT fixed here (explicitly out of scope --
+-- reported, not silently widened into historical remediation): the
+-- BASE product_components(tenant_id, client_product_id) columns have
+-- never had composite integrity against client_products(id, tenant_id)
+-- -- they are two independent single-column FKs today, unrelated to
+-- this migration. Only the NEW scoped columns added in section 4 below
+-- get the full triple-composite treatment, which is self-contained and
+-- does not depend on that pre-existing gap being fixed first.
 
 begin;
+
+-- ---------------------------------------------------------------------
+-- 0. client_products needs a composite (id, tenant_id) unique key before
+-- anything can reference it that way. tenant_id is nullable on
+-- client_products (ON DELETE SET NULL) -- confirmed live, zero current
+-- rows actually have a null tenant_id, and a unique index permits
+-- multiple nulls without issue regardless. A client_product with a null
+-- tenant_id simply cannot have garment variants/treatments (their own
+-- tenant_id is NOT NULL and must match a real tenant-bearing version of
+-- the family) -- a correct, not incidental, consequence: a family with
+-- no tenant has nothing to scope tenant-aware children to.
+-- ---------------------------------------------------------------------
+
+alter table public.client_products
+  add constraint client_products_id_tenant_id_key unique (id, tenant_id);
 
 -- ---------------------------------------------------------------------
 -- 1. client_product_garment_variants
@@ -43,7 +91,10 @@ create table public.client_product_garment_variants (
   -- Available sizes are DERIVED from inventory_variants at read time,
   -- never stored here -- see manual_available_sizes below for the only
   -- case where a stored list is appropriate.
-  inventory_product_id uuid references public.inventory_products(id) on delete set null,
+  -- Plain column here -- the tenant-scoped composite FK to
+  -- inventory_products is added below (Postgres requires the column to
+  -- exist before a table-level composite constraint can reference it).
+  inventory_product_id uuid,
   colour_name text,
   colour_code text,
   -- Fallback ONLY for garment variants not backed by normalized
@@ -58,10 +109,28 @@ create table public.client_product_garment_variants (
   created_by uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  -- The composite unique constraint child tables key off of, to prove
-  -- "this variant belongs to the same client_product as the row
-  -- referencing it" at the database level, not just in application code.
-  constraint client_product_garment_variants_id_cp_uidx unique (id, client_product_id)
+  -- Extended to a triple composite (id, client_product_id, tenant_id) so
+  -- child rows can prove id + family + tenant all agree together, not
+  -- just id + family. Child tables key off this for every FK below.
+  constraint client_product_garment_variants_id_cp_tenant_uidx
+    unique (id, client_product_id, tenant_id),
+  -- Proves this variant's own (client_product_id, tenant_id) pair is a
+  -- real, matching client_products row -- not two independently-valid
+  -- but mismatched UUIDs. RLS on this table authorizes by tenant_id
+  -- directly, so this is the fix for the actual reported risk.
+  constraint client_product_garment_variants_family_tenant_fkey
+    foreign key (client_product_id, tenant_id)
+    references public.client_products (id, tenant_id)
+    on delete cascade,
+  -- Reuses the EXACT established tenant-scoped inventory pattern already
+  -- live for inventory_variants/inventory_supplier_products
+  -- (inventory_products_tenant_id_id_key) -- not a new convention. Only
+  -- inventory_product_id is nulled on delete (column-specific SET NULL,
+  -- PG15+); tenant_id itself must stay NOT NULL.
+  constraint client_product_garment_variants_inventory_tenant_fkey
+    foreign key (tenant_id, inventory_product_id)
+    references public.inventory_products (tenant_id, id)
+    on delete set null (inventory_product_id)
 );
 
 create index client_product_garment_variants_client_product_id_idx
@@ -129,7 +198,29 @@ create table public.client_product_treatments (
   created_by uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint client_product_treatments_id_cp_uidx unique (id, client_product_id)
+  constraint client_product_treatments_id_cp_tenant_uidx
+    unique (id, client_product_id, tenant_id),
+  -- client_product_artwork has no tenant_id column (audited: it doesn't
+  -- exist on that table), so its composite FK below stays the plain
+  -- (id, client_product_id) form -- this narrower unique constraint is
+  -- kept alongside the triple one above specifically as that FK's
+  -- target, not redundant with it despite the overlapping columns
+  -- (Postgres requires an exact-match unique constraint per FK, it does
+  -- not derive a 2-column one from a 3-column one even though id alone
+  -- is already a primary key).
+  constraint client_product_treatments_id_cp_uidx
+    unique (id, client_product_id),
+  constraint client_product_treatments_family_tenant_fkey
+    foreign key (client_product_id, tenant_id)
+    references public.client_products (id, tenant_id)
+    on delete cascade,
+  -- Removes the theoretical collision with the coalesce() sentinel used
+  -- by the artwork current-uniqueness indexes below -- id is
+  -- gen_random_uuid()-generated so this is astronomically unlikely
+  -- regardless, but the instruction was to formally remove it, not just
+  -- rely on probability.
+  constraint client_product_treatments_id_not_sentinel
+    check (id <> '00000000-0000-0000-0000-000000000000'::uuid)
 );
 
 create index client_product_treatments_client_product_id_idx
@@ -173,13 +264,22 @@ create table public.client_product_variant_treatments (
   is_active boolean not null default true,
   created_by uuid,
   created_at timestamptz not null default now(),
+  -- Proves this mapping row's own (client_product_id, tenant_id) pair is
+  -- a real client_products row -- direct, not merely implied by the two
+  -- FKs below (defense in depth, and exactly what was asked for).
+  constraint client_product_variant_treatments_family_tenant_fkey
+    foreign key (client_product_id, tenant_id)
+    references public.client_products (id, tenant_id)
+    on delete cascade,
+  -- Triple composite: proves the mapped variant's own id + family +
+  -- tenant all agree with this mapping row's copies of family + tenant.
   constraint client_product_variant_treatments_variant_family_fkey
-    foreign key (garment_variant_id, client_product_id)
-    references public.client_product_garment_variants (id, client_product_id)
+    foreign key (garment_variant_id, client_product_id, tenant_id)
+    references public.client_product_garment_variants (id, client_product_id, tenant_id)
     on delete cascade,
   constraint client_product_variant_treatments_treatment_family_fkey
-    foreign key (treatment_id, client_product_id)
-    references public.client_product_treatments (id, client_product_id)
+    foreign key (treatment_id, client_product_id, tenant_id)
+    references public.client_product_treatments (id, client_product_id, tenant_id)
     on delete cascade,
   -- A join row is meaningless once either endpoint disappears, and
   -- garment variants/treatments have no delete path at the application
@@ -219,10 +319,23 @@ grant select, insert, update on public.client_product_variant_treatments to auth
 revoke all on public.client_product_variant_treatments from anon, public;
 
 -- ---------------------------------------------------------------------
--- 4. product_components -- scoped columns, composite family-integrity
--- FKs, and the mutual-exclusivity CHECK. Both columns default/stay null
--- for every existing row -- their current meaning ("family-level,
--- applies to the whole simple product") is completely unchanged.
+-- 4. product_components -- scoped columns, composite family+tenant
+-- integrity FKs, and the mutual-exclusivity CHECK. Both columns
+-- default/stay null for every existing row -- their current meaning
+-- ("family-level, applies to the whole simple product") is completely
+-- unchanged.
+--
+-- Note: product_components' own pre-existing (tenant_id, client_product_
+-- id) columns have never had composite integrity against client_products
+-- (id, tenant_id) -- confirmed live, they are two independent
+-- single-column FKs today. That gap predates this migration and is
+-- explicitly NOT fixed here (reported separately, not silently widened
+-- into historical remediation). It doesn't block the guarantee this
+-- section needs: the triple-composite FKs below are self-contained --
+-- they prove a component's own (garment_variant_id/treatment_id,
+-- client_product_id, tenant_id) triple matches a real variant/treatment
+-- row, independent of whether product_components' base tenant/family
+-- pair has ever been separately verified against client_products.
 -- ---------------------------------------------------------------------
 
 alter table public.product_components
@@ -231,12 +344,12 @@ alter table public.product_components
 
 alter table public.product_components
   add constraint product_components_variant_family_fkey
-    foreign key (garment_variant_id, client_product_id)
-    references public.client_product_garment_variants (id, client_product_id)
+    foreign key (garment_variant_id, client_product_id, tenant_id)
+    references public.client_product_garment_variants (id, client_product_id, tenant_id)
     on delete cascade,
   add constraint product_components_treatment_family_fkey
-    foreign key (treatment_id, client_product_id)
-    references public.client_product_treatments (id, client_product_id)
+    foreign key (treatment_id, client_product_id, tenant_id)
+    references public.client_product_treatments (id, client_product_id, tenant_id)
     on delete cascade,
   -- A component cannot be simultaneously variant-scoped and
   -- treatment-scoped. Valid: both null (family), variant set only, or

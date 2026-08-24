@@ -66,6 +66,53 @@ const MIGRATION_PATH = "supabase/migrations/20260825090000_garment_variants_trea
 // ['front'] alone: ready:true, driven purely by the simple row,
 // independent of the two treatment-scoped rows also present on that
 // same placement.
+//
+// Second review pass added TENANT-family integrity, since the first
+// pass proved id+family membership but not that the duplicated tenant_id
+// columns agree with it, and RLS on the new tables authorizes by their
+// own tenant_id. Live-verified in a second rolled-back transaction, with
+// a genuine second tenant (not just a second client_product) created
+// inside the same transaction:
+//   - client_products gained UNIQUE(id, tenant_id); the three new
+//     tables' composite FKs extended to (id, client_product_id,
+//     tenant_id) triples.
+//   - A variant/treatment claiming tenant A but a client_product_id that
+//     actually belongs to tenant B: BLOCKED (..._family_tenant_fkey),
+//     in both cases isolating the INTEGRITY check from RLS by keeping
+//     the row's own tenant_id as one the test session actually has
+//     reviewer access to (tenant A) -- only the referenced family's real
+//     tenant differs.
+//   - A mapping row claiming tenant A + a client_product_id that
+//     actually belongs to tenant B: BLOCKED, same isolation technique.
+//   - A component claiming tenant A + client_product_id A (both
+//     correct) but referencing a variant/treatment that actually
+//     belongs to tenant B/a different family entirely (seeded directly,
+//     bypassing RLS, purely as the foreign-tenant target): BLOCKED for
+//     both the variant and treatment case.
+//   - A garment variant (tenant A) pointing at an inventory_product that
+//     actually belongs to tenant B: BLOCKED
+//     (..._inventory_tenant_fkey) -- reusing inventory_products'
+//     own established (tenant_id, id) pattern, already live for
+//     inventory_variants/inventory_supplier_products.
+//   - A client_product_treatments row using the literal all-zero UUID as
+//     its id: BLOCKED (..._id_not_sentinel CHECK) -- removes the
+//     theoretical collision with the coalesce() sentinel used by the
+//     artwork current-uniqueness indexes.
+//   - A correctly same-tenant, same-family variant+treatment pair:
+//     succeeded.
+//   - Jai's readiness and SFR's components: re-confirmed byte-identical
+//     before/after this second pass's migration too.
+//
+// A real bug was caught and fixed by this second pass's own testing: the
+// treatment table's UNIQUE(id, client_product_id) constraint was
+// replaced outright by the new triple UNIQUE(id, client_product_id,
+// tenant_id) -- but client_product_artwork's treatment FK (which has no
+// tenant_id column to extend, per instruction, and correctly stays the
+// plain dual form) targets exactly that now-removed dual constraint.
+// Fixed by keeping BOTH the dual and triple unique constraints on
+// client_product_treatments side by side -- Postgres does not derive a
+// narrower composite unique constraint from a wider one even though id
+// alone is already a primary key, so both had to be declared explicitly.
 // ─────────────────────────────────────────────────────────────────────
 
 test("the migration is additive only - no drop of an existing table/column, and every new FK to client_products cascades (matches existing precedent), never SET NULL on a scoped reference", async () => {
@@ -80,25 +127,70 @@ test("the migration is additive only - no drop of an existing table/column, and 
   assert.ok(createUniqueIndexCount >= dropIndexCount, "every dropped index must be replaced by an equivalent unique index");
 });
 
-test("client_product_garment_variants and client_product_treatments each carry a UNIQUE(id, client_product_id) constraint - the mechanism composite FKs depend on to prove same-family membership", async () => {
+test("client_products has UNIQUE(id, tenant_id), and client_product_garment_variants/client_product_treatments each carry a UNIQUE(id, client_product_id, tenant_id) triple - the mechanism composite FKs depend on to prove id + family + tenant all agree", async () => {
   const source = await readSource(MIGRATION_PATH);
-  assert.ok(source.includes("constraint client_product_garment_variants_id_cp_uidx unique (id, client_product_id)"));
-  assert.ok(source.includes("constraint client_product_treatments_id_cp_uidx unique (id, client_product_id)"));
+  assert.ok(source.includes("add constraint client_products_id_tenant_id_key unique (id, tenant_id)"));
+  assert.ok(source.includes("constraint client_product_garment_variants_id_cp_tenant_uidx\n    unique (id, client_product_id, tenant_id)"));
+  assert.ok(source.includes("constraint client_product_treatments_id_cp_tenant_uidx\n    unique (id, client_product_id, tenant_id)"));
 });
 
-test("product_components' new FKs are composite (garment_variant_id/treatment_id, client_product_id) referencing the family-scoped unique constraints - not plain single-column FKs", async () => {
+test("client_product_treatments ALSO keeps the narrower dual UNIQUE(id, client_product_id) alongside the triple one - required as client_product_artwork's FK target, since that table has no tenant_id column to extend", async () => {
   const source = await readSource(MIGRATION_PATH);
-  assert.ok(source.includes("foreign key (garment_variant_id, client_product_id)\n    references public.client_product_garment_variants (id, client_product_id)"));
-  assert.ok(source.includes("foreign key (treatment_id, client_product_id)\n    references public.client_product_treatments (id, client_product_id)"));
+  assert.ok(source.includes("constraint client_product_treatments_id_cp_uidx\n    unique (id, client_product_id)"));
 });
 
-test("client_product_variant_treatments carries client_product_id directly and both its FKs are composite against that same column - transitively proving the mapped variant and treatment belong to the same family as each other", async () => {
+test("client_product_garment_variants and client_product_treatments each prove their OWN (client_product_id, tenant_id) pair against client_products(id, tenant_id) - not left as two independently-valid but possibly-mismatched UUIDs", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(source.includes("constraint client_product_garment_variants_family_tenant_fkey\n    foreign key (client_product_id, tenant_id)\n    references public.client_products (id, tenant_id)"));
+  assert.ok(source.includes("constraint client_product_treatments_family_tenant_fkey\n    foreign key (client_product_id, tenant_id)\n    references public.client_products (id, tenant_id)"));
+});
+
+test("product_components' new FKs are TRIPLE composite (garment_variant_id/treatment_id, client_product_id, tenant_id) referencing the family+tenant-scoped unique constraints - proving tenant agreement, not just family membership", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(source.includes("foreign key (garment_variant_id, client_product_id, tenant_id)\n    references public.client_product_garment_variants (id, client_product_id, tenant_id)"));
+  assert.ok(source.includes("foreign key (treatment_id, client_product_id, tenant_id)\n    references public.client_product_treatments (id, client_product_id, tenant_id)"));
+});
+
+test("client_product_variant_treatments proves its own (client_product_id, tenant_id) against client_products directly, AND both its variant/treatment FKs are triple composite - transitively proving the mapped variant, treatment, and mapping row all agree on tenant as well as family", async () => {
   const source = await readSource(MIGRATION_PATH);
   const tableStart = source.indexOf("create table public.client_product_variant_treatments");
-  const tableBody = source.slice(tableStart, tableStart + 1800);
-  assert.ok(tableBody.includes("client_product_id uuid not null references public.client_products(id) on delete cascade"));
-  assert.ok(tableBody.includes("foreign key (garment_variant_id, client_product_id)\n    references public.client_product_garment_variants (id, client_product_id)"));
-  assert.ok(tableBody.includes("foreign key (treatment_id, client_product_id)\n    references public.client_product_treatments (id, client_product_id)"));
+  const tableBody = source.slice(tableStart, tableStart + 2200);
+  assert.ok(tableBody.includes("constraint client_product_variant_treatments_family_tenant_fkey\n    foreign key (client_product_id, tenant_id)\n    references public.client_products (id, tenant_id)"));
+  assert.ok(tableBody.includes("foreign key (garment_variant_id, client_product_id, tenant_id)\n    references public.client_product_garment_variants (id, client_product_id, tenant_id)"));
+  assert.ok(tableBody.includes("foreign key (treatment_id, client_product_id, tenant_id)\n    references public.client_product_treatments (id, client_product_id, tenant_id)"));
+});
+
+test("client_product_garment_variants.inventory_product_id has a composite (tenant_id, inventory_product_id) FK against inventory_products(tenant_id, id) - reusing the exact established pattern already live for inventory_variants/inventory_supplier_products, not a new convention - with column-specific SET NULL so tenant_id itself stays NOT NULL", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(source.includes("constraint client_product_garment_variants_inventory_tenant_fkey\n    foreign key (tenant_id, inventory_product_id)\n    references public.inventory_products (tenant_id, id)\n    on delete set null (inventory_product_id)"));
+});
+
+test("client_product_treatments.id cannot be the all-zero sentinel UUID - removes the theoretical collision with the coalesce() sentinel used by the artwork current-uniqueness indexes", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(source.includes("constraint client_product_treatments_id_not_sentinel\n    check (id <> '00000000-0000-0000-0000-000000000000'::uuid)"));
+});
+
+test("NULLS NOT DISTINCT is not introduced as actual SQL syntax anywhere in the migration history - not an established pattern in this codebase, and the instruction was to remove the sentinel collision, not change approach for style (the phrase appears only in this migration's own explanatory comment, deliberately, recording that it was evaluated and rejected)", async () => {
+  const migrationDir = new URL("../supabase/migrations/", import.meta.url);
+  const files = await (await import("node:fs/promises")).readdir(migrationDir);
+  const stripComments = (sql) => sql.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+  for (const file of files) {
+    if (!file.endsWith(".sql")) continue;
+    const content = stripComments(await readSource(`supabase/migrations/${file}`));
+    assert.ok(!/nulls not distinct/i.test(content), `${file} must not use NULLS NOT DISTINCT as real SQL syntax`);
+  }
+  // Confirm the phrase IS present, deliberately, in this migration's own
+  // explanatory comment - proving the check above is exercising the
+  // comment-stripping path, not accidentally passing because the phrase
+  // never appears anywhere at all.
+  const rawMigration = await readSource(MIGRATION_PATH);
+  assert.ok(/nulls not distinct/i.test(rawMigration), "sanity check: the design-rationale comment should still mention it was considered");
+});
+
+test("the pre-existing gap - product_components(tenant_id, client_product_id) has no composite integrity against client_products(id, tenant_id) today - is documented as explicitly out of scope, not silently fixed as part of this migration", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(/pre-existing gap/i.test(source));
+  assert.ok(source.includes("explicitly NOT fixed here"));
 });
 
 test("client_product_artwork's new treatment_id FK is composite (treatment_id, client_product_id) and uses ON DELETE RESTRICT - never SET NULL, never CASCADE, so a treatment disappearing can never silently convert scoped artwork into family-level artwork or silently delete it", async () => {
