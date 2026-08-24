@@ -13,11 +13,11 @@ async function readSource(relativePath) {
 }
 
 const MIGRATION = "supabase/migrations/20260824090000_managed_clients_phase2_operations.sql";
+const HOTFIX_MIGRATION = "supabase/migrations/20260824090100_managed_clients_phase2_preflight_blocker_array_fix.sql";
 const LAYOUT = "src/Layout.jsx";
 const PAGE = "src/pages/ManagedClients.jsx";
 const OPERATIONS = "src/components/managedClients/ManagedClientOperations.jsx";
 const SQL_TEST_SUITE = "supabase/tests/managed_clients_phase2_operations.sql";
-const FORMS_LIB = "src/lib/managedClientForms.js";
 
 // src/lib/managedClientForms.js is pure/React-free/Supabase-free (see its
 // header comment), so diffWorkspaceForm and fingerprintPreviewInput are
@@ -379,4 +379,102 @@ test("SQL suite (item 1, regression guard): the disposable provisioning fixture 
     /'disposable_fixture_slugs_are_not_reserved_tokens',\s*\n\s*v_test_slug !~\* '\(\^\|-\)\(qa\|demo\|test\)\(-\|\$\)'/,
     "the suite must assert its own fixture slugs are not reserved, so this cannot silently regress again"
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Live cutover hotfix: 22P02 "malformed array literal" in
+// admin_preview_managed_brand_provisioning - `v_blockers text[] :=
+// '{}'` followed by `v_blockers := v_blockers || '<plain string>'` is
+// ambiguous between the anyarray||anyelement and anyarray||anyarray
+// overloads of `||`, and PostgreSQL resolved it the wrong way for these
+// literals in production. 20260824090000 is now LIVE/immutable and is
+// never edited again; the fix ships as a new CREATE OR REPLACE-only
+// migration, 20260824090100.
+// ─────────────────────────────────────────────────────────────────────
+
+test("hotfix migration exists and touches ONLY admin_preview_managed_brand_provisioning - no other function/table is created or replaced", async () => {
+  const source = await readSource(HOTFIX_MIGRATION);
+  const createStatements = source.match(/create (or replace )?(function|table)\s+[^\s(]+/gi) || [];
+  assert.deepEqual(
+    createStatements.map((s) => s.toLowerCase().replace(/\s+/g, " ")),
+    ["create or replace function public.admin_preview_managed_brand_provisioning"],
+    "the hotfix must create/replace exactly one object: admin_preview_managed_brand_provisioning"
+  );
+});
+
+test("hotfix: the original, already-applied 20260824090000 migration is byte-for-byte untouched", async () => {
+  const source = await readSource(MIGRATION);
+  // The bug is still present in the immutable original - this is
+  // expected and correct (production history is never rewritten); the
+  // hotfix's CREATE OR REPLACE in 20260824090100 is what takes effect at
+  // runtime once applied, not an edit to this file.
+  assert.match(source, /v_blockers := v_blockers \|\| 'Workspace\/brand display name is required\.';/, "20260824090000 must still read exactly as originally written - confirms this migration was not touched");
+});
+
+test("hotfix: every blocker addition uses array_append(anyarray, anyelement) - the ambiguous `v_blockers || <scalar>` pattern is completely gone", async () => {
+  const source = await readSource(HOTFIX_MIGRATION);
+  const fnMatch = source.match(/create or replace function public\.admin_preview_managed_brand_provisioning[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.ok(fnMatch, "expected to find the CREATE OR REPLACE function body");
+
+  assert.ok(
+    !/v_blockers\s*:=\s*v_blockers\s*\|\|/.test(fnMatch),
+    "the ambiguous array-concatenation-via-|| pattern must not appear anywhere in the fixed function"
+  );
+
+  const appendCount = (fnMatch.match(/v_blockers\s*:=\s*array_append\(v_blockers,/g) || []).length;
+  // One array_append call per blocker-producing branch: missing brand
+  // name, missing contact name, invalid/reserved slug, slug taken,
+  // hostname taken, invalid email, client email conflict, owner account
+  // required - matching every blocker the original function could ever
+  // produce (see the 8 examples in the task brief).
+  assert.equal(appendCount, 8, `expected exactly 8 array_append(v_blockers, ...) calls (one per blocker branch), found ${appendCount}`);
+});
+
+test("hotfix: blocker wording is unchanged from the original function", async () => {
+  const originalSource = await readSource(MIGRATION);
+  const hotfixSource = await readSource(HOTFIX_MIGRATION);
+  const blockerStrings = [
+    "Workspace/brand display name is required.",
+    "Client/contact name is required.",
+    "Tenant slug is invalid or reserved.",
+    'Tenant slug "%s" is already in use.',
+    'Hostname "%s" is already registered.',
+    "Canonical client/owner email is not a valid email address.",
+    "A clients row with this email already exists.",
+    "The owner must sign in/create their XOS account with this exact email before the workspace can be provisioned.",
+  ];
+  for (const wording of blockerStrings) {
+    assert.ok(originalSource.includes(wording), `sanity check: original wording "${wording}" should exist in the immutable 20260824090000 file`);
+    assert.ok(hotfixSource.includes(wording), `hotfix must preserve the exact wording: "${wording}"`);
+  }
+});
+
+test("hotfix: signature, authority gate, security/stability attributes, search_path, and grants are all preserved unchanged", async () => {
+  const source = await readSource(HOTFIX_MIGRATION);
+  const fnMatch = source.match(/create or replace function public\.admin_preview_managed_brand_provisioning\(p_input jsonb\)[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.ok(fnMatch, "expected the exact original signature: admin_preview_managed_brand_provisioning(p_input jsonb)");
+  assert.match(fnMatch, /returns jsonb/);
+  assert.match(fnMatch, /language plpgsql/);
+  assert.match(fnMatch, /\bstable\b/);
+  assert.match(fnMatch, /security definer/);
+  assert.match(fnMatch, /set search_path to 'pg_catalog', 'public'/);
+  assert.match(fnMatch, /if not public\.is_app_admin\(\) then/, "the app-admin gate must be preserved");
+
+  assert.match(source, /revoke all on function public\.admin_preview_managed_brand_provisioning\(jsonb\) from public;/);
+  assert.match(source, /revoke all on function public\.admin_preview_managed_brand_provisioning\(jsonb\) from anon;/);
+  assert.match(source, /grant execute on function public\.admin_preview_managed_brand_provisioning\(jsonb\) to authenticated;/);
+});
+
+test("hotfix: hostname derivation, owner lookup, and the output schema (jsonb keys) are unchanged from the original", async () => {
+  const source = await readSource(HOTFIX_MIGRATION);
+  const fnMatch = source.match(/create or replace function public\.admin_preview_managed_brand_provisioning[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(fnMatch, /v_hostname := case when v_slug_valid then v_slug \|\| '\.xos\.jointx\.co\.za' else null end;/);
+  assert.match(fnMatch, /select au\.id into v_owner_id from auth\.users au where lower\(au\.email\) = lower\(v_client_email\) limit 1;/);
+  for (const key of [
+    "normalized_slug", "derived_hostname", "owner_account_exists", "email_match",
+    "slug_available", "hostname_available", "client_email_available", "can_provision", "blockers",
+  ]) {
+    assert.ok(fnMatch.includes(`'${key}'`), `output schema must still include "${key}"`);
+  }
+  assert.ok(!/auth_user_id/i.test(fnMatch.match(/return jsonb_build_object\(([\s\S]*?)\);/)?.[1] ?? ""), "the hotfix must still never return auth_user_id");
 });
