@@ -14,10 +14,21 @@ async function readSource(relativePath) {
 
 const MIGRATION = "supabase/migrations/20260824090000_managed_clients_phase2_operations.sql";
 const HOTFIX_MIGRATION = "supabase/migrations/20260824090100_managed_clients_phase2_preflight_blocker_array_fix.sql";
+const CONTAINMENT_MIGRATION = "supabase/migrations/20260824090150_managed_clients_phase2_admin_guard_containment.sql";
+const NULL_SAFETY_MIGRATION = "supabase/migrations/20260824090200_app_admin_null_safety_and_phase2_regrant.sql";
 const LAYOUT = "src/Layout.jsx";
 const PAGE = "src/pages/ManagedClients.jsx";
 const OPERATIONS = "src/components/managedClients/ManagedClientOperations.jsx";
 const SQL_TEST_SUITE = "supabase/tests/managed_clients_phase2_operations.sql";
+
+const PHASE2_RPCS = [
+  { name: "admin_update_managed_client_workspace", args: "uuid, jsonb" },
+  { name: "admin_initialize_managed_client_workspace", args: "uuid, jsonb" },
+  { name: "admin_preview_managed_brand_provisioning", args: "jsonb" },
+  { name: "admin_provision_managed_brand", args: "jsonb, text" },
+  { name: "admin_activate_managed_xos_domain", args: "uuid" },
+  { name: "admin_set_managed_tenant_products_capability", args: "uuid, boolean" },
+];
 
 // src/lib/managedClientForms.js is pure/React-free/Supabase-free (see its
 // header comment), so diffWorkspaceForm and fingerprintPreviewInput are
@@ -477,4 +488,118 @@ test("hotfix: hostname derivation, owner lookup, and the output schema (jsonb ke
     assert.ok(fnMatch.includes(`'${key}'`), `output schema must still include "${key}"`);
   }
   assert.ok(!/auth_user_id/i.test(fnMatch.match(/return jsonb_build_object\(([\s\S]*?)\);/)?.[1] ?? ""), "the hotfix must still never return auth_user_id");
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// CRITICAL AUTH FINDING: public.is_app_admin() could return NULL (not
+// FALSE) for an authenticated identity with no public.users row and a
+// non-allowlisted email. `NOT NULL` is NULL, and PL/pgSQL's IF does not
+// enter on a NULL condition, so every Phase 2 RPC's `IF NOT
+// public.is_app_admin() THEN RAISE ... END IF;` guard silently failed
+// open for that identity shape. Contained live by revoking authenticated
+// EXECUTE on all six RPCs (20260824090150, already applied - added here
+// verbatim as production history), fixed at the root by making
+// is_app_admin() itself NULL-safe and only then re-granting
+// (20260824090200, NOT yet applied).
+// ─────────────────────────────────────────────────────────────────────
+
+test("containment migration (20260824090150, already applied) revokes authenticated EXECUTE on exactly the six Phase 2 RPCs, and nothing else", async () => {
+  const source = await readSource(CONTAINMENT_MIGRATION);
+  for (const { name, args } of PHASE2_RPCS) {
+    const pattern = new RegExp(`revoke execute on function\\s*\\n?\\s*public\\.${name}\\(${args.replace(/, /g, ",\\s*")}\\)\\s*\\n?\\s*from authenticated;`);
+    assert.match(source, pattern, `expected a revoke-from-authenticated for public.${name}(${args})`);
+  }
+  const revokeCount = (source.match(/revoke execute on function/g) || []).length;
+  assert.equal(revokeCount, 6, "the containment migration must revoke exactly six functions - no more, no fewer");
+  assert.ok(!/grant execute/i.test(source), "containment must be revoke-only - the re-grant belongs in 20260824090200, only after the null-safety fix");
+  assert.ok(!/create (or replace )?function/i.test(source), "containment must not define or redefine any function - grants only");
+});
+
+test("null-safety migration (20260824090200) CREATE OR REPLACEs is_app_admin() wrapping only the role-check arm in coalesce(...,false), preserving signature/attributes/allowlist exactly", async () => {
+  const source = await readSource(NULL_SAFETY_MIGRATION);
+  const fnMatch = source.match(/create or replace function public\.is_app_admin\(\)[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.ok(fnMatch, "expected a CREATE OR REPLACE for public.is_app_admin()");
+
+  assert.match(fnMatch, /returns boolean language sql security definer stable set search_path = public as \$\$/, "signature/language/STABLE/SECURITY DEFINER/search_path must be preserved exactly");
+  assert.match(fnMatch, /select coalesce\(public\.current_user_app_role\(\) = 'admin', false\)/, "the role-check arm must be wrapped in coalesce(...,false)");
+  assert.match(
+    fnMatch,
+    /or lower\(coalesce\(auth\.jwt\(\) ->> 'email', ''\)\) in \(\s*\n\s*'jointx\.co@gmail\.com', 'jointsexclusive@gmail\.com',\s*\n\s*'jasperjaimataruse@gmail\.com', 'jaicreativerealm@gmail\.com'\s*\n\s*\);/,
+    "the existing 4-address admin email allowlist must be preserved exactly, not expanded or reduced"
+  );
+
+  // The allowlist itself must not have grown or shrunk - count the
+  // quoted email literals rather than trusting prose.
+  const emailCount = (fnMatch.match(/'[^']+@[^']+'/g) || []).length;
+  assert.equal(emailCount, 4, `expected exactly 4 allowlisted admin emails, found ${emailCount}`);
+});
+
+test("null-safety migration re-grants the six Phase 2 RPCs to authenticated, textually AFTER the is_app_admin() replacement, and touches no RPC body", async () => {
+  const source = await readSource(NULL_SAFETY_MIGRATION);
+  const helperIdx = source.indexOf("create or replace function public.is_app_admin()");
+  assert.ok(helperIdx > -1, "expected to find the is_app_admin() replacement");
+
+  for (const { name, args } of PHASE2_RPCS) {
+    const pattern = new RegExp(`grant execute on function\\s*\\n?\\s*public\\.${name}\\(${args.replace(/, /g, ",\\s*")}\\)\\s*\\n?\\s*to authenticated;`);
+    const grantMatch = source.match(pattern);
+    assert.ok(grantMatch, `expected a grant-to-authenticated for public.${name}(${args})`);
+    const grantPos = source.indexOf(grantMatch[0]);
+    assert.ok(grantPos > helperIdx, `the grant for ${name} must appear textually after the is_app_admin() fix, not before it`);
+  }
+  const grantCount = (source.match(/grant execute on function/g) || []).length;
+  assert.equal(grantCount, 6, "exactly six re-grants, matching the six revoked by containment");
+
+  // This hotfix must never touch an RPC's own body - only is_app_admin()
+  // and the six grants.
+  for (const { name } of PHASE2_RPCS) {
+    assert.ok(!new RegExp(`create (or replace )?function public\\.${name}\\(`).test(source), `${name}'s own body must not be redefined in this migration`);
+  }
+});
+
+test("SQL suite: the non-admin identity's is_app_admin() check asserts IS FALSE, never the ambiguous NOT public.is_app_admin() form", async () => {
+  const source = await readSource(SQL_TEST_SUITE);
+  assert.match(source, /public\.is_app_admin\(\) is false/, "at least one assertion must use the unambiguous IS FALSE form");
+  // NOT public.is_app_admin() would itself evaluate to NULL whenever
+  // is_app_admin() returns NULL, and a NULL `passed` value is recorded
+  // by the final gate as `passed is distinct from true` (still correctly
+  // failing) - but as a boolean VALUE being asserted, "IS FALSE" is the
+  // form the task specifically requires, since it is what actually
+  // proves the function returns a real boolean rather than merely
+  // proving something falsy.
+  assert.ok(
+    !/passed,\s*\n?\s*not public\.is_app_admin\(\)/.test(source),
+    "no test may assert bare `not public.is_app_admin()` as its pass/fail value"
+  );
+});
+
+test("SQL suite: a pre-admin assertion confirms GSB's managed_client_workspaces count is still 0 immediately after the six non-admin denial attempts", async () => {
+  const source = await readSource(SQL_TEST_SUITE);
+  const nonAdminBlockEnd = source.indexOf("Shared authority: public.is_app_admin() null-safety");
+  const switchToAdminIdx = source.indexOf("Switch to the app-admin identity for every remaining test.");
+  assert.ok(nonAdminBlockEnd > -1 && switchToAdminIdx > -1, "expected to find both markers");
+  assert.match(
+    source,
+    /'gsb_workspace_count_still_zero_after_non_admin_denials',\s*\n\s*\(select count\(\*\) from public\.managed_client_workspaces where tenant_id = v_gsb_tenant_id\) = 0/,
+    "must assert GSB's workspace count is 0 right after the non-admin denial attempts"
+  );
+  const assertionIdx = source.indexOf("gsb_workspace_count_still_zero_after_non_admin_denials");
+  assert.ok(assertionIdx < switchToAdminIdx, "the GSB-zero-workspace assertion must run BEFORE switching to the admin identity");
+});
+
+test("SQL suite: all four is_app_admin() authority cases (A-D) are present, and none hardcodes a real auth UUID", async () => {
+  const source = await readSource(SQL_TEST_SUITE);
+  for (const label of [
+    "is_app_admin_case_a_no_users_row_returns_false",
+    "is_app_admin_case_b_role_admin_returns_true",
+    "is_app_admin_case_c_allowlisted_email_returns_true",
+    "is_app_admin_case_d_non_admin_users_row_returns_false",
+  ]) {
+    assert.ok(source.includes(label), `expected to find test case ${label}`);
+  }
+  // Case C/D must resolve their identities via SELECT ... INTO from
+  // auth.users/public.users, never a literal uuid assigned directly.
+  assert.match(source, /select au\.id, au\.email\s*\n\s*into v_allowlisted_admin_id, v_allowlisted_admin_email\s*\n\s*from auth\.users au/);
+  assert.match(source, /select u\.auth_user_id\s*\n\s*into v_normal_user_id\s*\n\s*from public\.users u/);
+  assert.ok(!/v_allowlisted_admin_id uuid := '[0-9a-f-]{36}'/i.test(source), "case C must not hardcode a UUID literal");
+  assert.ok(!/v_normal_user_id uuid := '[0-9a-f-]{36}'/i.test(source), "case D must not hardcode a UUID literal");
 });

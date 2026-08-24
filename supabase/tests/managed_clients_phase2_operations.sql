@@ -33,11 +33,29 @@
 -- admin-authorized test meaningless.
 --
 -- "Non-admin" tests reuse a fresh, never-persisted gen_random_uuid() with
--- no public.users row (same convention as Phase 0/1's v_non_staff) -
--- is_app_admin() deterministically returns false for it via both of its
--- own paths (no public.users row -> current_user_app_role() is null, and
--- the JWT email claim used is a disposable *@disposable.test string that
--- can never appear in is_app_admin()'s hardcoded email allowlist).
+-- no public.users row (same convention as Phase 0/1's v_non_staff) - the
+-- JWT email claim used is a disposable *@disposable.test string that can
+-- never appear in is_app_admin()'s hardcoded email allowlist, so only
+-- its role-check arm matters for this identity shape.
+--
+-- CRITICAL AUTH FINDING (this exact suite, run against live production):
+-- for precisely this identity shape - authenticated, no public.users
+-- row, non-allowlisted email - is_app_admin() previously returned NULL,
+-- not FALSE (current_user_app_role() = 'admin' evaluates to NULL when
+-- current_user_app_role() itself returns NULL, and `NULL OR FALSE` is
+-- NULL). Every Phase 2 RPC guards with `IF NOT public.is_app_admin()
+-- THEN RAISE ... END IF;`, and `NOT NULL` is also NULL - PL/pgSQL's IF
+-- does not enter on a NULL condition, so the guard silently failed open
+-- for this identity. Contained in production by revoking authenticated
+-- EXECUTE on all six RPCs (20260824090150), then fixed at the root by
+-- making is_app_admin() itself NULL-safe (20260824090200) before
+-- restoring those grants - see that migration's own header for the full
+-- rationale. `is_app_admin_case_a_no_users_row_returns_false` and the
+-- broader 'Shared authority' section below assert `IS FALSE` explicitly,
+-- never `NOT public.is_app_admin()`, which would itself evaluate to
+-- NULL and therefore never fail no matter what is_app_admin() actually
+-- returns - that imprecision is exactly what let the original bug ship
+-- undetected.
 --
 -- Fixture identities:
 --   owner email fixture - a REAL, currently-existing auth.users email
@@ -51,10 +69,14 @@
 --     account" rejection path - deliberately NOT looked up anywhere,
 --     since the whole point is that it must not exist.
 --
--- NOT executed as part of this task - "Production must remain READ ONLY
--- during implementation/review" per the brief, and the migration this
--- suite depends on has not been applied yet either. Ready to run once
--- both are explicitly authorized:
+-- 20260824090000/20260824090100/20260824090150 are already applied to
+-- production (this file - an earlier revision of it - is what surfaced
+-- the CRITICAL AUTH FINDING above when it was run there). This revision,
+-- with the finding's own regression coverage and the pending
+-- 20260824090200 null-safety fix it depends on for the six RPCs to be
+-- reachable again, is NOT executed as part of this task - the operator
+-- will run it after reviewing this hotfix, once 20260824090200 is
+-- applied:
 --   supabase db query --linked --file supabase/tests/managed_clients_phase2_operations.sql
 --
 -- A failed assertion raises at the end, failing the command (non-zero/
@@ -180,6 +202,22 @@ begin
   -- =====================================================================
   perform set_config('request.jwt.claims', jsonb_build_object('sub', v_non_admin, 'role', 'authenticated', 'email', 'phase2-nonadmin@disposable.test')::text, true);
 
+  -- Post-review (CRITICAL): is_app_admin() must never return NULL for
+  -- this identity shape (authenticated, no public.users row, non-
+  -- allowlisted email) - `NOT NULL` is itself NULL, and PL/pgSQL's IF
+  -- does not enter its THEN branch on a NULL condition, so every
+  -- `IF NOT public.is_app_admin() THEN RAISE ... END IF;` guard below
+  -- would silently fail open if this ever regressed. Asserting
+  -- `IS FALSE` specifically (not `NOT public.is_app_admin()`, which
+  -- would itself evaluate to NULL and therefore never fail this
+  -- assertion no matter what is_app_admin() actually returns) is the
+  -- only correct way to catch that regression here.
+  insert into test_results (test_name, passed, detail) values (
+    'is_app_admin_is_false_not_null_for_non_admin_identity',
+    public.is_app_admin() is false,
+    'is_app_admin()=' || coalesce(public.is_app_admin()::text, '(null)')
+  );
+
   begin
     perform public.admin_preview_managed_brand_provisioning(jsonb_build_object('workspace_name', 'x', 'tenant_slug', 'x', 'client_email', 'x@x.com', 'client_name', 'x'));
     insert into test_results (test_name, passed, detail) values ('non_admin_cannot_preview', false, 'call unexpectedly succeeded');
@@ -220,6 +258,115 @@ begin
     insert into test_results (test_name, passed, detail) values ('non_admin_cannot_activate_xos_domain', false, 'call unexpectedly succeeded');
   exception when others then
     insert into test_results (test_name, passed, detail) values ('non_admin_cannot_activate_xos_domain', sqlerrm like 'MANAGED_BRAND_FORBIDDEN%', sqlerrm);
+  end;
+
+  -- Post-review (CRITICAL): asserted BEFORE switching to the admin
+  -- identity, and BEFORE the real admin_initialize_managed_client_workspace
+  -- call for GSB later in this file - this is exactly the check that
+  -- would have caught the is_app_admin() NULL-bypass regression
+  -- directly, instead of only observing its downstream symptom (the
+  -- legitimate admin initialize call later failing with
+  -- WORKSPACE_INIT_ALREADY_EXISTS because the non-admin call above had
+  -- already silently succeeded and inserted a real row for GSB).
+  insert into test_results (test_name, passed, detail) values (
+    'gsb_workspace_count_still_zero_after_non_admin_denials',
+    (select count(*) from public.managed_client_workspaces where tenant_id = v_gsb_tenant_id) = 0,
+    'count=' || (select count(*) from public.managed_client_workspaces where tenant_id = v_gsb_tenant_id)::text
+  );
+  insert into test_results (test_name, passed, detail) values (
+    'no_application_table_writes_from_non_admin_denied_calls',
+    not exists (select 1 from public.tenants where slug = 'x')
+      and (select count(*) from public.tenant_capabilities where tenant_id = v_gsb_tenant_id and capability_key = 'products' and enabled = false) = 0
+      and (select status from public.tenant_domains where tenant_id = v_gsb_tenant_id and surface = 'xos_admin' and is_primary) = 'active',
+    'checked no tenant/capability/domain write happened from any of the 6 denied non-admin calls above'
+  );
+
+  -- =====================================================================
+  -- Shared authority: public.is_app_admin() null-safety (A-D)
+  -- =====================================================================
+  -- A. Fresh auth UUID, no public.users row, disposable email -> FALSE,
+  -- not NULL. Same identity/claims already used for the six denial
+  -- tests above and the 'is_app_admin_is_false_not_null_for_non_admin_identity'
+  -- assertion - re-verified explicitly here as its own labelled case to
+  -- match the lettered requirement precisely.
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_non_admin, 'role', 'authenticated', 'email', 'phase2-nonadmin@disposable.test')::text, true);
+  insert into test_results (test_name, passed, detail) values (
+    'is_app_admin_case_a_no_users_row_returns_false',
+    public.is_app_admin() is false,
+    'is_app_admin()=' || coalesce(public.is_app_admin()::text, '(null)')
+  );
+
+  -- B. Active public.users.role = 'admin' -> TRUE (v_admin, resolved
+  -- dynamically at the top of this file).
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', v_admin, 'role', 'authenticated', 'email', 'phase2-admin@disposable.test')::text, true);
+  insert into test_results (test_name, passed, detail) values (
+    'is_app_admin_case_b_role_admin_returns_true',
+    public.is_app_admin() is true,
+    'is_app_admin()=' || coalesce(public.is_app_admin()::text, '(null)')
+  );
+
+  -- C. An existing allowlisted admin email (the 4 addresses hardcoded in
+  -- is_app_admin() itself, from 202606230006_fix_internal_order_access.sql
+  -- - already-public application constants, not a secret) - dynamically
+  -- checks whether any of them corresponds to a real auth.users account
+  -- in this environment, read-only. Never a hardcoded auth UUID - the id
+  -- is looked up, and the assertion is skipped (recorded as a vacuous
+  -- pass with an explanatory detail) if none of the 4 addresses has an
+  -- account here, since production is not guaranteed to contain one.
+  declare
+    v_allowlisted_admin_id uuid;
+    v_allowlisted_admin_email text;
+  begin
+    select au.id, au.email
+    into v_allowlisted_admin_id, v_allowlisted_admin_email
+    from auth.users au
+    where lower(au.email) in ('jointx.co@gmail.com', 'jointsexclusive@gmail.com', 'jasperjaimataruse@gmail.com', 'jaicreativerealm@gmail.com')
+    limit 1;
+
+    if v_allowlisted_admin_id is not null then
+      perform set_config('request.jwt.claims', jsonb_build_object('sub', v_allowlisted_admin_id, 'role', 'authenticated', 'email', v_allowlisted_admin_email)::text, true);
+      insert into test_results (test_name, passed, detail) values (
+        'is_app_admin_case_c_allowlisted_email_returns_true',
+        public.is_app_admin() is true,
+        'is_app_admin()=' || coalesce(public.is_app_admin()::text, '(null)')
+      );
+    else
+      insert into test_results (test_name, passed, detail) values (
+        'is_app_admin_case_c_allowlisted_email_returns_true',
+        true,
+        'no allowlisted admin email has an auth.users account in this environment - vacuously skipped'
+      );
+    end if;
+  end;
+
+  -- D. A normal, active public.users identity whose role is NOT 'admin'
+  -- -> FALSE. Only the role matters for is_app_admin() (the simulated
+  -- JWT email below is a disposable string, never this person's real
+  -- email, so the email-allowlist arm is guaranteed false regardless of
+  -- who they are) - dynamically resolved, never a hardcoded auth UUID.
+  declare
+    v_normal_user_id uuid;
+  begin
+    select u.auth_user_id
+    into v_normal_user_id
+    from public.users u
+    where coalesce(u.is_active, true) and coalesce(u.role, '') <> 'admin'
+    limit 1;
+
+    if v_normal_user_id is not null then
+      perform set_config('request.jwt.claims', jsonb_build_object('sub', v_normal_user_id, 'role', 'authenticated', 'email', 'phase2-normal-user@disposable.test')::text, true);
+      insert into test_results (test_name, passed, detail) values (
+        'is_app_admin_case_d_non_admin_users_row_returns_false',
+        public.is_app_admin() is false,
+        'is_app_admin()=' || coalesce(public.is_app_admin()::text, '(null)')
+      );
+    else
+      insert into test_results (test_name, passed, detail) values (
+        'is_app_admin_case_d_non_admin_users_row_returns_false',
+        true,
+        'no active non-admin public.users row found in this environment - vacuously skipped'
+      );
+    end if;
   end;
 
   -- Switch to the app-admin identity for every remaining test.
