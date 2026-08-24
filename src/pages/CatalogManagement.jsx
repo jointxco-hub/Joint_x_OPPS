@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,11 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory } from "lucide-react";
+import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { PLACEMENT_PRESETS, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
 import { buildComponentPayload, buildSetupFeeCompanionPayload } from "@/lib/productComposition";
 import ComponentFieldsForm, { COMPONENT_TYPES, emptyComponentForm } from "@/components/composition/ComponentFieldsForm";
+import { SearchSelect } from "@/pages/Inventory";
 
 const CATEGORIES = [
   { value: "tshirts", label: "T-Shirts" },
@@ -65,6 +67,16 @@ export default function CatalogManagement() {
   const [newComponent, setNewComponent] = useState(emptyComponentForm());
   const [editingComponentId, setEditingComponentId] = useState("");
   const [editComponentForm, setEditComponentForm] = useState(emptyComponentForm());
+
+  // Phase 2A - Product Composition clone. Duplicate an existing
+  // composition onto another client_product for the SAME client, so
+  // staff never have to rebuild a near-identical setup component by
+  // component. v1 is deliberately narrow: whole-composition only, no
+  // component selection/merge/replace - see duplicate_product_composition
+  // (20260824100000) for the authoritative server-side rules this UI
+  // only mirrors for a faster/clearer failure, never enforces alone.
+  const [duplicatingComposition, setDuplicatingComposition] = useState(false);
+  const [duplicateTargetId, setDuplicateTargetId] = useState("");
 
   const { data: internalProducts = [] } = useQuery({
     queryKey: ['inventoryProducts'],
@@ -182,6 +194,44 @@ export default function CatalogManagement() {
   const hasApprovedArtwork = (placement) => !placement
     ? null
     : (Array.isArray(currentArtwork) ? currentArtwork : []).some((a) => a.placement === placement && a.status === 'approved');
+
+  // Candidate targets - best-effort same-client filter for a faster/
+  // clearer picker. The RPC re-validates same-tenant/same-client itself
+  // and is the only authority that actually matters (see 20260824100000).
+  const { data: cloneTargetCandidates = [] } = useQuery({
+    queryKey: ['clientProductsForCompositionClone', selectedClientProduct?.client_id],
+    queryFn: () => dataClient.entities.ClientProduct.filter({ client_id: selectedClientProduct.client_id }, 'client_facing_name', 200),
+    enabled: Boolean(duplicatingComposition && selectedClientProduct?.client_id),
+  });
+  const cloneTargetOptions = cloneTargetCandidates.filter((cp) => cp.id !== selectedClientProductId);
+  const selectedCloneTarget = cloneTargetOptions.find((cp) => cp.id === duplicateTargetId) || null;
+
+  // Faster/clearer warning only - the RPC's own "Target product already
+  // has a composition." rejection is what actually enforces this.
+  const { data: targetExistingComponents = [] } = useQuery({
+    queryKey: ['productComponents', duplicateTargetId],
+    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: duplicateTargetId }, 'sort_order', 100),
+    enabled: Boolean(duplicateTargetId),
+  });
+  const targetAlreadyHasComposition = Boolean(duplicateTargetId) && targetExistingComponents.length > 0;
+
+  const duplicateCompositionMutation = useMutation({
+    mutationFn: async (targetId) => {
+      const { data, error } = await supabase.rpc('duplicate_product_composition', {
+        p_source_client_product_id: selectedClientProductId,
+        p_target_client_product_id: targetId,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['productComponents', data.target_client_product_id] });
+      setDuplicatingComposition(false);
+      setDuplicateTargetId("");
+      toast.success(`Composition duplicated - ${data.cloned_count} component${data.cloned_count === 1 ? '' : 's'} copied`);
+    },
+    onError: (error) => toast.error(error.message || "Could not duplicate composition"),
+  });
 
   const handleImageUpload = async (e, item) => {
     const file = e.target.files?.[0];
@@ -743,6 +793,50 @@ export default function CatalogManagement() {
                           <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditingComponentId(""); setAddingComponent(true); }}>
                             <Plus className="mr-1.5 h-3.5 w-3.5" /> Add print option
                           </Button>
+                        )}
+
+                        {productComponents.length > 0 && !addingComponent && !editingComponentId && (
+                          duplicatingComposition ? (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                              <p className="text-xs text-slate-500">
+                                Duplicating from <span className="font-medium text-slate-700">{selectedClientProduct?.client_facing_name}</span> ({productComponents.length} component{productComponents.length === 1 ? '' : 's'}) into another client product for the same client.
+                              </p>
+                              <SearchSelect
+                                options={cloneTargetOptions}
+                                value={duplicateTargetId}
+                                onChange={(id) => setDuplicateTargetId(id)}
+                                getLabel={(cp) => cp.client_facing_name}
+                                placeholder={cloneTargetOptions.length ? "Select target client product" : "No other client products for this client yet"}
+                              />
+                              {selectedCloneTarget && targetAlreadyHasComposition && (
+                                <p className="text-xs text-amber-600">
+                                  Target product already has a composition ({targetExistingComponents.length} row{targetExistingComponents.length === 1 ? '' : 's'}) - choose a different target.
+                                </p>
+                              )}
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="flex-1"
+                                  onClick={() => { setDuplicatingComposition(false); setDuplicateTargetId(""); }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="flex-1"
+                                  disabled={!duplicateTargetId || targetAlreadyHasComposition || duplicateCompositionMutation.isPending}
+                                  onClick={() => duplicateCompositionMutation.mutate(duplicateTargetId)}
+                                >
+                                  {duplicateCompositionMutation.isPending ? "Duplicating…" : "Confirm duplicate"}
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <Button variant="outline" size="sm" className="w-full" onClick={() => setDuplicatingComposition(true)}>
+                              <Copy className="mr-1.5 h-3.5 w-3.5" /> Duplicate composition
+                            </Button>
+                          )
                         )}
                       </>
                     )}
