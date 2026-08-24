@@ -83,7 +83,22 @@ function TagListEditor({ label, values, onChange, suggestions = [], placeholder 
   );
 }
 
+// A template is selectable only when active AND (it has no declared
+// supported_site_types - "not yet scoped" - or the workspace's current
+// site_type appears in that list). Server-side readiness/generation are
+// the actual authority (see _managed_site_build_readiness); this mirrors
+// that rule client-side purely to avoid offering a choice the server
+// will reject.
+function isTemplateCompatible(template, siteType) {
+  if (!template || template.status !== "active") return false;
+  const types = Array.isArray(template.supported_site_types) ? template.supported_site_types : [];
+  if (types.length === 0) return true;
+  if (!siteType) return true;
+  return types.includes(siteType);
+}
+
 const EMPTY_BUILD_FORM = {
+  build_mode: "template",
   template_id: "",
   primary_goal: "",
   brand_summary: "",
@@ -103,6 +118,7 @@ const EMPTY_BUILD_FORM = {
 function buildToForm(build) {
   if (!build) return { ...EMPTY_BUILD_FORM };
   return {
+    build_mode: build.build_mode === "custom" ? "custom" : "template",
     template_id: build.template_id || "",
     primary_goal: build.primary_goal || "",
     brand_summary: build.brand_summary || "",
@@ -135,13 +151,21 @@ function diffBuildForm(current, original) {
   return updates;
 }
 
-function BuildConfigDialog({ open, onOpenChange, tenantId, build, templates }) {
+function BuildConfigDialog({ open, onOpenChange, tenantId, build, templates, siteType }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => buildToForm(build));
   const [originalForm] = useState(() => buildToForm(build));
   const [saving, setSaving] = useState(false);
 
-  const activeTemplates = templates.filter((t) => t.status === "active");
+  const compatibleTemplates = templates.filter((t) => isTemplateCompatible(t, siteType));
+  const selectedTemplate = templates.find((t) => t.id === form.template_id) || null;
+  // If the previously-selected template is no longer compatible (site type
+  // changed, or it was archived), keep showing it in the list - marked as
+  // incompatible - instead of silently dropping/replacing the selection.
+  const selectedIncompatible = form.build_mode !== "custom" && Boolean(form.template_id) && !isTemplateCompatible(selectedTemplate, siteType);
+  const selectableTemplates = selectedIncompatible && selectedTemplate
+    ? [selectedTemplate, ...compatibleTemplates.filter((t) => t.id !== selectedTemplate.id)]
+    : compatibleTemplates;
   const setField = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
 
   async function handleSave() {
@@ -169,22 +193,53 @@ function BuildConfigDialog({ open, onOpenChange, tenantId, build, templates }) {
         </DialogHeader>
 
         <div>
-          <Label className="text-xs text-slate-500">Site template</Label>
-          <Select value={form.template_id || "__none__"} onValueChange={(v) => setField("template_id")(v === "__none__" ? "" : v)}>
-            <SelectTrigger className="mt-1">
-              <SelectValue placeholder="No template selected (custom build)" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">No template (custom build)</SelectItem>
-              {activeTemplates.map((t) => (
-                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {activeTemplates.length === 0 && (
-            <p className="text-xs text-slate-400 mt-1">No site templates configured yet.</p>
-          )}
+          <Label className="text-xs text-slate-500">Site build type</Label>
+          <div className="flex gap-2 mt-1">
+            <Button
+              type="button"
+              size="sm"
+              variant={form.build_mode !== "custom" ? "default" : "outline"}
+              onClick={() => setField("build_mode")("template")}
+            >
+              Use template
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={form.build_mode === "custom" ? "default" : "outline"}
+              onClick={() => setForm((f) => ({ ...f, build_mode: "custom", template_id: "" }))}
+            >
+              Custom build
+            </Button>
+          </div>
         </div>
+
+        {form.build_mode !== "custom" && (
+          <div>
+            <Label className="text-xs text-slate-500">Site template</Label>
+            <Select value={form.template_id || "__none__"} onValueChange={(v) => setField("template_id")(v === "__none__" ? "" : v)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue placeholder="No template selected yet" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">No template selected</SelectItem>
+                {selectableTemplates.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}{selectedIncompatible && selectedTemplate && t.id === selectedTemplate.id ? " (incompatible with current site type)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedIncompatible && (
+              <p className="text-xs text-red-600 mt-1">
+                This template no longer supports the workspace's current site type. Choose a different template or switch to Custom build.
+              </p>
+            )}
+            {!selectedIncompatible && compatibleTemplates.length === 0 && (
+              <p className="text-xs text-slate-400 mt-1">No site templates configured yet.</p>
+            )}
+          </div>
+        )}
 
         <div>
           <Label className="text-xs text-slate-500">Primary goal</Label>
@@ -374,8 +429,14 @@ export function SiteBuildSection({ row }) {
           )}
           <div className="grid grid-cols-2 gap-4 text-sm">
             <div>
+              <p className="text-xs text-slate-500">Build mode</p>
+              <p className="text-slate-800 capitalize">{build.build_mode === "custom" ? "Custom" : "Template"}</p>
+            </div>
+            <div>
               <p className="text-xs text-slate-500">Template</p>
-              <p className="text-slate-800">{build.template?.name || "None (custom build)"}</p>
+              <p className={`text-slate-800 ${build.readiness?.state === "blocked" ? "text-red-600" : ""}`}>
+                {build.template?.name || (build.build_mode === "custom" ? "None (custom build)" : "Not selected")}
+              </p>
             </div>
             <div>
               <p className="text-xs text-slate-500">Build status</p>
@@ -429,7 +490,7 @@ export function SiteBuildSection({ row }) {
       )}
 
       {configOpen && (
-        <BuildConfigDialog open={configOpen} onOpenChange={setConfigOpen} tenantId={row.tenant_id} build={build} templates={templates} />
+        <BuildConfigDialog open={configOpen} onOpenChange={setConfigOpen} tenantId={row.tenant_id} build={build} templates={templates} siteType={row.site_type} />
       )}
       {briefViewOpen && build && (
         <BriefViewDialog open={briefViewOpen} onOpenChange={setBriefViewOpen} siteBuildId={build.id} />

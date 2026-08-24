@@ -94,6 +94,16 @@ create table public.managed_site_builds (
   workspace_id uuid not null references public.managed_client_workspaces(id),
   template_id uuid references public.managed_site_templates(id),
 
+  -- Post-review (spec gap): distinguishes "operator has not chosen a
+  -- template yet" from "operator intentionally selected a custom build" -
+  -- previously both were indistinguishable states of template_id = null.
+  -- 'custom' mode always has template_id = null (enforced by both this
+  -- CHECK and admin_upsert_managed_site_build's own normalization);
+  -- 'template' mode is the only mode where a missing template_id
+  -- surfaces as a readiness gap.
+  build_mode text not null default 'template' check (build_mode in ('template', 'custom')),
+  check (build_mode = 'template' or template_id is null),
+
   status text not null default 'draft' check (status in ('draft', 'brief_ready', 'building', 'preview_ready', 'review', 'live', 'archived')),
 
   primary_goal text,
@@ -165,6 +175,65 @@ revoke all on public.managed_site_build_briefs from authenticated;
 -- public._is_eligible_managed_tenant precedent).
 -- =====================================================================
 
+-- Shape validator (post-review, item 7): the key-allowlist validators
+-- below only ever checked KEY names, not VALUE shape - a malformed
+-- direct RPC call (e.g. a string or object where an array was expected)
+-- would otherwise reach jsonb_array_length/jsonb_array_elements_text
+-- deep inside admin_upsert_managed_site_build or the brief generator and
+-- raise a generic, unhelpful Postgres JSON-type error instead of a
+-- deterministic SITE_BUILD_INPUT_INVALID/SITE_TEMPLATE_INPUT_INVALID one.
+create function public._validate_jsonb_string_array(p_value jsonb, p_field_name text, p_error_code text)
+returns void
+language plpgsql
+set search_path to 'pg_catalog', 'public'
+as $$
+begin
+  if p_value is null or p_value = 'null'::jsonb then
+    return;
+  end if;
+  if jsonb_typeof(p_value) <> 'array' then
+    raise exception using errcode = 'P0001', message = format('%s: "%s" must be a JSON array', p_error_code, p_field_name);
+  end if;
+  if exists (select 1 from jsonb_array_elements(p_value) e where jsonb_typeof(e) <> 'string') then
+    raise exception using errcode = 'P0001', message = format('%s: "%s" must be a JSON array of strings', p_error_code, p_field_name);
+  end if;
+end;
+$$;
+
+revoke all on function public._validate_jsonb_string_array(jsonb, text, text) from public;
+revoke all on function public._validate_jsonb_string_array(jsonb, text, text) from anon;
+revoke all on function public._validate_jsonb_string_array(jsonb, text, text) from authenticated;
+
+-- Canonical workspace site types (matches Phase 2's SITE_TYPES exactly -
+-- src/components/managedClients/ManagedClientOperations.jsx) - used to
+-- reject a template's supported_site_types typo (e.g. "ecommerce" or
+-- "E-commerce") that would otherwise never match a real
+-- managed_client_workspaces.site_type value and silently make site-type
+-- compatibility checks meaningless.
+create function public._validate_managed_site_types(p_value jsonb)
+returns void
+language plpgsql
+set search_path to 'pg_catalog', 'public'
+as $$
+declare
+  v_allowed constant text[] := array[
+    'Portfolio / Booking', 'Catalog', 'Ecommerce', 'Preorder', 'Landing Page',
+    'Quote Request', 'Service Website', 'Other'
+  ];
+begin
+  if p_value is null or p_value = 'null'::jsonb then
+    return;
+  end if;
+  if exists (select 1 from jsonb_array_elements_text(p_value) x where not (x = any(v_allowed))) then
+    raise exception using errcode = 'P0001', message = 'SITE_TEMPLATE_SITE_TYPE_INVALID: supported_site_types must only contain canonical workspace site types';
+  end if;
+end;
+$$;
+
+revoke all on function public._validate_managed_site_types(jsonb) from public;
+revoke all on function public._validate_managed_site_types(jsonb) from anon;
+revoke all on function public._validate_managed_site_types(jsonb) from authenticated;
+
 create function public._validate_site_template_input_keys(p_input jsonb)
 returns void
 language plpgsql
@@ -185,6 +254,11 @@ begin
       raise exception using errcode = 'P0001', message = format('SITE_TEMPLATE_UPDATE_UNKNOWN_KEY: "%s" is not an editable template field', v_key);
     end if;
   end loop;
+
+  perform public._validate_jsonb_string_array(p_input -> 'supported_site_types', 'supported_site_types', 'SITE_TEMPLATE_INPUT_INVALID');
+  perform public._validate_managed_site_types(p_input -> 'supported_site_types');
+  perform public._validate_jsonb_string_array(p_input -> 'default_pages', 'default_pages', 'SITE_TEMPLATE_INPUT_INVALID');
+  perform public._validate_jsonb_string_array(p_input -> 'default_features', 'default_features', 'SITE_TEMPLATE_INPUT_INVALID');
 end;
 $$;
 
@@ -200,7 +274,7 @@ as $$
 declare
   v_key text;
   v_allowed constant text[] := array[
-    'template_id', 'primary_goal', 'brand_summary', 'target_audience', 'visual_direction', 'tone_of_voice',
+    'template_id', 'build_mode', 'primary_goal', 'brand_summary', 'target_audience', 'visual_direction', 'tone_of_voice',
     'required_pages', 'required_features', 'integrations', 'reference_urls',
     'content_notes', 'product_notes', 'technical_notes', 'deployment_notes'
   ];
@@ -216,6 +290,15 @@ begin
       raise exception using errcode = 'P0001', message = format('SITE_BUILD_UPDATE_UNKNOWN_KEY: "%s" is not an editable site-build field', v_key);
     end if;
   end loop;
+
+  if p_input ? 'build_mode' and nullif(p_input ->> 'build_mode', '') is not null and (p_input ->> 'build_mode') not in ('template', 'custom') then
+    raise exception using errcode = 'P0001', message = 'SITE_BUILD_MODE_INVALID: build_mode must be template or custom';
+  end if;
+
+  perform public._validate_jsonb_string_array(p_input -> 'required_pages', 'required_pages', 'SITE_BUILD_INPUT_INVALID');
+  perform public._validate_jsonb_string_array(p_input -> 'required_features', 'required_features', 'SITE_BUILD_INPUT_INVALID');
+  perform public._validate_jsonb_string_array(p_input -> 'integrations', 'integrations', 'SITE_BUILD_INPUT_INVALID');
+  perform public._validate_jsonb_string_array(p_input -> 'reference_urls', 'reference_urls', 'SITE_BUILD_INPUT_INVALID');
 end;
 $$;
 
@@ -261,14 +344,27 @@ revoke all on function public._resolve_active_managed_workspace(uuid) from publi
 revoke all on function public._resolve_active_managed_workspace(uuid) from anon;
 revoke all on function public._resolve_active_managed_workspace(uuid) from authenticated;
 
--- Readiness (Part F): 'blocked' is reserved for structural errors
--- (invalid/archived template - workspace/tenant/client structural
--- problems are already fail-fast raised by the resolver above and never
--- reach this function). Missing content NEVER blocks - it is surfaced
--- as 'ready_with_missing_inputs' plus an explicit missing-inputs list,
--- so a brief can legitimately say "Missing: final hero copy" instead of
--- fabricating placeholder content.
+-- Readiness (Part F): 'blocked' is reserved for structural errors -
+-- invalid/archived template, or (post-review, item 2) a template that no
+-- longer supports the workspace's CURRENT site type (site_type can
+-- change later through the Phase 2 workspace editor, after the build was
+-- saved and even after a brief was generated - readiness and generation
+-- must re-check compatibility against live data every time, not just at
+-- the moment the template was originally selected). Workspace/tenant/
+-- client structural problems are already fail-fast raised by the
+-- resolver above and never reach this function. Missing content NEVER
+-- blocks - it is surfaced as 'ready_with_missing_inputs' plus an
+-- explicit missing-inputs list, so a brief can legitimately say
+-- "Missing: final hero copy" instead of fabricating placeholder content.
+--
+-- build_mode (post-review, item 3): in 'custom' mode, template_id is
+-- always null by construction (see managed_site_builds' own CHECK
+-- constraint and admin_upsert_managed_site_build's normalization), and
+-- the "no template selected" gap simply does not apply - an explicit
+-- custom build can reach 'ready' with no template at all. In 'template'
+-- mode (the default), a null template_id IS a genuine missing input.
 create function public._managed_site_build_readiness(
+  p_build_mode text,
   p_template_id uuid,
   p_primary_goal text,
   p_brand_summary text,
@@ -287,15 +383,27 @@ declare
   v_missing text[] := '{}';
   v_blocked boolean := false;
   v_template_status text;
+  v_template_site_types text[];
 begin
-  if p_template_id is not null then
-    select status into v_template_status from public.managed_site_templates where id = p_template_id;
+  if p_build_mode = 'custom' then
+    -- template_id is expected to be null here by construction; no
+    -- "no template selected" warning applies to an explicit custom build.
+    null;
+  elsif p_template_id is not null then
+    select status, supported_site_types into v_template_status, v_template_site_types
+    from public.managed_site_templates where id = p_template_id;
     if v_template_status is null then
       v_blocked := true;
       v_missing := array_append(v_missing, 'Selected template no longer exists.');
     elsif v_template_status <> 'active' then
       v_blocked := true;
       v_missing := array_append(v_missing, 'Selected template has been archived - choose an active template.');
+    elsif p_site_type is not null
+      and coalesce(array_length(v_template_site_types, 1), 0) > 0
+      and not (p_site_type = any(v_template_site_types))
+    then
+      v_blocked := true;
+      v_missing := array_append(v_missing, format('Selected template does not support current workspace site type "%s".', p_site_type));
     end if;
   else
     v_missing := array_append(v_missing, 'No template selected (mark explicitly custom if intentional).');
@@ -334,9 +442,9 @@ begin
 end;
 $$;
 
-revoke all on function public._managed_site_build_readiness(uuid, text, text, jsonb, jsonb, text, text, text) from public;
-revoke all on function public._managed_site_build_readiness(uuid, text, text, jsonb, jsonb, text, text, text) from anon;
-revoke all on function public._managed_site_build_readiness(uuid, text, text, jsonb, jsonb, text, text, text) from authenticated;
+revoke all on function public._managed_site_build_readiness(text, uuid, text, text, jsonb, jsonb, text, text, text) from public;
+revoke all on function public._managed_site_build_readiness(text, uuid, text, text, jsonb, jsonb, text, text, text) from anon;
+revoke all on function public._managed_site_build_readiness(text, uuid, text, text, jsonb, jsonb, text, text, text) from authenticated;
 
 -- Single source of truth for the brief source snapshot (Part D/E) -
 -- shared by admin_get_managed_site_build (to detect and report
@@ -368,38 +476,69 @@ declare
 begin
   v_products_enabled := coalesce((select enabled from public.tenant_capabilities where tenant_id = p_build.tenant_id and capability_key = 'products'), false);
 
+  -- Post-review (blocker, item 4): the product query only ever RUNS when
+  -- the tenant's Products capability is actually enabled. Querying
+  -- commerce.products unconditionally (and only checking the flag for
+  -- display) meant a hidden/disabled catalog change could silently mark
+  -- a brief stale even though the brief itself never shows Commerce
+  -- content for that tenant - violating "For Products-enabled managed
+  -- tenants, include SAFE Commerce summaries" (implying: never otherwise).
   -- Safe Commerce product context - commerce.products/product_variants
   -- (see 20260823111500_xos_3a_products_foundation.sql) have no internal
   -- production-cost column at all; they are already the customer-facing
   -- catalog projection XOS 3A/3B established, so selecting these columns
   -- directly can never leak supplier/production cost.
-  select coalesce(jsonb_agg(jsonb_build_object(
-    'name', p.name, 'description', p.description, 'price', p.price, 'sale_price', p.sale_price,
-    'currency', p.currency, 'availability', p.availability, 'primary_image_url', p.primary_image_url,
-    'variants', coalesce((
-      select jsonb_agg(jsonb_build_object('title', v.title, 'size', v.size, 'color', v.color, 'availability', v.availability) order by v.sort_order)
-      from commerce.product_variants v where v.product_id = p.id
-    ), '[]'::jsonb)
-  ) order by p.name), '[]'::jsonb)
-  into v_products
-  from commerce.products p
-  where p.tenant_id = p_build.tenant_id and p.status <> 'archived';
+  if v_products_enabled then
+    -- Post-review (item 5): deterministic tie-breakers - product name
+    -- and variant sort_order are both realistically non-unique (two
+    -- products can share a name; two variants can share/lack a
+    -- sort_order), so the primary key is appended to guarantee a
+    -- stable, reproducible aggregate order regardless of how many rows
+    -- happen to tie. IDs are never exposed in the generated brief text
+    -- itself - they exist here only to make ORDER BY deterministic.
+    select coalesce(jsonb_agg(jsonb_build_object(
+      'name', p.name, 'description', p.description, 'price', p.price, 'sale_price', p.sale_price,
+      'currency', p.currency, 'availability', p.availability, 'primary_image_url', p.primary_image_url,
+      'variants', coalesce((
+        select jsonb_agg(jsonb_build_object('title', v.title, 'size', v.size, 'color', v.color, 'availability', v.availability) order by v.sort_order nulls last, v.title, v.id)
+        from commerce.product_variants v where v.product_id = p.id
+      ), '[]'::jsonb)
+    ) order by p.name, p.id), '[]'::jsonb)
+    into v_products
+    from commerce.products p
+    where p.tenant_id = p_build.tenant_id and p.status <> 'archived';
+  else
+    v_products := '[]'::jsonb;
+  end if;
 
   -- Never includes auth metadata, private file contents, internal costs,
   -- supplier prices, tokens, secrets, or private conversation content -
   -- every field below is either operator-entered site-build
-  -- configuration, workspace readiness status text, or the safe Commerce
-  -- projection above. Unrelated OPPS data never enters this object, so
-  -- an unrelated change elsewhere in the system can never change the
-  -- fingerprint derived from it.
+  -- configuration, workspace readiness status text, template metadata,
+  -- or the safe Commerce projection above. Unrelated OPPS data never
+  -- enters this object, so an unrelated change elsewhere in the system
+  -- can never change the fingerprint derived from it.
+  --
+  -- Post-review (blocker, item 1): the generated brief text directly
+  -- uses the SELECTED template's repository_url, supported_site_types,
+  -- and build_instructions (sections 4 and readiness) - all three (plus
+  -- status, since an archived template changes readiness/blocks
+  -- generation) must participate here, or editing a template after a
+  -- brief was generated could leave a stale brief silently reporting
+  -- "Current".
   return jsonb_build_object(
     'brand_name', coalesce(p_client.brand_name, p_tenant.name, p_client.name),
     'tenant_slug', p_tenant.slug,
     'client_type', p_workspace.client_type,
     'site_type', p_workspace.site_type,
+    'build_mode', p_build.build_mode,
     'template_id', p_build.template_id,
     'template_key', p_template.template_key,
     'template_name', p_template.name,
+    'template_status', p_template.status,
+    'template_repository_url', p_template.repository_url,
+    'template_supported_site_types', to_jsonb(p_template.supported_site_types),
+    'template_build_instructions', p_template.build_instructions,
     'primary_goal', p_build.primary_goal,
     'brand_summary', p_build.brand_summary,
     'target_audience', p_build.target_audience,
@@ -530,12 +669,25 @@ begin
       jsonb_build_object('template_key', v_template.template_key)
     );
   else
-    if not exists (select 1 from public.managed_site_templates where id = p_template_id) then
+    select * into v_template from public.managed_site_templates where id = p_template_id;
+    if not found then
       raise exception using errcode = 'P0001', message = 'SITE_TEMPLATE_NOT_FOUND: template does not exist';
     end if;
 
+    if p_input ? 'template_key' then
+      if nullif(btrim(coalesce(p_input ->> 'template_key', '')), '') is null then
+        raise exception using errcode = 'P0001', message = 'SITE_TEMPLATE_KEY_REQUIRED: template_key cannot be empty';
+      end if;
+      if btrim(p_input ->> 'template_key') <> v_template.template_key then
+        raise exception using errcode = 'P0001', message = 'SITE_TEMPLATE_KEY_IMMUTABLE: template_key cannot be changed after creation';
+      end if;
+    end if;
+
+    if p_input ? 'name' and nullif(btrim(coalesce(p_input ->> 'name', '')), '') is null then
+      raise exception using errcode = 'P0001', message = 'SITE_TEMPLATE_NAME_REQUIRED: name cannot be empty';
+    end if;
+
     update public.managed_site_templates set
-      template_key = case when p_input ? 'template_key' then btrim(p_input ->> 'template_key') else template_key end,
       name = case when p_input ? 'name' then btrim(p_input ->> 'name') else name end,
       description = case when p_input ? 'description' then p_input ->> 'description' else description end,
       supported_site_types = case when p_input ? 'supported_site_types' then coalesce(v_site_types, '{}'::text[]) else supported_site_types end,
@@ -674,7 +826,7 @@ begin
   end if;
 
   v_readiness := public._managed_site_build_readiness(
-    v_build.template_id, v_build.primary_goal, v_build.brand_summary, v_build.required_pages, v_build.required_features,
+    v_build.build_mode, v_build.template_id, v_build.primary_goal, v_build.brand_summary, v_build.required_pages, v_build.required_features,
     v_workspace.site_type, v_workspace.assets_status, v_workspace.content_status
   );
 
@@ -703,12 +855,13 @@ declare
   v_client_id uuid;
   v_workspace_id uuid;
   v_workspace_site_type text;
-  v_template_id uuid;
   v_template_status text;
   v_template_site_types text[];
-  v_existing_id uuid;
-  v_build public.managed_site_builds;
+  v_existing public.managed_site_builds;
   v_is_new boolean;
+  v_next_build_mode text;
+  v_next_template_id uuid;
+  v_build public.managed_site_builds;
 begin
   if not public.is_app_admin() then
     raise exception using errcode = 'P0001', message = 'SITE_BUILD_FORBIDDEN: app admin access required';
@@ -719,39 +872,54 @@ begin
   select * into v_client_id, v_workspace_id from public._resolve_active_managed_workspace(p_tenant_id);
   select site_type into v_workspace_site_type from public.managed_client_workspaces where id = v_workspace_id;
 
-  if p_input ? 'template_id' then
-    v_template_id := nullif(p_input ->> 'template_id', '')::uuid;
-    if v_template_id is not null then
-      select status, supported_site_types into v_template_status, v_template_site_types
-      from public.managed_site_templates where id = v_template_id;
-      if v_template_status is null or v_template_status <> 'active' then
-        raise exception using errcode = 'P0001', message = 'SITE_BUILD_TEMPLATE_INVALID: template does not exist or is not active';
-      end if;
-      -- Site-type compatibility: only enforced when both sides have a
-      -- value to compare - a template with an empty supported_site_types
-      -- array is treated as "not yet scoped to specific site types" and
-      -- is never rejected on this basis alone.
-      if v_workspace_site_type is not null
-         and coalesce(array_length(v_template_site_types, 1), 0) > 0
-         and not (v_workspace_site_type = any(v_template_site_types))
-      then
-        raise exception using errcode = 'P0001', message = format('SITE_BUILD_TEMPLATE_SITE_TYPE_MISMATCH: template does not support site type "%s"', v_workspace_site_type);
-      end if;
+  select * into v_existing from public.managed_site_builds where workspace_id = v_workspace_id and status <> 'archived';
+  v_is_new := not found;
+
+  -- ---- Resolve the EFFECTIVE build_mode/template_id together (post-
+  -- review, item 3) - "custom" always wins over any supplied template_id
+  -- (normalized, not rejected: selecting build_mode=custom silently
+  -- clears template_id server-side, matching "if operator changes from
+  -- template -> custom: clear template_id server-side"), and explicitly
+  -- selecting a real template always forces build_mode back to
+  -- "template" (matching "if operator selects a template: set/require
+  -- build_mode = template"). ----
+  v_next_build_mode := case when p_input ? 'build_mode' then coalesce(nullif(p_input ->> 'build_mode', ''), 'template') else coalesce(v_existing.build_mode, 'template') end;
+  v_next_template_id := case when p_input ? 'template_id' then nullif(p_input ->> 'template_id', '')::uuid else v_existing.template_id end;
+
+  if (p_input ? 'template_id') and v_next_template_id is not null then
+    v_next_build_mode := 'template';
+  end if;
+  if v_next_build_mode = 'custom' then
+    v_next_template_id := null;
+  end if;
+
+  if v_next_template_id is not null then
+    select status, supported_site_types into v_template_status, v_template_site_types
+    from public.managed_site_templates where id = v_next_template_id;
+    if v_template_status is null or v_template_status <> 'active' then
+      raise exception using errcode = 'P0001', message = 'SITE_BUILD_TEMPLATE_INVALID: template does not exist or is not active';
+    end if;
+    -- Site-type compatibility: only enforced when both sides have a
+    -- value to compare - a template with an empty supported_site_types
+    -- array is treated as "not yet scoped to specific site types" and
+    -- is never rejected on this basis alone.
+    if v_workspace_site_type is not null
+       and coalesce(array_length(v_template_site_types, 1), 0) > 0
+       and not (v_workspace_site_type = any(v_template_site_types))
+    then
+      raise exception using errcode = 'P0001', message = format('SITE_BUILD_TEMPLATE_SITE_TYPE_MISMATCH: template does not support site type "%s"', v_workspace_site_type);
     end if;
   end if;
 
   v_actor := auth.email();
 
-  select id into v_existing_id from public.managed_site_builds where workspace_id = v_workspace_id and status <> 'archived';
-  v_is_new := v_existing_id is null;
-
   if v_is_new then
     insert into public.managed_site_builds (
-      tenant_id, client_id, workspace_id, template_id, primary_goal, brand_summary, target_audience,
+      tenant_id, client_id, workspace_id, template_id, build_mode, primary_goal, brand_summary, target_audience,
       visual_direction, tone_of_voice, required_pages, required_features, integrations, reference_urls,
       content_notes, product_notes, technical_notes, deployment_notes
     ) values (
-      p_tenant_id, v_client_id, v_workspace_id, v_template_id,
+      p_tenant_id, v_client_id, v_workspace_id, v_next_template_id, v_next_build_mode,
       p_input ->> 'primary_goal', p_input ->> 'brand_summary', p_input ->> 'target_audience',
       p_input ->> 'visual_direction', p_input ->> 'tone_of_voice',
       coalesce(p_input -> 'required_pages', '[]'::jsonb), coalesce(p_input -> 'required_features', '[]'::jsonb),
@@ -764,7 +932,8 @@ begin
     values (p_tenant_id, v_actor, v_actor, 'managed_site_build_created', 'managed_site_build', v_build.id, 'Created site build for tenant ' || p_tenant_id::text, '{}'::jsonb);
   else
     update public.managed_site_builds set
-      template_id = case when p_input ? 'template_id' then v_template_id else template_id end,
+      template_id = v_next_template_id,
+      build_mode = v_next_build_mode,
       primary_goal = case when p_input ? 'primary_goal' then p_input ->> 'primary_goal' else primary_goal end,
       brand_summary = case when p_input ? 'brand_summary' then p_input ->> 'brand_summary' else brand_summary end,
       target_audience = case when p_input ? 'target_audience' then p_input ->> 'target_audience' else target_audience end,
@@ -779,7 +948,7 @@ begin
       technical_notes = case when p_input ? 'technical_notes' then p_input ->> 'technical_notes' else technical_notes end,
       deployment_notes = case when p_input ? 'deployment_notes' then p_input ->> 'deployment_notes' else deployment_notes end,
       updated_at = now()
-    where id = v_existing_id
+    where id = v_existing.id
     returning * into v_build;
 
     insert into public.opps_activity_events (tenant_id, actor_email, actor_name, event_type, entity_type, entity_id, summary, metadata)
@@ -838,7 +1007,15 @@ begin
     raise exception using errcode = 'P0001', message = 'SITE_BUILD_FORBIDDEN: app admin access required';
   end if;
 
-  select * into v_build from public.managed_site_builds where id = p_site_build_id;
+  -- Post-review (item 6): FOR UPDATE serializes two concurrent
+  -- generations for the SAME build (so `max(version) + 1` below can
+  -- never race and collide against the unique(site_build_id, version)
+  -- constraint), and also serializes generation against a concurrent
+  -- admin_upsert_managed_site_build UPDATE on this same row - a plain
+  -- UPDATE from another transaction needs the same row lock and will
+  -- simply wait until this transaction commits/rolls back. Deliberately
+  -- scoped to this one row, not a broad/global lock.
+  select * into v_build from public.managed_site_builds where id = p_site_build_id for update;
   if not found then
     raise exception using errcode = 'P0001', message = 'SITE_BUILD_NOT_FOUND: site build does not exist';
   end if;
@@ -863,7 +1040,7 @@ begin
   end if;
 
   v_readiness := public._managed_site_build_readiness(
-    v_build.template_id, v_build.primary_goal, v_build.brand_summary, v_build.required_pages, v_build.required_features,
+    v_build.build_mode, v_build.template_id, v_build.primary_goal, v_build.brand_summary, v_build.required_pages, v_build.required_features,
     v_workspace.site_type, v_workspace.assets_status, v_workspace.content_status
   );
   if v_readiness ->> 'state' = 'blocked' then
@@ -933,7 +1110,8 @@ begin
     'Client type: ' || coalesce(v_workspace.client_type, 'Not configured') || chr(10) ||
     'Site type: ' || coalesce(v_workspace.site_type, 'Not configured') || chr(10) ||
     'Build ID: ' || v_build.id::text || chr(10) ||
-    'Template: ' || coalesce(v_template.name, 'Not selected (custom build)') || chr(10) ||
+    'Build mode: ' || case when v_build.build_mode = 'custom' then 'Custom' else 'Template' end || chr(10) ||
+    'Template: ' || coalesce(v_template.name, case when v_build.build_mode = 'custom' then 'None (explicit custom build)' else 'Not selected' end) || chr(10) ||
     'Template reference: ' || coalesce(v_template.repository_url, v_template.template_key, 'Not configured') || chr(10) || chr(10) ||
 
     '## 2. Objective' || chr(10) || chr(10) ||

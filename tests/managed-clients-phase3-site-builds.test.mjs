@@ -144,6 +144,119 @@ test("migration: no repository/Vercel/Supabase tokens or secret-shaped columns e
   assert.ok(!/token|secret|password|service_role_key|api_key/i.test(tableBlock), "the template registry must never declare a secret-shaped column");
 });
 
+// ─────────────────────────────────────────────────────────────────────
+// PR #40 pre-production review amendment coverage
+// ─────────────────────────────────────────────────────────────────────
+
+test("migration (item 1): every template field the brief text actually uses is present in the shared source snapshot", async () => {
+  const source = await readSource(MIGRATION);
+  const snapshotFn = source.match(/create function public\._compute_managed_site_build_snapshot[\s\S]*?\$\$;/)?.[0] ?? "";
+  for (const field of ["template_status", "template_repository_url", "template_supported_site_types", "template_build_instructions"]) {
+    assert.match(snapshotFn, new RegExp(`'${field}'`), `snapshot must include '${field}' - it is used in the generated brief text`);
+  }
+  const genFn = source.match(/create function public\.admin_generate_managed_site_build_brief[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(genFn, /v_template\.repository_url/, "brief text uses the template's repository_url");
+  assert.match(genFn, /v_template\.supported_site_types/, "brief text uses the template's supported_site_types");
+  assert.match(genFn, /v_template\.build_instructions/, "brief text uses the template's build_instructions");
+});
+
+test("migration (item 2): readiness re-checks the CURRENT workspace site_type against the CURRENT template's supported_site_types, not just at selection time", async () => {
+  const source = await readSource(MIGRATION);
+  const readinessFn = source.match(/create function public\._managed_site_build_readiness[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(readinessFn, /select status, supported_site_types into v_template_status, v_template_site_types/);
+  assert.match(readinessFn, /not \(p_site_type = any\(v_template_site_types\)\)/);
+  assert.match(readinessFn, /does not support current workspace site type/);
+  // Both admin_get_managed_site_build (read path) and
+  // admin_generate_managed_site_build_brief (write path) must call the
+  // SAME readiness helper, so the re-check applies to both.
+  const getFn = source.match(/create function public\.admin_get_managed_site_build\(p_tenant_id uuid\)[\s\S]*?\$\$;/)?.[0] ?? "";
+  const genFn = source.match(/create function public\.admin_generate_managed_site_build_brief[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(getFn, /_managed_site_build_readiness\(/);
+  assert.match(genFn, /_managed_site_build_readiness\(/);
+});
+
+test("migration (item 3): build_mode is an explicit, persisted, constrained column - not inferred from template_id being null", async () => {
+  const source = await readSource(MIGRATION);
+  assert.match(source, /build_mode text not null default 'template' check \(build_mode in \('template', 'custom'\)\)/);
+  assert.match(source, /check \(build_mode = 'template' or template_id is null\)/, "table-level defense-in-depth: custom mode can never carry a template_id, even via a direct write");
+  const buildFn = source.match(/create function public\.admin_upsert_managed_site_build[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(buildFn, /if v_next_build_mode = 'custom' then\s*\n\s*v_next_template_id := null;/, "custom mode must clear template_id server-side");
+  assert.match(buildFn, /v_next_build_mode := 'template';/, "selecting a real template must force build_mode back to template");
+  const readinessFn = source.match(/create function public\._managed_site_build_readiness[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(readinessFn, /if p_build_mode = 'custom' then/);
+  assert.match(readinessFn, /No template selected \(mark explicitly custom if intentional\)\./);
+});
+
+test("migration (item 4): the Commerce product query only ever runs when the tenant's Products capability is enabled", async () => {
+  const source = await readSource(MIGRATION);
+  const snapshotFn = source.match(/create function public\._compute_managed_site_build_snapshot[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(snapshotFn, /if v_products_enabled then/);
+  assert.match(snapshotFn, /v_products := '\[\]'::jsonb;/, "commerce_products must be an empty array, not merely hidden, when the capability is disabled");
+  const genFn = source.match(/create function public\.admin_generate_managed_site_build_brief[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(genFn, /Products capability is not enabled for this tenant - use configured product\/service notes instead\./);
+});
+
+test("migration (item 5): product and variant aggregation use a unique tie-breaker (primary key) after the non-unique sort column", async () => {
+  const source = await readSource(MIGRATION);
+  const snapshotFn = source.match(/create function public\._compute_managed_site_build_snapshot[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(snapshotFn, /order by p\.name, p\.id\)/, "product aggregate must break name ties on id");
+  assert.match(snapshotFn, /order by v\.sort_order nulls last, v\.title, v\.id\)/, "variant aggregate must break sort_order/title ties on id");
+});
+
+test("migration (item 6): brief generation takes a per-build row lock before computing the next version, serializing concurrent generators", async () => {
+  const source = await readSource(MIGRATION);
+  const genFn = source.match(/create function public\.admin_generate_managed_site_build_brief[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(genFn, /select \* into v_build from public\.managed_site_builds where id = p_site_build_id for update;/, "must lock the specific build row, not a broad/global lock");
+  const lockIdx = genFn.indexOf("for update;");
+  const nextVersionIdx = genFn.indexOf("into v_next_version");
+  assert.ok(lockIdx > -1 && nextVersionIdx > -1 && lockIdx < nextVersionIdx, "the row lock must be acquired BEFORE max(version)+1 is computed");
+});
+
+test("migration (item 7): structured jsonb array inputs are validated for shape, not just key presence, with deterministic error codes", async () => {
+  const source = await readSource(MIGRATION);
+  assert.match(source, /create function public\._validate_jsonb_string_array\(p_value jsonb, p_field_name text, p_error_code text\)/);
+  assert.match(source, /create function public\._validate_managed_site_types\(p_value jsonb\)/);
+  const buildKeysFn = source.match(/create function public\._validate_site_build_input_keys[\s\S]*?\$\$;/)?.[0] ?? "";
+  for (const field of ["required_pages", "required_features", "integrations", "reference_urls"]) {
+    assert.match(buildKeysFn, new RegExp(`_validate_jsonb_string_array\\(p_input -> '${field}'`), `${field} must be shape-validated`);
+  }
+  const templateKeysFn = source.match(/create function public\._validate_site_template_input_keys[\s\S]*?\$\$;/)?.[0] ?? "";
+  for (const field of ["supported_site_types", "default_pages", "default_features"]) {
+    assert.match(templateKeysFn, new RegExp(`_validate_jsonb_string_array\\(p_input -> '${field}'`), `${field} must be shape-validated`);
+  }
+  assert.match(templateKeysFn, /_validate_managed_site_types\(p_input -> 'supported_site_types'\)/, "supported_site_types must be checked against the canonical workspace site-type list");
+  assert.match(source, /'Portfolio \/ Booking', 'Catalog', 'Ecommerce', 'Preorder', 'Landing Page',\s*\n\s*'Quote Request', 'Service Website', 'Other'/, "canonical site types must match Phase 2's SITE_TYPES exactly");
+});
+
+test("SQL test suite (item 8): the current-projection test actually calls admin_list_managed_clients() via a dynamically-resolved identity, not just a workspace-count proxy", async () => {
+  const source = await readSource(SQL_TEST_SUITE);
+  assert.match(source, /managed_clients_current_projection_count_is_one[\s\S]{0,300}admin_list_managed_clients\(\)/, "the test named for the real projection must actually call the real projection RPC");
+  assert.match(source, /jsonb_array_length\(v_projection\) = 1 and \(v_projection -> 0 ->> 'tenant_slug'\) = 'gsb'/);
+  // The workspace-count proxy is retained as its own separate, honestly-named check.
+  assert.match(source, /managed_client_workspaces_row_count_is_zero/);
+});
+
+test("migration (item 9): template_key is immutable after creation, and empty template_key/name are rejected on update", async () => {
+  const source = await readSource(MIGRATION);
+  const templateFn = source.match(/create function public\.admin_upsert_managed_site_template[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.match(templateFn, /SITE_TEMPLATE_KEY_IMMUTABLE/);
+  assert.match(templateFn, /btrim\(p_input ->> 'template_key'\) <> v_template\.template_key/);
+  assert.match(templateFn, /SITE_TEMPLATE_KEY_REQUIRED: template_key cannot be empty/);
+  assert.match(templateFn, /SITE_TEMPLATE_NAME_REQUIRED: name cannot be empty/);
+  assert.ok(!/template_key = case when p_input \? 'template_key'/.test(templateFn), "the update statement must no longer treat template_key as a mutable field");
+});
+
+test("SiteBuildSection (frontend): explicit build_mode toggle exists, drives whether the template selector is shown, and an incompatible-but-selected template is surfaced rather than silently swapped", async () => {
+  const source = await readSource(SECTION);
+  assert.match(source, /Site build type/);
+  assert.match(source, />\s*Use template\s*<\/Button>/);
+  assert.match(source, />\s*Custom build\s*<\/Button>/);
+  assert.match(source, /setForm\(\(f\) => \(\{ \.\.\.f, build_mode: "custom", template_id: "" \}\)\)/, "switching to custom must clear the client-side template_id too, matching the server-side normalization");
+  assert.match(source, /const selectedIncompatible = /, "an already-selected template that becomes incompatible must be detected, not silently dropped");
+  assert.match(source, /incompatible with current site type/i);
+  assert.match(source, /siteType=\{row\.site_type\}/, "the workspace's current site_type must be passed into the config dialog so compatibility can be evaluated");
+});
+
 test("SQL test suite never uses GSB as a write fixture - the only calls targeting GSB are inside begin/exception blocks proving they are REJECTED, and every successful (assignment-form) call targets the disposable fixture", async () => {
   const source = await readSource(SQL_TEST_SUITE);
   assert.ok(source.includes("v_gsb_tenant_id"), "expected GSB's tenant id to be used for read-only/rejection-probe purposes");
@@ -183,10 +296,12 @@ test("SiteBuildSection: workspace present but no build shows 'Configure site bui
   assert.match(source, /<Button size="sm" onClick=\{\(\) => setConfigOpen\(true\)\}>Configure site build<\/Button>/);
 });
 
-test("SiteBuildSection: the template selector in BuildConfigDialog is populated from the registry RPC, and only active templates are offered", async () => {
+test("SiteBuildSection: the template selector in BuildConfigDialog is populated from the registry RPC, and is filtered to active + site-type-compatible templates", async () => {
   const source = await readSource(SECTION);
   assert.match(source, /adminListManagedSiteTemplates/);
-  assert.match(source, /const activeTemplates = templates\.filter\(\(t\) => t\.status === "active"\);/, "archived templates must be filtered out of the selectable options");
+  assert.match(source, /function isTemplateCompatible\(template, siteType\)/, "compatibility must be a named, testable helper, not inlined ad hoc");
+  assert.match(source, /template\.status !== "active"/, "archived templates must never be offered as selectable");
+  assert.match(source, /const compatibleTemplates = templates\.filter\(\(t\) => isTemplateCompatible\(t, siteType\)\);/);
 });
 
 test("SiteBuildSection: required pages/features/integrations use structured repeatable controls (TagListEditor), not one giant notes box", async () => {
