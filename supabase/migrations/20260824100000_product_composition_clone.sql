@@ -55,12 +55,32 @@ begin
   end if;
 
   -- ── Source / target existence ──────────────────────────────────────
+  -- Source is deliberately NOT locked. Under READ COMMITTED (this
+  -- project's default), the later `insert into product_components (...)
+  -- select ... from product_components where client_product_id =
+  -- source` is one statement, and one statement reads one consistent
+  -- snapshot of the source composition as of that statement's start -
+  -- sufficient for "one clone sees one transactionally-consistent
+  -- source." Locking the source row here would only serialize against a
+  -- staff member concurrently editing that source's own composition,
+  -- which this function has no reason to block - a normal edit landing
+  -- just before or after the read is an acceptable, ordinary outcome,
+  -- not a race bug.
   select * into v_source from public.client_products where id = p_source_client_product_id;
   if not found then
     raise exception 'COMPOSITION_CLONE_SOURCE_NOT_FOUND: source client_product % does not exist', p_source_client_product_id;
   end if;
 
-  select * into v_target from public.client_products where id = p_target_client_product_id;
+  -- Locked here, before any later check reads or acts on the target -
+  -- this is the only serialization point this function needs. Two
+  -- concurrent clone calls targeting the same product: the second
+  -- blocks on this row lock until the first's transaction ends (commit
+  -- or rollback), then re-evaluates the target-empty count check below
+  -- against the now-current data (READ COMMITTED re-reads per
+  -- statement), so it correctly sees the first clone's rows and is
+  -- rejected - rather than both observing an empty target and both
+  -- inserting. A row lock on one client_products row, not a table lock.
+  select * into v_target from public.client_products where id = p_target_client_product_id for update;
   if not found then
     raise exception 'COMPOSITION_CLONE_TARGET_NOT_FOUND: target client_product % does not exist', p_target_client_product_id;
   end if;

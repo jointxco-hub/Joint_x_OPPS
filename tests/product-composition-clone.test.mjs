@@ -73,6 +73,44 @@ async function readSource(relativePath) {
 // clone ("query returned more than one row") - exactly the case Layer 2
 // exists to prove. Fixed by dropping that RETURNING entirely and
 // re-selecting the cloned ids by client_product_id afterward.
+//
+// Concurrency fix (post-review): the target's target-empty check and the
+// clone insert were not serialized against a second concurrent clone
+// call targeting the same product - two transactions could both observe
+// an empty target before either inserted. Fixed with `select ... for
+// update` on the target client_products row, acquired at target
+// resolution (before every later check/the insert). Live-verified with
+// TWO GENUINELY CONCURRENT database connections (not simulated) against
+// a temporarily-installed copy of the function, real disposable fixture
+// rows since cross-session visibility requires real commits (rollback
+// alone cannot demonstrate blocking across sessions):
+//   - Session A: manually pre-acquired the target's row lock, held it
+//     under `pg_sleep(4)`, then called duplicate_product_composition
+//     (source had 3 components), then committed.
+//   - Session B: launched 1.5s into A's sleep, called
+//     duplicate_product_composition directly against the same
+//     source/target - its own internal `for update` blocked until A
+//     committed and released the lock.
+//   - Result: A -> {ok:true, cloned_count:3}. B -> genuinely blocked
+//     (its response only returned once A committed, ~2.5s later), then
+//     rejected with the exact "Target product already has a
+//     composition." error, seeing A's now-committed rows.
+//   - Final state: target_component_count = 3 = source_component_count
+//     (never 6/doubled). activity_event_count = 1, matching A's own
+//     activity_event_id exactly - B produced no event.
+// The temporarily-installed function and every disposable row (including
+// the activity event) were then deleted/dropped, confirmed byte-for-byte
+// reverted to the pre-test state - production carries zero trace of this
+// test run.
+//
+// Source consistency was also audited per review: the clone's INSERT ...
+// SELECT is one statement, and under this project's default READ
+// COMMITTED isolation a single statement reads one consistent snapshot
+// of the source composition as of that statement's start - sufficient
+// for "one clone sees one transactionally-consistent source." The source
+// client_products row is deliberately NOT locked - doing so would only
+// block a staff member concurrently editing that source's own
+// composition, which this function has no reason to prevent.
 // ─────────────────────────────────────────────────────────────────────
 
 const MIGRATION_PATH = "supabase/migrations/20260824100000_product_composition_clone.sql";
@@ -119,6 +157,36 @@ test("the clone is one INSERT ... SELECT statement - atomic by construction, no 
   const fnBody = source.slice(fnStart);
   assert.ok(!/for\s+\w+\s+in\s+select/i.test(fnBody), "must not loop row-by-row over the source composition");
   assert.ok(fnBody.includes("insert into public.product_components"));
+});
+
+test("concurrency: the target row is locked (FOR UPDATE) at target resolution, before the target-empty check and before the clone insert - a row lock on one client_products row, not a table lock", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  const fnStart = source.indexOf("create or replace function public.duplicate_product_composition");
+  const body = source.slice(fnStart);
+  assert.ok(
+    body.includes("select * into v_target from public.client_products where id = p_target_client_product_id for update;"),
+    "the target SELECT must carry FOR UPDATE, scoped to a single row by primary key - never a bare table-level LOCK statement"
+  );
+  assert.ok(!/lock\s+table/i.test(body), "must not use a broad table lock");
+  const lockIdx = body.indexOf("for update;");
+  const emptyCheckIdx = body.indexOf("select count(*) into v_target_component_count");
+  const insertIdx = body.indexOf("insert into public.product_components");
+  assert.ok(lockIdx !== -1 && lockIdx < emptyCheckIdx, "the lock must be acquired before the target-empty check");
+  assert.ok(lockIdx < insertIdx, "the lock must be acquired before the clone insert");
+});
+
+test("concurrency: the source row is deliberately NOT locked - a single INSERT...SELECT statement already reads one consistent snapshot under READ COMMITTED, and locking the source would only block unrelated concurrent edits to it", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  const fnStart = source.indexOf("create or replace function public.duplicate_product_composition");
+  const body = source.slice(fnStart);
+  const sourceSelectIdx = body.indexOf("select * into v_source from public.client_products where id = p_source_client_product_id;");
+  assert.notEqual(sourceSelectIdx, -1, "the source resolution SELECT must not carry FOR UPDATE");
+  assert.ok(!body.slice(0, sourceSelectIdx + 120).includes("v_source") || !/select \* into v_source[^;]*for update/i.test(body), "source row must not be locked");
+});
+
+test("no uniqueness constraint was added that would prevent legitimate multiple product_components rows per product", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(!/unique\s*\(/i.test(source) && !/add constraint.*unique/i.test(source), "no UNIQUE constraint may be introduced by this migration");
 });
 
 test("authorization: reviewer/admin permission (inventory_can_review_tenant) is checked against BOTH source and target tenant contexts, reused rather than reinvented", async () => {
