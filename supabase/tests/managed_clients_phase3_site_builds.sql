@@ -547,6 +547,43 @@ begin
   end;
 
   -- =====================================================================
+  -- Site-build upsert locking / patch-semantics regression (final
+  -- integration pass, item 3) - admin_upsert_managed_site_build now locks
+  -- the workspace row and the existing build row (both FOR UPDATE) before
+  -- deriving v_next_build_mode/v_next_template_id. A single-session
+  -- rollback test cannot reproduce the actual interleaving of two
+  -- concurrent transactions, but it CAN prove the property that lock
+  -- exists to guarantee: an unrelated-field-only patch (no build_mode/
+  -- template_id key in p_input at all) must never revert a build_mode/
+  -- template_id value set by a PRIOR call, because v_next_build_mode/
+  -- v_next_template_id always fall back to whatever is on the row at the
+  -- time this call actually runs (v_existing, read under the lock), never
+  -- a value cached from an earlier read. The row-lock ordering itself
+  -- (lock acquired before derivation) is proven statically in the JS
+  -- suite by asserting FOR UPDATE precedes v_next_build_mode/
+  -- v_next_template_id in the function source.
+  -- =====================================================================
+  declare
+    v_patch_build jsonb;
+  begin
+    perform public.admin_upsert_managed_site_build(v_tenant_id, jsonb_build_object('build_mode', 'custom'));
+
+    -- Simulates "B": a concurrent caller that only ever intended to touch
+    -- primary_goal - p_input never mentions build_mode or template_id.
+    v_patch_build := public.admin_upsert_managed_site_build(v_tenant_id, jsonb_build_object('primary_goal', 'Unrelated patch must not revert build_mode'));
+    insert into test_results (test_name, passed, detail) values (
+      'unrelated_field_patch_never_reverts_concurrently_set_build_mode',
+      (v_patch_build ->> 'build_mode') = 'custom'
+        and (v_patch_build ->> 'template_id') is null
+        and (v_patch_build ->> 'primary_goal') = 'Unrelated patch must not revert build_mode',
+      'after setting build_mode=custom then patching only primary_goal: build_mode=' || (v_patch_build ->> 'build_mode') || ' template_id=' || coalesce(v_patch_build ->> 'template_id', 'null') || ' primary_goal=' || (v_patch_build ->> 'primary_goal')
+    );
+
+    -- restore template mode with the compatible template for subsequent tests
+    perform public.admin_upsert_managed_site_build(v_tenant_id, jsonb_build_object('build_mode', 'template', 'template_id', v_template_a_id::text));
+  end;
+
+  -- =====================================================================
   -- Brief generation row-lock / version serialization (item 6) -
   -- admin_generate_managed_site_build_brief takes `select ... for update`
   -- on the build row before computing max(version)+1, which serializes

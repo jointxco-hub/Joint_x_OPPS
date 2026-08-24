@@ -870,9 +870,30 @@ begin
   perform public._validate_site_build_input_keys(p_input);
 
   select * into v_client_id, v_workspace_id from public._resolve_active_managed_workspace(p_tenant_id);
-  select site_type into v_workspace_site_type from public.managed_client_workspaces where id = v_workspace_id;
 
-  select * into v_existing from public.managed_site_builds where workspace_id = v_workspace_id and status <> 'archived';
+  -- Post-review (final integration pass, item 3): lock the canonical
+  -- workspace row for the duration of this upsert - narrow, per-row, not
+  -- a table lock. This serializes concurrent create/update calls for the
+  -- SAME workspace and prevents site_type from changing mid-way through
+  -- the template/site-type compatibility validation below (the same
+  -- retroactive-invalidation concern item 2 covers for readiness/
+  -- generation, applied here to the write path itself).
+  select site_type into v_workspace_site_type
+  from public.managed_client_workspaces
+  where id = v_workspace_id
+  for update;
+
+  -- Lock the existing active build row (if any) BEFORE deriving the
+  -- effective build_mode/template_id below. Without this, two concurrent
+  -- patch-style edits can both read the same pre-update row - e.g. A
+  -- changes template -> custom while B (concurrently) patches only
+  -- primary_goal; B would derive its v_next_build_mode/v_next_template_id
+  -- from the OLD row and then overwrite A's change when B's UPDATE runs,
+  -- even though B's own input never touched build_mode/template_id at
+  -- all. Locking here, combined with the workspace lock above, makes
+  -- concurrent upserts for the same workspace fully serialized rather
+  -- than interleaved.
+  select * into v_existing from public.managed_site_builds where workspace_id = v_workspace_id and status <> 'archived' for update;
   v_is_new := not found;
 
   -- ---- Resolve the EFFECTIVE build_mode/template_id together (post-

@@ -7,7 +7,7 @@ async function readSource(relativePath) {
   return raw.replace(/\r\n/g, "\n");
 }
 
-const MIGRATION = "supabase/migrations/20260825090000_managed_clients_phase3_site_builds.sql";
+const MIGRATION = "supabase/migrations/20260827090000_managed_clients_phase3_site_builds.sql";
 const SQL_TEST_SUITE = "supabase/tests/managed_clients_phase3_site_builds.sql";
 const PAGE = "src/pages/ManagedClients.jsx";
 const TEMPLATES_PAGE = "src/pages/ManagedSiteTemplates.jsx";
@@ -201,6 +201,30 @@ test("migration (item 5): product and variant aggregation use a unique tie-break
   const snapshotFn = source.match(/create function public\._compute_managed_site_build_snapshot[\s\S]*?\$\$;/)?.[0] ?? "";
   assert.match(snapshotFn, /order by p\.name, p\.id\)/, "product aggregate must break name ties on id");
   assert.match(snapshotFn, /order by v\.sort_order nulls last, v\.title, v\.id\)/, "variant aggregate must break sort_order/title ties on id");
+});
+
+test("migration (final integration pass, item 3): admin_upsert_managed_site_build locks the workspace row and the existing build row BEFORE deriving the effective build_mode/template_id, closing the lost-update race", async () => {
+  const source = await readSource(MIGRATION);
+  const buildFn = source.match(/create function public\.admin_upsert_managed_site_build[\s\S]*?\$\$;/)?.[0] ?? "";
+
+  const workspaceLockMatch = buildFn.match(/select site_type into v_workspace_site_type\s*\n\s*from public\.managed_client_workspaces\s*\n\s*where id = v_workspace_id\s*\n\s*for update;/);
+  assert.ok(workspaceLockMatch, "the workspace row must be locked (narrow, per-row FOR UPDATE) while resolving site_type");
+
+  const buildLockMatch = buildFn.match(/select \* into v_existing from public\.managed_site_builds where workspace_id = v_workspace_id and status <> 'archived' for update;/);
+  assert.ok(buildLockMatch, "the existing active build row must be locked before it is used to derive effective build_mode/template_id");
+
+  const workspaceLockIdx = buildFn.indexOf(workspaceLockMatch[0]);
+  const buildLockIdx = buildFn.indexOf(buildLockMatch[0]);
+  const derivationIdx = buildFn.indexOf("v_next_build_mode :=");
+  assert.ok(workspaceLockIdx > -1 && buildLockIdx > -1 && derivationIdx > -1);
+  assert.ok(workspaceLockIdx < buildLockIdx, "workspace lock must be acquired before the build-row lock");
+  assert.ok(buildLockIdx < derivationIdx, "the build row must be locked BEFORE v_next_build_mode/v_next_template_id are derived from it - otherwise a concurrent unrelated-field patch can read a stale row and revert a concurrently-applied build_mode/template_id change");
+
+  // Never a table-wide/advisory lock - only single-row FOR UPDATE selects
+  // scoped by primary key or the workspace's own unique active-build
+  // index.
+  assert.ok(!/lock table/i.test(buildFn), "must never take a table-level lock");
+  assert.ok(!/pg_advisory/i.test(buildFn), "must never use a global advisory lock");
 });
 
 test("migration (item 6): brief generation takes a per-build row lock before computing the next version, serializing concurrent generators", async () => {

@@ -29,7 +29,7 @@ import { SiteBuildSection } from "@/components/managedClients/SiteBuildSection";
 // workspace for a modern tenant with none yet (GSB today), a real Add
 // Managed Brand provisioning wizard, products capability control, and the
 // explicit Vercel/XOS activation gate. Phase 3 (see
-// supabase/migrations/20260825090000_managed_clients_phase3_site_builds.sql
+// supabase/migrations/20260827090000_managed_clients_phase3_site_builds.sql
 // and src/components/managedClients/SiteBuildSection.jsx) adds a "Site
 // Build" section for modern tenants - structured site-build
 // configuration, a site-template registry, and deterministic, versioned,

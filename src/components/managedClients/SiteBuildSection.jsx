@@ -18,7 +18,7 @@ import {
 } from "@/api/managedSiteBuilds";
 
 // Phase 3 - "Site Build" section inside a modern Managed Client's detail
-// view (see supabase/migrations/20260825090000_managed_clients_phase3_site_builds.sql).
+// view (see supabase/migrations/20260827090000_managed_clients_phase3_site_builds.sql).
 // Deliberately model-agnostic: admin_generate_managed_site_build_brief is
 // pure deterministic SQL string composition over structured Joint X
 // data - there is no "Claude-specific" logic here or in the database.

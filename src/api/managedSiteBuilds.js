@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabaseClient";
 
 // Thin RPC wrappers - every RPC (see supabase/migrations/
-// 20260825090000_managed_clients_phase3_site_builds.sql) does all
+// 20260827090000_managed_clients_phase3_site_builds.sql) does all
 // app-admin authorization and the actual work server-side; this file
 // just calls them and normalizes the result/error shape for React
 // callers, matching the pattern already used by src/api/managedClients.js.

@@ -16,7 +16,7 @@ import {
 } from "@/api/managedSiteBuilds";
 
 // Internal app-admin registry for reusable managed-site templates (see
-// supabase/migrations/20260825090000_managed_clients_phase3_site_builds.sql).
+// supabase/migrations/20260827090000_managed_clients_phase3_site_builds.sql).
 // Metadata only - repository/preview URLs and build instructions, never
 // tokens/secrets/credentials. Reused across every managed brand's Site
 // Build configuration (src/components/managedClients/SiteBuildSection.jsx)
