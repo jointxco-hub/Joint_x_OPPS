@@ -20,9 +20,9 @@
 -- raise-and-deny branch; FALSE now correctly does.
 --
 -- CREATE OR REPLACE preserves the function's identity exactly - same
--- signature, LANGUAGE sql, STABLE, SECURITY DEFINER, search_path, and
--- the existing hardcoded admin-email allowlist (not expanded, not
--- reduced). The only change: the role-check arm,
+-- signature, LANGUAGE sql, STABLE, SECURITY DEFINER, and the existing
+-- hardcoded admin-email allowlist (not expanded, not reduced). The only
+-- logical change: the role-check arm,
 -- `public.current_user_app_role() = 'admin'`, is now wrapped in
 -- `coalesce(..., false)`. current_user_app_role() itself returns NULL
 -- when the calling identity has no matching public.users row (its query
@@ -40,15 +40,45 @@
 --   identity with no public.users row                    -> FALSE
 --   anonymous/missing claims                             -> FALSE
 -- No input shape can produce NULL any more.
+--
+-- Post-review (blocker): search_path. The function's ORIGINAL definition
+-- (202606230006_fix_internal_order_access.sql) declared `set search_path
+-- = public`, but it was subsequently hardened - still live in production
+-- today - by 20260817173001_xos_opps_staff_authority.sql's
+-- `alter function public.is_app_admin() set search_path = pg_catalog,
+-- public;` (that same migration also set its live ACL: revoke from
+-- public/anon, grant to authenticated/service_role). A CREATE OR REPLACE
+-- naively copying the original CREATE statement's `search_path = public`
+-- would silently UNDO that later hardening for a SECURITY DEFINER
+-- function the moment this migration is applied - exactly the kind of
+-- regression a security-hardening hotfix must never introduce. This
+-- definition instead declares `search_path = pg_catalog, public`
+-- directly, matching what is actually live today, and the ACL is
+-- reasserted explicitly right below (CREATE OR REPLACE does not reset
+-- an existing function's ACL, but making it explicit here removes any
+-- doubt for a security-critical shared helper rather than relying on
+-- that implicit preservation).
 
 create or replace function public.is_app_admin()
-returns boolean language sql security definer stable set search_path = public as $$
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
   select coalesce(public.current_user_app_role() = 'admin', false)
     or lower(coalesce(auth.jwt() ->> 'email', '')) in (
       'jointx.co@gmail.com', 'jointsexclusive@gmail.com',
       'jasperjaimataruse@gmail.com', 'jaicreativerealm@gmail.com'
     );
 $$;
+
+-- Explicit ACL reassertion - matches the live production contract set by
+-- 20260817173001_xos_opps_staff_authority.sql exactly: PUBLIC and anon
+-- can never execute this SECURITY DEFINER function; authenticated and
+-- service_role can.
+revoke all on function public.is_app_admin() from public, anon;
+grant execute on function public.is_app_admin() to authenticated, service_role;
 
 -- =====================================================================
 -- Phase 2 re-grant - ONLY now that is_app_admin() is guaranteed to
@@ -87,5 +117,10 @@ grant execute on function
 -- =====================================================================
 -- Post-apply verification (run manually, not part of this script):
 --   select public.is_app_admin() is not null; -- expect true, always, for every caller shape
+--   select proconfig from pg_proc where proname = 'is_app_admin'; -- expect {search_path=pg_catalog, public}
+--   select has_function_privilege('public', 'public.is_app_admin()', 'EXECUTE'); -- expect false
+--   select has_function_privilege('anon', 'public.is_app_admin()', 'EXECUTE'); -- expect false
+--   select has_function_privilege('authenticated', 'public.is_app_admin()', 'EXECUTE'); -- expect true
+--   select has_function_privilege('service_role', 'public.is_app_admin()', 'EXECUTE'); -- expect true
 --   select has_function_privilege('authenticated', 'public.admin_provision_managed_brand(jsonb,text)', 'EXECUTE'); -- expect true
 -- =====================================================================

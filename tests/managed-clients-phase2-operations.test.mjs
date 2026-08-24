@@ -520,7 +520,10 @@ test("null-safety migration (20260824090200) CREATE OR REPLACEs is_app_admin() w
   const fnMatch = source.match(/create or replace function public\.is_app_admin\(\)[\s\S]*?\$\$;/)?.[0] ?? "";
   assert.ok(fnMatch, "expected a CREATE OR REPLACE for public.is_app_admin()");
 
-  assert.match(fnMatch, /returns boolean language sql security definer stable set search_path = public as \$\$/, "signature/language/STABLE/SECURITY DEFINER/search_path must be preserved exactly");
+  assert.match(fnMatch, /returns boolean/);
+  assert.match(fnMatch, /language sql/);
+  assert.match(fnMatch, /\bstable\b/);
+  assert.match(fnMatch, /security definer/);
   assert.match(fnMatch, /select coalesce\(public\.current_user_app_role\(\) = 'admin', false\)/, "the role-check arm must be wrapped in coalesce(...,false)");
   assert.match(
     fnMatch,
@@ -532,6 +535,38 @@ test("null-safety migration (20260824090200) CREATE OR REPLACEs is_app_admin() w
   // quoted email literals rather than trusting prose.
   const emailCount = (fnMatch.match(/'[^']+@[^']+'/g) || []).length;
   assert.equal(emailCount, 4, `expected exactly 4 allowlisted admin emails, found ${emailCount}`);
+});
+
+test("null-safety migration (post-review, blocker): search_path stays pg_catalog, public - matching the live production hardening from 20260817173001, never regressed to the function's original bare 'public'", async () => {
+  const source = await readSource(NULL_SAFETY_MIGRATION);
+  const fnMatch = source.match(/create or replace function public\.is_app_admin\(\)[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.ok(fnMatch, "expected a CREATE OR REPLACE for public.is_app_admin()");
+
+  assert.match(fnMatch, /set search_path = pg_catalog, public/, "search_path must be pg_catalog, public - the live-hardened value, not the function's original bare 'public'");
+  // The bare, unhardened form must not appear anywhere in this
+  // function's definition - a future edit that naively copies the
+  // ORIGINAL 202606230006 create statement (search_path = public alone)
+  // would silently regress this SECURITY DEFINER function's search_path
+  // hardening the moment the migration is applied.
+  assert.ok(
+    !/set search_path = public\b(?!,)/.test(fnMatch),
+    "search_path must never be regressed to bare 'public' (without pg_catalog) - that would undo 20260817173001's hardening"
+  );
+});
+
+test("null-safety migration (post-review): is_app_admin()'s ACL is explicitly reasserted to match the live production contract - PUBLIC/anon revoked, authenticated/service_role granted", async () => {
+  const source = await readSource(NULL_SAFETY_MIGRATION);
+  const helperIdx = source.indexOf("create or replace function public.is_app_admin()");
+  const revokeMatch = source.match(/revoke all on function public\.is_app_admin\(\) from public, anon;/);
+  const grantMatch = source.match(/grant execute on function public\.is_app_admin\(\) to authenticated, service_role;/);
+
+  assert.ok(revokeMatch, "expected an explicit revoke-all-from-public,anon for is_app_admin()");
+  assert.ok(grantMatch, "expected an explicit grant-execute-to-authenticated,service_role for is_app_admin()");
+
+  const revokePos = source.indexOf(revokeMatch[0]);
+  const grantPos = source.indexOf(grantMatch[0]);
+  assert.ok(revokePos > helperIdx, "the ACL reassertion must come after the CREATE OR REPLACE, not before it");
+  assert.ok(grantPos > helperIdx, "the ACL reassertion must come after the CREATE OR REPLACE, not before it");
 });
 
 test("null-safety migration re-grants the six Phase 2 RPCs to authenticated, textually AFTER the is_app_admin() replacement, and touches no RPC body", async () => {
@@ -546,8 +581,12 @@ test("null-safety migration re-grants the six Phase 2 RPCs to authenticated, tex
     const grantPos = source.indexOf(grantMatch[0]);
     assert.ok(grantPos > helperIdx, `the grant for ${name} must appear textually after the is_app_admin() fix, not before it`);
   }
+  // Total grants in this file = 6 Phase 2 RPC re-grants + 1 for
+  // is_app_admin() itself (asserted separately above) = 7.
   const grantCount = (source.match(/grant execute on function/g) || []).length;
-  assert.equal(grantCount, 6, "exactly six re-grants, matching the six revoked by containment");
+  assert.equal(grantCount, 7, "exactly six Phase 2 RPC re-grants plus the one is_app_admin() ACL grant");
+  const phase2GrantCount = (source.match(/grant execute on function\s*\n?\s*public\.admin_/g) || []).length;
+  assert.equal(phase2GrantCount, 6, "exactly six Phase 2 RPC re-grants, matching the six revoked by containment");
 
   // This hotfix must never touch an RPC's own body - only is_app_admin()
   // and the six grants.
