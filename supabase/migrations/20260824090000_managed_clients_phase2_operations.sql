@@ -157,7 +157,7 @@ revoke all on function public._is_eligible_managed_tenant(uuid) from anon;
 revoke all on function public._is_eligible_managed_tenant(uuid) from authenticated;
 
 -- Shared allowlist gate for both workspace-mutation RPCs (Part A update,
--- Part B initialize) - rejects any key outside the 20 operational
+-- Part B initialize) - rejects any key outside the allowlisted operational
 -- workspace fields explicitly, rather than silently ignoring it. Never
 -- allows id/tenant_id/client_id/business_id/brand_id/storefront_id/
 -- created_at through this path at all - those identity columns are not
@@ -511,6 +511,11 @@ grant execute on function public.admin_preview_managed_brand_provisioning(jsonb)
 -- automatically (no explicit savepoints needed - a plpgsql function body
 -- is already one implicit block). auth_user_id is resolved and used
 -- internally only; it is never part of the returned/stored result.
+-- Concurrency: three pg_advisory_xact_lock namespaces, always acquired in
+-- the same order (idempotency-key -> slug -> email, see the inline note
+-- below the slug checks) so two concurrent calls can never deadlock.
+-- initial_workspace is validated against the same key allowlist used by
+-- Parts A/B before it touches any insert.
 -- =====================================================================
 
 create function public.admin_provision_managed_brand(p_input jsonb, p_idempotency_key text)
@@ -577,6 +582,14 @@ begin
     raise exception using errcode = 'P0001', message = 'MANAGED_BRAND_EMAIL_INVALID: canonical client/owner email is not valid';
   end if;
 
+  -- Post-review: initial_workspace must pass the same 21-field allowlist
+  -- as admin_update_managed_client_workspace/admin_initialize_managed_client_workspace
+  -- (client_type/site_type stay their own separate top-level constrained
+  -- inputs above, not part of this payload) - an unknown key here must
+  -- reject, not be silently ignored, keeping all three workspace-mutation
+  -- entry points aligned.
+  perform public._validate_managed_workspace_update_keys(v_workspace_fields);
+
   v_hostname := v_slug || '.xos.jointx.co.za';
 
   -- Fingerprint every resolved input that changes the outcome (not the
@@ -616,6 +629,19 @@ begin
   if exists (select 1 from public.tenant_domains where hostname = v_hostname) then
     raise exception using errcode = 'P0001', message = format('MANAGED_BRAND_HOSTNAME_TAKEN: hostname "%s" is already registered', v_hostname);
   end if;
+
+  -- Post-review (blocker): public.clients.email has no global unique
+  -- constraint, so the email-conflict check below is only race-safe if
+  -- it runs while holding a lock keyed on the normalized email itself -
+  -- otherwise two concurrent provisioning calls with different slugs/
+  -- idempotency keys but the SAME canonical email could both pass the
+  -- check before either transaction commits. Deterministic, documented
+  -- global lock-acquisition order for this function (never varied, so
+  -- two concurrent calls can never form a wait cycle): idempotency-key ->
+  -- slug -> email. No separate hostname lock is needed - hostname is
+  -- derived 1:1 from slug, so the slug lock already serializes it.
+  perform pg_advisory_xact_lock(hashtextextended('managed_brand_email:' || lower(btrim(v_client_email)), 0));
+
   if exists (select 1 from public.clients where lower(email) = lower(v_client_email)) then
     raise exception using errcode = 'P0001', message = 'MANAGED_BRAND_CLIENT_EMAIL_TAKEN: a clients row with this email already exists';
   end if;
@@ -632,8 +658,12 @@ begin
   values (v_slug, v_workspace_name, 'active', '{}'::jsonb)
   returning id into v_tenant_id;
 
-  insert into public.clients (tenant_id, name, email, status)
-  values (v_tenant_id, v_client_name, v_client_email, 'active')
+  -- Post-review: brand_name is set explicitly to the workspace/brand
+  -- name, separately from name (the contact person) - the unified read
+  -- model's brand_name display (section 11 below) would otherwise show
+  -- the contact's name instead of the brand whenever they differ.
+  insert into public.clients (tenant_id, name, brand_name, email, status)
+  values (v_tenant_id, v_client_name, v_workspace_name, v_client_email, 'active')
   returning id into v_client_id;
 
   insert into public.tenant_domains (tenant_id, hostname, surface, status, is_primary)
@@ -781,6 +811,17 @@ grant execute on function public.admin_activate_managed_xos_domain(uuid) to auth
 -- capability_key = 'products' only. Never touches commerce.products -
 -- turning the capability off only controls the XOS-side capability flag,
 -- never deletes or alters any Commerce product row.
+--
+-- Post-review: "has at least one linked clients row" was too broad a
+-- gate on its own - it would let the capability be enabled for any
+-- tenant with a client at all, not just a genuine managed brand. This
+-- now requires the same structural signal the read model itself uses
+-- (public._is_eligible_managed_tenant) - a linked client AND at least
+-- one of a matching workspace, a non-disabled xos_admin/storefront
+-- domain, or an already-enabled capability. The capability toggle is an
+-- operational control for a tenant that is already established as
+-- managed (via provisioning, which sets the domain first), never a
+-- bootstrapping mechanism for making an arbitrary tenant "managed".
 -- =====================================================================
 
 create function public.admin_set_managed_tenant_products_capability(p_tenant_id uuid, p_enabled boolean)
@@ -807,8 +848,8 @@ begin
   if v_tenant.slug = 'joint-x' or v_tenant.slug ~* '(^|-)(qa|demo|test)(-|$)' then
     raise exception using errcode = 'P0001', message = 'MANAGED_BRAND_SYSTEM_TENANT_FORBIDDEN: cannot manage capability for a system/QA/demo/test tenant';
   end if;
-  if not exists (select 1 from public.clients c where c.tenant_id = p_tenant_id) then
-    raise exception using errcode = 'P0001', message = 'MANAGED_BRAND_TENANT_NOT_MANAGED: tenant has no linked client - not a managed brand';
+  if not public._is_eligible_managed_tenant(p_tenant_id) then
+    raise exception using errcode = 'P0001', message = 'MANAGED_BRAND_TENANT_NOT_MANAGED: tenant has no managed-tenant signal (workspace/domain/capability) - not a recognized managed brand';
   end if;
 
   v_actor := auth.email();
@@ -885,7 +926,12 @@ begin
       jsonb_build_object(
         'key', 'tenant:' || mt.id::text,
         'source', case when w.id is not null then 'both' else 'modern' end,
-        'brand_name', coalesce(pc.brand_name, pc.name, mt.name),
+        -- Post-review: brand identity (pc.brand_name, then the tenant's
+        -- own name - itself the workspace/brand name at provisioning
+        -- time) must be preferred over the contact person's name
+        -- (pc.name) whenever they differ - see admin_provision_managed_brand,
+        -- which now sets clients.brand_name explicitly for this reason.
+        'brand_name', coalesce(pc.brand_name, mt.name, pc.name),
         'tenant_id', mt.id,
         'tenant_slug', mt.slug,
         'tenant_name', mt.name,

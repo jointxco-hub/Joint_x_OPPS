@@ -19,6 +19,13 @@ import {
   adminActivateManagedXosDomain,
   adminSetManagedTenantProductsCapability,
 } from "@/api/managedClients";
+import {
+  EMPTY_WORKSPACE_FORM,
+  workspaceRowToForm,
+  formToUpdates,
+  diffWorkspaceForm,
+  fingerprintPreviewInput,
+} from "@/lib/managedClientForms";
 
 // Phase 2 operator surface for Managed Clients - workspace editing,
 // modern-tenant workspace initialization, products capability control,
@@ -69,40 +76,15 @@ function TextField({ label, value, onChange, type = "text" }) {
   );
 }
 
-const EMPTY_WORKSPACE_FORM = {
-  client_type: "", onboarding_stage: "", site_type: "", site_status: "", storefront_status: "",
-  domain_status: "", assets_status: "", content_status: "", products_services_status: "",
-  pricing_status: "", mockup_status: "", launch_readiness_status: "", preview_url: "", live_url: "",
-  domain_name: "", site_repo_url: "", next_action: "", next_action_owner: "", next_action_due_at: "",
-  launch_target_date: "", internal_notes: "",
-};
-
-function workspaceRowToForm(row) {
-  const form = { ...EMPTY_WORKSPACE_FORM };
-  Object.keys(form).forEach((key) => {
-    if (row?.[key] != null) form[key] = row[key];
-  });
-  if (form.next_action_due_at) form.next_action_due_at = String(form.next_action_due_at).slice(0, 10);
-  return form;
-}
-
-// Only allowlisted fields are ever assembled here - matches the RPC's own
-// allowlist exactly (see _validate_managed_workspace_update_keys). Empty
-// string is sent as null (clears a nullable field); a select left "Not
-// set" is also sent as null.
-function formToUpdates(form) {
-  const updates = {};
-  Object.entries(form).forEach(([key, value]) => {
-    updates[key] = value === "" ? null : value;
-  });
-  return updates;
-}
-
 // Shared by "Edit Workspace" (mode="edit") and "Set up workspace"
 // (mode="init") - same field set, different RPC underneath.
 export function WorkspaceFormDialog({ open, onOpenChange, mode, row }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => (mode === "edit" ? workspaceRowToForm(row) : { ...EMPTY_WORKSPACE_FORM }));
+  // Pinned snapshot of the form as loaded, for EDIT mode's patch-style
+  // diff - never updated after mount, so it always reflects what the
+  // operator actually started from.
+  const [originalForm] = useState(() => (mode === "edit" ? workspaceRowToForm(row) : null));
   const [saving, setSaving] = useState(false);
 
   const setField = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
@@ -113,7 +95,7 @@ export function WorkspaceFormDialog({ open, onOpenChange, mode, row }) {
       if (mode === "edit") {
         const { error } = await adminUpdateManagedClientWorkspace({
           workspaceId: row.workspace_id,
-          updates: formToUpdates(form),
+          updates: diffWorkspaceForm(form, originalForm),
         });
         if (error) {
           toast.error(error);
@@ -295,6 +277,7 @@ export function AddManagedBrandWizard({ open, onOpenChange }) {
   const [brand, setBrand] = useState({ workspace_name: "", client_name: "", client_email: "" });
   const [workspace, setWorkspace] = useState({ tenant_slug: "", client_type: "", site_type: "", products_enabled: false });
   const [preflight, setPreflight] = useState(null);
+  const [preflightFingerprint, setPreflightFingerprint] = useState(null);
   const [checking, setChecking] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [provisionResult, setProvisionResult] = useState(null);
@@ -315,6 +298,13 @@ export function AddManagedBrandWizard({ open, onOpenChange }) {
     client_name: brand.client_name,
   }), [brand, workspace.tenant_slug]);
 
+  // Re-derived on every render from current form state - any edit to a
+  // preflight-relevant field automatically changes this without any
+  // manual "clear the preflight" plumbing.
+  const currentFingerprint = useMemo(() => fingerprintPreviewInput(previewInput), [previewInput]);
+  const preflightIsCurrent = Boolean(preflight) && preflightFingerprint === currentFingerprint;
+  const canAdvanceFromPreflight = preflightIsCurrent && preflight?.can_provision === true;
+
   async function runPreflight() {
     setChecking(true);
     try {
@@ -324,12 +314,22 @@ export function AddManagedBrandWizard({ open, onOpenChange }) {
         return;
       }
       setPreflight(data);
+      setPreflightFingerprint(fingerprintPreviewInput(previewInput));
     } finally {
       setChecking(false);
     }
   }
 
   async function handleProvision() {
+    // Defensive re-check, mirroring the Review/Next gating - provisioning
+    // must always describe/execute the exact same payload the operator
+    // reviewed. The backend independently re-validates everything
+    // regardless (see admin_provision_managed_brand), this just prevents
+    // the call from ever firing on stale UI state in the first place.
+    if (!canAdvanceFromPreflight) {
+      toast.error("Preflight is out of date for the current input - re-check availability before provisioning.");
+      return;
+    }
     setProvisioning(true);
     try {
       const { data, error } = await adminProvisionManagedBrand({
@@ -409,6 +409,11 @@ export function AddManagedBrandWizard({ open, onOpenChange }) {
         {step === 2 && (
           <div className="space-y-3">
             <Button variant="outline" onClick={runPreflight} disabled={checking}>{checking ? "Checking..." : "Check availability"}</Button>
+            {preflight && !preflightIsCurrent && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                Brand/workspace name, tenant slug, contact name, or email changed since this preflight ran - it no longer describes your current input. Check availability again before continuing.
+              </div>
+            )}
             {preflight && (
               <div className="space-y-2 text-sm">
                 <p>Normalized slug: <code className="bg-slate-100 px-1 rounded">{preflight.normalized_slug || "(invalid)"}</code></p>
@@ -450,7 +455,7 @@ export function AddManagedBrandWizard({ open, onOpenChange }) {
         {step === 4 && (
           <div className="space-y-3">
             <p className="text-sm text-slate-600">Ready to provision. This is a real, atomic write - review the previous step before continuing.</p>
-            <Button onClick={handleProvision} disabled={provisioning || !preflight?.can_provision}>
+            <Button onClick={handleProvision} disabled={provisioning || !canAdvanceFromPreflight}>
               {provisioning ? "Provisioning..." : "Provision managed brand"}
             </Button>
           </div>
@@ -478,7 +483,18 @@ export function AddManagedBrandWizard({ open, onOpenChange }) {
             {step === 0 ? "Cancel" : "Back"}
           </Button>
           {step < 4 && (
-            <Button onClick={() => setStep((s) => s + 1)} disabled={step === 0 && (!brand.workspace_name || !brand.client_name || !brand.client_email)}>
+            <Button
+              onClick={() => setStep((s) => s + 1)}
+              disabled={
+                (step === 0 && (!brand.workspace_name || !brand.client_name || !brand.client_email))
+                // Review must always describe the exact same payload
+                // Provision executes - block advancing past the
+                // preflight step unless it exists, says can_provision,
+                // AND still matches the current form values (post-review
+                // blocker fix - see fingerprintPreviewInput above).
+                || (step === 2 && !canAdvanceFromPreflight)
+              }
+            >
               Next
             </Button>
           )}

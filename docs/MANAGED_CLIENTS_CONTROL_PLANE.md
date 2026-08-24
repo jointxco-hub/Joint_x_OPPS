@@ -235,6 +235,24 @@ Builds on Phase 0/1 without editing its already-applied migration
 Continues using exactly the same tables Phase 0/1 established - no
 competing managed-client model.
 
+**Pre-production review amendment.** A dedicated review pass before this
+migration is applied found and fixed 8 issues, called out inline below
+where each one lives: (1) the disposable SQL test suite's own happy-path
+fixture slug accidentally matched the reserved-token rule it exists to
+exercise; (2) the products capability toggle required only "has a
+client", not genuine managed-tenant eligibility; (3) the canonical
+client/owner email had no advisory lock, unlike slug/idempotency-key,
+despite `clients.email` having no database-level uniqueness constraint;
+(4) the Add Managed Brand wizard could let an operator review one
+payload and provision a different, edited one; (5) `clients.brand_name`
+was never set at provisioning, so the unified projection could display
+the contact's name instead of the brand; (6) workspace edits sent every
+field on every save instead of only what changed; (7) the allowlist was
+documented as "20 fields" when it is actually 21; (8) `initial_workspace`
+was never validated against the shared key allowlist. None of these
+affected GSB or any other production data - the migration still has not
+been applied.
+
 ### Authority model
 
 `admin_list_managed_clients()` stays `is_opps_staff()`-gated - unchanged,
@@ -252,9 +270,13 @@ narrow, allowlisted, `SECURITY DEFINER` RPC.
 
 `admin_update_managed_client_workspace(p_workspace_id, p_updates)` -
 app-admin-only, reintroduces the mutation Phase 0/1 deliberately removed
-(it had no caller then). `p_updates` is validated against a 20-field
-allowlist (`_validate_managed_workspace_update_keys`) shared with Part B
-- an unknown key is rejected outright, never silently ignored. Every
+(it had no caller then). `p_updates` is validated against the
+allowlisted operational workspace fields
+(`_validate_managed_workspace_update_keys`) shared with Part B -
+deliberately not restated here as a fixed number (the exact count is the
+migration's own key list; stating it separately here previously drifted
+out of sync and was corrected post-review) - an unknown key is rejected
+outright, never silently ignored. Every
 allowed field uses `CASE WHEN p_updates ? 'key' THEN ... ELSE <existing>
 END`, so an omitted key is preserved and a JSON `null` for a nullable
 field clears it to SQL `NULL` - no separate "clear" flag needed.
@@ -264,6 +286,24 @@ via the table's own `CHECK` constraints. No identity column
 `created_at`) is ever in the allowlist or the `UPDATE ... SET` list.
 Writes an `opps_activity_events` row (`managed_client_workspace_updated`)
 with the changed key list.
+
+**Patch-style edits (post-review, issue 6).** `WorkspaceFormDialog` in
+EDIT mode captures the loaded row as a pinned `originalForm` snapshot,
+then computes `updates` via `diffWorkspaceForm(current, original)`
+(`src/lib/managedClientForms.js`) - only keys whose value actually
+changed are sent. Sending every field unconditionally could otherwise
+rewrite an untouched value; the clearest case is `next_action_due_at`,
+a `timestamptz` displayed as a date-only input (truncated in
+`workspaceRowToForm`) - resubmitting an unedited date would silently
+drop any non-midnight time component the row actually had. INIT mode
+still sends a complete payload via `formToUpdates` (there is no prior
+row to clobber). Both helper functions, plus `fingerprintPreviewInput`
+(see the wizard section below), live in `src/lib/managedClientForms.js`
+- deliberately React/UI-library/Supabase-free, so `node --test` can
+import and exercise them directly (matching the existing
+`src/lib/orderPrimaryImage.js` convention), unlike everything else in
+this phase's frontend, which is only reachable via static source
+inspection.
 
 ### Workspace initialization for a modern tenant with none (Part B)
 
@@ -306,7 +346,22 @@ optional products capability → workspace. Any failure means zero partial
 provisioning - one plpgsql function body is already one implicit
 transactional block, so an exception anywhere rolls back every earlier
 insert in the same call. `auth_user_id` is resolved and used internally
-only; never returned or stored.
+only; never returned or stored. `p_input.initial_workspace` is validated
+against the exact same key allowlist as Parts A/B before any insert
+(post-review, issue 8) - an unknown key rejects rather than being
+silently ignored, keeping all three workspace-mutation entry points
+aligned; `client_type`/`site_type` stay their own separate top-level
+constrained inputs, not part of this payload.
+
+**Brand identity vs contact identity (post-review, issue 5).** The
+`clients` insert now sets `brand_name = v_workspace_name` explicitly,
+while `name` stays `v_client_name` (the contact). Without this,
+the unified read model's `coalesce(pc.brand_name, pc.name, mt.name)`
+fallback would display the contact's name instead of the brand whenever
+they differ - the "brand/workspace identity" is not the same concept as
+the "client/contact identity", and provisioning now keeps them
+genuinely distinct. See "Unified read model refinement" below for the
+matching fallback-order fix.
 
 ### Idempotency
 
@@ -322,6 +377,19 @@ idempotency-key calls racing to provision the same slug (the first lock
 alone only protects retries of one call). Same key + same payload
 returns the original result; same key + different payload raises
 `MANAGED_BRAND_IDEMPOTENCY_CONFLICT`.
+
+**Canonical-email lock (post-review, blocker, issue 3).** `public.clients.email`
+has no global unique constraint, so the slug/idempotency-key locks alone
+left a real race: two concurrent provisioning calls with *different*
+slugs and *different* idempotency keys but the *same* canonical email
+could both pass the "no conflicting clients row" check before either
+transaction committed. A third `pg_advisory_xact_lock`, keyed on
+`lower(btrim(email))`, closes this - the email-conflict re-check now
+runs only after acquiring it. All three locks are always acquired in the
+same documented order - idempotency-key → slug → email - so two
+concurrent calls can never form a wait cycle (no separate hostname lock
+is needed; hostname is derived 1:1 from slug, so the slug lock already
+serializes it).
 
 ### XOS domain: pending until explicit Vercel activation (Part E)
 
@@ -349,6 +417,20 @@ Never touches `commerce.products` - turning the capability off only
 controls the XOS-side flag, never deletes or alters any Commerce
 product.
 
+**Real managed-tenant eligibility required (post-review, blocker, issue
+2).** The original check only required "tenant exists, not system,
+has at least one linked client" - too broad, since any tenant with a
+client at all could have Products enabled regardless of whether it was
+a genuine managed brand. It now also requires
+`public._is_eligible_managed_tenant(p_tenant_id)` - the same structural
+signal (matching workspace, non-disabled domain, or already-enabled
+capability) the read model itself uses - rejecting with
+`MANAGED_BRAND_TENANT_NOT_MANAGED` otherwise. The capability toggle is
+an operational control for a tenant already established as managed (via
+provisioning, which sets the domain first), never a bootstrapping
+mechanism for making an arbitrary tenant "managed". GSB (active domain,
+already-enabled capability) still passes.
+
 ### Unified read model refinement
 
 `admin_list_managed_clients()` is `CREATE OR REPLACE`d in the **new**
@@ -365,6 +447,16 @@ same helper is reused by Part B and Part F's tenant-eligibility checks -
 one source of truth, never duplicated. Legacy modernization is still
 explicitly deferred - see the "Reconciliation identity rule" section
 above, unchanged.
+
+The modern-row `brand_name` fallback order also changed (post-review,
+issue 5): `coalesce(pc.brand_name, mt.name, pc.name)`, preferring the
+client's own `brand_name`, then the tenant's own name (itself the
+workspace/brand name at provisioning time), before ever falling back to
+`pc.name` (the contact). The old order -
+`coalesce(pc.brand_name, pc.name, mt.name)` - would show the contact's
+name for any tenant provisioned without `brand_name` set, which is
+exactly the gap `admin_provision_managed_brand` closes going forward
+(see above).
 
 ### Legacy workspaces stay legacy
 
@@ -394,11 +486,25 @@ legacy-only row.
   activation): a fresh `crypto.randomUUID()` idempotency key is generated
   once per wizard mount (same convention as
   `CommerceProductsSection`). The preflight step surfaces "Owner account
-  required" verbatim when no matching `auth.users` account exists. The
-  Provision button is disabled until preflight's `can_provision` is
-  true. Step 6 (external activation) is a separate screen with its own
-  confirmation checkbox and `Activate XOS` button - never auto-triggered
-  by a successful provision.
+  required" verbatim when no matching `auth.users` account exists. Step 6
+  (external activation) is a separate screen with its own confirmation
+  checkbox and `Activate XOS` button - never auto-triggered by a
+  successful provision.
+  **Stale-preflight binding (post-review, blocker/operator-consent
+  issue, issue 4):** advancing from Owner/Preflight to Review, and the
+  Provision button itself, both require `canAdvanceFromPreflight` -
+  `preflightIsCurrent && preflight?.can_provision === true` - not just
+  `can_provision` alone. `preflightIsCurrent` compares
+  `fingerprintPreviewInput(previewInput)` (`src/lib/managedClientForms.js`)
+  computed live on every render against the fingerprint recorded at the
+  last successful preflight call. Editing `workspace_name`, `tenant_slug`,
+  `client_email`, or `client_name` after a successful preflight
+  therefore invalidates it automatically - no manual "clear the
+  preflight" step needed - and the step-2 screen shows an explicit
+  warning banner when this happens. Without this, an operator could
+  review one payload and have Provision silently execute a different,
+  edited one; backend revalidation would catch an *invalid* resulting
+  state but not a *valid* one the operator never actually reviewed.
 - All new components live in
   `src/components/managedClients/ManagedClientOperations.jsx` (repo
   convention: `eslint.config.js` only lints `src/components/**`/
@@ -419,49 +525,79 @@ completes, same as Phase 0/1's own final-verification step). Two
 identities are resolved dynamically (never a hardcoded real person's auth
 UUID): an OPPS staff identity (reused from Phase 0/1's own query, for the
 read-model checks) and an app-admin identity
-(`public.users.role = 'admin'`, for every Part A-F call). Covers: non-
-admin denial for every mutating RPC; preflight slug normalization/
-hostname derivation/conflict detection (slug, hostname, and client-email
-conflicts tested independently); the owner-account-required rejection;
-the `email_match`/`owner_account_exists` invariant; a full happy-path
-provisioning creating exactly one of each dependency row, with the
-domain left `pending`; idempotency replay (same key/same payload returns
-the original result, same key/different payload conflicts, no
-duplicate rows survive multiple attempts); initializing GSB's real (but
-currently absent) workspace, server-side client resolution, system-tenant
-rejection, and duplicate-initialization rejection; workspace update
-(allowed-field changes, identity-key rejection, unknown-key rejection,
-invalid-constrained-value rejection via the table's own `CHECK`
-constraints, and intentional nullable-field clearing); the products
-capability toggle (and that it never touches `commerce.products`); XOS
-activation (pending → active, idempotent re-activation, system-tenant
-rejection); and that the 3 historical legacy rows and GSB's Commerce
-count remain correct in the unified projection despite all of the above.
-**Not yet executed against production** - same read-only constraint as
-Phase 0/1, and the Phase 2 migration itself has not been applied yet
-either.
+(`public.users.role = 'admin'`, for every Part A-F call). Covers: a
+runtime self-check that every fixture slug the file actually passes to a
+provisioning/preflight call is not itself a reserved token (post-review
+regression guard, issue 1 - the original happy-path fixture,
+`phase2-test-<rand>`, silently matched `(^|-)(qa|demo|test)(-|$)` and
+made that test a no-op); non-admin denial for every mutating RPC;
+preflight slug normalization/hostname derivation/conflict detection
+(slug, hostname, and client-email conflicts tested independently); the
+owner-account-required rejection; the `email_match`/`owner_account_exists`
+invariant; provisioning rejecting an unknown `initial_workspace` key
+before any insert; a full happy-path provisioning (with deliberately
+different brand/contact names) creating exactly one of each dependency
+row, with the domain left `pending`; that the unified projection's
+`brand_name` is the workspace/brand name while `client_name` stays the
+contact; a second provisioning attempt reusing the same canonical email
+under a different slug/idempotency key being rejected (exercising the
+email-conflict re-check post-lock, since true concurrent-session locking
+cannot be exercised from one serial script); idempotency replay (same
+key/same payload returns the original result, same key/different payload
+conflicts, no duplicate rows survive multiple attempts); initializing
+GSB's real (but currently absent) workspace, server-side client
+resolution, system-tenant rejection, and duplicate-initialization
+rejection; workspace update (allowed-field changes, identity-key
+rejection, unknown-key rejection, invalid-constrained-value rejection via
+the table's own `CHECK` constraints, and intentional nullable-field
+clearing); a disposable unmanaged tenant (client, but no workspace/
+domain/capability) having its products-capability toggle rejected, and
+GSB's own toggle still succeeding; XOS activation (pending → active,
+idempotent re-activation, system-tenant rejection); and that the 3
+historical legacy rows and GSB's Commerce count remain correct in the
+unified projection despite all of the above. **Not yet executed against
+production** - same read-only constraint as Phase 0/1, and the Phase 2
+migration itself has not been applied yet either.
 
-**JS (`tests/managed-clients-phase2-operations.test.mjs`)** - pure static
-source-inspection tests, same convention as the Phase 0/1 suite, so these
-run for real right now with zero database/network access: the nav gate
-keeps `adminOnly: true`; legacy rows still never render Commerce
-onboarding; the modern-no-workspace/has-workspace button branching;
-`WorkspaceFormDialog`'s mode selection; the provisioning wizard never
-sends a hostname to the RPC; the XOS activation card never presents
-`pending` as live and requires its confirmation checkbox; the wizard's
-own provision/activation gating and single-generation idempotency key;
-the owner-account-required copy; the capability toggle never calls a
-product-deletion function; the workspace form's field set excludes every
-identity column; every Phase 2 RPC gates on `is_app_admin()` (never
-`is_opps_staff()` alone); `admin_list_managed_clients()` stays
-`is_opps_staff()`-gated; the XOS domain is always inserted `pending` and
-activation never accepts a hostname parameter; provisioning/preview never
-return `auth_user_id`; the workspace-update `SET` clause never assigns an
-identity column; workspace-initialize rejects ambiguous client matches;
-the idempotency ledger is its own table, never reusing
-`commerce.onboarding_operations`; and the refined eligibility rule
-accepts any non-disabled domain status. All 21 pass. (The Phase 0/1 suite
-was updated in place: its "write RPC removed" test now only asserts the
+**JS (`tests/managed-clients-phase2-operations.test.mjs`)** - 31 tests:
+most are static source-inspection tests, same convention as the Phase
+0/1 suite, but `diffWorkspaceForm` and `fingerprintPreviewInput` are
+imported from `src/lib/managedClientForms.js` and exercised as real,
+behavioral unit tests (that file is React/UI-library/Supabase-free,
+matching the `src/lib/orderPrimaryImage.js` precedent) - covering that
+an edit to one field never resubmits an untouched one (even a truncated,
+non-midnight `next_action_due_at`), that clearing vs. never-touching a
+field are distinguished, and that the preflight fingerprint changes for
+each of the four relevant fields but ignores everything else. The static
+tests cover: the nav gate keeps `adminOnly: true`; legacy rows still
+never render Commerce onboarding; the modern-no-workspace/has-workspace
+button branching; `WorkspaceFormDialog`'s mode selection; the
+provisioning wizard never sends a hostname to the RPC; the XOS activation
+card never presents `pending` as live and requires its confirmation
+checkbox; the wizard's provision/activation gating now requires
+`canAdvanceFromPreflight` (current AND `can_provision`), with a matching
+stale-preflight warning and a blocked Next button at the preflight step;
+single-generation idempotency key; the owner-account-required copy; the
+capability toggle never calls a product-deletion function; the workspace
+form's field set excludes every identity column and its count matches
+the migration's allowlist exactly (no restated number to drift, issue 7);
+every Phase 2 RPC gates on `is_app_admin()` (never `is_opps_staff()`
+alone); `admin_list_managed_clients()` stays `is_opps_staff()`-gated; the
+XOS domain is always inserted `pending` and activation never accepts a
+hostname parameter; provisioning/preview never return `auth_user_id`;
+the workspace-update `SET` clause never assigns an identity column;
+workspace-initialize rejects ambiguous client matches; the idempotency
+ledger is its own table, never reusing `commerce.onboarding_operations`;
+the refined eligibility rule accepts any non-disabled domain status; the
+capability RPC requires `_is_eligible_managed_tenant`, not just "has a
+client"; provisioning's canonical-email lock exists in the documented
+idempotency-key → slug → email order, with the email-conflict re-check
+positioned after it; `clients.brand_name` is set at provisioning and the
+read-model's fallback order prefers it; provisioning validates
+`initial_workspace` before its first insert; and the disposable SQL
+fixture slug is confirmed non-reserved (and the suite is confirmed to
+assert this of itself). All 31 pass. (The Phase 0/1 suite was updated in
+place: its "write RPC removed" test now only asserts the
 already-applied `20260823140000` file itself was never retroactively
 edited to add the RPC - Phase 2 deliberately reintroduces it in a new
 migration once a real caller exists, so the old "must be absent

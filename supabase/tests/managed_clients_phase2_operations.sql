@@ -87,8 +87,15 @@ declare
   v_hostconflict_owner_tenant_id uuid;
   v_hostconflict_slug text := 'phase2-hosttest-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
 
-  v_test_slug text := 'phase2-test-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
+  -- Post-review (blocker): admin_provision_managed_brand rejects any slug
+  -- matching (^|-)(qa|demo|test)(-|$) - the previous fixture,
+  -- 'phase2-test-<rand>', contains a hyphen-bounded "test" token and was
+  -- silently rejected by that same rule the happy-path test exists to
+  -- exercise. "disposable" contains no qa/demo/test substring at all.
+  v_test_slug text := 'phase2-disposable-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
+  v_test_slug_2 text := 'phase2-disposable-b-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
   v_idem_key text := gen_random_uuid()::text;
+  v_idem_key_2 text := gen_random_uuid()::text;
 
   v_preview jsonb;
   v_result jsonb;
@@ -148,6 +155,25 @@ begin
   returning id into v_hostconflict_owner_tenant_id;
   insert into public.tenant_domains (tenant_id, hostname, surface, status, is_primary)
   values (v_hostconflict_owner_tenant_id, v_hostconflict_slug || '.xos.jointx.co.za', 'xos_admin', 'pending', true);
+
+  -- =====================================================================
+  -- Regression guard (post-review, blocker fix): every fixture slug this
+  -- file actually passes to admin_provision_managed_brand/
+  -- admin_preview_managed_brand_provisioning must independently satisfy
+  -- the exact reserved-token rule those RPCs enforce
+  -- ((^|-)(qa|demo|test)(-|$)) - asserted here, once, against every such
+  -- fixture, so a future edit that reintroduces a reserved token fails
+  -- loudly instead of silently making the happy-path test a no-op again.
+  -- =====================================================================
+  insert into test_results (test_name, passed, detail) values (
+    'disposable_fixture_slugs_are_not_reserved_tokens',
+    v_test_slug !~* '(^|-)(qa|demo|test)(-|$)'
+      and v_test_slug_2 !~* '(^|-)(qa|demo|test)(-|$)'
+      and 'phase2-unused-slug-a' !~* '(^|-)(qa|demo|test)(-|$)'
+      and 'phase2-unused-slug-b' !~* '(^|-)(qa|demo|test)(-|$)'
+      and 'phase2-unused-slug-c' !~* '(^|-)(qa|demo|test)(-|$)',
+    'v_test_slug=' || v_test_slug || ' v_test_slug_2=' || v_test_slug_2
+  );
 
   -- =====================================================================
   -- Non-admin denial (tests 1-6)
@@ -276,12 +302,30 @@ begin
   -- =====================================================================
   -- Provisioning (tests 14-19)
   -- =====================================================================
+
+  -- Post-review: initial_workspace must pass the same key allowlist as
+  -- Parts A/B - an unknown key rejects rather than being silently
+  -- ignored, before any insert happens (this call never touches
+  -- v_test_slug, so it does not consume that fixture).
+  begin
+    perform public.admin_provision_managed_brand(
+      jsonb_build_object(
+        'workspace_name', 'x', 'tenant_slug', 'phase2-unused-slug-c', 'client_email', 'phase2-badinit@disposable.test', 'client_name', 'x',
+        'initial_workspace', jsonb_build_object('not_a_real_workspace_field', 'x')
+      ),
+      gen_random_uuid()::text
+    );
+    insert into test_results (test_name, passed, detail) values ('provision_rejects_unknown_initial_workspace_key', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('provision_rejects_unknown_initial_workspace_key', sqlerrm like 'WORKSPACE_UPDATE_UNKNOWN_KEY%', sqlerrm);
+  end;
+
   v_result := public.admin_provision_managed_brand(
     jsonb_build_object(
-      'workspace_name', 'Phase2 Disposable Test Brand',
+      'workspace_name', 'Phase2 Disposable Brand',
       'tenant_slug', v_test_slug,
       'client_email', v_owner_email,
-      'client_name', 'Phase2 Disposable Test Owner',
+      'client_name', 'Phase2 Disposable Different Contact',
       'client_type', 'Service Business',
       'site_type', 'Landing Page',
       'products_enabled', true
@@ -329,12 +373,46 @@ begin
     coalesce(v_row::text, '(not found)')
   );
 
+  -- Post-review: brand/workspace identity must display separately from
+  -- the client/contact identity - workspace_name ('Phase2 Disposable
+  -- Brand') and client_name ('Phase2 Disposable Different Contact') were
+  -- deliberately chosen to differ above.
+  insert into test_results (test_name, passed, detail) values (
+    'brand_identity_distinct_from_contact_identity_in_projection',
+    (v_row ->> 'brand_name') = 'Phase2 Disposable Brand'
+      and (v_row ->> 'client_name') = 'Phase2 Disposable Different Contact',
+    'brand_name=' || (v_row ->> 'brand_name') || ' client_name=' || (v_row ->> 'client_name')
+  );
+
+  -- Post-review (blocker): the canonical email is now protected by its
+  -- own advisory lock, and the re-check of "no conflicting clients row"
+  -- runs after acquiring it - functionally exercised here by attempting
+  -- a SECOND, otherwise-valid provisioning (different slug, different
+  -- idempotency key) reusing the SAME canonical email the first call
+  -- just committed to public.clients within this transaction. True
+  -- concurrent-session locking cannot be exercised from one serial SQL
+  -- script - see tests/managed-clients-phase2-operations.test.mjs for
+  -- the static assertion that the lock line itself exists.
+  begin
+    perform public.admin_provision_managed_brand(
+      jsonb_build_object(
+        'workspace_name', 'Phase2 Disposable Brand Two', 'tenant_slug', v_test_slug_2,
+        'client_email', v_owner_email, 'client_name', 'Phase2 Disposable Second Contact',
+        'products_enabled', false
+      ),
+      v_idem_key_2
+    );
+    insert into test_results (test_name, passed, detail) values ('provision_email_conflict_rejected_under_different_slug_and_key', false, 'call unexpectedly succeeded');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('provision_email_conflict_rejected_under_different_slug_and_key', sqlerrm like 'MANAGED_BRAND_CLIENT_EMAIL_TAKEN%', sqlerrm);
+  end;
+
   v_result2 := public.admin_provision_managed_brand(
     jsonb_build_object(
-      'workspace_name', 'Phase2 Disposable Test Brand',
+      'workspace_name', 'Phase2 Disposable Brand',
       'tenant_slug', v_test_slug,
       'client_email', v_owner_email,
-      'client_name', 'Phase2 Disposable Test Owner',
+      'client_name', 'Phase2 Disposable Different Contact',
       'client_type', 'Service Business',
       'site_type', 'Landing Page',
       'products_enabled', true
@@ -350,10 +428,10 @@ begin
   begin
     perform public.admin_provision_managed_brand(
       jsonb_build_object(
-        'workspace_name', 'Phase2 Disposable Test Brand CHANGED',
+        'workspace_name', 'Phase2 Disposable Brand CHANGED',
         'tenant_slug', v_test_slug,
         'client_email', v_owner_email,
-        'client_name', 'Phase2 Disposable Test Owner',
+        'client_name', 'Phase2 Disposable Different Contact',
         'client_type', 'Service Business',
         'site_type', 'Landing Page',
         'products_enabled', true
@@ -445,6 +523,34 @@ begin
   -- =====================================================================
   -- Products capability toggle (tests 28-29)
   -- =====================================================================
+
+  -- Post-review (blocker): "has a linked client" alone used to be enough
+  -- to enable Products - now the tenant must also pass
+  -- _is_eligible_managed_tenant (a matching workspace, a non-disabled
+  -- xos/storefront domain, or an already-enabled capability). Build a
+  -- disposable tenant with none of those three signals - just a tenant
+  -- and one linked client, nothing else - and confirm the toggle rejects
+  -- it deterministically.
+  declare
+    v_unmanaged_tenant_id uuid;
+  begin
+    insert into public.tenants (slug, name, status, settings)
+    values ('phase2-disposable-unmanaged-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8), 'Phase2 Unmanaged Tenant Fixture', 'active', '{}'::jsonb)
+    returning id into v_unmanaged_tenant_id;
+    insert into public.clients (tenant_id, name, email, status)
+    values (v_unmanaged_tenant_id, 'Phase2 Unmanaged Fixture Contact', 'phase2-unmanaged-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8) || '@disposable.test', 'active');
+
+    begin
+      perform public.admin_set_managed_tenant_products_capability(v_unmanaged_tenant_id, true);
+      insert into test_results (test_name, passed, detail) values ('capability_toggle_rejects_unmanaged_tenant', false, 'call unexpectedly succeeded on a tenant with no workspace/domain/capability signal');
+    exception when others then
+      insert into test_results (test_name, passed, detail) values ('capability_toggle_rejects_unmanaged_tenant', sqlerrm like 'MANAGED_BRAND_TENANT_NOT_MANAGED%', sqlerrm);
+    end;
+  end;
+
+  -- GSB (active domain, already-enabled capability) must still pass
+  -- eligibility under the tightened rule - this call succeeding is that
+  -- proof.
   perform public.admin_set_managed_tenant_products_capability(v_gsb_tenant_id, false);
   insert into test_results (test_name, passed, detail) values (
     'capability_toggle_works',
@@ -540,7 +646,7 @@ begin
   insert into test_results (test_name, passed, detail) values (
     'no_persistent_disposable_residue',
     true,
-    'Every real application-table INSERT in this file (2 disposable conflict-fixture tenants, 1 disposable domain, 1 provisioned tenant/client/domain/membership/capability/workspace, 1 GSB workspace) is inside this file''s single begin;/rollback; - none of it is committed. Verified by inspection.'
+    'Every real application-table INSERT in this file (2 disposable conflict-fixture tenants, 1 disposable domain, 1 disposable unmanaged tenant + client, 1 provisioned tenant/client/domain/membership/capability/workspace, 1 GSB workspace) is inside this file''s single begin;/rollback; - none of it is committed. Verified by inspection.'
   );
 end;
 $$;
