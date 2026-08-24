@@ -31,21 +31,30 @@
 -- on the created row itself (no separate ledger table needed - the
 -- variant/treatment row IS the natural result to return).
 --
--- Source-snapshot consistency (audited, see design return): the source
--- variant/treatment row is re-selected FOR UPDATE immediately before the
--- actual clone work, and both clone INSERT ... SELECT statements append
--- FOR UPDATE to their own source-reading SELECT. This is narrow (row-
--- level only, only the specific source's own rows, no table lock, no
--- unrelated product blocked) but structurally closes both risk classes
--- for the duration of the clone: (a) FOR UPDATE on the source row itself
--- blocks a concurrent edit to the variant/treatment's own fields (an
--- UPDATE needs a conflicting lock on that row); (b) it ALSO blocks any
--- concurrent INSERT of a NEW product_components/client_product_variant_
--- treatments row referencing that source, because Postgres automatically
--- acquires a FOR KEY SHARE lock on a referenced parent row when
--- inserting a referencing child row, and FOR KEY SHARE conflicts with
--- FOR UPDATE. Locking the components/mappings themselves as they're read
--- for cloning closes the remaining gap (a concurrent UPDATE to an
+-- Source-snapshot consistency (audited, see design return; revised after
+-- review to close a TOCTOU gap - the source was originally read
+-- unlocked for authorization/validation, then re-read FOR UPDATE only
+-- immediately before cloning, leaving a window where the source's own
+-- tenant_id/client_product_id could change between the two reads). The
+-- source row is now locked FOR UPDATE on its ONE AND ONLY read, as step
+-- 3 - before authorization, before the advisory lock, before the
+-- idempotency lookup, before the same-tenant/same-family checks, and
+-- before the fields are copied into the clone. Every one of those steps
+-- reads the same locked v_source row, so "the source used to authorize"
+-- and "the source used to validate" and "the source used to populate the
+-- clone" are, within the transaction, provably the identical row at the
+-- identical instant - not three reads that could each observe a
+-- different state. Concurrent duplicate operations sharing the same
+-- source now serialize on that source row (acceptable: they are related
+-- operations on the same row), but this remains row-level only - no
+-- table lock, no unrelated variant/treatment/product blocked. This also
+-- blocks any concurrent INSERT of a NEW product_components/client_
+-- product_variant_treatments row referencing that source, because
+-- Postgres automatically acquires a FOR KEY SHARE lock on a referenced
+-- parent row when inserting a referencing child row, and FOR KEY SHARE
+-- conflicts with FOR UPDATE. Locking the components/mappings themselves
+-- as they're read for cloning (FOR UPDATE OF on the clone INSERT ...
+-- SELECT statements) closes the remaining gap (a concurrent UPDATE to an
 -- EXISTING component/mapping's own fields, which doesn't touch the
 -- parent row at all). product_components has no DELETE grant for
 -- authenticated at all (confirmed live), so concurrent deletion of a
@@ -119,7 +128,6 @@ declare
   v_actor_email text;
   v_actor_name text;
   v_source public.client_product_garment_variants;
-  v_source_locked public.client_product_garment_variants;
   v_target_family public.client_products;
   v_target_name text;
   v_fingerprint text;
@@ -149,8 +157,13 @@ begin
   end if;
   v_target_name := btrim(p_target_name);
 
-  -- ── 3. Resolve source (unlocked - authorization/idempotency reads only) ──
-  select * into v_source from public.client_product_garment_variants where id = p_source_variant_id;
+  -- ── 3. Resolve source, locked FOR UPDATE immediately - this is the
+  -- ONLY source read in the whole function, so authorization, the
+  -- advisory-lock namespace, the idempotency lookup scope, the same-
+  -- tenant/same-family checks, and the fields copied into the clone all
+  -- observe the identical locked row, closing the TOCTOU window between
+  -- an unlocked read and a later locked re-read ──────────────────────
+  select * into v_source from public.client_product_garment_variants where id = p_source_variant_id for update;
   if not found then
     raise exception 'GARMENT_VARIANT_CLONE_SOURCE_NOT_FOUND: source variant % does not exist', p_source_variant_id;
   end if;
@@ -206,21 +219,16 @@ begin
     raise exception 'GARMENT_VARIANT_CLONE_CROSS_FAMILY: v1 only supports duplicating within the same client product family';
   end if;
 
-  -- ── 9. Clone, under the source-row lock ─────────────────────────────
-  select * into v_source_locked
-  from public.client_product_garment_variants
-  where id = p_source_variant_id
-  for update;
-
+  -- ── 9. Clone, from the already-locked source (see step 3) ───────────
   insert into public.client_product_garment_variants (
     id, tenant_id, client_product_id, name, inventory_product_id, colour_name, colour_code,
     manual_available_sizes, price_override, sort_order, is_active, notes,
     created_by, created_at, updated_at, idempotency_key, request_fingerprint
   ) values (
     gen_random_uuid(), v_target_family.tenant_id, p_target_client_product_id, v_target_name,
-    v_source_locked.inventory_product_id, v_source_locked.colour_name, v_source_locked.colour_code,
-    v_source_locked.manual_available_sizes, v_source_locked.price_override, v_source_locked.sort_order,
-    v_source_locked.is_active, v_source_locked.notes,
+    v_source.inventory_product_id, v_source.colour_name, v_source.colour_code,
+    v_source.manual_available_sizes, v_source.price_override, v_source.sort_order,
+    v_source.is_active, v_source.notes,
     v_actor_uid, now(), now(), p_idempotency_key, v_fingerprint
   )
   returning * into v_new;
@@ -259,11 +267,11 @@ begin
     tenant_id, actor_email, actor_name, event_type, entity_type, entity_id, summary, metadata
   ) values (
     v_target_family.tenant_id, v_actor_email, v_actor_name, 'variant_duplicated', 'client_products', p_target_client_product_id,
-    format('%s duplicated garment variant "%s" as "%s"', coalesce(v_actor_name, 'Staff'), v_source_locked.name, v_target_name),
+    format('%s duplicated garment variant "%s" as "%s"', coalesce(v_actor_name, 'Staff'), v_source.name, v_target_name),
     jsonb_build_object(
       'source_variant_id', p_source_variant_id,
       'new_variant_id', v_new.id,
-      'source_client_product_id', v_source_locked.client_product_id,
+      'source_client_product_id', v_source.client_product_id,
       'cloned_component_count', v_component_count,
       'cloned_mapping_count', v_mapping_count
     )
@@ -303,7 +311,6 @@ declare
   v_actor_email text;
   v_actor_name text;
   v_source public.client_product_treatments;
-  v_source_locked public.client_product_treatments;
   v_target_family public.client_products;
   v_target_name text;
   v_fingerprint text;
@@ -332,8 +339,10 @@ begin
   end if;
   v_target_name := btrim(p_target_name);
 
-  -- ── 3. Resolve source ────────────────────────────────────────────────
-  select * into v_source from public.client_product_treatments where id = p_source_treatment_id;
+  -- ── 3. Resolve source, locked FOR UPDATE immediately - this is the
+  -- ONLY source read in the whole function; see duplicate_garment_
+  -- variant's step 3 comment for why ──────────────────────────────────
+  select * into v_source from public.client_product_treatments where id = p_source_treatment_id for update;
   if not found then
     raise exception 'TREATMENT_CLONE_SOURCE_NOT_FOUND: source treatment % does not exist', p_source_treatment_id;
   end if;
@@ -384,21 +393,16 @@ begin
     raise exception 'TREATMENT_CLONE_CROSS_FAMILY: v1 only supports duplicating within the same client product family';
   end if;
 
-  -- ── 9. Clone, under the source-row lock ─────────────────────────────
-  select * into v_source_locked
-  from public.client_product_treatments
-  where id = p_source_treatment_id
-  for update;
-
+  -- ── 9. Clone, from the already-locked source (see step 3) ───────────
   insert into public.client_product_treatments (
     id, tenant_id, client_product_id, name, print_colour, production_method, primary_placement,
     print_size, surcharge, production_instructions, sort_order, is_active,
     created_by, created_at, updated_at, idempotency_key, request_fingerprint
   ) values (
     gen_random_uuid(), v_target_family.tenant_id, p_target_client_product_id, v_target_name,
-    v_source_locked.print_colour, v_source_locked.production_method, v_source_locked.primary_placement,
-    v_source_locked.print_size, v_source_locked.surcharge, v_source_locked.production_instructions,
-    v_source_locked.sort_order, v_source_locked.is_active,
+    v_source.print_colour, v_source.production_method, v_source.primary_placement,
+    v_source.print_size, v_source.surcharge, v_source.production_instructions,
+    v_source.sort_order, v_source.is_active,
     v_actor_uid, now(), now(), p_idempotency_key, v_fingerprint
   )
   returning * into v_new;
@@ -430,11 +434,11 @@ begin
     tenant_id, actor_email, actor_name, event_type, entity_type, entity_id, summary, metadata
   ) values (
     v_target_family.tenant_id, v_actor_email, v_actor_name, 'treatment_duplicated', 'client_products', p_target_client_product_id,
-    format('%s duplicated treatment "%s" as "%s"', coalesce(v_actor_name, 'Staff'), v_source_locked.name, v_target_name),
+    format('%s duplicated treatment "%s" as "%s"', coalesce(v_actor_name, 'Staff'), v_source.name, v_target_name),
     jsonb_build_object(
       'source_treatment_id', p_source_treatment_id,
       'new_treatment_id', v_new.id,
-      'source_client_product_id', v_source_locked.client_product_id,
+      'source_client_product_id', v_source.client_product_id,
       'cloned_component_count', v_component_count,
       'artwork_copied', false,
       'mapping_copied', false

@@ -115,6 +115,50 @@ const MIGRATION_PATH = "supabase/migrations/20260826090000_garment_variant_treat
 //   leftover_components all 0, fns_remaining 0 (both functions dropped)
 //   after the real-commit phase - production left with zero trace beyond
 //   this migration itself.
+//
+// PHASE C (post-review fix) - a review pass on the first PR flagged a
+// TOCTOU gap: the source row was originally read UNLOCKED for
+// authorization/validation (step 3), then re-read FOR UPDATE only
+// immediately before cloning (old step 9) - leaving a window where the
+// source's own tenant_id/client_product_id could change between the two
+// reads, so "the source authorized" and "the source cloned" were not
+// provably the same row-state. Fixed by locking the source FOR UPDATE on
+// its ONE AND ONLY read (now step 3, before authorization), removing the
+// later re-read entirely (v_source_locked no longer exists), and routing
+// every downstream decision - source-tenant authorization, the advisory-
+// lock namespace, the idempotency lookup scope, the same-tenant/same-
+// family checks, and the fields copied into the clone - through that
+// single locked v_source row.
+//
+// Verification for this fix:
+//   - A disposable, rolled-back functional retest (fresh fixtures,
+//     tenant Jet) confirmed the fix does not change externally-visible
+//     behaviour: variant_clone_result (2 components, 1 mapping),
+//     variant_replay_result (replayed:true, same row), variant_conflict_
+//     blocked (GARMENT_VARIANT_CLONE_IDEMPOTENCY_CONFLICT), and
+//     treatment_clone_result all matched the pre-fix Phase A results
+//     exactly.
+//   - Structural proof (this file, below): the source table is read
+//     exactly once per function (grep-counted), v_source_locked does not
+//     exist anywhere in the migration, and every authorization/lock/
+//     idempotency/validation/clone-field reference uses v_source.
+//   - A live, real two-session race SPECIFIC to this fix (session B
+//     attempting to UPDATE the locked source row's client_product_id
+//     while session A holds the FOR UPDATE lock mid-clone) was designed
+//     but deliberately NOT executed against production - the user
+//     declined a second real-commit install/test/revert cycle for this
+//     narrow fix, choosing the disposable-retest-plus-structural-proof
+//     alternative instead. The underlying primitive being relied on
+//     (a session-A FOR UPDATE row lock blocking a session-B UPDATE
+//     against that exact row until A's transaction ends) is standard
+//     Postgres MVCC behaviour, and was ALREADY live-verified on this
+//     exact table in Phase B Scenario D above (there, blocking a
+//     concurrent INSERT of a new child row referencing the locked
+//     parent; a direct UPDATE of the locked row's own columns is the
+//     simpler, more directly-guaranteed case of the same mechanism, not
+//     a new one). No live 2-session proof specific to the client_
+//     product_id-reassignment scenario exists in this repo's test
+//     history as of this fix.
 // ─────────────────────────────────────────────────────────────────────
 
 test("the migration is additive only - no drop of an existing table/column/function", async () => {
@@ -216,10 +260,37 @@ test("same-tenant and same-family (v1) validation happen AFTER target resolution
   assert.ok(source.includes("if v_source.client_product_id is distinct from p_target_client_product_id then\n    raise exception 'TREATMENT_CLONE_CROSS_FAMILY"));
 });
 
-test("the source row is re-selected FOR UPDATE immediately before the clone insert, and both the component-clone and mapping-clone INSERT...SELECT statements append FOR UPDATE OF to their own source-reading SELECT - closing both the parent-row-edit and existing-child-row-edit concurrency gaps without a table lock", async () => {
+test("the source row is locked FOR UPDATE on its ONE AND ONLY read (step 3, before authorization) - there is no second/re-select of the source anywhere in either function, closing the TOCTOU window between an earlier unlocked read and a later locked re-read", async () => {
   const source = await readSource(MIGRATION_PATH);
-  assert.ok(source.includes("select * into v_source_locked\n  from public.client_product_garment_variants\n  where id = p_source_variant_id\n  for update;"));
-  assert.ok(source.includes("select * into v_source_locked\n  from public.client_product_treatments\n  where id = p_source_treatment_id\n  for update;"));
+  assert.ok(source.includes("select * into v_source from public.client_product_garment_variants where id = p_source_variant_id for update;"));
+  assert.ok(source.includes("select * into v_source from public.client_product_treatments where id = p_source_treatment_id for update;"));
+  // No second read of either source table into a variant beyond v_source itself - v_source_locked (or any
+  // other re-read variable) must not exist anywhere in the migration.
+  assert.ok(!/v_source_locked/.test(source), "no second/re-read source variable should exist - v_source is locked once and reused throughout");
+  const variantFnStart = source.indexOf("create or replace function public.duplicate_garment_variant");
+  const variantFnEnd = source.indexOf("$function$;", variantFnStart);
+  const variantBody = source.slice(variantFnStart, variantFnEnd);
+  assert.equal((variantBody.match(/from public\.client_product_garment_variants where id = p_source_variant_id/g) || []).length, 1, "duplicate_garment_variant must read its own source table exactly once");
+  const treatmentFnStart = source.indexOf("create or replace function public.duplicate_treatment");
+  const treatmentFnEnd = source.indexOf("$function$;", treatmentFnStart);
+  const treatmentBody = source.slice(treatmentFnStart, treatmentFnEnd);
+  assert.equal((treatmentBody.match(/from public\.client_product_treatments where id = p_source_treatment_id/g) || []).length, 1, "duplicate_treatment must read its own source table exactly once");
+});
+
+test("authorization, the advisory-lock namespace, the idempotency lookup scope, the same-tenant/same-family checks, and the cloned fields all read from v_source (the single locked row) - never from a separately-read variable, so every decision point observes the identical instant", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  assert.ok(source.includes("public.inventory_can_review_tenant(v_source.tenant_id)"));
+  assert.ok(source.includes("hashtextextended('duplicate_garment_variant:' || v_source.tenant_id::text"));
+  assert.ok(source.includes("hashtextextended('duplicate_treatment:' || v_source.tenant_id::text"));
+  assert.ok(source.includes("where tenant_id = v_source.tenant_id and idempotency_key = p_idempotency_key"));
+  assert.ok(source.includes("if v_source.tenant_id is distinct from v_target_family.tenant_id"));
+  assert.ok(source.includes("if v_source.client_product_id is distinct from p_target_client_product_id"));
+  assert.ok(source.includes("v_source.inventory_product_id, v_source.colour_name, v_source.colour_code"));
+  assert.ok(source.includes("v_source.print_colour, v_source.production_method, v_source.primary_placement"));
+});
+
+test("the component-clone and mapping-clone INSERT...SELECT statements still append FOR UPDATE OF to their own source-reading SELECT - closing the existing-child-row-edit concurrency gap independently of the source row's own lock", async () => {
+  const source = await readSource(MIGRATION_PATH);
   assert.ok(source.includes("where garment_variant_id = p_source_variant_id\n  for update of product_components;"));
   assert.ok(source.includes("where garment_variant_id = p_source_variant_id and is_active\n  for update of client_product_variant_treatments;"));
   assert.ok(source.includes("where treatment_id = p_source_treatment_id\n  for update of product_components;"));
