@@ -1,5 +1,15 @@
 -- Managed Clients Control Plane — Phase 2 disposable test matrix.
 --
+-- STALE FIXTURE NOTE (Phase 3): the 3 historical managed_client_workspaces
+-- rows this file's isolation assertions reference by name (Siya Mnisi,
+-- Xilaveko Bilankulu, Dr Ndamane) were test fixtures, intentionally
+-- removed from production after Phase 2 acceptance -
+-- public.managed_client_workspaces currently has zero rows. This file is
+-- not touched further or re-validated as part of Phase 3 (it was never
+-- executed against production by that task either) - see
+-- docs/MANAGED_CLIENTS_CONTROL_PLANE.md's "Current state" note for the
+-- authoritative current baseline.
+--
 -- UNLIKE the Phase 0/1 suite (supabase/tests/managed_clients_control_plane.sql,
 -- which is genuinely read-only), THIS file DOES perform real
 -- application-table writes - that is the point: it exercises the actual
