@@ -1,4 +1,4 @@
-# Managed Clients Control Plane — Phase 0/1
+# Managed Clients Control Plane — Phase 0/1 & Phase 2
 
 OPPS internal control plane for Joint X-operated brands, sites, and client
 workspaces — distinct from **Normal Clients** (`src/pages/Clients.jsx`),
@@ -219,6 +219,251 @@ workspace join requires both `client_id` and `tenant_id`; the legacy
 exclusion uses the identical key; legacy rows always project `tenant_id`
 as `null`; `modern_tenants` requires the client-row and domain/capability
 structural signals, not slug alone; the `access` email resolution and
-allowlist; `tenant_status` is present on both row shapes; the write RPC
-and its frontend wrapper are both absent; and the detail page's Commerce
-section is gated behind `isCommerceEligible(row)`. All 8 pass.
+allowlist; `tenant_status` is present on both row shapes; the Phase 0/1
+migration file itself still never defines the write RPC (Phase 2
+reintroduces it in its own new migration - see below); and the detail
+page's Commerce section is gated behind `isCommerceEligible(row)`. All 8
+pass.
+
+---
+
+## Phase 2 — Operator Workspace + Safe Managed Brand Provisioning
+
+Builds on Phase 0/1 without editing its already-applied migration
+(`20260823140000`). All Phase 2 DB work lives in a NEW migration,
+`supabase/migrations/20260824090000_managed_clients_phase2_operations.sql`.
+Continues using exactly the same tables Phase 0/1 established - no
+competing managed-client model.
+
+### Authority model
+
+`admin_list_managed_clients()` stays `is_opps_staff()`-gated - unchanged,
+still the cross-tenant staff READ surface. Every Phase 2
+mutation/provisioning/preflight RPC instead requires
+`public.is_app_admin()` - these are high-impact operations (editing
+production workspace state, creating tenants/clients/domains/
+memberships, activating a live XOS hostname), not ordinary staff-read
+visibility. No browser INSERT/UPDATE ever touches `tenants`, `clients`,
+`tenant_domains`, `tenant_memberships`, `tenant_capabilities`, or
+`managed_client_workspaces` directly - every write goes through a
+narrow, allowlisted, `SECURITY DEFINER` RPC.
+
+### Workspace editing (Part A)
+
+`admin_update_managed_client_workspace(p_workspace_id, p_updates)` -
+app-admin-only, reintroduces the mutation Phase 0/1 deliberately removed
+(it had no caller then). `p_updates` is validated against a 20-field
+allowlist (`_validate_managed_workspace_update_keys`) shared with Part B
+- an unknown key is rejected outright, never silently ignored. Every
+allowed field uses `CASE WHEN p_updates ? 'key' THEN ... ELSE <existing>
+END`, so an omitted key is preserved and a JSON `null` for a nullable
+field clears it to SQL `NULL` - no separate "clear" flag needed.
+`onboarding_stage`/`client_type`/`site_type` still reject invalid values
+via the table's own `CHECK` constraints. No identity column
+(`id`/`tenant_id`/`client_id`/`business_id`/`brand_id`/`storefront_id`/
+`created_at`) is ever in the allowlist or the `UPDATE ... SET` list.
+Writes an `opps_activity_events` row (`managed_client_workspace_updated`)
+with the changed key list.
+
+### Workspace initialization for a modern tenant with none (Part B)
+
+`admin_initialize_managed_client_workspace(p_tenant_id, p_workspace)` -
+app-admin-only. The browser supplies only the tenant id and optional
+workspace fields; the canonical client is resolved server-side
+(`tenant_id` filter on `public.clients`), and an **ambiguous** match
+(more than one client row for that tenant) is rejected outright rather
+than guessed at - stricter than the read model's display-only "pick the
+oldest" convenience, because a write must never guess. Rejects
+joint-x/system/QA/demo/test tenants and any tenant that doesn't pass the
+same structural eligibility rule the read model uses (see below).
+Rejects if a workspace already exists for that tenant/client pair. Used
+by the UI's "Set up workspace" action - GSB is the first real candidate,
+but this migration does **not** call it for GSB; that's a reviewed,
+authorized follow-up action.
+
+### Safe Add Managed Brand provisioning (Parts C/D)
+
+`admin_preview_managed_brand_provisioning(p_input)` - app-admin-only,
+read-only. Normalizes the tenant slug server-side
+(`_normalize_managed_brand_slug`), derives the hostname as
+`<slug>.xos.jointx.co.za` (the browser never supplies a hostname), and
+checks slug/hostname/client-email availability plus whether an
+`auth.users` account exists with that exact canonical email
+(case-insensitive). The owner lookup is a single query - `select ...
+from auth.users where lower(email) = lower(p_input->>'client_email')` -
+so "owner account exists" and "email matches" are coupled by
+construction; a true mismatch state cannot occur in this design (see the
+function's own header note and the SQL test asserting this invariant).
+Returns only booleans/derived strings and a human-readable blocker list -
+**never** `auth_user_id`.
+
+`admin_provision_managed_brand(p_input, p_idempotency_key)` - app-admin-
+only, atomic. Re-validates everything the preview already checked (never
+trusts the earlier preview call - state can change between the two calls),
+then provisions in dependency order inside one transaction: tenant →
+client → XOS domain (**pending**, never active) → owner membership →
+optional products capability → workspace. Any failure means zero partial
+provisioning - one plpgsql function body is already one implicit
+transactional block, so an exception anywhere rolls back every earlier
+insert in the same call. `auth_user_id` is resolved and used internally
+only; never returned or stored.
+
+### Idempotency
+
+A dedicated ledger, `public.managed_brand_provisioning_operations`
+(`idempotency_key` primary key, `request_fingerprint`, `result jsonb`) -
+deliberately **not** `commerce.onboarding_operations`, which is a
+Commerce-product-onboarding ledger, not a generic one; reusing it would
+conflate two unrelated idempotency domains under one key namespace. Same
+`pg_advisory_xact_lock` + ledger pattern already proven in XOS 3B's
+`admin_onboard_client_commerce_product`. A second advisory lock, keyed on
+the normalized slug, additionally serializes two *different*
+idempotency-key calls racing to provision the same slug (the first lock
+alone only protects retries of one call). Same key + same payload
+returns the original result; same key + different payload raises
+`MANAGED_BRAND_IDEMPOTENCY_CONFLICT`.
+
+### XOS domain: pending until explicit Vercel activation (Part E)
+
+The old manual template
+(`supabase/provisioning/xos_tenant_provisioning_template.sql`) inserts
+`tenant_domains.status = 'active'` directly, because a human operator
+manually verifies the Vercel attachment before ever running it. The new
+UI-driven provisioner has no such guarantee - a database row can never
+prove Vercel is actually serving the hostname - so it always inserts
+`status = 'pending'`. `admin_activate_managed_xos_domain(p_tenant_id)` -
+app-admin-only - is the *only* path to `active`: it accepts just a
+tenant id (never an arbitrary hostname), locates that tenant's own
+primary `xos_admin` domain, allows only `pending`/`verified` → `active`,
+and is idempotent if already active. The UI gates the call behind an
+explicit "I confirm this hostname is attached to the correct Vercel
+project" checkbox - provisioning (step 5) and activation (step 6) are
+never combined automatically.
+
+### Products capability (Part F)
+
+`admin_set_managed_tenant_products_capability(p_tenant_id, p_enabled)` -
+app-admin-only. Reuses the existing `tenant_capabilities` authority as-is
+(no new module system), scoped to `capability_key = 'products'` only.
+Never touches `commerce.products` - turning the capability off only
+controls the XOS-side flag, never deletes or alters any Commerce
+product.
+
+### Unified read model refinement
+
+`admin_list_managed_clients()` is `CREATE OR REPLACE`d in the **new**
+Phase 2 migration only - the applied Phase 0/1 file is untouched. The
+only logical change is `modern_tenants`' eligibility rule, now delegated
+to a shared helper, `public._is_eligible_managed_tenant(tenant_id)`: a
+linked `public.clients` row AND at least one of a matching
+`managed_client_workspaces` row, a **non-disabled** (pending, verified,
+*or* active - not just active) `xos_admin`/`storefront` domain, or an
+enabled `tenant_capabilities` row. This is what lets a freshly
+provisioned brand (domain status `pending`) appear immediately instead of
+being hidden until someone remembers to run the activation step. The
+same helper is reused by Part B and Part F's tenant-eligibility checks -
+one source of truth, never duplicated. Legacy modernization is still
+explicitly deferred - see the "Reconciliation identity rule" section
+above, unchanged.
+
+### Legacy workspaces stay legacy
+
+Phase 2 lets staff edit a legacy workspace's own site/readiness/work
+fields via the same `admin_update_managed_client_workspace` RPC, but
+never changes `clients.tenant_id`, never creates a replacement client
+mapping, and never unlocks Commerce for it - `isCommerceEligible(row)`
+is unchanged from Phase 0/1. The detail view shows an explicit "Legacy
+tenant reconciliation is a separate migration phase" message for every
+legacy-only row.
+
+### UI
+
+- **Legacy row**: "Edit Workspace" button opens `WorkspaceFormDialog`
+  (mode `edit`) - selects for `client_type`/`site_type`/
+  `onboarding_stage`, plain inputs for the rest, a textarea for internal
+  notes. No Commerce/XOS controls.
+- **Modern, no workspace (GSB today)**: "Set up workspace" opens the same
+  dialog (mode `init`), calling `admin_initialize_managed_client_workspace`
+  instead. Commerce remains available immediately (its modern tenant
+  identity already exists) regardless of workspace state.
+- **Modern, with workspace**: "Edit Workspace" (mode `edit`), plus
+  `ProductsCapabilityCard` (a `Switch`) and `XosActivationCard` (hidden
+  once `xos_status === 'active'`).
+- **Add Managed Brand wizard** (`AddManagedBrandWizard`, six steps: Brand
+  → Workspace → Owner/Preflight → Review → Provision → External
+  activation): a fresh `crypto.randomUUID()` idempotency key is generated
+  once per wizard mount (same convention as
+  `CommerceProductsSection`). The preflight step surfaces "Owner account
+  required" verbatim when no matching `auth.users` account exists. The
+  Provision button is disabled until preflight's `can_provision` is
+  true. Step 6 (external activation) is a separate screen with its own
+  confirmation checkbox and `Activate XOS` button - never auto-triggered
+  by a successful provision.
+- All new components live in
+  `src/components/managedClients/ManagedClientOperations.jsx` (repo
+  convention: `eslint.config.js` only lints `src/components/**`/
+  `src/pages/**`/`src/Layout.jsx`, matching where
+  `CommerceProductsSection.jsx` already lives).
+
+### Tests
+
+**SQL (`supabase/tests/managed_clients_phase2_operations.sql`)** -
+rollback-wrapped, but UNLIKE the Phase 0/1 suite, this one performs real
+application-table writes (it exercises the actual mutation/provisioning
+RPCs) - every one of them is inside the file's single
+`begin;`/`rollback;`, which is what guarantees none of it persists (a
+single `supabase db query --file` invocation is one transaction, so
+"after rollback" cannot be queried from inside the same file - that is
+confirmed separately via a genuinely read-only query after the suite
+completes, same as Phase 0/1's own final-verification step). Two
+identities are resolved dynamically (never a hardcoded real person's auth
+UUID): an OPPS staff identity (reused from Phase 0/1's own query, for the
+read-model checks) and an app-admin identity
+(`public.users.role = 'admin'`, for every Part A-F call). Covers: non-
+admin denial for every mutating RPC; preflight slug normalization/
+hostname derivation/conflict detection (slug, hostname, and client-email
+conflicts tested independently); the owner-account-required rejection;
+the `email_match`/`owner_account_exists` invariant; a full happy-path
+provisioning creating exactly one of each dependency row, with the
+domain left `pending`; idempotency replay (same key/same payload returns
+the original result, same key/different payload conflicts, no
+duplicate rows survive multiple attempts); initializing GSB's real (but
+currently absent) workspace, server-side client resolution, system-tenant
+rejection, and duplicate-initialization rejection; workspace update
+(allowed-field changes, identity-key rejection, unknown-key rejection,
+invalid-constrained-value rejection via the table's own `CHECK`
+constraints, and intentional nullable-field clearing); the products
+capability toggle (and that it never touches `commerce.products`); XOS
+activation (pending → active, idempotent re-activation, system-tenant
+rejection); and that the 3 historical legacy rows and GSB's Commerce
+count remain correct in the unified projection despite all of the above.
+**Not yet executed against production** - same read-only constraint as
+Phase 0/1, and the Phase 2 migration itself has not been applied yet
+either.
+
+**JS (`tests/managed-clients-phase2-operations.test.mjs`)** - pure static
+source-inspection tests, same convention as the Phase 0/1 suite, so these
+run for real right now with zero database/network access: the nav gate
+keeps `adminOnly: true`; legacy rows still never render Commerce
+onboarding; the modern-no-workspace/has-workspace button branching;
+`WorkspaceFormDialog`'s mode selection; the provisioning wizard never
+sends a hostname to the RPC; the XOS activation card never presents
+`pending` as live and requires its confirmation checkbox; the wizard's
+own provision/activation gating and single-generation idempotency key;
+the owner-account-required copy; the capability toggle never calls a
+product-deletion function; the workspace form's field set excludes every
+identity column; every Phase 2 RPC gates on `is_app_admin()` (never
+`is_opps_staff()` alone); `admin_list_managed_clients()` stays
+`is_opps_staff()`-gated; the XOS domain is always inserted `pending` and
+activation never accepts a hostname parameter; provisioning/preview never
+return `auth_user_id`; the workspace-update `SET` clause never assigns an
+identity column; workspace-initialize rejects ambiguous client matches;
+the idempotency ledger is its own table, never reusing
+`commerce.onboarding_operations`; and the refined eligibility rule
+accepts any non-disabled domain status. All 21 pass. (The Phase 0/1 suite
+was updated in place: its "write RPC removed" test now only asserts the
+already-applied `20260823140000` file itself was never retroactively
+edited to add the RPC - Phase 2 deliberately reintroduces it in a new
+migration once a real caller exists, so the old "must be absent
+everywhere" assertion is now obsolete by design, not a regression. All 8
+still pass.)
