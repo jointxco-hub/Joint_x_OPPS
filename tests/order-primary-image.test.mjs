@@ -421,9 +421,25 @@ test("Orders.jsx: production_thumbnail_url is fully removed", async () => {
 test("Orders.jsx: Production Summary fetches primary-image context in ONE batched query, not per-card", async () => {
   const source = await readSource("src/pages/Orders.jsx");
   assert.match(source, /getOrderPrimaryImageContext\(activeOrderIds\)/);
-  // Only one call site for the batched query - no second (per-card) call.
+});
+
+test("Orders.jsx: the list view fetches primary-image context in ONE batched query for the filtered/visible order set, not per-row", async () => {
+  const source = await readSource("src/pages/Orders.jsx");
+  assert.match(source, /getOrderPrimaryImageContext\(filteredOrderIds\)/);
+});
+
+test("Orders.jsx: exactly two getOrderPrimaryImageContext call sites exist (Production Summary's activeOrderIds, list view's filteredOrderIds) - never a third, and never one nested inside a per-row/per-card render function", async () => {
+  const source = await readSource("src/pages/Orders.jsx");
   const calls = source.match(/getOrderPrimaryImageContext\(/g) || [];
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  // Both call sites must live inside a component-level useQuery, not inside
+  // a per-item render function (OrderListThumbnail/ProductionSummaryOrderCard
+  // themselves never call the RPC - they only ever receive already-fetched
+  // contextRows as a prop).
+  const thumbnailBody = source.slice(source.indexOf("function OrderListThumbnail"), source.indexOf("function DrawerLoadingFallback"));
+  assert.doesNotMatch(thumbnailBody, /getOrderPrimaryImageContext/);
+  const cardBody = source.slice(source.indexOf("function ProductionSummaryOrderCard"), source.indexOf("function PrintDatum"));
+  assert.doesNotMatch(cardBody, /getOrderPrimaryImageContext/);
 });
 
 test("Orders.jsx: Production Summary priority excludes portal-visible files (delegates entirely to the shared resolver)", async () => {

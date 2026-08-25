@@ -264,6 +264,7 @@ export default function Orders() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [printSummary, setPrintSummary] = useState(null);
+  const [imageGalleryOrder, setImageGalleryOrder] = useState(null);
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -359,6 +360,25 @@ export default function Orders() {
     cancelled: orders.filter(o => !o.is_archived && o.status === "cancelled").length,
   }), [orders]);
   const healthSummary = useMemo(() => getOrderHealthSummary(filtered), [filtered]);
+
+  // ONE batched query for every order currently visible in the list view -
+  // never one ClientAsset/context lookup per row. Same canonical primitive
+  // OrdersProductionSummary already uses (get_order_primary_image_context),
+  // scoped to the filtered/visible set rather than the full 200-row fetch.
+  const filteredOrderIds = useMemo(
+    () => Array.from(new Set(filtered.map(order => order.id).filter(Boolean))),
+    [filtered]
+  );
+  const { data: listPrimaryImageContextRows = [] } = useQuery({
+    queryKey: ["orderPrimaryImageContext", "list", filteredOrderIds],
+    queryFn: async () => dataClient.files.getOrderPrimaryImageContext(filteredOrderIds),
+    enabled: viewMode === "list" && filteredOrderIds.length > 0,
+    staleTime: 15_000,
+  });
+  const listPrimaryImageContextByOrder = useMemo(
+    () => groupPrimaryImageContextByOrder(listPrimaryImageContextRows),
+    [listPrimaryImageContextRows]
+  );
 
   // Kanban helpers
   const normalStages = useMemo(
@@ -532,6 +552,7 @@ export default function Orders() {
                 const healthFlags = getOrderHealthFlags(order);
                 const paid = getOrderAmountPaid(order);
                 const total = getOrderTotal(order);
+                const orderImageContext = listPrimaryImageContextByOrder.get(order.id) || [];
                 return (
                   <button
                     key={order.id}
@@ -539,37 +560,51 @@ export default function Orders() {
                     className="w-full text-left border-b border-border last:border-0 hover:bg-secondary/40 transition-all"
                   >
                     {/* Mobile */}
-                    <div className="md:hidden px-4 py-4">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <SourceBadge source={order.source} />
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{sc.label}</span>
+                    <div className="md:hidden flex gap-3 px-4 py-4">
+                      <OrderListThumbnail
+                        order={order}
+                        contextRows={orderImageContext}
+                        onOpenGallery={setImageGalleryOrder}
+                        size={48}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <SourceBadge source={order.source} />
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{sc.label}</span>
+                        </div>
+                        <p className="truncate text-base font-semibold text-foreground">{order.display_name || order.client_name || "Customer"}</p>
+                        {aliasText && (
+                          <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
+                        )}
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                          <span className="font-mono">{order.order_number}</span>
+                          <span>{order.due_date ? format(new Date(order.due_date), "d MMM") : "No due date"}</span>
+                          {order.total_amount ? <span className="font-semibold text-foreground">R{Number(order.total_amount).toLocaleString()}</span> : null}
+                        </div>
+                        <div className="mt-2">
+                          <OrderTagBadges order={order} />
+                        </div>
+                        {healthFlags.length > 0 && (
+                          <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                            {healthFlags[0].label}{paid > 0 && total > 0 ? ` - R${paid.toLocaleString()} / R${total.toLocaleString()}` : ""}
+                          </p>
+                        )}
+                        {detailLabel && (
+                          <p className="mt-2 text-xs font-medium text-emerald-700">{detailLabel}</p>
+                        )}
                       </div>
-                      <p className="truncate text-base font-semibold text-foreground">{order.display_name || order.client_name || "Customer"}</p>
-                      {aliasText && (
-                        <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
-                      )}
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                        <span className="font-mono">{order.order_number}</span>
-                        <span>{order.due_date ? format(new Date(order.due_date), "d MMM") : "No due date"}</span>
-                        {order.total_amount ? <span className="font-semibold text-foreground">R{Number(order.total_amount).toLocaleString()}</span> : null}
-                      </div>
-                      <div className="mt-2">
-                        <OrderTagBadges order={order} />
-                      </div>
-                      {healthFlags.length > 0 && (
-                        <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                          {healthFlags[0].label}{paid > 0 && total > 0 ? ` - R${paid.toLocaleString()} / R${total.toLocaleString()}` : ""}
-                        </p>
-                      )}
-                      {detailLabel && (
-                        <p className="mt-2 text-xs font-medium text-emerald-700">{detailLabel}</p>
-                      )}
                     </div>
                     {/* Desktop */}
                     <div className="hidden md:grid grid-cols-12 items-center px-5 py-4 gap-2">
                       <div className="col-span-4 flex items-start gap-3">
                         <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${priorityDot[order.priority] || priorityDot.normal}`} />
-                        <div>
+                        <OrderListThumbnail
+                          order={order}
+                          contextRows={orderImageContext}
+                          onOpenGallery={setImageGalleryOrder}
+                          size={44}
+                        />
+                        <div className="min-w-0">
                           <p className="font-medium text-foreground text-sm">{order.display_name || order.client_name}</p>
                           {aliasText && (
                             <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
@@ -739,7 +774,68 @@ export default function Orders() {
           onClose={() => setPrintSummary(null)}
         />
       )}
+
+      {imageGalleryOrder && (
+        <FileLightbox
+          // preserveIdentity: false - same presentation-only gallery contract
+          // as ProductionSummaryOrderCard: plain image URLs via the canonical
+          // resolver/gallery builder, never real ClientAsset ids.
+          files={buildLightboxItems(
+            buildOrderPrimaryImageGallery(imageGalleryOrder, listPrimaryImageContextByOrder.get(imageGalleryOrder.id) || []),
+            { preserveIdentity: false }
+          )}
+          onClose={() => setImageGalleryOrder(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// Phase 1A order-line coherence - compact (40-56px) canonical thumbnail for
+// the Orders list. Resolves via the same batched RPC/resolver every other
+// image surface in this codebase already uses (resolveOrderPrimaryImage
+// over get_order_primary_image_context rows) - never a second resolver, and
+// never promotes this into orders.primary_image_asset_id (read-only here).
+// Click opens the shared FileLightbox with this order's full resolved
+// gallery, stopping propagation so it never also triggers the row's own
+// "open order drawer" click handler.
+function OrderListThumbnail({ order, contextRows, onOpenGallery, size = 44 }) {
+  const ref = resolveOrderPrimaryImage(order, contextRows).ref;
+  const dimension = `${size}px`;
+
+  if (!ref) {
+    return (
+      <div
+        className="flex flex-shrink-0 items-center justify-center rounded-lg border border-border bg-secondary/40"
+        style={{ width: dimension, height: dimension }}
+      >
+        <Package className="h-4 w-4 text-muted-foreground/40" />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpenGallery(order);
+      }}
+      className="flex-shrink-0 overflow-hidden rounded-lg border border-border"
+      style={{ width: dimension, height: dimension }}
+      aria-label={`Open ${order.display_name || order.client_name || "order"} image gallery`}
+    >
+      <SecureImage
+        value={ref}
+        alt=""
+        className="h-full w-full object-cover"
+        fallback={
+          <div className="flex h-full w-full items-center justify-center bg-secondary/40">
+            <Package className="h-4 w-4 text-muted-foreground/40" />
+          </div>
+        }
+      />
+    </button>
   );
 }
 
