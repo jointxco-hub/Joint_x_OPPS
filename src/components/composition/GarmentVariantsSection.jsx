@@ -17,8 +17,10 @@ import { toStaffMessage } from "@/lib/pgErrorMessages";
 // product composition (rendered separately, above this section) remains
 // the primary flow, unchanged - this section only ever ADDS an optional
 // per-variant layer, never forces a simple product into variant setup.
+// No currentArtwork/onArtworkLinked props - variant composition does not
+// own artwork (see comment below at the ScopedComponentsEditor call site).
 export default function GarmentVariantsSection({
-  clientProductId, clientProduct, internalProducts, pricingDefaultFor, allComponents, currentArtwork, onArtworkLinked,
+  clientProductId, clientProduct, internalProducts, pricingDefaultFor, allComponents,
 }) {
   const queryClient = useQueryClient();
   const [addingVariant, setAddingVariant] = useState(false);
@@ -44,6 +46,17 @@ export default function GarmentVariantsSection({
   const allowedTreatmentCount = (variantId) => allMappings.filter((m) => m.garment_variant_id === variantId && m.is_active).length;
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: variantsQueryKey });
+
+  // duplicate_garment_variant creates a new variant row, clones variant-
+  // scoped product_components, AND clones active mappings - all three
+  // displayed lists must refresh, or immediately expanding the new
+  // variant would show it with zero components/mappings until something
+  // else happened to refetch.
+  const invalidateAfterDuplicate = () => {
+    invalidate();
+    queryClient.invalidateQueries({ queryKey: ["productComponents", clientProductId] });
+    queryClient.invalidateQueries({ queryKey: mappingCountsQueryKey });
+  };
 
   const createMutation = useMutation({
     mutationFn: (form) => dataClient.entities.GarmentVariant.create(buildGarmentVariantPayload(form, { clientProductId, sortOrder: variants.length })),
@@ -172,6 +185,10 @@ export default function GarmentVariantsSection({
                       <div className="space-y-3 border-t border-slate-100 p-3">
                         <div>
                           <p className="mb-1 text-xs font-medium text-slate-500">Production components for this garment variant</p>
+                          {/* Deliberately no currentArtwork/onArtworkLinked here - variant
+                              composition does not own artwork (family or a selected
+                              treatment does), and ScopedComponentsEditor's variant scope
+                              ignores them defensively even if passed. */}
                           <ScopedComponentsEditor
                             clientProductId={clientProductId}
                             scope={{ type: "variant", id: variant.id }}
@@ -180,8 +197,6 @@ export default function GarmentVariantsSection({
                             internalProducts={internalProducts}
                             pricingDefaultFor={pricingDefaultFor}
                             clientProduct={clientProduct}
-                            currentArtwork={currentArtwork}
-                            onArtworkLinked={onArtworkLinked}
                             addLabel="Add component"
                             emptyLabel="No components for this variant yet."
                           />
@@ -228,7 +243,7 @@ export default function GarmentVariantsSection({
           sourceVariant={duplicatingVariant}
           targetClientProductId={clientProductId}
           onClose={() => setDuplicatingVariant(null)}
-          onSuccess={() => { invalidate(); setDuplicatingVariant(null); }}
+          onSuccess={() => { invalidateAfterDuplicate(); setDuplicatingVariant(null); }}
         />
       )}
     </div>

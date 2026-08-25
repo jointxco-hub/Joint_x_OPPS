@@ -625,8 +625,6 @@ export default function CatalogManagement() {
                           internalProducts={internalProducts}
                           pricingDefaultFor={pricingDefaultFor}
                           allComponents={productComponents}
-                          currentArtwork={currentArtwork}
-                          onArtworkLinked={invalidateCurrentArtwork}
                         />
 
                         <TreatmentsSection
@@ -635,8 +633,6 @@ export default function CatalogManagement() {
                           internalProducts={internalProducts}
                           pricingDefaultFor={pricingDefaultFor}
                           allComponents={productComponents}
-                          currentArtwork={currentArtwork}
-                          onArtworkLinked={invalidateCurrentArtwork}
                         />
 
                         {productComponents.length > 0 && !familyComposerBusy && (

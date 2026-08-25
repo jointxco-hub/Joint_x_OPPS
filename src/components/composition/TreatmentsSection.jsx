@@ -15,8 +15,12 @@ import { toStaffMessage } from "@/lib/pgErrorMessages";
 // Composition panel. Mirrors GarmentVariantsSection's structure exactly
 // (list/add/edit/duplicate/disable, expandable detail) - see that file
 // for the shared design rationale.
+// No currentArtwork/onArtworkLinked props - the family artwork-linking
+// path never applies here. Treatment artwork state is handled entirely
+// by TreatmentArtworkState (its own scoped query + the X LAB Admin deep
+// link), not by feeding family data into ScopedComponentsEditor.
 export default function TreatmentsSection({
-  clientProductId, clientProduct, internalProducts, pricingDefaultFor, allComponents, currentArtwork, onArtworkLinked,
+  clientProductId, clientProduct, internalProducts, pricingDefaultFor, allComponents,
 }) {
   const queryClient = useQueryClient();
   const [addingTreatment, setAddingTreatment] = useState(false);
@@ -44,6 +48,15 @@ export default function TreatmentsSection({
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: treatmentsQueryKey });
     queryClient.invalidateQueries({ queryKey: mappingCountsQueryKey });
+  };
+
+  // duplicate_treatment creates a new treatment row and clones treatment-
+  // scoped product_components (intentionally zero mappings/artwork -
+  // invalidating the mapping-count query here is harmless and keeps both
+  // list counts in sync regardless).
+  const invalidateAfterDuplicate = () => {
+    invalidate();
+    queryClient.invalidateQueries({ queryKey: ["productComponents", clientProductId] });
   };
 
   const createMutation = useMutation({
@@ -167,6 +180,8 @@ export default function TreatmentsSection({
                       <div className="space-y-3 border-t border-slate-100 p-3">
                         <div>
                           <p className="mb-1 text-xs font-medium text-slate-500">Production components for this treatment</p>
+                          {/* Deliberately no currentArtwork/onArtworkLinked here - see
+                              module header. Artwork state is TreatmentArtworkState, below. */}
                           <ScopedComponentsEditor
                             clientProductId={clientProductId}
                             scope={{ type: "treatment", id: treatment.id }}
@@ -175,8 +190,6 @@ export default function TreatmentsSection({
                             internalProducts={internalProducts}
                             pricingDefaultFor={pricingDefaultFor}
                             clientProduct={clientProduct}
-                            currentArtwork={currentArtwork}
-                            onArtworkLinked={onArtworkLinked}
                             addLabel="Add component"
                             emptyLabel="No components for this treatment yet."
                             excludeComponentTypes={["blank_garment"]}
@@ -222,7 +235,7 @@ export default function TreatmentsSection({
           sourceTreatment={duplicatingTreatment}
           targetClientProductId={clientProductId}
           onClose={() => setDuplicatingTreatment(null)}
-          onSuccess={() => { invalidate(); setDuplicatingTreatment(null); }}
+          onSuccess={() => { invalidateAfterDuplicate(); setDuplicatingTreatment(null); }}
         />
       )}
     </div>

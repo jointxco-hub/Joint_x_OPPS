@@ -28,9 +28,14 @@ export default function VariantTreatmentMappingEditor({ variantId, clientProduct
     enabled: Boolean(variantId),
   });
 
+  // Both the per-variant mapping list (this component's own display) AND
+  // the family-wide mapping-count query (used by GarmentVariantsSection's
+  // "N treatments" / TreatmentsSection's "N garments" counts, and by
+  // VariantPricingPreview) must be invalidated - they are two separate
+  // useQuery caches over overlapping data, and a toggle here changes both.
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["variantTreatmentMappings", variantId] });
-    queryClient.invalidateQueries({ queryKey: ["garmentVariants", clientProductId] });
+    queryClient.invalidateQueries({ queryKey: ["variantTreatmentMappingsForFamily", clientProductId] });
   };
 
   const toggleMutation = useMutation({

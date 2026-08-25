@@ -203,3 +203,132 @@ test("no client-side cloning exists anywhere in the new components - every 'dupl
     assert.ok(!/Treatment\.create\(\{[^}]*\.\.\.(duplicatingTreatment|sourceTreatment)/.test(source));
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Post-review fixes: (1) family artwork context must never reach a
+// variant- or treatment-scoped ScopedComponentsEditor instance, and (2)
+// every write that changes displayed derived state must invalidate every
+// query that state is read from.
+// ─────────────────────────────────────────────────────────────────────
+
+test("ScopedComponentsEditor: artworkAware is true ONLY for family scope (including the no-scope/undefined default) - variant and treatment scope both compute it false", async () => {
+  const source = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
+  assert.ok(source.includes('const artworkAware = !scope || scope.type === "family";'));
+});
+
+test("ScopedComponentsEditor: scopedCurrentArtwork/scopedOnArtworkLinked collapse to undefined whenever artworkAware is false, and BOTH ComponentFieldsForm render sites (add and edit) use the scoped values plus allowArtworkLinking={artworkAware} - never the raw currentArtwork/onArtworkLinked props directly", async () => {
+  const source = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
+  assert.ok(source.includes("const scopedCurrentArtwork = artworkAware ? currentArtwork : undefined;"));
+  assert.ok(source.includes("const scopedOnArtworkLinked = artworkAware ? onArtworkLinked : undefined;"));
+  // Neither raw prop may be forwarded directly to ComponentFieldsForm -
+  // only the scoped (potentially-undefined) versions.
+  assert.ok(!/currentArtwork={currentArtwork}/.test(source), "must never pass the raw prop straight through");
+  assert.ok(!/onArtworkLinked={onArtworkLinked}/.test(source), "must never pass the raw prop straight through");
+  const componentFieldsFormCount = (source.match(/<ComponentFieldsForm/g) || []).length;
+  const scopedArtworkPropCount = (source.match(/currentArtwork={scopedCurrentArtwork}/g) || []).length;
+  const scopedLinkedPropCount = (source.match(/onArtworkLinked={scopedOnArtworkLinked}/g) || []).length;
+  const allowLinkingPropCount = (source.match(/allowArtworkLinking={artworkAware}/g) || []).length;
+  assert.equal(componentFieldsFormCount, 2, "expected exactly the add and edit render sites");
+  assert.equal(scopedArtworkPropCount, componentFieldsFormCount);
+  assert.equal(scopedLinkedPropCount, componentFieldsFormCount);
+  assert.equal(allowLinkingPropCount, componentFieldsFormCount, "every ComponentFieldsForm render must pass allowArtworkLinking={artworkAware}");
+});
+
+test("ScopedComponentsEditor: the 'no approved artwork' list-view badge is also gated by artworkAware - hasApprovedArtwork short-circuits to null (not false) whenever artworkAware is false, so a treatment/variant-scoped print_service component never shows a misleading family-artwork warning", async () => {
+  const source = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
+  assert.ok(source.includes("const hasApprovedArtwork = (placement) => !artworkAware || !placement"));
+});
+
+test("ComponentFieldsForm: allowArtworkLinking (default true, so every pre-Step-3 caller is unaffected) gates BOTH the artwork-status block and the ClientAssetPickerModal - false means the artwork-linking control cannot render or be invoked at all, not just visually hidden", async () => {
+  const source = await readSource("src/components/composition/ComponentFieldsForm.jsx");
+  assert.ok(source.includes("allowArtworkLinking = true,"));
+  assert.ok(source.includes('{allowArtworkLinking && form.component_type === "print_service" && effectivePlacement && ('));
+  assert.ok(source.includes("{allowArtworkLinking && showArtworkPicker && ("));
+});
+
+test("GarmentVariantsSection: the variant-scoped ScopedComponentsEditor instance is never given currentArtwork/onArtworkLinked as actual JSX props - the component signature itself no longer accepts them (mentioning them BY NAME in an explanatory comment, as this file does, is fine - actually passing them as props is not)", async () => {
+  const source = await readSource("src/components/composition/GarmentVariantsSection.jsx");
+  assert.ok(!/currentArtwork={/.test(source), "GarmentVariantsSection must never pass currentArtwork as a prop - variant composition does not own artwork");
+  assert.ok(!/onArtworkLinked={/.test(source));
+});
+
+test("TreatmentsSection: the treatment-scoped ScopedComponentsEditor instance is never given currentArtwork/onArtworkLinked as actual JSX props either - treatment artwork state is TreatmentArtworkState's own scoped query, not family data forwarded through ComponentFieldsForm", async () => {
+  const source = await readSource("src/components/composition/TreatmentsSection.jsx");
+  assert.ok(!/currentArtwork={/.test(source));
+  assert.ok(!/onArtworkLinked={/.test(source));
+  assert.ok(source.includes("<TreatmentArtworkState"), "the only treatment artwork surface must still be TreatmentArtworkState");
+});
+
+test("CatalogManagement: the family-scoped ScopedComponentsEditor instance is the ONLY place currentArtwork/onArtworkLinked are still wired through - family scope's existing artwork behaviour is unchanged", async () => {
+  const source = await readSource("src/pages/CatalogManagement.jsx");
+  const familyEditorStart = source.indexOf('scope={{ type: "family" }}');
+  assert.notEqual(familyEditorStart, -1);
+  const familyEditorEnd = source.indexOf("/>", familyEditorStart);
+  const familyEditorProps = source.slice(familyEditorStart, familyEditorEnd);
+  assert.ok(familyEditorProps.includes("currentArtwork={currentArtwork}"));
+  assert.ok(familyEditorProps.includes("onArtworkLinked={invalidateCurrentArtwork}"));
+  // And GarmentVariantsSection/TreatmentsSection are no longer even passed these props.
+  const gvStart = source.indexOf("<GarmentVariantsSection");
+  const gvProps = source.slice(gvStart, source.indexOf("/>", gvStart));
+  assert.ok(!gvProps.includes("currentArtwork") && !gvProps.includes("onArtworkLinked"));
+  const tsStart = source.indexOf("<TreatmentsSection");
+  const tsProps = source.slice(tsStart, source.indexOf("/>", tsStart));
+  assert.ok(!tsProps.includes("currentArtwork") && !tsProps.includes("onArtworkLinked"));
+});
+
+test("VariantTreatmentMappingEditor: a mapping toggle invalidates BOTH the per-variant mapping query and the family-wide mapping-count query used by the visible variant/treatment lists - not just the former", async () => {
+  const source = await readSource("src/components/composition/VariantTreatmentMappingEditor.jsx");
+  const invalidateStart = source.indexOf("const invalidate = () => {");
+  assert.notEqual(invalidateStart, -1);
+  const invalidateBody = source.slice(invalidateStart, invalidateStart + 400);
+  assert.ok(invalidateBody.includes('queryKey: ["variantTreatmentMappings", variantId]'));
+  assert.ok(invalidateBody.includes('queryKey: ["variantTreatmentMappingsForFamily", clientProductId]'));
+});
+
+test("GarmentVariantsSection: duplicating a variant invalidates the variants list, the shared productComponents query, AND the family mapping-count query - not just the variants list", async () => {
+  const source = await readSource("src/components/composition/GarmentVariantsSection.jsx");
+  const start = source.indexOf("const invalidateAfterDuplicate = () => {");
+  assert.notEqual(start, -1);
+  const body = source.slice(start, start + 300);
+  assert.ok(body.includes("invalidate();"));
+  assert.ok(body.includes('queryKey: ["productComponents", clientProductId]'));
+  assert.ok(body.includes("queryKey: mappingCountsQueryKey"));
+  assert.ok(source.includes("onSuccess={() => { invalidateAfterDuplicate(); setDuplicatingVariant(null); }}"), "the duplicate modal's onSuccess must call the wider invalidation, not the plain one");
+});
+
+test("TreatmentsSection: duplicating a treatment invalidates the treatments list, the shared productComponents query, AND the family mapping-count query", async () => {
+  const source = await readSource("src/components/composition/TreatmentsSection.jsx");
+  const start = source.indexOf("const invalidateAfterDuplicate = () => {");
+  assert.notEqual(start, -1);
+  const body = source.slice(start, start + 300);
+  assert.ok(body.includes("invalidate();"));
+  assert.ok(body.includes('queryKey: ["productComponents", clientProductId]'));
+  assert.ok(source.includes("onSuccess={() => { invalidateAfterDuplicate(); setDuplicatingTreatment(null); }}"));
+});
+
+test("a newly duplicated variant can immediately render its cloned component count/state from refreshed query data - the invalidated productComponents key EXACTLY matches CatalogManagement's own query key (the single source ScopedComponentsEditor derives every scope's list from via filterComponentsByScope), so no separate per-variant component query can go stale", async () => {
+  const catalogSource = await readSource("src/pages/CatalogManagement.jsx");
+  assert.ok(catalogSource.includes("queryKey: ['productComponents', selectedClientProductId]"));
+
+  const variantSectionSource = await readSource("src/components/composition/GarmentVariantsSection.jsx");
+  assert.ok(variantSectionSource.includes('queryKey: ["productComponents", clientProductId]'), "the same logical key (clientProductId === selectedClientProductId at the call site) must be invalidated after duplication");
+
+  const editorSource = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
+  assert.ok(editorSource.includes("const scopedComponents = filterComponentsByScope(allComponents, scope);"), "the variant's expanded detail reads from the SAME allComponents list CatalogManagement fetches - once that query is invalidated and refetched, expanding the new variant shows the cloned components with no additional fetch to go stale");
+});
+
+test("no real SFR data is referenced anywhere in this phase's changed files - UI/data-layer only, no client_product id is hardcoded", async () => {
+  for (const file of [
+    "src/pages/CatalogManagement.jsx",
+    "src/components/composition/GarmentVariantsSection.jsx",
+    "src/components/composition/TreatmentsSection.jsx",
+    "src/components/composition/ScopedComponentsEditor.jsx",
+    "src/components/composition/DuplicateGarmentVariantModal.jsx",
+    "src/components/composition/DuplicateTreatmentModal.jsx",
+    "src/components/composition/VariantTreatmentMappingEditor.jsx",
+    "src/components/composition/TreatmentArtworkState.jsx",
+  ]) {
+    const source = await readSource(file);
+    assert.ok(!source.includes("4ae5878d-f3e2-41c7-9256-9165782a1781"), `${file}: SFR's real client_product id must not appear`);
+  }
+});

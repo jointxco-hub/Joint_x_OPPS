@@ -15,6 +15,24 @@ import ComponentFieldsForm, { COMPONENT_TYPES, emptyComponentForm } from "@/comp
 // see productComposition.js's filterComponentsByScope/buildComponentPayload
 // for how scope is resolved and enforced on every write.
 //
+// Artwork awareness is scope-gated HERE, not left to each caller to
+// remember: the existing family artwork-linking path (find_or_create_
+// client_product_artwork_from_asset via ComponentFieldsForm) only
+// understands treatment_id IS NULL family rows. Passing that same
+// currentArtwork/onArtworkLinked into a variant- or treatment-scoped
+// instance would be misleading (family artwork state rendered as if it
+// were that variant's/treatment's own) and would let staff invoke a
+// linking action that writes family-level artwork from inside what looks
+// like a treatment-scoped editor. So: family scope keeps existing
+// behaviour unchanged; variant and treatment scope both ignore whatever
+// currentArtwork/onArtworkLinked the caller passes (defensively, even if
+// a caller forgets to omit them) and never render the artwork-linking
+// control or the "no approved artwork" warning. Treatment artwork state
+// is shown separately, read-only, by TreatmentArtworkState - variant
+// composition does not own artwork at all (see GarmentVariantsSection,
+// which renders no artwork surface for its ScopedComponentsEditor
+// instance).
+//
 // onBusyChange(isAddingOrEditing) - the add/edit form state now lives in
 // here rather than in the parent, but CatalogManagement's family instance
 // still needs to know whether it's open (to hide "Duplicate composition"
@@ -40,10 +58,17 @@ export default function ScopedComponentsEditor({
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeyForInvalidation });
 
+  // Only family scope (the default, and CatalogManagement's own instance)
+  // may treat currentArtwork/onArtworkLinked as meaningful - see the
+  // module header for why variant/treatment scope discard them entirely.
+  const artworkAware = !scope || scope.type === "family";
+  const scopedCurrentArtwork = artworkAware ? currentArtwork : undefined;
+  const scopedOnArtworkLinked = artworkAware ? onArtworkLinked : undefined;
+
   const internalProductLabel = (id) => internalProducts.find((p) => p.id === id)?.internal_name || internalProducts.find((p) => p.id === id)?.internal_code || "Unmapped";
-  const hasApprovedArtwork = (placement) => !placement
+  const hasApprovedArtwork = (placement) => !artworkAware || !placement
     ? null
-    : (Array.isArray(currentArtwork) ? currentArtwork : []).some((a) => a.placement === placement && a.status === 'approved');
+    : (Array.isArray(scopedCurrentArtwork) ? scopedCurrentArtwork : []).some((a) => a.placement === placement && a.status === 'approved');
 
   const createSetupFeeCompanion = async (printForm) => {
     const method = printForm.production_method;
@@ -141,9 +166,10 @@ export default function ScopedComponentsEditor({
                   internalProducts={internalProducts}
                   pricingDefaultFor={pricingDefaultFor}
                   clientProduct={clientProduct}
-                  currentArtwork={currentArtwork}
-                  onArtworkLinked={onArtworkLinked}
+                  currentArtwork={scopedCurrentArtwork}
+                  onArtworkLinked={scopedOnArtworkLinked}
                   excludeComponentTypes={excludeComponentTypes}
+                  allowArtworkLinking={artworkAware}
                 />
                 <div className="mt-2 flex gap-2">
                   <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingComponentId("")}>Cancel</Button>
@@ -210,9 +236,10 @@ export default function ScopedComponentsEditor({
             internalProducts={internalProducts}
             pricingDefaultFor={pricingDefaultFor}
             clientProduct={clientProduct}
-            currentArtwork={currentArtwork}
-            onArtworkLinked={onArtworkLinked}
+            currentArtwork={scopedCurrentArtwork}
+            onArtworkLinked={scopedOnArtworkLinked}
             excludeComponentTypes={excludeComponentTypes}
+            allowArtworkLinking={artworkAware}
           />
           <div className="mt-2 flex gap-2">
             <Button variant="outline" size="sm" className="flex-1" onClick={() => { setAddingComponent(false); setNewComponent(emptyComponentForm()); }}>Cancel</Button>
