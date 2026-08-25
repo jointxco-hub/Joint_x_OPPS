@@ -9,11 +9,59 @@ export function resolvePlacement(form) {
   return form.placement;
 }
 
+// Phase 2B Step 3 - one deliberate scope concept for product_components,
+// never two independently-optional IDs that could drift out of sync.
+// Every add/edit path must resolve one of these three shapes and pass it
+// through buildComponentPayload, which always writes BOTH columns
+// explicitly (never omits either) - so an edit can never accidentally
+// retain a scope left over from a previous selection/render, and a
+// family-scoped component is always writeable back to family scope by
+// passing { type: 'family' } again, not by omission.
+export const COMPONENT_SCOPE_FAMILY = "family";
+export const COMPONENT_SCOPE_VARIANT = "variant";
+export const COMPONENT_SCOPE_TREATMENT = "treatment";
+
+export function resolveComponentScope(scope) {
+  if (!scope || scope.type === COMPONENT_SCOPE_FAMILY) {
+    return { garment_variant_id: null, treatment_id: null };
+  }
+  if (scope.type === COMPONENT_SCOPE_VARIANT) {
+    if (!scope.id) throw new Error("Variant scope requires an id");
+    return { garment_variant_id: scope.id, treatment_id: null };
+  }
+  if (scope.type === COMPONENT_SCOPE_TREATMENT) {
+    if (!scope.id) throw new Error("Treatment scope requires an id");
+    return { garment_variant_id: null, treatment_id: scope.id };
+  }
+  throw new Error(`Unknown component scope type: ${scope.type}`);
+}
+
+// Client-side scope filtering over one already-fetched, unscoped list of
+// a family's components - avoids three separate scoped queries (the
+// existing family-composition query already fetches every component for
+// client_product_id; family/variant/treatment editors all derive their
+// own subset from that same list instead of re-querying).
+export function filterComponentsByScope(components, scope) {
+  const list = Array.isArray(components) ? components : [];
+  if (!scope || scope.type === COMPONENT_SCOPE_FAMILY) {
+    return list.filter((c) => !c.garment_variant_id && !c.treatment_id);
+  }
+  if (scope.type === COMPONENT_SCOPE_VARIANT) {
+    return list.filter((c) => c.garment_variant_id === scope.id);
+  }
+  if (scope.type === COMPONENT_SCOPE_TREATMENT) {
+    return list.filter((c) => c.treatment_id === scope.id);
+  }
+  return [];
+}
+
 // The reusable, client-product-level default component - never carries
 // an order-specific price. sort_order is passed in by the caller (it
 // depends on how many components already exist, which differs between
-// CatalogManagement's full list and a single-line add).
-export function buildComponentPayload(form, { clientProductId, sortOrder } = {}) {
+// CatalogManagement's full list and a single-line add). scope defaults
+// to family (unscoped) so every existing call site (which predates
+// scoping) keeps writing exactly what it always has.
+export function buildComponentPayload(form, { clientProductId, sortOrder, scope } = {}) {
   return {
     client_product_id: clientProductId,
     sort_order: sortOrder,
@@ -30,6 +78,7 @@ export function buildComponentPayload(form, { clientProductId, sortOrder } = {})
     production_instructions: form.production_instructions || null,
     label: form.label || null,
     notes: form.notes || null,
+    ...resolveComponentScope(scope),
   };
 }
 

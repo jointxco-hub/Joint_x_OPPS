@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import ResponsiveModal from "@/components/common/ResponsiveModal";
+import { SIZE_PRESETS } from "@/lib/sizePresets";
 
 const INV_CATEGORIES = [
   "tees","hoodies","sweaters","bottoms","headwear","accessories",
@@ -632,7 +633,6 @@ function MovementHistoryModal({ open, onClose, item, movements }) {
 
 const NEW_OPTION = "__new__";
 const COLOUR_PRESETS = ["Black", "White", "Grey", "Navy", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Brown", "Maroon", "Olive"];
-const SIZE_PRESETS = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
 
 function SingleChoiceChips({ value, onChange, presets, placeholder }) {
   const [customMode, setCustomMode] = useState(value !== "" && !presets.includes(value));

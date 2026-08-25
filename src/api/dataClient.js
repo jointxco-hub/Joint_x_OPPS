@@ -559,6 +559,69 @@ const ENTITY_CONFIG = {
         label: payload.label,
         notes: payload.notes,
         is_active: payload.is_active,
+        // Phase 2B Step 3 - both always explicitly passed through (never
+        // conditionally omitted) so an edit can never silently retain a
+        // scope left over from a previous selection; buildComponentPayload
+        // is the only caller and always sets both via resolveComponentScope.
+        garment_variant_id: payload.garment_variant_id,
+        treatment_id: payload.treatment_id,
+      });
+    },
+  },
+  GarmentVariant: {
+    table: 'client_product_garment_variants',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        client_product_id: payload.client_product_id,
+        name: payload.name,
+        inventory_product_id: payload.inventory_product_id,
+        colour_name: payload.colour_name,
+        colour_code: payload.colour_code,
+        manual_available_sizes: payload.manual_available_sizes,
+        price_override: numberOrUndefined(payload.price_override),
+        sort_order: numberOrUndefined(payload.sort_order),
+        is_active: payload.is_active,
+        notes: payload.notes,
+      });
+    },
+  },
+  Treatment: {
+    table: 'client_product_treatments',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        client_product_id: payload.client_product_id,
+        name: payload.name,
+        print_colour: payload.print_colour,
+        production_method: payload.production_method,
+        primary_placement: payload.primary_placement,
+        print_size: payload.print_size,
+        surcharge: numberOrUndefined(payload.surcharge),
+        production_instructions: payload.production_instructions,
+        sort_order: numberOrUndefined(payload.sort_order),
+        is_active: payload.is_active,
+      });
+    },
+  },
+  VariantTreatmentMapping: {
+    table: 'client_product_variant_treatments',
+    tenantScoped: true,
+    normalize(row) {
+      return row;
+    },
+    serialize(payload) {
+      return compactObject({
+        client_product_id: payload.client_product_id,
+        garment_variant_id: payload.garment_variant_id,
+        treatment_id: payload.treatment_id,
+        is_active: payload.is_active,
       });
     },
   },
