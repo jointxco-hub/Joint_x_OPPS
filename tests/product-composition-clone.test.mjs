@@ -345,6 +345,15 @@ test("v1 UI does not build component selection, merge, replace, or a bulk varian
 });
 
 test("Duplicate composition button only shows when the source has at least one component, and is hidden while add/edit component forms are open", async () => {
+  // Phase 2B Step 3 moved the add/edit form state into the shared
+  // ScopedComponentsEditor - CatalogManagement now tracks whether it's
+  // open via onBusyChange (see ScopedComponentsEditor.jsx) instead of
+  // owning addingComponent/editingComponentId directly, but the same
+  // hide-while-busy behaviour is preserved.
   const source = await readSource(UI_PATH);
-  assert.ok(source.includes("productComponents.length > 0 && !addingComponent && !editingComponentId && ("));
+  assert.ok(source.includes("productComponents.length > 0 && !familyComposerBusy && ("));
+  assert.ok(source.includes("onBusyChange={setFamilyComposerBusy}"), "the family composition editor must report its open/closed state back up");
+
+  const editorSource = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
+  assert.ok(editorSource.includes("onBusyChange?.(addingComponent || Boolean(editingComponentId));"));
 });

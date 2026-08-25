@@ -107,9 +107,20 @@ test("blank_garment is excluded from the + Add print option component-type choic
 });
 
 test("Catalog Management's general Add component flow is unaffected - blank_garment stays available there", async () => {
-  const source = await readSource("src/pages/CatalogManagement.jsx");
-  assert.ok(source.includes("emptyComponentForm()"), "Catalog Management still uses the general-purpose (blank_garment-defaulting) factory");
-  assert.ok(!source.includes("excludeComponentTypes"), "Catalog Management must not restrict component types - it is the general composition editor");
+  // Phase 2B Step 3 extracted the family composition list/add/edit UI out
+  // of CatalogManagement.jsx into the shared ScopedComponentsEditor (also
+  // reused, scoped, by the new Garment Variants/Treatments sections) -
+  // CatalogManagement's OWN family instance still renders it with no
+  // excludeComponentTypes, so blank_garment stays available there exactly
+  // as before.
+  const pageSource = await readSource("src/pages/CatalogManagement.jsx");
+  const familyEditorStart = pageSource.indexOf('scope={{ type: "family" }}');
+  assert.notEqual(familyEditorStart, -1, "CatalogManagement must render the family-scoped composition editor");
+  const familyEditorProps = pageSource.slice(familyEditorStart - 200, familyEditorStart + 600);
+  assert.ok(!familyEditorProps.includes("excludeComponentTypes"), "the family instance must not restrict component types - it is the general composition editor");
+
+  const editorSource = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
+  assert.ok(editorSource.includes("emptyComponentForm()"), "the shared editor still uses the general-purpose (blank_garment-defaulting) factory");
 });
 
 test("a print_service component created via + Add print option never carries an inventory identity", async () => {
@@ -124,8 +135,11 @@ test("a print_service component created via + Add print option never carries an 
   assert.ok(body.includes("buildComponentPayload(form, { clientProductId: clientProduct.id, sortOrder: existingCount })"));
 });
 
-test("a genuine blank_garment component (added via Catalog Management) still requires an internal inventory identity, unchanged", async () => {
-  const source = await readSource("src/pages/CatalogManagement.jsx");
+test("a genuine blank_garment component (added via Catalog Management, or any scoped editor built on the same shared component) still requires an internal inventory identity, unchanged", async () => {
+  // See the previous test's comment - this logic now lives in the shared
+  // ScopedComponentsEditor that CatalogManagement's family instance (and
+  // the new Garment Variants/Treatments sections) all render.
+  const source = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
   assert.ok(
     source.includes('createComponentMutation.isPending || (newComponent.component_type === "blank_garment" && !newComponent.inventory_product_id)'),
     "the add-component submit button must still be disabled for an unresolved blank_garment"
