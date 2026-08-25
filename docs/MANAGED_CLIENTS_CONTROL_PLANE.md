@@ -1,10 +1,27 @@
-# Managed Clients Control Plane — Phase 0/1 & Phase 2
+# Managed Clients Control Plane — Phase 0/1, Phase 2 & Phase 3
 
 OPPS internal control plane for Joint X-operated brands, sites, and client
 workspaces — distinct from **Normal Clients** (`src/pages/Clients.jsx`),
 which is the CRM/customer-record surface. This phase recovers the
 surviving legacy database model and reconciles it with the modern XOS
 tenant architecture; it does not migrate, rewrite, or provision anything.
+
+**Current state (post Phase 2 acceptance):** the 3 historical
+`managed_client_workspaces` rows described below (Dr Ndamane, Siya
+Mnisi, Xilaveko Bilankulu) were test fixtures used to validate the
+Phase 0/1/2 reconciliation logic against real legacy-shaped data. They
+have since been intentionally removed from the active Managed Clients
+dataset - `public.managed_client_workspaces` currently has **zero
+rows**. Their underlying `clients`/`orders`/`invoices`/`assets`/`tasks`/
+other OPPS history was **not** deleted and remains fully intact; only
+the workspace rows themselves were removed. `admin_list_managed_clients()`
+today returns exactly one row: **God's Spoilt Brat** (`commerce_product_count`
+= 1). The reconciliation rule, join logic, and legacy-Commerce-guard
+description below are kept as-written (and kept working, still covered
+by tests) because they remain the correct, generic behavior for any
+future legacy-shaped row - nothing in this control plane assumes those
+3 specific rows still exist, and nothing below should be read as a
+claim that they currently do.
 
 ## Two generations of managed-brand data
 
@@ -16,11 +33,12 @@ tenant architecture; it does not migrate, rewrite, or provision anything.
   fields (`preview_url`, `live_url`, `domain_name`, `site_repo_url`,
   `storefront_status`), and work tracking (`next_action`,
   `next_action_owner`, `next_action_due_at`, `launch_target_date`,
-  `internal_notes`). 3 rows currently survive (Siya Mnisi, Xilaveko
-  Bilankulu, Dr Ndamane) — all point at the Joint X system tenant; their
-  linked `public.clients` rows are also still Joint-X-scoped, i.e. none of
-  them have been migrated to a dedicated tenant. This migration does not
-  touch this table's schema or rows, and does not add a competing table.
+  `internal_notes`). It currently has zero rows (see "Current state"
+  above) - the 3 rows that previously survived here (Siya Mnisi, Xilaveko
+  Bilankulu, Dr Ndamane) all pointed at the Joint X system tenant; their
+  linked `public.clients` rows were also still Joint-X-scoped, i.e. none
+  of them were ever migrated to a dedicated tenant. This control plane
+  does not touch this table's schema, and does not add a competing table.
 - **Modern**: tenant → client → `tenant_domains` → `tenant_memberships` →
   `tenant_capabilities` → Commerce, the architecture every new managed
   brand (e.g. God's Spoilt Brat) now uses. See
@@ -73,9 +91,13 @@ builds the unified projection as follows:
    workspace row, which now stays independently visible as its own
    legacy/reconciliation-needed record rather than being absorbed.
 
-Result today: 1 modern-only row (GSB) + 3 legacy-only rows (the surviving
-historical workspaces) = 4 managed brands. Confirmed against production,
-read-only, during this task.
+Result at Phase 0/1 acceptance: 1 modern-only row (GSB) + 3 legacy-only
+rows (the surviving historical workspaces, since removed as test
+fixtures - see "Current state" above) = 4 managed brands, confirmed
+against production read-only at the time. Today `admin_list_managed_clients()`
+returns exactly 1 row (GSB) - the legacy-row branch of this same logic
+is unexercised by real data right now but remains correct and covered
+by tests for the next time a genuine legacy-shaped row exists.
 
 **Commerce eligibility.** A legacy-only row's `client_id` is real, but
 that client still belongs to the Joint X tenant (XOS 3B derives the
@@ -97,9 +119,9 @@ production RLS on `managed_client_workspaces` itself
 (`xos1_require_opps_staff USING is_opps_staff()`, restrictive, plus a
 permissive `is_app_admin() OR can_access_tenant(tenant_id)` policy) would
 have exactly the same cross-tenant staff-visibility gap already fixed for
-`clients`/`orders` in PR #33 — direct table access works for the 3
-historical rows (their `tenant_id` is Joint X, which staff are always
-members of) but would fail for a future modern-tenant workspace row
+`clients`/`orders` in PR #33 — direct table access worked for the 3
+now-removed historical rows (their `tenant_id` was Joint X, which staff
+are always members of) but would fail for a future modern-tenant workspace row
 unless the staff member is `is_app_admin()`. It is `SECURITY DEFINER`,
 `set search_path`, revokes `EXECUTE` from `PUBLIC`/`anon`, grants to
 `authenticated` only, and returns an explicitly allowlisted field set (no

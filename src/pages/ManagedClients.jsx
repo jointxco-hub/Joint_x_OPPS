@@ -14,6 +14,7 @@ import {
   XosActivationCard,
   AddManagedBrandWizard,
 } from "@/components/managedClients/ManagedClientOperations";
+import { SiteBuildSection } from "@/components/managedClients/SiteBuildSection";
 
 // OPPS internal control plane for Joint X-operated brands/sites/workspaces
 // - reconciles two generations of managed-brand data (the surviving
@@ -27,9 +28,16 @@ import {
 // operational - editing an existing legacy workspace, initializing a
 // workspace for a modern tenant with none yet (GSB today), a real Add
 // Managed Brand provisioning wizard, products capability control, and the
-// explicit Vercel/XOS activation gate. Legacy modernization (migrating
-// the 3 historical workspace clients to their own dedicated tenants) is
-// still explicitly out of scope - see docs/MANAGED_CLIENTS_CONTROL_PLANE.md.
+// explicit Vercel/XOS activation gate. Phase 3 (see
+// supabase/migrations/20260827090000_managed_clients_phase3_site_builds.sql
+// and src/components/managedClients/SiteBuildSection.jsx) adds a "Site
+// Build" section for modern tenants - structured site-build
+// configuration, a site-template registry, and deterministic, versioned,
+// model-agnostic build-brief generation. No deploy/Vercel/DNS action
+// exists yet - the brief is the reviewed output that makes those later
+// actions deterministic. Legacy modernization (migrating historical
+// workspace clients to their own dedicated tenants) is still explicitly
+// out of scope - see docs/MANAGED_CLIENTS_CONTROL_PLANE.md.
 //
 // This is a SEPARATE page from Clients.jsx (Normal Clients = CRM/customer
 // records) - it does not replace it. The Commerce Products section is
@@ -347,6 +355,8 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
             </div>
           )}
         </section>
+
+        {isModern && <SiteBuildSection row={row} />}
 
         <section className="rounded-lg border border-slate-200 p-4">
           <div className="flex items-center justify-between mb-3">

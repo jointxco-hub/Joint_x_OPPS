@@ -1,5 +1,18 @@
 -- Managed Clients Control Plane — Phase 0/1 disposable test matrix.
 --
+-- STALE FIXTURE NOTE (Phase 3): the 3 historical managed_client_workspaces
+-- rows this file's assertions reference by name (Siya Mnisi, Xilaveko
+-- Bilankulu, Dr Ndamane) were test fixtures, intentionally removed from
+-- production after Phase 2 acceptance - public.managed_client_workspaces
+-- currently has zero rows, and admin_list_managed_clients() currently
+-- returns exactly one row (God's Spoilt Brat). This file is not touched
+-- further or re-validated as part of Phase 3 (it was never executed by
+-- that task either - production stayed read-only) - see
+-- docs/MANAGED_CLIENTS_CONTROL_PLANE.md's "Current state" note for the
+-- authoritative current baseline. The reconciliation logic this suite
+-- exercises remains correct for any future legacy-shaped row; only the 3
+-- specific named fixtures it currently asserts by name no longer exist.
+--
 -- This file performs ZERO PERSISTENT APPLICATION-TABLE WRITES: it does
 -- INSERT into a `create temporary table` (test_results - Postgres session
 -- temp tables are never persisted and are gone the instant this
