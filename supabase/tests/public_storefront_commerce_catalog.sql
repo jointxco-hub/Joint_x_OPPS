@@ -115,12 +115,18 @@ begin
   values (v_tenant_b, 'sf-test-tee-tenant-b-' || v_slug_suffix, 'Tenant B Tee', 300, 'ZAR', 'available', 'published')
   returning id into v_p_b;
 
-  -- Two variants tied on sort_order (id tie-break, test 17), plus one
-  -- with a null sort_order (nulls-last, test 12/17).
+  -- Two variants tied on sort_order (id tie-break, test 17), plus a
+  -- third with a distinct, higher sort_order (2) to prove ordering also
+  -- correctly separates non-tied values, not just tie-break behavior
+  -- (test 12/17). commerce.product_variants.sort_order is NOT NULL
+  -- DEFAULT 0 on the live schema - a null value here was never a valid
+  -- fixture; the migration's own `order by sort_order nulls last, id`
+  -- clause remains unchanged and is still correct defensive SQL, it
+  -- just isn't exercised via a null value by this particular fixture.
   insert into commerce.product_variants (tenant_id, product_id, sku, title, size, color, price_override, availability, sort_order) values
     (v_tenant_a, v_p1, 'SF-A-S-' || v_slug_suffix, 'Small', 'S', 'Black', null, 'available', 1),
     (v_tenant_a, v_p1, 'SF-A-M-' || v_slug_suffix, 'Medium', 'M', 'Black', 105, 'available', 1),
-    (v_tenant_a, v_p1, null, 'Large', 'L', 'Black', null, 'out_of_stock', null),
+    (v_tenant_a, v_p1, null, 'Large', 'L', 'Black', null, 'out_of_stock', 2),
     (v_tenant_a, v_p2, 'SF-Z-ONE-' || v_slug_suffix, 'One Size', null, 'White', null, 'out_of_stock', 1);
 
   -- Tenant A ALSO gets one legacy OPPS-side product (public.products) -
