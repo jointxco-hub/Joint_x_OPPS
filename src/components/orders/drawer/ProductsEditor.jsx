@@ -1561,13 +1561,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       )}
 
       {/* Set/Change thumbnail (Phase 4-6) - single-select, client-scoped,
-          explicit overwrite path per resolveLineThumbnail's design. */}
+          explicit overwrite path per resolveLineThumbnail's design. Mockups
+          is this picker's intended context - the same canonical category
+          the order-primary-image precedence chain treats as authoritative. */}
       {!locked && thumbnailPickerLineId && (
         <ClientAssetPickerModal
           clientId={order.client_id}
           selectionMode="single"
+          defaultCategory="Mockups"
+          uploadCategory="Mockups"
           title="Set line thumbnail"
-          description="Pick a file from this client's library to use as this line's thumbnail. This replaces any current thumbnail."
+          description="Pick a file from this client's library, or upload a new one, to use as this line's thumbnail. This replaces any current thumbnail."
           confirmVerb="Use"
           onClose={() => setThumbnailPickerLineId("")}
           onConfirm={applyThumbnail}

@@ -328,9 +328,10 @@ export default function ComponentFieldsForm({
           clientId={clientProduct?.client_id}
           selectionMode="single"
           defaultCategory="Artwork"
+          uploadCategory="Artwork"
           showApprovalBadge
           title="Select artwork"
-          description={`Browsing this client's approved/current files. The selected file becomes the current revision for ${effectivePlacement || "this placement"} - nothing is re-uploaded.`}
+          description={`Browsing this client's approved/current files, or upload a new one. The selected file becomes the current revision for ${effectivePlacement || "this placement"}.`}
           confirmVerb="Use"
           onClose={() => setShowArtworkPicker(false)}
           onConfirm={([asset]) => asset && artworkMutation.mutate(asset)}
