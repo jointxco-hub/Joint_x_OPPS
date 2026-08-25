@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Search, Upload } from "lucide-react";
+import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
 import MediaPreview from "@/components/common/MediaPreview";
 import { ORDER_ASSET_CATEGORIES } from "@/lib/orderAssetFolders";
@@ -20,6 +21,21 @@ import { resolveClientCategoryFromFolder, determineAlreadyLinkedState } from "@/
 // artwork linking: one asset only, confirms immediately on pick, no
 // order-linked-state styling, and (when showApprovalBadge is set) surfaces
 // each asset's approval_status and sorts approved assets first.
+//
+// Phase 1B - Upload New (Order Line Coherence). Reuses the exact canonical
+// upload primitive already used by OrderDrawer.jsx's uploadFile and
+// FileManager.jsx (dataClient.integrations.Core.UploadFile -> a real
+// ClientAsset row) - never a second upload implementation. Gated by
+// uploadCategory: the consumer must explicitly supply which category a new
+// upload belongs in (e.g. "Artwork" for the artwork-linking flow, "Mockups"
+// for the line-thumbnail flow) - if it's not supplied, the Upload New
+// control simply does not render, rather than guessing a category. The
+// destination folder_id is resolved from the client's ALREADY-fetched
+// folders for that category (never a new get-or-create-folder RPC, which
+// would need a migration this phase doesn't need) - if no such folder
+// exists yet for this client, the upload lands uncategorized (folder_id
+// null), exactly like FileManager's own upload-to-current-folder fallback,
+// rather than inventing folder auto-provisioning here.
 export default function ClientAssetPickerModal({
   clientId,
   onClose,
@@ -27,6 +43,7 @@ export default function ClientAssetPickerModal({
   currentOrderUrls,
   selectionMode = "multi",
   defaultCategory = "",
+  uploadCategory = "",
   showApprovalBadge = false,
   title = "Add from client library",
   description = "Select any of this client's existing files. The same stored file is linked - nothing is re-uploaded.",
@@ -35,6 +52,8 @@ export default function ClientAssetPickerModal({
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState(defaultCategory);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const fileInputRef = useRef(null);
+  const queryClient = useQueryClient();
 
   const folderEntity = /** @type {any} */ (dataClient.entities).Folder;
   const clientAssetEntity = /** @type {any} */ (dataClient.entities).ClientAsset;
@@ -104,6 +123,56 @@ export default function ClientAssetPickerModal({
     });
   };
 
+  // Upload New: choose file -> UploadFile -> canonical ClientAsset,
+  // reusing an existing row by (client_id, file_url) if one already exists
+  // rather than ever creating a second row for the same stored file (the
+  // same create-or-reuse pattern OrderDrawerShared.jsx's
+  // mirrorOrderFileToClientAssetFolder already uses). folder_id is resolved
+  // from the client's own already-fetched folders for uploadCategory - a
+  // real folder if one exists, otherwise null (uncategorized), never a
+  // synthetic/order-only reference.
+  const uploadMutation = useMutation({
+    mutationFn: async (file) => {
+      if (!clientId) throw new Error("No linked client yet - cannot upload.");
+      if (!uploadCategory) throw new Error("Upload category not configured for this picker.");
+
+      const { file_url } = await dataClient.integrations.Core.UploadFile({ file });
+      if (!file_url) throw new Error("Upload failed - no file was stored.");
+
+      const existing = await clientAssetEntity.filter({ client_id: clientId, file_url }, undefined, 1);
+      const existingAsset = Array.isArray(existing) ? existing[0] : null;
+      if (existingAsset) return existingAsset;
+
+      const targetFolder = clientFolders.find((folder) => resolveClientCategoryFromFolder(folder) === uploadCategory);
+      return clientAssetEntity.create({
+        client_id: clientId,
+        title: file.name,
+        file_url,
+        folder_id: targetFolder?.id ?? null,
+      });
+    },
+    onSuccess: (asset) => {
+      queryClient.invalidateQueries({ queryKey: ["clientLibraryAssets", clientId] });
+      queryClient.invalidateQueries({ queryKey: ["clientLibraryFolders", clientId] });
+      if (selectionMode === "single") {
+        // Auto-select and continue through the exact same confirm path a
+        // click on an existing tile would take - the caller never knows
+        // whether the asset was picked or just uploaded.
+        onConfirm([asset], categoryByFolderId);
+      } else {
+        setSelectedIds((current) => new Set(current).add(asset.id));
+        toast.success("File uploaded");
+      }
+    },
+    onError: (error) => toast.error(error?.message || "Upload failed"),
+  });
+
+  const handleFileChosen = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) uploadMutation.mutate(file);
+  };
+
   const allFilteredSelected = filteredAssets.length > 0 && filteredAssets.every((asset) => selectedIds.has(asset.id));
   const toggleSelectAllFiltered = () => {
     setSelectedIds((current) => {
@@ -169,6 +238,20 @@ export default function ClientAssetPickerModal({
             >
               {allFilteredSelected ? "Clear selection" : `Select all (${filteredAssets.length})`}
             </button>
+          )}
+          {uploadCategory && Boolean(clientId) && (
+            <>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadMutation.isPending}
+                className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                {uploadMutation.isPending ? "Uploading..." : "Upload new"}
+              </button>
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChosen} />
+            </>
           )}
         </div>
 
