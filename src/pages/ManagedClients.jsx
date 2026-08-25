@@ -17,18 +17,24 @@ import {
 import { SiteBuildSection } from "@/components/managedClients/SiteBuildSection";
 
 // OPPS internal control plane for Joint X-operated brands/sites/workspaces
-// - reconciles two generations of managed-brand data (the surviving
-// public.managed_client_workspaces table and the modern tenant/client/XOS
-// architecture) into one unified view via admin_list_managed_clients (see
+// - reconciles two managed-brand identity sources (public.clients rows
+// carrying a public.managed_client_workspaces record, and the modern
+// tenant/client/XOS architecture) into one unified view via
+// admin_list_managed_clients (see
 // supabase/migrations/20260823140000_managed_clients_control_plane.sql for
-// the full reconciliation identity rule). Phase 0/1 was read-only
-// recovery/reconciliation; Phase 2 (see
+// the full reconciliation identity rule). A managed_client_workspaces row
+// is NOT inherently legacy - a modern tenant can (and, per GSB's own
+// intentionally-initialized workspace, does) have one too. "Legacy"
+// describes only a client that has never been migrated to its own
+// dedicated tenant (row.source === "legacy"); row.source === "both" means
+// a modern tenant WITH a configured workspace, not a historical record.
+// Phase 0/1 was read-only recovery/reconciliation; Phase 2 (see
 // supabase/migrations/20260824090000_managed_clients_phase2_operations.sql
 // and src/components/managedClients/ManagedClientOperations.jsx) makes it
-// operational - editing an existing legacy workspace, initializing a
-// workspace for a modern tenant with none yet (GSB today), a real Add
-// Managed Brand provisioning wizard, products capability control, and the
-// explicit Vercel/XOS activation gate. Phase 3 (see
+// operational - editing an existing workspace, initializing a workspace
+// for a modern tenant with none yet, a real Add Managed Brand
+// provisioning wizard, products capability control, and the explicit
+// Vercel/XOS activation gate. Phase 3 (see
 // supabase/migrations/20260827090000_managed_clients_phase3_site_builds.sql
 // and src/components/managedClients/SiteBuildSection.jsx) adds a "Site
 // Build" section for modern tenants - structured site-build
@@ -216,7 +222,7 @@ export default function ManagedClients() {
                       {isXosLive(row) ? "XOS live" : "XOS not configured"}
                     </Badge>
                     <Badge variant="outline" className={row.workspace_id ? "text-slate-700 border-slate-300" : "text-slate-400 border-slate-200"}>
-                      {row.workspace_id ? (row.site_status || "Workspace tracked") : "No legacy workspace"}
+                      {row.workspace_id ? (row.site_status || "Workspace configured") : "Workspace not configured"}
                     </Badge>
                   </div>
                 </CardContent>
@@ -275,8 +281,8 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
                 {row.source === "legacy"
                   ? "Legacy workspace record - not yet migrated to a dedicated XOS tenant."
                   : row.source === "both"
-                    ? "Modern managed tenant with a linked legacy workspace record."
-                    : "Modern managed tenant - no legacy workspace record yet (expected for a newly provisioned brand)."}
+                    ? "Modern managed tenant with a configured workspace."
+                    : "Modern managed tenant - workspace not configured yet."}
               </p>
             </div>
             {(isLegacyOnly || hasWorkspace) && (
@@ -304,11 +310,13 @@ function ManagedClientDetailDialog({ row, open, onOpenChange }) {
             <StatusField label="Site type" value={row.site_type} />
             <StatusField label="Tenant" value={row.tenant_slug} />
             {/* Tenant status (the modern tenant's own active/inactive
-                state) and Site status (the legacy workspace's site
-                readiness) are two different concepts - conflating them
-                under one "Status" field would misrepresent a modern
-                tenant like GSB, whose tenant IS active even though it has
-                no site/workspace status yet (post-review fix). */}
+                state) and Site status (the workspace's own site
+                readiness, whether that workspace belongs to a legacy-only
+                client or a modern tenant) are two different concepts -
+                conflating them under one "Status" field would misrepresent
+                a modern tenant whose tenant is active but has no
+                workspace configured yet, or vice versa (post-review
+                fix). */}
             <StatusField label="Tenant status" value={row.tenant_status ? capitalize(row.tenant_status) : null} />
             <StatusField label="Site status" value={row.site_status} />
             <StatusField label="Onboarding stage" value={row.onboarding_stage} />
