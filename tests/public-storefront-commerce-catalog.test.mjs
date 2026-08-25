@@ -108,6 +108,88 @@ test("both public RPCs require the Products capability enabled for the resolved 
   }
 });
 
+test("post-review amendment: both public Commerce RPCs ALSO require storefront_catalog_source = 'commerce', not capability alone", async () => {
+  const source = await readSource(MIGRATION);
+  const listFn = source.match(/create function public\.get_public_storefront_products_for_host[\s\S]*?\$\$;/)?.[0] ?? "";
+  const detailFn = source.match(/create function public\.get_public_storefront_product_for_host[\s\S]*?\$\$;/)?.[0] ?? "";
+  for (const fn of [listFn, detailFn]) {
+    assert.match(fn, /if not coalesce\(v_products_enabled, false\)\s*\n\s*or public\._public_storefront_catalog_source\(v_tenant_id\) <> 'commerce'\s*\n\s*then/, "must deny when EITHER the capability is off OR the source is not 'commerce' - a single combined condition, not two independently-satisfiable checks");
+  }
+});
+
+test("_public_storefront_catalog_source: missing/legacy_opps/commerce/invalid semantics, capability enabled is a SEPARATE concern, internal only", async () => {
+  const source = await readSource(MIGRATION);
+  const fn = source.match(/create function public\._public_storefront_catalog_source\(p_tenant_id uuid\)[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.ok(fn, "expected to find _public_storefront_catalog_source");
+  assert.match(fn, /security definer/);
+  assert.match(fn, /set search_path to 'pg_catalog', 'public'/);
+  assert.match(fn, /coalesce\(\s*\(/, "must coalesce a missing row/key to a default, not error or return null outright");
+  assert.match(fn, /'legacy_opps'/);
+  assert.match(fn, /when 'commerce' then 'commerce'/);
+  assert.match(fn, /else 'invalid'/, "an unrecognized explicit value must resolve to a distinct 'invalid' sentinel, never silently coerced to either real mode");
+  assert.ok(!/\benabled\b/.test(fn), "capability-enabled must remain a wholly separate concern - this helper must never itself read tenant_capabilities.enabled");
+
+  const revokeBlock = source.match(/revoke all on function public\._public_storefront_catalog_source\(uuid\)[\s\S]*?(?=\n\n|create (or replace )?function)/)?.[0] ?? "";
+  assert.match(revokeBlock, /revoke all on function public\._public_storefront_catalog_source\(uuid\) from public;/);
+  assert.match(revokeBlock, /revoke all on function public\._public_storefront_catalog_source\(uuid\) from anon;/);
+  assert.match(revokeBlock, /revoke all on function public\._public_storefront_catalog_source\(uuid\) from authenticated;/);
+  assert.ok(!/grant execute on function public\._public_storefront_catalog_source/.test(source), "must never itself be granted to any role - only called from within the two containment/Commerce RPCs");
+});
+
+test("old OPPS RPC containment: get_storefront_catalog_for_host is CREATE OR REPLACE'd (not touching its original migration file), refuses commerce/invalid source, preserves the legacy query/output shape and grants", async () => {
+  const migrationSource = await readSource(MIGRATION);
+  const originalSource = await readSource(EXISTING_STOREFRONT_BACKEND);
+
+  assert.match(originalSource, /create or replace function public\.resolve_public_storefront_tenant\(p_hostname text\)/, "the original Phase 5B migration file itself must remain unedited - immutable migration history");
+  assert.match(originalSource, /create or replace function public\.get_storefront_catalog_for_host/, "confirms the original definition still exists in its own file, for history");
+
+  const containmentFn = migrationSource.match(/create or replace function public\.get_storefront_catalog_for_host[\s\S]*?\$\$;/)?.[0] ?? "";
+  assert.ok(containmentFn, "expected a CREATE OR REPLACE for get_storefront_catalog_for_host in the new migration");
+  assert.match(containmentFn, /security definer/);
+  assert.match(containmentFn, /set search_path to 'pg_catalog', 'public'/, "the containment amendment must use the hardened search_path even though the original used the bare form");
+
+  // Refuses when source is not legacy_opps.
+  assert.match(containmentFn, /v_source := public\._public_storefront_catalog_source\(v_tenant_id\);/);
+  assert.match(containmentFn, /if v_source <> 'legacy_opps' then\s*\n\s*raise exception 'Storefront catalog is not available\.';/, "must use the SAME generic denial message as the new Commerce RPCs - neither system's error may reveal which boundary was hit");
+
+  // An unresolved hostname still returns [] (never an exception) -
+  // preserves the original plain-SQL function's exact behavior.
+  assert.match(containmentFn, /if v_tenant_id is null then\s*\n\s*return '\[\]'::jsonb;/);
+
+  // The legacy payload shape/query is preserved field-for-field (spot
+  // checks on the most identity-sensitive parts of the original query).
+  for (const fragment of [
+    "coalesce(p.is_archived, false) = false",
+    "coalesce(p.store_visible, true) = true",
+    "lower(coalesce(p.status, 'active')) in ('active', 'published')",
+    "'image_url',",
+    "'images',",
+    "'addons',",
+    "'print_options',",
+    "'display_order', product_row.display_order",
+    "least(greatest(coalesce(p_limit, 100), 1), 100)",
+  ]) {
+    assert.ok(containmentFn.includes(fragment), `legacy payload/query fragment missing or changed: ${fragment}`);
+  }
+
+  // Grants restated, unchanged - still anon + authenticated.
+  const grantBlock = migrationSource.match(/revoke all on function public\.get_storefront_catalog_for_host\(text, int\)[\s\S]*?;\s*\n\s*grant execute on function public\.get_storefront_catalog_for_host\(text, int\) to anon, authenticated;/)?.[0] ?? "";
+  assert.ok(grantBlock, "expected the restated anon+authenticated grant for the legacy RPC");
+});
+
+test("dual-authority containment: mutual exclusivity is proven for all 7 required cases (A-G) in the disposable SQL suite, including the explicit enabled=false Blocker 2 case", async () => {
+  const source = await readSource(SQL_TEST_SUITE);
+  assert.match(source, /mutual_exclusivity_a_missing_source_old_succeeds_new_denied/);
+  assert.match(source, /mutual_exclusivity_b_explicit_legacy_opps_old_succeeds_new_denied/);
+  assert.match(source, /mutual_exclusivity_c_commerce_source_enabled_new_succeeds_old_denied/);
+  assert.match(source, /mutual_exclusivity_d_commerce_source_disabled_both_denied_no_fallback/);
+  assert.match(source, /mutual_exclusivity_e_invalid_explicit_source_both_denied/);
+  assert.match(source, /mutual_exclusivity_f_same_hostname_never_serves_both_contracts_at_once/);
+  assert.match(source, /mutual_exclusivity_g_grant_model_old_and_new_coexist_correctly/);
+  assert.match(source, /products_capability_explicitly_disabled_blocks_public_catalog/, "Blocker 2: an EXPLICIT enabled=false row must be tested separately from a merely-absent capability row");
+  assert.ok(!/no_other_storefront_named_function_is_anon_reachable/.test(source), "the incorrect blanket assertion (false by design, since the legacy RPC is intentionally anon-reachable) must be gone, not merely patched");
+});
+
 test("neither public RPC accepts a tenant_id/client_id parameter - hostname (and slug for detail) only", async () => {
   const source = await readSource(MIGRATION);
   assert.match(source, /create function public\.get_public_storefront_products_for_host\(\s*\n\s*p_hostname text,\s*\n\s*p_limit integer default 50\s*\n\)/);

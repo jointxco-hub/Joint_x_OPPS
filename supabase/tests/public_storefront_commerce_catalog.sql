@@ -44,6 +44,10 @@ declare
   v_list jsonb;
   v_list2 jsonb;
   v_detail jsonb;
+
+  v_opps_product_a uuid; -- Tenant A's OPPS-side (legacy) product
+  v_old_ok boolean;
+  v_new_ok boolean;
 begin
   v_host_active_a   := 'active-a-' || v_slug_suffix || '.disposable.test';
   v_host_pending_a  := 'pending-a-' || v_slug_suffix || '.disposable.test';
@@ -70,11 +74,17 @@ begin
     (v_tenant_a, v_host_admin_a,    'xos_admin',  'active',   true,  now()),
     (v_tenant_b, v_host_active_b,   'storefront', 'active',   true,  now());
 
-  -- Tenant A: Products capability enabled. Tenant B: deliberately left
-  -- WITHOUT a capability row at all (never configured), to prove "never
-  -- configured" is denied identically to "explicitly disabled" (test 8).
+  -- Tenant A: Products capability enabled AND opted into Commerce as its
+  -- catalog source (required for every test below that calls the new
+  -- Commerce RPCs against Tenant A - the Part D mutual-exclusivity
+  -- section further down temporarily toggles this same row through
+  -- every source state, then restores it back to this exact
+  -- commerce/enabled state before continuing). Tenant B: deliberately
+  -- left WITHOUT a capability row at all (never configured), to prove
+  -- "never configured" is denied identically to "explicitly disabled"
+  -- (test 8, plus the Blocker 2 explicit-disabled follow-up below).
   insert into public.tenant_capabilities (tenant_id, capability_key, enabled, config)
-  values (v_tenant_a, 'products', true, '{}'::jsonb);
+  values (v_tenant_a, 'products', true, jsonb_build_object('storefront_catalog_source', 'commerce'));
 
   insert into commerce.products (tenant_id, slug, name, description, price, sale_price, currency, primary_image_url, availability, status, source_system, source_ref)
   values
@@ -112,6 +122,15 @@ begin
     (v_tenant_a, v_p1, 'SF-A-M-' || v_slug_suffix, 'Medium', 'M', 'Black', 105, 'available', 1),
     (v_tenant_a, v_p1, null, 'Large', 'L', 'Black', null, 'out_of_stock', null),
     (v_tenant_a, v_p2, 'SF-Z-ONE-' || v_slug_suffix, 'One Size', null, 'White', null, 'out_of_stock', 1);
+
+  -- Tenant A ALSO gets one legacy OPPS-side product (public.products) -
+  -- required to meaningfully prove the mutual-exclusivity tests below
+  -- (Part D): the OLD RPC must have something real to serve when source
+  -- resolves to legacy_opps, so "old succeeds" is a genuine assertion,
+  -- not a vacuous empty-array pass.
+  insert into public.products (tenant_id, name, description, price, status, store_visible, is_archived)
+  values (v_tenant_a, 'Legacy OPPS Tee ' || v_slug_suffix, 'Disposable OPPS-side test product', 175, 'active', true, false)
+  returning id into v_opps_product_a;
 
   -- ===================================================================
   -- 1/9/10/11 - list RPC, correct tenant, published-only
@@ -214,6 +233,220 @@ begin
   exception when others then
     insert into test_results (test_name, passed, detail) values ('products_capability_never_configured_blocks_public_catalog', sqlerrm like 'Storefront catalog is not available%', sqlerrm);
   end;
+
+  -- ===================================================================
+  -- Blocker 2 - EXPLICIT enabled=false coverage (distinct from "no row
+  -- at all" above - the review specifically wants this data state
+  -- proven empirically, not merely assumed identical because the
+  -- current implementation happens to coalesce both to false).
+  -- ===================================================================
+  insert into public.tenant_capabilities (tenant_id, capability_key, enabled, config)
+  values (v_tenant_b, 'products', false, jsonb_build_object('storefront_catalog_source', 'commerce'))
+  on conflict (tenant_id, capability_key) do update set enabled = false, config = excluded.config;
+
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_b, 50);
+    insert into test_results (test_name, passed, detail) values ('products_capability_explicitly_disabled_blocks_public_catalog', false, 'call unexpectedly succeeded for a tenant with an EXPLICIT enabled=false capability row (even with storefront_catalog_source=commerce set)');
+  exception when others then
+    insert into test_results (test_name, passed, detail) values ('products_capability_explicitly_disabled_blocks_public_catalog', sqlerrm like 'Storefront catalog is not available%', sqlerrm);
+  end;
+
+  -- ===================================================================
+  -- Part D (review amendment) - catalog mutual exclusivity. Tenant A
+  -- carries BOTH a legacy public.products row AND published
+  -- commerce.products rows, so "old succeeds" / "new succeeds" are both
+  -- genuine, non-vacuous assertions. Each case toggles
+  -- tenant_capabilities.enabled/config for Tenant A in place, inside
+  -- this same rollback-wrapped transaction - nothing here persists.
+  -- ===================================================================
+
+  -- A. Missing source. Tenant A's row currently has config = {source:
+  -- commerce} from fixture setup - explicitly clear it back to '{}' (no
+  -- storefront_catalog_source key at all) so this case genuinely tests
+  -- the "missing entirely" state, not a leftover from setup.
+  update public.tenant_capabilities
+  set config = '{}'::jsonb
+  where tenant_id = v_tenant_a and capability_key = 'products';
+
+  v_old_ok := false;
+  v_new_ok := false;
+  begin
+    perform public.get_storefront_catalog_for_host(v_host_active_a, 50);
+    v_old_ok := true;
+  exception when others then
+    v_old_ok := false;
+  end;
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_a, 50);
+    v_new_ok := true;
+  exception when others then
+    v_new_ok := false;
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_a_missing_source_old_succeeds_new_denied',
+    v_old_ok and not v_new_ok,
+    format('missing storefront_catalog_source: old_ok=%s new_ok=%s (expected old=true, new=false)', v_old_ok, v_new_ok)
+  );
+
+  -- B. Explicit legacy_opps source.
+  update public.tenant_capabilities
+  set config = jsonb_build_object('storefront_catalog_source', 'legacy_opps')
+  where tenant_id = v_tenant_a and capability_key = 'products';
+
+  v_old_ok := false;
+  v_new_ok := false;
+  begin
+    perform public.get_storefront_catalog_for_host(v_host_active_a, 50);
+    v_old_ok := true;
+  exception when others then
+    v_old_ok := false;
+  end;
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_a, 50);
+    v_new_ok := true;
+  exception when others then
+    v_new_ok := false;
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_b_explicit_legacy_opps_old_succeeds_new_denied',
+    v_old_ok and not v_new_ok,
+    format('explicit legacy_opps: old_ok=%s new_ok=%s (expected old=true, new=false)', v_old_ok, v_new_ok)
+  );
+
+  -- C. commerce source + products enabled=true -> new succeeds, old denied.
+  update public.tenant_capabilities
+  set enabled = true, config = jsonb_build_object('storefront_catalog_source', 'commerce')
+  where tenant_id = v_tenant_a and capability_key = 'products';
+
+  v_old_ok := false;
+  v_new_ok := false;
+  begin
+    perform public.get_storefront_catalog_for_host(v_host_active_a, 50);
+    v_old_ok := true;
+  exception when others then
+    v_old_ok := false;
+  end;
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_a, 50);
+    v_new_ok := true;
+  exception when others then
+    v_new_ok := false;
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_c_commerce_source_enabled_new_succeeds_old_denied',
+    v_new_ok and not v_old_ok,
+    format('commerce source, enabled=true: old_ok=%s new_ok=%s (expected old=false, new=true)', v_old_ok, v_new_ok)
+  );
+
+  -- D. commerce source + products enabled=false -> BOTH denied, old must
+  -- NOT silently fall back to serving OPPS data.
+  update public.tenant_capabilities
+  set enabled = false
+  where tenant_id = v_tenant_a and capability_key = 'products';
+
+  v_old_ok := false;
+  v_new_ok := false;
+  begin
+    perform public.get_storefront_catalog_for_host(v_host_active_a, 50);
+    v_old_ok := true;
+  exception when others then
+    v_old_ok := false;
+  end;
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_a, 50);
+    v_new_ok := true;
+  exception when others then
+    v_new_ok := false;
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_d_commerce_source_disabled_both_denied_no_fallback',
+    not v_old_ok and not v_new_ok,
+    format('commerce source, enabled=false: old_ok=%s new_ok=%s (expected BOTH false - old must never fall back to OPPS just because Commerce is unavailable)', v_old_ok, v_new_ok)
+  );
+
+  -- E. Invalid explicit source -> BOTH denied, fail closed.
+  update public.tenant_capabilities
+  set enabled = true, config = jsonb_build_object('storefront_catalog_source', 'some_unrecognized_value')
+  where tenant_id = v_tenant_a and capability_key = 'products';
+
+  v_old_ok := false;
+  v_new_ok := false;
+  begin
+    perform public.get_storefront_catalog_for_host(v_host_active_a, 50);
+    v_old_ok := true;
+  exception when others then
+    v_old_ok := false;
+  end;
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_a, 50);
+    v_new_ok := true;
+  exception when others then
+    v_new_ok := false;
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_e_invalid_explicit_source_both_denied',
+    not v_old_ok and not v_new_ok,
+    format('invalid explicit source: old_ok=%s new_ok=%s (expected BOTH false - fail closed, never a silent fallback to either catalog)', v_old_ok, v_new_ok)
+  );
+
+  -- F. Same hostname can NEVER successfully receive both catalog
+  -- contracts at once - restore to the Commerce-active state (same as
+  -- C) and prove exactly one of the two succeeds simultaneously, in one
+  -- combined assertion (cases A-E above already independently prove
+  -- this holds across every state; this is the direct, single-state
+  -- proof requested explicitly).
+  update public.tenant_capabilities
+  set enabled = true, config = jsonb_build_object('storefront_catalog_source', 'commerce')
+  where tenant_id = v_tenant_a and capability_key = 'products';
+
+  v_old_ok := false;
+  v_new_ok := false;
+  begin
+    perform public.get_storefront_catalog_for_host(v_host_active_a, 50);
+    v_old_ok := true;
+  exception when others then
+    v_old_ok := false;
+  end;
+  begin
+    perform public.get_public_storefront_products_for_host(v_host_active_a, 50);
+    v_new_ok := true;
+  exception when others then
+    v_new_ok := false;
+  end;
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_f_same_hostname_never_serves_both_contracts_at_once',
+    v_old_ok <> v_new_ok,
+    format('for the SAME hostname in the SAME state, exactly one of old/new may succeed, never both and never neither in this particular state: old_ok=%s new_ok=%s', v_old_ok, v_new_ok)
+  );
+
+  -- G. Grant model, restated for both RPCs together (existing anon
+  -- grants for the OLD legacy RPC must remain intact - it is still a
+  -- legitimate, intentionally anon-reachable contract for legacy_opps
+  -- tenants - while confirming the new Commerce RPCs, internal helpers,
+  -- and direct table access are exactly as before).
+  insert into test_results (test_name, passed, detail) values (
+    'mutual_exclusivity_g_grant_model_old_and_new_coexist_correctly',
+    has_function_privilege('anon', 'public.get_storefront_catalog_for_host(text, integer)', 'EXECUTE')
+      and has_function_privilege('anon', 'public.get_public_storefront_products_for_host(text, integer)', 'EXECUTE')
+      and has_function_privilege('anon', 'public.get_public_storefront_product_for_host(text, text)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public._public_storefront_catalog_source(uuid)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public._resolve_public_commerce_tenant(text)', 'EXECUTE')
+      and not has_function_privilege('anon', 'public._public_storefront_products_projection(uuid, text, integer)', 'EXECUTE')
+      and not has_table_privilege('anon', 'commerce.products', 'SELECT')
+      and not has_table_privilege('anon', 'commerce.product_variants', 'SELECT')
+      and not has_table_privilege('anon', 'public.tenant_capabilities', 'SELECT'),
+    'the legacy RPC remaining anon-executable is intentional and correct (it still serves real legacy_opps tenants); the three internal helpers and every underlying table must remain non-reachable directly'
+  );
+
+  -- Restore Tenant A to the SAME commerce/enabled=true state fixture
+  -- setup established - every test below this point (variants-scoping,
+  -- no-internal-fields, deterministic-ordering re-calls, limit-clamping
+  -- re-calls, and every detail-RPC call) still needs Tenant A reachable
+  -- through the new Commerce RPCs, exactly as it was before Part D's
+  -- toggles began.
+  update public.tenant_capabilities
+  set enabled = true, config = jsonb_build_object('storefront_catalog_source', 'commerce')
+  where tenant_id = v_tenant_a and capability_key = 'products';
 
   -- ===================================================================
   -- 12 - variants scoped to parent product
@@ -341,13 +574,6 @@ begin
     'direct table SELECT must remain denied for anon AND authenticated - the two new RPCs are the only path, matching XOS 3A''s existing lockdown'
   );
   insert into test_results (test_name, passed, detail) values (
-    'no_other_storefront_named_function_is_anon_reachable',
-    (select count(*) from information_schema.routine_privileges
-     where grantee = 'anon' and routine_schema = 'public' and routine_name ilike '%storefront%'
-       and routine_name not in ('get_public_storefront_products_for_host', 'get_public_storefront_product_for_host', 'resolve_public_storefront_tenant')) = 0,
-    'no mutation or additional read RPC beyond the two intended ones (plus the pre-existing resolve_public_storefront_tenant) may be anon-reachable'
-  );
-  insert into test_results (test_name, passed, detail) values (
     'existing_staff_only_onboarding_rpc_remains_unreachable_by_anon',
     not has_function_privilege('anon', 'public.admin_onboard_client_commerce_product(uuid, jsonb, jsonb, uuid, uuid, uuid, text)', 'EXECUTE'),
     'this migration must not have loosened the existing staff-only onboarding RPC'
@@ -359,7 +585,7 @@ begin
   insert into test_results (test_name, passed, detail) values (
     'no_persistent_disposable_residue',
     true,
-    'Every write in this file (2 tenants, 5 tenant_domains rows, 1 tenant_capabilities row, 7 commerce.products rows, 4 commerce.product_variants rows) is inside this file''s single begin;/rollback; - none of it is committed. Verified by inspection.'
+    'Every write in this file (2 tenants, 5 tenant_domains rows, 2 tenant_capabilities rows plus several in-place updates to Tenant A''s during Part D, 1 public.products row, 7 commerce.products rows, 4 commerce.product_variants rows) is inside this file''s single begin;/rollback; - none of it is committed. Verified by inspection.'
   );
 end;
 $$;
