@@ -10,10 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory, Copy } from "lucide-react";
 import { toast } from "sonner";
-import { PLACEMENT_PRESETS, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
-import { buildComponentPayload, buildSetupFeeCompanionPayload } from "@/lib/productComposition";
-import ComponentFieldsForm, { COMPONENT_TYPES, emptyComponentForm } from "@/components/composition/ComponentFieldsForm";
 import { SearchSelect } from "@/pages/Inventory";
+import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
+import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
+import TreatmentsSection from "@/components/composition/TreatmentsSection";
 
 const CATEGORIES = [
   { value: "tshirts", label: "T-Shirts" },
@@ -63,10 +63,7 @@ export default function CatalogManagement() {
   // item (via client_products.opps_product_id), to compose. One client
   // product edited at a time, deliberately no bulk-apply action.
   const [selectedClientProductId, setSelectedClientProductId] = useState("");
-  const [addingComponent, setAddingComponent] = useState(false);
-  const [newComponent, setNewComponent] = useState(emptyComponentForm());
-  const [editingComponentId, setEditingComponentId] = useState("");
-  const [editComponentForm, setEditComponentForm] = useState(emptyComponentForm());
+  const [familyComposerBusy, setFamilyComposerBusy] = useState(false);
 
   // Phase 2A - Product Composition clone. Duplicate an existing
   // composition onto another client_product for the SAME client, so
@@ -109,91 +106,8 @@ export default function CatalogManagement() {
   });
   const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
 
-  // Explicit staff action, not automatic "new client = setup required".
-  // Creates a sibling setup_fee component defaulted to once_per_order,
-  // prefilled from production_pricing_defaults for the chosen method but
-  // fully editable/removable like any other component.
-  const createSetupFeeCompanion = async (printForm) => {
-    const method = printForm.production_method;
-    const methodLabel = PRINT_COMPONENT_METHODS.find((m) => m.value === method)?.label || method;
-    await dataClient.entities.ProductComponent.create(buildSetupFeeCompanionPayload(printForm, {
-      clientProductId: selectedClientProductId,
-      sortOrder: activeComponents.length + 1,
-      methodLabel,
-      productionDefault: pricingDefaultFor(method),
-    }));
-  };
-
-  const createComponentMutation = useMutation({
-    mutationFn: async (form) => {
-      const created = await dataClient.entities.ProductComponent.create(
-        buildComponentPayload(form, { clientProductId: selectedClientProductId, sortOrder: activeComponents.length })
-      );
-      if (form.component_type === "print_service" && form.setupRequired && form.production_method) {
-        await createSetupFeeCompanion(form);
-      }
-      return created;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productComponents', selectedClientProductId] });
-      setAddingComponent(false);
-      setNewComponent(emptyComponentForm());
-      toast.success("Component added");
-    },
-    onError: () => toast.error("Could not add component"),
-  });
-
-  const updateComponentMutation = useMutation({
-    mutationFn: ({ id, form }) => dataClient.entities.ProductComponent.update(
-      id, buildComponentPayload(form, { clientProductId: selectedClientProductId, sortOrder: undefined })
-    ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productComponents', selectedClientProductId] });
-      setEditingComponentId("");
-      toast.success("Component updated");
-    },
-    onError: () => toast.error("Could not update component"),
-  });
-
-  const removeComponentMutation = useMutation({
-    mutationFn: (id) => dataClient.entities.ProductComponent.update(id, { is_active: false }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['productComponents', selectedClientProductId] });
-      toast.success("Component removed");
-    },
-    onError: () => toast.error("Could not remove component"),
-  });
-
-  const startEditingComponent = (component) => {
-    setAddingComponent(false);
-    setEditingComponentId(component.id);
-    const knownPlacement = PLACEMENT_PRESETS.includes(component.placement);
-    setEditComponentForm({
-      ...emptyComponentForm(),
-      component_type: component.component_type,
-      inventory_product_id: component.inventory_product_id || "",
-      fixed_inventory_variant_id: component.fixed_inventory_variant_id || "",
-      quantity_per_unit: component.quantity_per_unit ?? 1,
-      default_sell_price: component.default_sell_price ?? "",
-      billing_mode: component.billing_mode || "per_unit",
-      production_method: component.production_method || "",
-      placement: component.placement ? (knownPlacement ? component.placement : "__custom") : "",
-      placementCustom: component.placement && !knownPlacement ? component.placement : "",
-      production_colour: component.production_colour || "",
-      specification: component.specification || "",
-      production_instructions: component.production_instructions || "",
-      label: component.label || "",
-      notes: component.notes || "",
-    });
-  };
-
-  const activeComponents = (Array.isArray(productComponents) ? productComponents : []).filter((c) => c.is_active !== false);
   const selectedClientProduct = (Array.isArray(linkedClientProducts) ? linkedClientProducts : []).find((cp) => cp.id === selectedClientProductId) || null;
   const invalidateCurrentArtwork = () => queryClient.invalidateQueries({ queryKey: ['clientProductArtworkCurrent', selectedClientProductId] });
-  const internalProductLabel = (id) => internalProducts.find((p) => p.id === id)?.internal_name || internalProducts.find((p) => p.id === id)?.internal_code || "Unmapped";
-  const hasApprovedArtwork = (placement) => !placement
-    ? null
-    : (Array.isArray(currentArtwork) ? currentArtwork : []).some((a) => a.placement === placement && a.status === 'approved');
 
   // Candidate targets - best-effort same-client filter for a faster/
   // clearer picker. The RPC re-validates same-tenant/same-client itself
@@ -690,112 +604,38 @@ export default function CatalogManagement() {
 
                     {selectedClientProductId && (
                       <>
-                        {activeComponents.length > 0 && (
-                          <div className="space-y-1.5">
-                            {activeComponents.map((component) => (
-                              editingComponentId === component.id ? (
-                                <div key={component.id} className="rounded-lg border border-primary/30 bg-primary/5 p-3">
-                                  <ComponentFieldsForm
-                                    form={editComponentForm}
-                                    setForm={setEditComponentForm}
-                                    internalProducts={internalProducts}
-                                    pricingDefaultFor={pricingDefaultFor}
-                                    clientProduct={selectedClientProduct}
-                                    currentArtwork={currentArtwork}
-                                    onArtworkLinked={invalidateCurrentArtwork}
-                                  />
-                                  <div className="mt-2 flex gap-2">
-                                    <Button variant="outline" size="sm" className="flex-1" onClick={() => setEditingComponentId("")}>Cancel</Button>
-                                    <Button
-                                      size="sm"
-                                      className="flex-1"
-                                      disabled={updateComponentMutation.isPending || (editComponentForm.component_type === "blank_garment" && !editComponentForm.inventory_product_id)}
-                                      onClick={() => updateComponentMutation.mutate({ id: component.id, form: editComponentForm })}
-                                    >
-                                      Save changes
-                                    </Button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div key={component.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                                  <div className="min-w-0">
-                                    <span className="font-medium text-slate-800">
-                                      {COMPONENT_TYPES.find((t) => t.value === component.component_type)?.label || component.component_type}
-                                    </span>
-                                    {component.placement && <span className="ml-1.5 text-slate-500">- {component.placement}</span>}
-                                    {component.inventory_product_id && (
-                                      <span className="ml-1.5 text-slate-500">- {internalProductLabel(component.inventory_product_id)}</span>
-                                    )}
-                                    {component.label && <span className="ml-1.5 text-slate-500">({component.label})</span>}
-                                    {component.billing_mode === "once_per_order" ? (
-                                      <span className="ml-1.5 text-slate-400">R{component.default_sell_price} ×1 once-off</span>
-                                    ) : (
-                                      <>
-                                        <span className="ml-1.5 text-slate-400">x{component.quantity_per_unit}</span>
-                                        {component.default_sell_price != null && (
-                                          <span className="ml-1.5 text-slate-400">R{component.default_sell_price}</span>
-                                        )}
-                                      </>
-                                    )}
-                                    {component.placement && hasApprovedArtwork(component.placement) === false && (
-                                      <span className="ml-1.5 text-amber-600">no approved artwork</span>
-                                    )}
-                                  </div>
-                                  <div className="flex flex-shrink-0 items-center gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7"
-                                      onClick={() => startEditingComponent(component)}
-                                    >
-                                      <Pencil className="h-3.5 w-3.5 text-slate-500" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7"
-                                      onClick={() => removeComponentMutation.mutate(component.id)}
-                                      disabled={removeComponentMutation.isPending}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              )
-                            ))}
-                          </div>
-                        )}
+                        <ScopedComponentsEditor
+                          clientProductId={selectedClientProductId}
+                          scope={{ type: "family" }}
+                          allComponents={productComponents}
+                          queryKeyForInvalidation={['productComponents', selectedClientProductId]}
+                          internalProducts={internalProducts}
+                          pricingDefaultFor={pricingDefaultFor}
+                          clientProduct={selectedClientProduct}
+                          currentArtwork={currentArtwork}
+                          onArtworkLinked={invalidateCurrentArtwork}
+                          addLabel="Add print option"
+                          emptyLabel=""
+                          onBusyChange={setFamilyComposerBusy}
+                        />
 
-                        {addingComponent ? (
-                          <div>
-                            <ComponentFieldsForm
-                              form={newComponent}
-                              setForm={setNewComponent}
-                              internalProducts={internalProducts}
-                              pricingDefaultFor={pricingDefaultFor}
-                              clientProduct={selectedClientProduct}
-                              currentArtwork={currentArtwork}
-                              onArtworkLinked={invalidateCurrentArtwork}
-                            />
-                            <div className="mt-2 flex gap-2">
-                              <Button variant="outline" size="sm" className="flex-1" onClick={() => { setAddingComponent(false); setNewComponent(emptyComponentForm()); }}>Cancel</Button>
-                              <Button
-                                size="sm"
-                                className="flex-1"
-                                disabled={createComponentMutation.isPending || (newComponent.component_type === "blank_garment" && !newComponent.inventory_product_id)}
-                                onClick={() => createComponentMutation.mutate(newComponent)}
-                              >
-                                Add component
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditingComponentId(""); setAddingComponent(true); }}>
-                            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add print option
-                          </Button>
-                        )}
+                        <GarmentVariantsSection
+                          clientProductId={selectedClientProductId}
+                          clientProduct={selectedClientProduct}
+                          internalProducts={internalProducts}
+                          pricingDefaultFor={pricingDefaultFor}
+                          allComponents={productComponents}
+                        />
 
-                        {productComponents.length > 0 && !addingComponent && !editingComponentId && (
+                        <TreatmentsSection
+                          clientProductId={selectedClientProductId}
+                          clientProduct={selectedClientProduct}
+                          internalProducts={internalProducts}
+                          pricingDefaultFor={pricingDefaultFor}
+                          allComponents={productComponents}
+                        />
+
+                        {productComponents.length > 0 && !familyComposerBusy && (
                           duplicatingComposition ? (
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
                               <p className="text-xs text-slate-500">

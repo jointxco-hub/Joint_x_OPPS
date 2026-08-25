@@ -82,6 +82,16 @@ export function emptyPrintOptionForm() {
 export default function ComponentFieldsForm({
   form, setForm, internalProducts, pricingDefaultFor, clientProduct, currentArtwork, onArtworkLinked,
   showOrderPrice = false, excludeComponentTypes = [],
+  // Phase 2B Step 3 - the family-level artwork-linking control (find_or_
+  // create_client_product_artwork_from_asset) only understands
+  // treatment_id IS NULL family artwork. It must never be shown for a
+  // variant- or treatment-scoped component, where currentArtwork/
+  // onArtworkLinked (if passed at all) would represent a DIFFERENT,
+  // unrelated artwork namespace - see ScopedComponentsEditor, which is
+  // the only caller that sets this false. Default true preserves every
+  // pre-Step-3 caller (CatalogManagement's family composition,
+  // ProductsEditor's "+ Add print option") unchanged.
+  allowArtworkLinking = true,
 }) {
   const availableComponentTypes = COMPONENT_TYPES.filter((t) => !excludeComponentTypes.includes(t.value));
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
@@ -287,7 +297,7 @@ export default function ComponentFieldsForm({
         </label>
       )}
 
-      {form.component_type === "print_service" && effectivePlacement && (
+      {allowArtworkLinking && form.component_type === "print_service" && effectivePlacement && (
         <div className="rounded-lg border border-dashed border-slate-300 p-2 text-xs">
           {linkedArtwork ? (
             <div className="flex items-center justify-between gap-2">
@@ -313,7 +323,7 @@ export default function ComponentFieldsForm({
           )}
         </div>
       )}
-      {showArtworkPicker && (
+      {allowArtworkLinking && showArtworkPicker && (
         <ClientAssetPickerModal
           clientId={clientProduct?.client_id}
           selectionMode="single"
