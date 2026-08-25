@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -98,9 +98,12 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     enabled: Boolean(order.client_id),
     staleTime: 60_000,
   });
+  // Snapshot Lifecycle Foundation - live UI only ever renders is_current
+  // rows; superseded historical revisions stay queryable (for audit) but
+  // must never leak into the normal working view.
   const { data: lineSnapshots = [] } = useQuery({
     queryKey: ["orderLineComponentSnapshots", order.id],
-    queryFn: () => dataClient.entities.OrderLineComponentSnapshot.filter({ order_id: order.id }, "sort_order", 300),
+    queryFn: () => dataClient.entities.OrderLineComponentSnapshot.filter({ order_id: order.id, is_current: true }, "sort_order", 300),
     enabled: Boolean(order.id),
     staleTime: 30_000,
   });
@@ -733,11 +736,100 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     toast.success(`${selectedSizes.length} size lines added`);
   };
 
+  // Snapshot Lifecycle Foundation - duplication is entirely RPC-backed
+  // (duplicate_order_line_with_snapshots): commercial line append AND
+  // frozen production snapshot clone happen atomically, server-side, in
+  // one transaction. There is deliberately no client-side construction of
+  // the new commercial line's fields anymore.
+  //
+  // The target line_id is the RPC's idempotency key, so ONE duplication
+  // attempt must own a stable target id for its entire retry lifecycle -
+  // minting a fresh id per mutate() call would defeat the RPC's own
+  // provenance replay protection (a lost response + a manual retry would
+  // mint a second target id and create a second real duplicate). The
+  // target id is therefore generated in duplicateRow (not inside
+  // mutationFn) and kept in this ref, keyed by source line id, until the
+  // attempt against that source line actually succeeds - so a retry of a
+  // still-pending or failed (including ambiguously failed, e.g. a lost
+  // response after the RPC actually committed) attempt reuses the same
+  // target id and safely replays via the RPC's own conflict/replay logic,
+  // rather than silently minting a new one. Only a genuine success clears
+  // the entry, so a later, deliberate "duplicate this line again" click
+  // mints a fresh id and creates a genuinely new, separate duplicate.
+  const pendingDuplicateTargetIdsRef = useRef(new Map());
+
+  const duplicateLineMutation = useMutation({
+    mutationFn: async ({ sourceLineId, targetLineId }) => {
+      const { data, error } = await supabase.rpc("duplicate_order_line_with_snapshots", {
+        p_order_id: order.id,
+        p_source_line_id: sourceLineId,
+        p_new_line_id: targetLineId,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: async (data, variables) => {
+      // The RPC reporting success is not itself proof the drawer can move
+      // on - the pending target id must survive until a fresh server read
+      // independently confirms the duplicate actually landed. If this
+      // fetch fails, or the fetched order unexpectedly doesn't contain
+      // variables.targetLineId, the pending id is deliberately RETAINED
+      // (never cleared, no success toast) so the next retry calls the RPC
+      // with the exact same target id - the RPC's own replay logic then
+      // safely returns the existing duplicate rather than creating a
+      // second one.
+      let freshOrder = null;
+      try {
+        const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+        freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+      } catch {
+        freshOrder = null;
+      }
+
+      const targetLinePresent =
+        Array.isArray(freshOrder?.products) &&
+        freshOrder.products.some((p) => p?.line_id === variables.targetLineId);
+
+      if (!targetLinePresent) {
+        toast.error("Could not confirm the duplicate was saved - please try again.");
+        return;
+      }
+
+      // Re-sync the drawer's locally-held order from what the RPC actually
+      // persisted (never a client-side reconstruction of the new line) -
+      // onUpdate's own follow-up write is then a true no-op (identical
+      // value), reusing the existing sync path without inventing a new one.
+      onUpdate(order.id, { products: freshOrder.products });
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);
+
+      const count = data?.cloned_component_count;
+      toast.success(
+        data?.replayed
+          ? "Product already duplicated"
+          : `Product duplicated${count ? ` — ${count} production component${count === 1 ? "" : "s"} copied` : ""}`
+      );
+    },
+    // The pending target id is deliberately NOT cleared here - the outcome
+    // of the failed attempt is ambiguous (it may have committed server-side
+    // before the error surfaced), so the next retry against this source
+    // line must reuse the same target id, not mint a new one.
+    onError: (error) => toast.error(error?.message || "Could not duplicate this line"),
+  });
+
   const duplicateRow = (/** @type {any} */ rawProduct) => {
-    if (locked) return;
+    if (locked || duplicateLineMutation.isPending) return;
     const p = cleanProduct(rawProduct);
-    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1, line_id: newLineId() }] });
-    toast.success("Product copied on this order");
+    if (!p.line_id) {
+      toast.error("This line has no line id yet - save the order once before duplicating it.");
+      return;
+    }
+    let targetLineId = pendingDuplicateTargetIdsRef.current.get(p.line_id);
+    if (!targetLineId) {
+      targetLineId = newLineId();
+      pendingDuplicateTargetIdsRef.current.set(p.line_id, targetLineId);
+    }
+    duplicateLineMutation.mutate({ sourceLineId: p.line_id, targetLineId });
   };
 
   const allPickerItems = [
@@ -1172,8 +1264,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 )}
                 {!locked && (
                 <button type="button" onClick={() => duplicateRow(p)}
-                  className="opacity-100 text-muted-foreground hover:text-primary transition-all sm:opacity-0 sm:group-hover:opacity-100"
-                  title="Copy product">
+                  disabled={duplicateLineMutation.isPending}
+                  className="opacity-100 text-muted-foreground hover:text-primary transition-all disabled:cursor-not-allowed disabled:opacity-40 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Copy product (production components copy with it)">
                   <Copy className="w-3 h-3" />
                 </button>
                 )}
