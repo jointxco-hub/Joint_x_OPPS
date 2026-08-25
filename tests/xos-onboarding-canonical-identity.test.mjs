@@ -64,7 +64,43 @@ test("supplied source identity collision fails clearly, both via pre-check and a
   const preCheckIdx = source.indexOf("ONBOARD_SOURCE_IDENTITY_COLLISION");
   const insertIdx = source.indexOf("insert into commerce.products (\n        tenant_id, slug, name, description, price, sale_price, currency,");
   assert.ok(preCheckIdx > -1 && insertIdx > -1 && preCheckIdx < insertIdx, "the pre-check must run BEFORE the INSERT, not only be caught reactively");
-  assert.match(source, /exception when unique_violation then\s*\n\s*raise exception using errcode = 'P0001', message =\s*\n\s*format\('ONBOARD_SLUG_COLLISION: slug "%s" or source identity/, "a concurrent race must also fail with a clear message, not a raw constraint violation");
+  assert.match(source, /exception when unique_violation then/, "a concurrent race must still be caught, not left to surface a raw constraint violation");
+});
+
+test("post-review amendment (race classification fix): the unique_violation handler inspects CONSTRAINT_NAME and never conflates slug vs. source-identity races", async () => {
+  const source = await readSource(MIGRATION);
+
+  // 1. Declares and captures CONSTRAINT_NAME via GET STACKED DIAGNOSTICS.
+  assert.match(source, /v_constraint_name text;/, "expected a declared variable to hold the violated constraint/index name");
+  assert.match(source, /get stacked diagnostics v_constraint_name = constraint_name;/);
+
+  const handlerBlock = source.match(/exception when unique_violation then\s*\n(?:\s*--.*\n)*[\s\S]*?end;\s*\n\s*end if;\s*\n\s*\n\s*-- ---- Variants/)?.[0] ?? "";
+  assert.ok(handlerBlock, "expected to find the INSERT's unique_violation exception handler block");
+
+  // 2. Source-identity unique index maps to ONBOARD_SOURCE_IDENTITY_COLLISION.
+  assert.match(handlerBlock, /if v_constraint_name = 'commerce_products_tenant_source_ref_unique' then/);
+  const sourceBranch = handlerBlock.match(/if v_constraint_name = 'commerce_products_tenant_source_ref_unique' then([\s\S]*?)elsif/)?.[1] ?? "";
+  assert.match(sourceBranch, /ONBOARD_SOURCE_IDENTITY_COLLISION/);
+  assert.ok(!/ONBOARD_SLUG_COLLISION/.test(sourceBranch), "the source-identity branch must never raise ONBOARD_SLUG_COLLISION");
+
+  // 3. Tenant-slug uniqueness maps to ONBOARD_SLUG_COLLISION.
+  assert.match(handlerBlock, /elsif v_constraint_name = 'commerce_products_tenant_slug_unique' then/);
+  const slugBranch = handlerBlock.match(/elsif v_constraint_name = 'commerce_products_tenant_slug_unique' then([\s\S]*?)else/)?.[1] ?? "";
+  assert.match(slugBranch, /ONBOARD_SLUG_COLLISION/);
+  assert.ok(!/ONBOARD_SOURCE_IDENTITY_COLLISION/.test(slugBranch), "the slug branch must never raise ONBOARD_SOURCE_IDENTITY_COLLISION");
+
+  // 4. Any OTHER unique_violation is neither silently swallowed nor
+  // mislabeled as slug/source-identity - it gets its own generic code.
+  const elseBranch = handlerBlock.match(/else\s*\n\s*raise exception using errcode = 'P0001', message = '([^']*)';/)?.[1] ?? "";
+  assert.ok(elseBranch, "expected a final else branch with its own raise");
+  assert.match(elseBranch, /^ONBOARD_UNIQUE_COLLISION:/);
+  assert.ok(!/ONBOARD_SLUG_COLLISION|ONBOARD_SOURCE_IDENTITY_COLLISION/.test(elseBranch), "an unrecognized constraint must never be mislabeled as slug or source-identity collision");
+
+  // Confirm the two mapped names are the REAL live constraint/index names
+  // from the XOS 3A migration, not placeholders.
+  const foundationSource = await readSource("supabase/migrations/20260823111500_xos_3a_products_foundation.sql");
+  assert.match(foundationSource, /constraint commerce_products_tenant_slug_unique\s*\n\s*unique \(tenant_id, slug\)/);
+  assert.match(foundationSource, /create unique index commerce_products_tenant_source_ref_unique\s*\n\s*on commerce\.products \(tenant_id, source_system, source_ref\)/);
 });
 
 test("the fingerprint is unchanged - p_product's full JSON (including any slug/source_system/source_ref keys) is already covered", async () => {

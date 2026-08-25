@@ -81,6 +81,10 @@ declare
   v_supplied_source_ref text;
   v_final_source_system text;
   v_final_source_ref text;
+  -- Post-review amendment (race classification fix): which unique
+  -- constraint/index a concurrent-race unique_violation actually
+  -- reports, so the two collision types are never conflated.
+  v_constraint_name text;
 begin
   if p_idempotency_key is null or btrim(p_idempotency_key) = '' then
     raise exception using errcode = 'P0001', message = 'ONBOARD_IDEMPOTENCY_KEY_REQUIRED: p_idempotency_key is required';
@@ -348,8 +352,34 @@ begin
       )
       returning id into v_commerce_product_id;
     exception when unique_violation then
-      raise exception using errcode = 'P0001', message =
-        format('ONBOARD_SLUG_COLLISION: slug "%s" or source identity (%s, %s) was claimed by a concurrent request', v_slug, v_final_source_system, v_final_source_ref);
+      -- Post-review amendment (race classification fix): the pre-checks
+      -- above already distinguish ONBOARD_SLUG_COLLISION from
+      -- ONBOARD_SOURCE_IDENTITY_COLLISION for the common case; this
+      -- handler only fires for the rare concurrent race where a second
+      -- request claims the same slug or source identity between the
+      -- pre-check and this INSERT (pg_advisory_xact_lock only serializes
+      -- calls sharing the SAME idempotency key, not two different keys
+      -- racing for the same caller-supplied identity). GET STACKED
+      -- DIAGNOSTICS reports the actual violated index/constraint name -
+      -- for a unique_violation this is populated from the underlying
+      -- index regardless of whether it was declared as an inline table
+      -- CONSTRAINT (commerce_products_tenant_slug_unique) or a standalone
+      -- CREATE UNIQUE INDEX (commerce_products_tenant_source_ref_unique)
+      -- - so the two race outcomes are classified exactly as precisely
+      -- as the pre-checks are, never conflated into one message. Any
+      -- OTHER unique_violation (a constraint this function does not
+      -- know about) is neither silently swallowed nor mislabeled as
+      -- slug/source-identity - it gets its own generic, non-leaking code.
+      get stacked diagnostics v_constraint_name = constraint_name;
+      if v_constraint_name = 'commerce_products_tenant_source_ref_unique' then
+        raise exception using errcode = 'P0001', message =
+          format('ONBOARD_SOURCE_IDENTITY_COLLISION: source identity (%s, %s) was claimed by a concurrent request', v_final_source_system, v_final_source_ref);
+      elsif v_constraint_name = 'commerce_products_tenant_slug_unique' then
+        raise exception using errcode = 'P0001', message =
+          format('ONBOARD_SLUG_COLLISION: slug "%s" was claimed by a concurrent request', v_slug);
+      else
+        raise exception using errcode = 'P0001', message = 'ONBOARD_UNIQUE_COLLISION: a concurrent request claimed a conflicting identity';
+      end if;
     end;
   end if;
 
