@@ -98,9 +98,12 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     enabled: Boolean(order.client_id),
     staleTime: 60_000,
   });
+  // Snapshot Lifecycle Foundation - live UI only ever renders is_current
+  // rows; superseded historical revisions stay queryable (for audit) but
+  // must never leak into the normal working view.
   const { data: lineSnapshots = [] } = useQuery({
     queryKey: ["orderLineComponentSnapshots", order.id],
-    queryFn: () => dataClient.entities.OrderLineComponentSnapshot.filter({ order_id: order.id }, "sort_order", 300),
+    queryFn: () => dataClient.entities.OrderLineComponentSnapshot.filter({ order_id: order.id, is_current: true }, "sort_order", 300),
     enabled: Boolean(order.id),
     staleTime: 30_000,
   });
@@ -733,11 +736,55 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     toast.success(`${selectedSizes.length} size lines added`);
   };
 
+  // Snapshot Lifecycle Foundation - duplication is entirely RPC-backed
+  // (duplicate_order_line_with_snapshots): commercial line append AND
+  // frozen production snapshot clone happen atomically, server-side, in
+  // one transaction. There is deliberately no client-side construction of
+  // the new commercial line's fields anymore - the target line_id is
+  // generated once via newLineId() (the same crypto.randomUUID() this
+  // file already uses for every other new line, matching the RPC's
+  // required valid-UUID line_id format) and doubles as the idempotency
+  // key; a retry of the same click reuses it and safely replays.
+  const duplicateLineMutation = useMutation({
+    mutationFn: async (sourceLineId) => {
+      const targetLineId = newLineId();
+      const { data, error } = await supabase.rpc("duplicate_order_line_with_snapshots", {
+        p_order_id: order.id,
+        p_source_line_id: sourceLineId,
+        p_new_line_id: targetLineId,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: async (data) => {
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      // Re-sync the drawer's locally-held order from what the RPC actually
+      // persisted (never a client-side reconstruction of the new line) -
+      // onUpdate's own follow-up write is then a true no-op (identical
+      // value), reusing the existing sync path without inventing a new one.
+      const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+      const freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+      if (freshOrder?.products) {
+        onUpdate(order.id, { products: freshOrder.products });
+      }
+      const count = data?.cloned_component_count;
+      toast.success(
+        data?.replayed
+          ? "Product already duplicated"
+          : `Product duplicated${count ? ` — ${count} production component${count === 1 ? "" : "s"} copied` : ""}`
+      );
+    },
+    onError: (error) => toast.error(error?.message || "Could not duplicate this line"),
+  });
+
   const duplicateRow = (/** @type {any} */ rawProduct) => {
-    if (locked) return;
+    if (locked || duplicateLineMutation.isPending) return;
     const p = cleanProduct(rawProduct);
-    onUpdate(order.id, { products: [...products, { ...p, quantity: Number(p.quantity) || 1, line_id: newLineId() }] });
-    toast.success("Product copied on this order");
+    if (!p.line_id) {
+      toast.error("This line has no line id yet - save the order once before duplicating it.");
+      return;
+    }
+    duplicateLineMutation.mutate(p.line_id);
   };
 
   const allPickerItems = [
@@ -1172,8 +1219,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 )}
                 {!locked && (
                 <button type="button" onClick={() => duplicateRow(p)}
-                  className="opacity-100 text-muted-foreground hover:text-primary transition-all sm:opacity-0 sm:group-hover:opacity-100"
-                  title="Copy product">
+                  disabled={duplicateLineMutation.isPending}
+                  className="opacity-100 text-muted-foreground hover:text-primary transition-all disabled:cursor-not-allowed disabled:opacity-40 sm:opacity-0 sm:group-hover:opacity-100"
+                  title="Copy product (production components copy with it)">
                   <Copy className="w-3 h-3" />
                 </button>
                 )}
