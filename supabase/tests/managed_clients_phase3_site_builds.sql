@@ -408,7 +408,7 @@ begin
     -- Case A: Products capability disabled.
     v_cap_fp_before := (public.admin_generate_managed_site_build_brief(v_build_id) ->> 'source_fingerprint');
     insert into commerce.products (tenant_id, slug, name, description, price, currency, availability, status)
-    values (v_tenant_id, v_slug || '-product-disabled', 'Phase3 Disabled-Capability Product', 'Should never affect fingerprint or appear in brief', 500, 'ZAR', 'in_stock', 'active')
+    values (v_tenant_id, v_slug || '-product-disabled', 'Phase3 Disabled-Capability Product', 'Should never affect fingerprint or appear in brief', 500, 'ZAR', 'available', 'published')
     returning id into v_disposable_product_id;
     v_cap_brief_after := public.admin_generate_managed_site_build_brief(v_build_id);
     v_cap_fp_after := v_cap_brief_after ->> 'source_fingerprint';
@@ -430,7 +430,7 @@ begin
     values (v_tenant_id, 'products', true, '{}'::jsonb);
     v_cap_fp_before := (public.admin_generate_managed_site_build_brief(v_build_id) ->> 'source_fingerprint');
     insert into commerce.products (tenant_id, slug, name, description, price, currency, availability, status)
-    values (v_tenant_id, v_slug || '-product-enabled', 'Phase3 Enabled-Capability Product', 'A disposable test product', 350, 'ZAR', 'in_stock', 'active');
+    values (v_tenant_id, v_slug || '-product-enabled', 'Phase3 Enabled-Capability Product', 'A disposable test product', 350, 'ZAR', 'available', 'published');
     v_cap_brief_after := public.admin_generate_managed_site_build_brief(v_build_id);
     v_cap_fp_after := v_cap_brief_after ->> 'source_fingerprint';
     insert into test_results (test_name, passed, detail) values (
@@ -471,7 +471,7 @@ begin
     v_ord_brief_b jsonb;
   begin
     insert into commerce.products (tenant_id, slug, name, description, price, currency, availability, status)
-    values (v_tenant_id, v_slug || '-product-tie', 'Phase3 Enabled-Capability Product', 'Same name as the existing enabled-capability product - ties on the primary ORDER BY key', 275, 'ZAR', 'in_stock', 'active')
+    values (v_tenant_id, v_slug || '-product-tie', 'Phase3 Enabled-Capability Product', 'Same name as the existing enabled-capability product - ties on the primary ORDER BY key', 275, 'ZAR', 'available', 'published')
     returning id into v_ord_product_id;
 
     insert into commerce.product_variants (tenant_id, product_id, sku, title, sort_order)
