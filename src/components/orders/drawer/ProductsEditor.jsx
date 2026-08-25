@@ -769,17 +769,40 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       return data;
     },
     onSuccess: async (data, variables) => {
-      pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);
-      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      // The RPC reporting success is not itself proof the drawer can move
+      // on - the pending target id must survive until a fresh server read
+      // independently confirms the duplicate actually landed. If this
+      // fetch fails, or the fetched order unexpectedly doesn't contain
+      // variables.targetLineId, the pending id is deliberately RETAINED
+      // (never cleared, no success toast) so the next retry calls the RPC
+      // with the exact same target id - the RPC's own replay logic then
+      // safely returns the existing duplicate rather than creating a
+      // second one.
+      let freshOrder = null;
+      try {
+        const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+        freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+      } catch {
+        freshOrder = null;
+      }
+
+      const targetLinePresent =
+        Array.isArray(freshOrder?.products) &&
+        freshOrder.products.some((p) => p?.line_id === variables.targetLineId);
+
+      if (!targetLinePresent) {
+        toast.error("Could not confirm the duplicate was saved - please try again.");
+        return;
+      }
+
       // Re-sync the drawer's locally-held order from what the RPC actually
       // persisted (never a client-side reconstruction of the new line) -
       // onUpdate's own follow-up write is then a true no-op (identical
       // value), reusing the existing sync path without inventing a new one.
-      const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
-      const freshOrder = Array.isArray(fresh) ? fresh[0] : null;
-      if (freshOrder?.products) {
-        onUpdate(order.id, { products: freshOrder.products });
-      }
+      onUpdate(order.id, { products: freshOrder.products });
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);
+
       const count = data?.cloned_component_count;
       toast.success(
         data?.replayed

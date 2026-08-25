@@ -525,30 +525,94 @@ test("ProductsEditor: a duplicate attempt without a resolved line_id is blocked 
   assert.ok(body.includes("if (!p.line_id) {"));
 });
 
-test("ProductsEditor: the pending target id for a source line is cleared ONLY on genuine success (via the actual mutate() variables, not a re-derived value) - so a real retry reuses it, but a later deliberate re-duplication of the same source line mints a fresh one", async () => {
+// ── PR #49 final hardening: an RPC "success" response is not itself proof
+// the drawer can move on - the pending target id must survive an
+// independent post-RPC reconciliation read before it is cleared. See the
+// header block above for the exact required sequence and the failure
+// handling.
+
+test("ProductsEditor: onSuccess fetches and verifies the fresh order BEFORE touching the pending-id map at all - reconciliation must complete before the id can be cleared", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
   const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
-  assert.notEqual(onSuccessStart, -1, "onSuccess must receive the mutation's own variables to know exactly which source line just genuinely completed");
+  assert.notEqual(onSuccessStart, -1, "onSuccess must receive the mutation's own variables to know exactly which source/target line just ran");
   const onErrorIdx = source.indexOf("onError:", onSuccessStart);
   const onSuccessBody = source.slice(onSuccessStart, onErrorIdx);
-  assert.ok(onSuccessBody.includes("pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);"));
-  // And NOT cleared on error - the outcome of a failed/ambiguous attempt is
-  // exactly the case a retry needs to reuse the same target id for.
+
+  const fetchIdx = onSuccessBody.indexOf("dataClient.entities.Order.filter({ id: order.id }, undefined, 1)");
+  const verifyIdx = onSuccessBody.indexOf("freshOrder.products.some((p) => p?.line_id === variables.targetLineId)");
+  const deleteIdx = onSuccessBody.indexOf("pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);");
+  assert.ok(fetchIdx !== -1 && verifyIdx !== -1 && deleteIdx !== -1);
+  assert.ok(fetchIdx < verifyIdx && verifyIdx < deleteIdx, "the fetch and the presence-verification must both happen strictly before the pending id is ever cleared");
+});
+
+test("ProductsEditor: the pending target id is cleared ONLY inside the branch where the fresh order actually contains variables.targetLineId - not unconditionally after the fetch", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
+  const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
+  const onErrorIdx = source.indexOf("onError:", onSuccessStart);
+  const onSuccessBody = source.slice(onSuccessStart, onErrorIdx);
+
+  const guardIdx = onSuccessBody.indexOf("if (!targetLinePresent) {");
+  const earlyReturnIdx = onSuccessBody.indexOf("return;", guardIdx);
+  const deleteIdx = onSuccessBody.indexOf("pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);");
+  assert.ok(guardIdx !== -1 && earlyReturnIdx !== -1 && deleteIdx !== -1);
+  assert.ok(guardIdx < earlyReturnIdx && earlyReturnIdx < deleteIdx, "the early return on a failed/absent reconciliation must occur before the delete line is ever reached");
+});
+
+test("ProductsEditor: reconciliation failure (fetch throwing, or the target line unexpectedly absent from the fresh order) surfaces an error and returns BEFORE the success toast, sync, or query invalidation", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
+  const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
+  const onErrorIdx = source.indexOf("onError:", onSuccessStart);
+  const onSuccessBody = source.slice(onSuccessStart, onErrorIdx);
+
+  // A fetch failure must not throw out of onSuccess uncaught - it must be
+  // caught and treated identically to "target line absent".
+  assert.ok(onSuccessBody.includes("try {"));
+  assert.ok(onSuccessBody.includes("freshOrder = null;\n      }"), "a failed fetch must fall back to freshOrder = null, which then fails the targetLinePresent check the same way an absent line would");
+
+  const guardIdx = onSuccessBody.indexOf("if (!targetLinePresent) {");
+  const toastErrorIdx = onSuccessBody.indexOf("toast.error(", guardIdx);
+  const earlyReturnIdx = onSuccessBody.indexOf("return;", guardIdx);
+  const onUpdateIdx = onSuccessBody.indexOf("onUpdate(order.id, { products: freshOrder.products });");
+  const invalidateIdx = onSuccessBody.indexOf('queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });');
+  const toastSuccessIdx = onSuccessBody.indexOf("toast.success(");
+  assert.ok(toastErrorIdx !== -1 && toastErrorIdx < earlyReturnIdx, "a reconciliation-failure error toast must fire before the early return");
+  assert.ok(earlyReturnIdx < onUpdateIdx && earlyReturnIdx < invalidateIdx && earlyReturnIdx < toastSuccessIdx, "sync, invalidation, and the success toast must all sit AFTER the early return - unreachable on reconciliation failure");
+});
+
+test("ProductsEditor: a genuinely confirmed duplicate (target line present in the fresh order) still syncs the drawer, invalidates the snapshot query, clears the pending id, and shows the success toast, in that order", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
+  const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
+  const onErrorIdx = source.indexOf("onError:", onSuccessStart);
+  const onSuccessBody = source.slice(onSuccessStart, onErrorIdx);
+
+  const onUpdateIdx = onSuccessBody.indexOf("onUpdate(order.id, { products: freshOrder.products });");
+  const invalidateIdx = onSuccessBody.indexOf('queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });');
+  const deleteIdx = onSuccessBody.indexOf("pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);");
+  const toastSuccessIdx = onSuccessBody.indexOf("toast.success(");
+  assert.ok([onUpdateIdx, invalidateIdx, deleteIdx, toastSuccessIdx].every((i) => i !== -1));
+  assert.ok(onUpdateIdx < deleteIdx && invalidateIdx < deleteIdx, "the drawer must be re-synced from the fresh, confirmed order before the pending id is cleared");
+  assert.ok(deleteIdx < toastSuccessIdx, "the pending id must be cleared before the success toast - never the reverse");
+});
+
+test("ProductsEditor: onError still never touches the pending-id map - unchanged from the prior hardening, still correct after this reconciliation change", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
+  const onErrorIdx = source.indexOf("onError:", mutationStart);
   const onErrorEnd = source.indexOf("});", onErrorIdx);
   const onErrorBody = source.slice(onErrorIdx, onErrorEnd);
   assert.ok(!/pendingDuplicateTargetIdsRef/.test(onErrorBody), "onError must not touch the pending-id map - the entry must survive so a retry reuses the same id");
 });
 
-test("ProductsEditor: after a successful duplicate, the snapshot query is invalidated and the drawer's order state is re-synced from a fresh server read - never from a client-side reconstruction of the new line", async () => {
+test("ProductsEditor: the RPC call itself always uses variables.targetLineId (the stable, ref-persisted id) - a retry naturally calls the RPC with the same id as long as the pending entry was never cleared, and the RPC's own replay logic then handles it safely", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
-  const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
-  const onErrorIdx = source.indexOf("onError:", onSuccessStart);
-  const body = source.slice(onSuccessStart, onErrorIdx);
-  assert.ok(body.includes('queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });'));
-  assert.ok(body.includes("dataClient.entities.Order.filter({ id: order.id }, undefined, 1)"));
-  assert.ok(body.includes("onUpdate(order.id, { products: freshOrder.products });"));
+  const mutationFnEnd = source.indexOf("onSuccess:", mutationStart);
+  const mutationFnBody = source.slice(mutationStart, mutationFnEnd);
+  assert.ok(mutationFnBody.includes("p_new_line_id: targetLineId,"), "mutationFn takes targetLineId straight from its destructured variables, never regenerating it - so as long as duplicateRow keeps reusing the pending id (proven above), every retry's RPC call carries the same p_new_line_id, and ORDER_LINE_DUPLICATION_IDEMPOTENCY_CONFLICT-free replay is what the RPC itself already guarantees for a matching provenance stamp");
 });
 
 test("ProductsEditor: the duplicate button disables while the mutation is pending, preventing a double-submit", async () => {
