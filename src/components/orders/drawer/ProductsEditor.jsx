@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -740,14 +740,26 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // (duplicate_order_line_with_snapshots): commercial line append AND
   // frozen production snapshot clone happen atomically, server-side, in
   // one transaction. There is deliberately no client-side construction of
-  // the new commercial line's fields anymore - the target line_id is
-  // generated once via newLineId() (the same crypto.randomUUID() this
-  // file already uses for every other new line, matching the RPC's
-  // required valid-UUID line_id format) and doubles as the idempotency
-  // key; a retry of the same click reuses it and safely replays.
+  // the new commercial line's fields anymore.
+  //
+  // The target line_id is the RPC's idempotency key, so ONE duplication
+  // attempt must own a stable target id for its entire retry lifecycle -
+  // minting a fresh id per mutate() call would defeat the RPC's own
+  // provenance replay protection (a lost response + a manual retry would
+  // mint a second target id and create a second real duplicate). The
+  // target id is therefore generated in duplicateRow (not inside
+  // mutationFn) and kept in this ref, keyed by source line id, until the
+  // attempt against that source line actually succeeds - so a retry of a
+  // still-pending or failed (including ambiguously failed, e.g. a lost
+  // response after the RPC actually committed) attempt reuses the same
+  // target id and safely replays via the RPC's own conflict/replay logic,
+  // rather than silently minting a new one. Only a genuine success clears
+  // the entry, so a later, deliberate "duplicate this line again" click
+  // mints a fresh id and creates a genuinely new, separate duplicate.
+  const pendingDuplicateTargetIdsRef = useRef(new Map());
+
   const duplicateLineMutation = useMutation({
-    mutationFn: async (sourceLineId) => {
-      const targetLineId = newLineId();
+    mutationFn: async ({ sourceLineId, targetLineId }) => {
       const { data, error } = await supabase.rpc("duplicate_order_line_with_snapshots", {
         p_order_id: order.id,
         p_source_line_id: sourceLineId,
@@ -756,7 +768,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       if (error) throw new Error(error.message);
       return data;
     },
-    onSuccess: async (data) => {
+    onSuccess: async (data, variables) => {
+      pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);
       queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
       // Re-sync the drawer's locally-held order from what the RPC actually
       // persisted (never a client-side reconstruction of the new line) -
@@ -774,6 +787,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           : `Product duplicated${count ? ` — ${count} production component${count === 1 ? "" : "s"} copied` : ""}`
       );
     },
+    // The pending target id is deliberately NOT cleared here - the outcome
+    // of the failed attempt is ambiguous (it may have committed server-side
+    // before the error surfaced), so the next retry against this source
+    // line must reuse the same target id, not mint a new one.
     onError: (error) => toast.error(error?.message || "Could not duplicate this line"),
   });
 
@@ -784,7 +801,12 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       toast.error("This line has no line id yet - save the order once before duplicating it.");
       return;
     }
-    duplicateLineMutation.mutate(p.line_id);
+    let targetLineId = pendingDuplicateTargetIdsRef.current.get(p.line_id);
+    if (!targetLineId) {
+      targetLineId = newLineId();
+      pendingDuplicateTargetIdsRef.current.set(p.line_id, targetLineId);
+    }
+    duplicateLineMutation.mutate({ sourceLineId: p.line_id, targetLineId });
   };
 
   const allPickerItems = [

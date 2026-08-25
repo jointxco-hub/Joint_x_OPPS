@@ -113,6 +113,58 @@ const MIGRATION_PATH = "supabase/migrations/20260828090000_order_line_snapshot_l
 //      fails the column's own FK (the referenced row must already exist).
 //      This is why the new row is inserted (non-current) BEFORE the old
 //      row's superseded_by is set, not after.
+//
+// PR #49 REVIEW FIX ROUND (both applied to production, live-verified):
+//
+// 1. Duplication idempotency - target id must survive retry. The frontend
+//    originally minted a fresh target line id INSIDE mutationFn, so a
+//    retry after a lost RPC response would generate a second target id
+//    and create a second real duplicate, defeating the RPC's own
+//    provenance replay protection. Fixed in ProductsEditor.jsx: the
+//    target id is now generated once in duplicateRow and kept in a
+//    per-source-line ref (pendingDuplicateTargetIdsRef) for the entire
+//    retry lifecycle of that attempt, cleared only on genuine success.
+//    See the "PR #49 review fix" tests below.
+//
+// 2. Revision null/audit-diff semantics - revise_order_line_component_snapshot
+//    originally built changed_fields by comparing the RAW incoming p_*
+//    params against v_old, while the actual INSERT used
+//    coalesce(p_field, v_old.field). A null param (meaning "preserve")
+//    was therefore logged as a false change (e.g. p_specification=null
+//    against old "Front chest" logged {"before":"Front chest","after":null}
+//    even though the persisted value stayed "Front chest" unchanged).
+//    Fixed: the effective new value for every editable field is now
+//    computed ONCE into v_new_* (still via coalesce - the NULL contract
+//    stays "null means preserve", not "clear", documented inline in the
+//    migration), and that exact v_new_* value is used for BOTH the
+//    INSERT and the changed_fields diff - never two different sources of
+//    truth for what "the new value" is.
+//
+//    Live-verified via a disposable rolled-back transaction that first
+//    replaced the function with the FIXED body inside that same
+//    transaction (so nothing touched production until the fix was
+//    already proven), then reapplied for real once confirmed:
+//      - case_a (every param null): persisted values all unchanged
+//        (specification/placement both stayed "Front chest"), and
+//        changed_fields came back as {} - completely empty, not a false
+//        diff for every field (which is exactly what the OLD buggy
+//        function was proven to do in the same test run, before the fix
+//        was applied: it logged a "before"-only entry for label,
+//        placement, specification, sell_price, and billing_mode purely
+//        because every param was null, none of which had actually
+//        changed).
+//      - case_b (placement + specification genuinely changed): persisted
+//        values updated correctly, and changed_fields contained EXACTLY
+//        those two fields with correct before/after - production_method,
+//        production_colour, production_instructions, sell_price,
+//        billing_mode, and label were all correctly absent (unchanged).
+//      - case_c1 (sell_price param null against an existing revised row):
+//        sell_price stayed unchanged, changed_fields empty.
+//      - case_c2 (sell_price param genuinely changed from 50 to 75):
+//        changed_fields contained exactly {"sell_price":{"before":50,
+//        "after":75}}, nothing else.
+//    Post-apply, pg_get_functiondef confirmed the live function body
+//    matches this migration file's function definition exactly.
 // ─────────────────────────────────────────────────────────────────────
 
 test("the migration is additive only - no drop of an existing table/column/function", async () => {
@@ -199,7 +251,7 @@ test("revise: component_type is never in the editable parameter list - copied ve
   const signature = source.slice(start, signatureEnd);
   assert.ok(!/p_component_type/.test(signature));
   const body = source.slice(start, source.indexOf("$function$;", start));
-  assert.ok(body.includes("v_old.component_type,\n    coalesce(p_label, v_old.label),"), "component_type is copied straight from v_old, not from a parameter");
+  assert.ok(body.includes("v_old.component_type,\n    v_new_label,"), "component_type is copied straight from v_old, not from a parameter");
 });
 
 test("revise: unspecified fields fall back to the old row's own value via coalesce - a caller only needs to pass what's changing", async () => {
@@ -209,6 +261,62 @@ test("revise: unspecified fields fall back to the old row's own value via coales
   for (const field of ["label", "production_method", "placement", "production_colour", "specification", "production_instructions", "sell_price", "billing_mode"]) {
     assert.ok(body.includes(`coalesce(p_${field}, v_old.${field})`), `${field} must fall back to the old value via coalesce`);
   }
+});
+
+// ── PR #49 review fix: the audit diff must be computed from the exact
+// same effective values that get persisted, never from the raw incoming
+// params directly - see the header block above for the exact bug
+// (a null param silently preserved by coalesce() in the INSERT was still
+// logged as a false before/after change) and the live-verified fix.
+
+test("revise: the effective new value for every editable field is computed exactly once, into v_new_*, before either the diff or the insert reads it", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  const start = source.indexOf("create or replace function public.revise_order_line_component_snapshot");
+  const body = source.slice(start, source.indexOf("$function$;", start));
+  const computeIdx = body.indexOf("v_new_label := coalesce(p_label, v_old.label);");
+  const diffIdx = body.indexOf("v_changed_fields := jsonb_strip_nulls(");
+  const insertIdx = body.indexOf("insert into public.order_line_component_snapshots (");
+  assert.ok(computeIdx !== -1 && diffIdx !== -1 && insertIdx !== -1);
+  assert.ok(computeIdx < diffIdx && diffIdx < insertIdx, "the v_new_* values must be computed before both the diff and the insert, in that order");
+  for (const field of ["label", "placement", "production_method", "production_colour", "specification", "production_instructions", "sell_price", "billing_mode"]) {
+    assert.ok(body.includes(`v_new_${field} := coalesce(p_${field}, v_old.${field});`), `v_new_${field} must be computed via coalesce exactly once`);
+  }
+});
+
+test("revise: changed_fields compares v_new_* against v_old - never the raw p_* parameters directly - for every editable field", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  const start = source.indexOf("create or replace function public.revise_order_line_component_snapshot");
+  const diffStart = source.indexOf("v_changed_fields := jsonb_strip_nulls(", start);
+  const diffEnd = source.indexOf("));", diffStart);
+  const diffBody = source.slice(diffStart, diffEnd);
+  for (const field of ["label", "placement", "production_method", "production_colour", "specification", "production_instructions", "sell_price", "billing_mode"]) {
+    assert.ok(
+      diffBody.includes(`case when v_new_${field} is distinct from v_old.${field} then jsonb_build_object('before', v_old.${field}, 'after', v_new_${field}) end`),
+      `${field}'s diff must compare v_new_${field} (the actual effective/persisted value) against v_old.${field}`
+    );
+    assert.ok(!diffBody.includes(`p_${field} is distinct from`), `${field}'s diff must never compare the raw incoming parameter directly - that was the exact bug`);
+  }
+});
+
+test("revise: the INSERT's editable-field values are the same v_new_* variables used for the diff - never a second, separately-computed coalesce() at the insert site", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  const start = source.indexOf("create or replace function public.revise_order_line_component_snapshot");
+  const insertStart = source.indexOf("insert into public.order_line_component_snapshots (", start);
+  const insertValuesStart = source.indexOf("v_old.component_type,", insertStart);
+  const insertValuesEnd = source.indexOf("v_old.quantity_per_unit, v_old.sort_order,", insertValuesStart);
+  const insertValuesBody = source.slice(insertValuesStart, insertValuesEnd);
+  assert.ok(!/coalesce\(/.test(insertValuesBody), "the insert's editable-field values must be the already-computed v_new_* variables, not a fresh coalesce() call");
+  for (const field of ["label", "placement", "production_method", "production_colour", "specification", "production_instructions", "sell_price", "billing_mode"]) {
+    assert.ok(insertValuesBody.includes(`v_new_${field},`), `the insert must use v_new_${field} directly`);
+  }
+});
+
+test("revise: the NULL contract (null param means preserve, not clear) is documented inline as an explicit design decision, not left implicit", async () => {
+  const source = await readSource(MIGRATION_PATH);
+  const start = source.indexOf("create or replace function public.revise_order_line_component_snapshot");
+  const body = source.slice(start, source.indexOf("$function$;", start));
+  assert.ok(body.includes('NULL contract for this RPC version: a null parameter means "leave this'));
+  assert.ok(body.includes("field unchanged\", NOT \"clear it\""));
 });
 
 test("revise: billing_mode and sell_price are validated with clear staff-facing messages before any write, matching the base table's own CHECK constraints", async () => {
@@ -378,27 +486,64 @@ test("ProductsEditor: duplicateRow is entirely RPC-backed - calls duplicate_orde
   assert.ok(!/\.\.\.p, quantity: Number\(p\.quantity\) \|\| 1, line_id: newLineId\(\)/.test(fullSource));
 });
 
-test("ProductsEditor: duplicateRow generates a fresh target line id via newLineId() (crypto.randomUUID(), matching the RPC's required UUID line_id format) and never reuses the source's own line_id", async () => {
+// ── PR #49 review fix: the target line id (the RPC's idempotency key)
+// must survive an entire duplication attempt's retry lifecycle, not be
+// re-minted per mutate() call - see the header block above this section
+// for the exact bug and the fix.
+
+test("ProductsEditor: the target line id is generated in duplicateRow, NOT inside mutationFn - mutationFn only ever consumes a supplied id, it never mints its own", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
-  const mutationEnd = source.indexOf("const duplicateRow = (", mutationStart);
-  const mutationBody = source.slice(mutationStart, mutationEnd);
-  assert.ok(mutationBody.includes("const targetLineId = newLineId();"));
+  const mutationFnStart = source.indexOf("mutationFn: async ({ sourceLineId, targetLineId }) => {", mutationStart);
+  assert.notEqual(mutationFnStart, -1, "mutationFn must destructure a pre-generated { sourceLineId, targetLineId } pair, not accept a bare sourceLineId");
+  const mutationFnEnd = source.indexOf("onSuccess:", mutationFnStart);
+  const mutationFnBody = source.slice(mutationFnStart, mutationFnEnd);
+  assert.ok(!/newLineId\(\)/.test(mutationFnBody), "mutationFn must not generate a new target id itself - that would defeat the whole point of a stable id across retries");
+  assert.ok(mutationFnBody.includes("p_source_line_id: sourceLineId,"));
+  assert.ok(mutationFnBody.includes("p_new_line_id: targetLineId,"));
+});
+
+test("ProductsEditor: duplicateRow reuses a still-pending target id for the same source line rather than minting a new one on every call - this is what makes a retry of the same attempt safe", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const refDeclIdx = source.indexOf("const pendingDuplicateTargetIdsRef = useRef(new Map());");
+  assert.notEqual(refDeclIdx, -1, "a ref (surviving across renders, unlike component state reset by remount) must track one pending target id per source line id");
+  const start = source.indexOf("const duplicateRow = (");
+  const end = source.indexOf("\n  };", start);
+  const body = source.slice(start, end);
+  assert.ok(body.includes("let targetLineId = pendingDuplicateTargetIdsRef.current.get(p.line_id);"));
+  assert.ok(body.includes("if (!targetLineId) {"));
+  assert.ok(body.includes("targetLineId = newLineId();"));
+  assert.ok(body.includes("pendingDuplicateTargetIdsRef.current.set(p.line_id, targetLineId);"));
+  assert.ok(body.includes("duplicateLineMutation.mutate({ sourceLineId: p.line_id, targetLineId });"));
 });
 
 test("ProductsEditor: a duplicate attempt without a resolved line_id is blocked client-side with a clear message, rather than calling the RPC with a blank source id", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   const start = source.indexOf("const duplicateRow = (");
-  const end = source.indexOf("};", start);
+  const end = source.indexOf("\n  };", start);
   const body = source.slice(start, end);
   assert.ok(body.includes("if (!p.line_id) {"));
-  assert.ok(body.includes("duplicateLineMutation.mutate(p.line_id);"));
+});
+
+test("ProductsEditor: the pending target id for a source line is cleared ONLY on genuine success (via the actual mutate() variables, not a re-derived value) - so a real retry reuses it, but a later deliberate re-duplication of the same source line mints a fresh one", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
+  const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
+  assert.notEqual(onSuccessStart, -1, "onSuccess must receive the mutation's own variables to know exactly which source line just genuinely completed");
+  const onErrorIdx = source.indexOf("onError:", onSuccessStart);
+  const onSuccessBody = source.slice(onSuccessStart, onErrorIdx);
+  assert.ok(onSuccessBody.includes("pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);"));
+  // And NOT cleared on error - the outcome of a failed/ambiguous attempt is
+  // exactly the case a retry needs to reuse the same target id for.
+  const onErrorEnd = source.indexOf("});", onErrorIdx);
+  const onErrorBody = source.slice(onErrorIdx, onErrorEnd);
+  assert.ok(!/pendingDuplicateTargetIdsRef/.test(onErrorBody), "onError must not touch the pending-id map - the entry must survive so a retry reuses the same id");
 });
 
 test("ProductsEditor: after a successful duplicate, the snapshot query is invalidated and the drawer's order state is re-synced from a fresh server read - never from a client-side reconstruction of the new line", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   const mutationStart = source.indexOf("const duplicateLineMutation = useMutation({");
-  const onSuccessStart = source.indexOf("onSuccess: async (data) => {", mutationStart);
+  const onSuccessStart = source.indexOf("onSuccess: async (data, variables) => {", mutationStart);
   const onErrorIdx = source.indexOf("onError:", onSuccessStart);
   const body = source.slice(onSuccessStart, onErrorIdx);
   assert.ok(body.includes('queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });'));

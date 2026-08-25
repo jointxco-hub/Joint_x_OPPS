@@ -96,6 +96,14 @@ declare
   v_new public.order_line_component_snapshots;
   v_old_tracking public.order_line_production_tracking;
   v_current_count integer;
+  v_new_label text;
+  v_new_placement text;
+  v_new_production_method text;
+  v_new_production_colour text;
+  v_new_specification text;
+  v_new_production_instructions text;
+  v_new_sell_price numeric;
+  v_new_billing_mode text;
   v_changed_fields jsonb;
   v_event_id uuid;
 begin
@@ -154,15 +162,35 @@ begin
     raise exception 'SNAPSHOT_REVISION_INTEGRITY_VIOLATION: expected exactly one current row for this component, found %', v_current_count;
   end if;
 
+  -- NULL contract for this RPC version: a null parameter means "leave this
+  -- field unchanged", NOT "clear it" - every editable field falls back to
+  -- v_old's own value via coalesce. The effective value is computed ONCE
+  -- here, into v_new_*, and that same value is used both for what actually
+  -- gets persisted below AND for the changed_fields audit diff - never
+  -- computed from the raw incoming params, which would let a null
+  -- parameter (silently preserving the old value) still log a false
+  -- before/after diff against something that never actually changed. If
+  -- staff ever need to intentionally clear a nullable field, that needs an
+  -- explicit distinct clear mechanism in a later phase - null is not
+  -- overloaded to mean that here.
+  v_new_label := coalesce(p_label, v_old.label);
+  v_new_placement := coalesce(p_placement, v_old.placement);
+  v_new_production_method := coalesce(p_production_method, v_old.production_method);
+  v_new_production_colour := coalesce(p_production_colour, v_old.production_colour);
+  v_new_specification := coalesce(p_specification, v_old.specification);
+  v_new_production_instructions := coalesce(p_production_instructions, v_old.production_instructions);
+  v_new_sell_price := coalesce(p_sell_price, v_old.sell_price);
+  v_new_billing_mode := coalesce(p_billing_mode, v_old.billing_mode);
+
   v_changed_fields := jsonb_strip_nulls(jsonb_build_object(
-    'label', case when p_label is distinct from v_old.label then jsonb_build_object('before', v_old.label, 'after', p_label) end,
-    'placement', case when p_placement is distinct from v_old.placement then jsonb_build_object('before', v_old.placement, 'after', p_placement) end,
-    'production_method', case when p_production_method is distinct from v_old.production_method then jsonb_build_object('before', v_old.production_method, 'after', p_production_method) end,
-    'production_colour', case when p_production_colour is distinct from v_old.production_colour then jsonb_build_object('before', v_old.production_colour, 'after', p_production_colour) end,
-    'specification', case when p_specification is distinct from v_old.specification then jsonb_build_object('before', v_old.specification, 'after', p_specification) end,
-    'production_instructions', case when p_production_instructions is distinct from v_old.production_instructions then jsonb_build_object('before', v_old.production_instructions, 'after', p_production_instructions) end,
-    'sell_price', case when p_sell_price is distinct from v_old.sell_price then jsonb_build_object('before', v_old.sell_price, 'after', p_sell_price) end,
-    'billing_mode', case when p_billing_mode is distinct from v_old.billing_mode then jsonb_build_object('before', v_old.billing_mode, 'after', p_billing_mode) end
+    'label', case when v_new_label is distinct from v_old.label then jsonb_build_object('before', v_old.label, 'after', v_new_label) end,
+    'placement', case when v_new_placement is distinct from v_old.placement then jsonb_build_object('before', v_old.placement, 'after', v_new_placement) end,
+    'production_method', case when v_new_production_method is distinct from v_old.production_method then jsonb_build_object('before', v_old.production_method, 'after', v_new_production_method) end,
+    'production_colour', case when v_new_production_colour is distinct from v_old.production_colour then jsonb_build_object('before', v_old.production_colour, 'after', v_new_production_colour) end,
+    'specification', case when v_new_specification is distinct from v_old.specification then jsonb_build_object('before', v_old.specification, 'after', v_new_specification) end,
+    'production_instructions', case when v_new_production_instructions is distinct from v_old.production_instructions then jsonb_build_object('before', v_old.production_instructions, 'after', v_new_production_instructions) end,
+    'sell_price', case when v_new_sell_price is distinct from v_old.sell_price then jsonb_build_object('before', v_old.sell_price, 'after', v_new_sell_price) end,
+    'billing_mode', case when v_new_billing_mode is distinct from v_old.billing_mode then jsonb_build_object('before', v_old.billing_mode, 'after', v_new_billing_mode) end
   ));
 
   -- ── 7. Three-step ordering, deliberately: (a) insert the new row
@@ -186,14 +214,14 @@ begin
   ) values (
     gen_random_uuid(), v_old.tenant_id, v_old.order_id, v_old.line_id, v_old.client_product_id, v_old.source_product_component_id,
     v_old.component_type,
-    coalesce(p_label, v_old.label),
-    coalesce(p_production_method, v_old.production_method),
-    coalesce(p_placement, v_old.placement),
-    coalesce(p_production_colour, v_old.production_colour),
-    coalesce(p_specification, v_old.specification),
-    coalesce(p_production_instructions, v_old.production_instructions),
-    coalesce(p_sell_price, v_old.sell_price),
-    coalesce(p_billing_mode, v_old.billing_mode),
+    v_new_label,
+    v_new_production_method,
+    v_new_placement,
+    v_new_production_colour,
+    v_new_specification,
+    v_new_production_instructions,
+    v_new_sell_price,
+    v_new_billing_mode,
     v_old.quantity_per_unit, v_old.sort_order,
     v_old.inventory_product_id, v_old.resolved_inventory_variant_id, v_old.artwork_revision_ids, v_old.notes,
     v_actor_uid, now(), now(),
