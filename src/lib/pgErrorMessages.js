@@ -17,6 +17,18 @@ export function toStaffMessage(rawMessage) {
   const constraintHit = CONSTRAINT_MESSAGES.find((c) => c.match.test(message));
   if (constraintHit) return constraintHit.message;
 
+  // Phase 1F-B - a raw row-level-security / grant rejection is never
+  // staff-readable ("new row violates row-level security policy for table
+  // ..."). Production-configuration writes (product_components,
+  // client_product_garment_variants / _treatments / _variant_treatments)
+  // are gated by inventory_can_review_tenant() - owner/admin tenant role -
+  // which is stricter than ordinary staff access. The capability-based
+  // permission system is Phase 1G; until then, translate the rejection
+  // into one clear sentence rather than surfacing Postgres.
+  if (/row-level security policy|permission denied for (table|relation|schema|function)/i.test(message)) {
+    return "You don't have permission to make this production change. Ask a workspace owner or admin.";
+  }
+
   // RPC exceptions are formatted as "SOME_CODE: human text" - the human
   // text alone is already what staff should see.
   const codeMatch = message.match(/^[A-Z_]+:\s*(.+)$/);
