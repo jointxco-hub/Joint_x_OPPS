@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function readSource() {
-  const raw = await readFile(new URL("../supabase/migrations/20260829120000_xos_2_7ab_status_fields.sql", import.meta.url), "utf8");
+  const raw = await readFile(new URL("../supabase/migrations/20260829120001_xos_2_7ab_status_fields.sql", import.meta.url), "utf8");
   return raw.replace(/\r\n/g, "\n");
 }
 
