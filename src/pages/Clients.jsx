@@ -204,7 +204,7 @@ export default function Clients() {
     const primaryOrdersByClientKey = new Map();
 
     orders
-      .filter((order) => !order.is_archived && orderPrimaryClientKey(order))
+      .filter((order) => !order.is_archived && !order.excluded_from_reports && orderPrimaryClientKey(order))
       .forEach((order) => {
         const primaryKey = orderPrimaryClientKey(order);
         const primaryGroup = primaryOrdersByClientKey.get(primaryKey) || [];

@@ -2478,6 +2478,27 @@ export const dataClient = {
     async updateVisibleClient(id, payload = {}) {
       return runStaffUpdate('Client', id, payload);
     },
+    // XOS 2.7C - explicit, staff-only QA/test order classification.
+    // Deliberately NOT exposed via Order.update()/the generic tenant
+    // write path: ordinary tenant members can already UPDATE arbitrary
+    // columns on their own tenant's orders (see the Phase 0 finding in
+    // the 20260829130000_xos_2_7c_test_order_hygiene.sql migration
+    // header), so classification goes through this dedicated
+    // set_order_test_classification RPC, which is gated by
+    // is_opps_staff() specifically - not the ordinary
+    // can_access_tenant() UPDATE policy on orders. Pass only the field(s)
+    // being changed; is_test and excluded_from_reports are independent -
+    // omitting one leaves it untouched.
+    async setOrderTestClassification(orderId, { isTest, excludedFromReports } = {}) {
+      if (!supabase || !orderId) return null;
+      const { data, error } = await supabase.rpc('set_order_test_classification', {
+        p_order_id: orderId,
+        p_is_test: isTest === undefined ? null : isTest,
+        p_excluded_from_reports: excludedFromReports === undefined ? null : excludedFromReports,
+      });
+      if (error) throw error;
+      return data || null;
+    },
   },
   auth: {
     async me() {

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { restoreEntity } from "@/utils/archiveEntity";
+import OrderClassificationBadge from "@/components/orders/OrderClassificationBadge";
 
 const TABS = [
   { key: "orders",    label: "Orders",    icon: Package,      entity: "Order" },
@@ -167,6 +168,7 @@ export default function ArchivePage() {
                     {activeTab === "orders" && item.status && (
                       <Badge variant="outline" className="text-xs">{item.status}</Badge>
                     )}
+                    {activeTab === "orders" && <OrderClassificationBadge order={item} />}
                     {activeTab === "orders" && item.total_amount && (
                       <span className="text-xs text-muted-foreground">R{Number(item.total_amount).toLocaleString()}</span>
                     )}

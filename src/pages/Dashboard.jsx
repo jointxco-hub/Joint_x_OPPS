@@ -40,7 +40,7 @@ export default function Dashboard() {
 
   const { data: orders = [] } = useQuery({
     queryKey: ["orders-dash"],
-    queryFn: () => ents.Order.filter({ is_archived: false }, "-created_date", 100),
+    queryFn: () => ents.Order.filter({ is_archived: false, excluded_from_reports: false }, "-created_date", 100),
   });
 
   const { data: goals = [] } = useQuery({
