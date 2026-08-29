@@ -196,11 +196,40 @@ test("XOSProducts: all four availability-tone badges (product list, product deta
 // Tenant provisioning template
 // ─────────────────────────────────────────────────────────────────────
 
-test("provisioning template: order_prefix is required, validated to 2-8 uppercase letters/numbers before any insert, and flows into the new tenant's settings", async () => {
+test("provisioning template: order_prefix defaults to null (a deliberately invalid placeholder), not a literal that happens to satisfy its own validation regex", async () => {
   const source = await readSource(PROVISIONING_TEMPLATE);
-  assert.ok(source.includes("v_order_prefix       text := 'REPLACE';"));
+  assert.ok(source.includes("v_order_prefix       text := null; -- REQUIRED: 2-8 uppercase letters/numbers, e.g. GSB, KM, BARBZ"));
+  // The original default, 'REPLACE', was itself 7 uppercase letters - it
+  // silently satisfied ^[A-Z0-9]{2,8}$, so an operator who forgot to
+  // configure it would have successfully provisioned a tenant whose
+  // orders became REPLACE-YYYY-NNNNNN. Guard against that literal ever
+  // coming back as the default.
+  assert.ok(!/v_order_prefix\s+text := 'REPLACE'/.test(source));
+});
+
+test("provisioning template: order_prefix validation - the null default (and other non-conforming values) fail; GSB/KM/BARBZ-style prefixes pass - mirrors the template's exact normalize-then-regex logic", async () => {
+  const source = await readSource(PROVISIONING_TEMPLATE);
   assert.ok(source.includes("v_order_prefix := upper(trim(coalesce(v_order_prefix, '')));"));
   assert.ok(source.includes("if v_order_prefix !~ '^[A-Z0-9]{2,8}$' then"));
+
+  // Mirrors coalesce(v_order_prefix, '') -> upper(trim(...)) -> regex test,
+  // exactly as the template's own PL/pgSQL does it.
+  const normalizeAndValidate = (raw) => {
+    const normalized = String(raw ?? "").trim().toUpperCase();
+    return { normalized, valid: /^[A-Z0-9]{2,8}$/.test(normalized) };
+  };
+
+  assert.equal(normalizeAndValidate(null).valid, false, "the new null default must fail validation");
+  assert.equal(normalizeAndValidate("").valid, false);
+  assert.equal(normalizeAndValidate("REPLACE").valid, true, "'REPLACE' itself still structurally satisfies the regex - this is exactly why it could never be a safe default, only ever a value an operator deliberately typed");
+  for (const good of ["GSB", "KM", "BARBZ"]) {
+    assert.equal(normalizeAndValidate(good).valid, true, `${good} must remain a valid prefix`);
+  }
+  assert.equal(normalizeAndValidate("gsb").normalized, "GSB", "lowercase input must still normalize and validate correctly");
+});
+
+test("provisioning template: order_prefix validation still runs before any tenant INSERT, and the validated value still flows into the new tenant's settings", async () => {
+  const source = await readSource(PROVISIONING_TEMPLATE);
   const validationIdx = source.indexOf("v_order_prefix := upper(trim(coalesce(v_order_prefix, '')));");
   const insertIdx = source.indexOf("insert into public.tenants (slug, name, status, settings)");
   assert.ok(validationIdx !== -1 && insertIdx !== -1 && validationIdx < insertIdx, "validation must run before the tenant is ever inserted");

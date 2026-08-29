@@ -37,7 +37,7 @@ declare
   v_client_name        text := 'REPLACE_ME client contact name';
   v_owner_auth_user_id uuid := null; -- must already exist in auth.users; create the Supabase Auth account first
   v_owner_role         text := 'owner';
-  v_order_prefix       text := 'REPLACE'; -- 2-8 uppercase letters/numbers, e.g. GSB, KM, BARBZ
+  v_order_prefix       text := null; -- REQUIRED: 2-8 uppercase letters/numbers, e.g. GSB, KM, BARBZ
   -- ==============================================================
 
   v_tenant_id uuid;
