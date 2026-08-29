@@ -15,6 +15,7 @@ import SignedFileLink from "@/components/common/SignedFileLink";
 import { listInvoiceItemTemplates, listInvoiceItemVersions } from "@/api/invoices";
 import ClientInvoiceItemHistory from "@/features/invoices/ClientInvoiceItemHistory";
 import { CommerceProductsSection } from "@/components/commerce/CommerceProductsSection";
+import { ClientProductsSection } from "@/components/clients/ClientProductsSection";
 
 const ACTIVE_ORDER_STATUSES = new Set(['confirmed', 'in_production', 'ready', 'shipped']);
 const DONE_ORDER_STATUSES = new Set(['delivered']);
@@ -569,6 +570,8 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
             <p className="text-xl font-semibold">{client.completed_orders || 0}</p>
           </div>
         </div>
+
+        {clientId && <ClientProductsSection clientId={clientId} />}
 
         {clientId && <CommerceProductsSection clientId={clientId} />}
 
