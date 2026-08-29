@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ImageOff, Search } from 'lucide-react';
 import { useXosOrderDetail, useXosOrders } from '@/lib/useXosData';
-import { getClientSafeOrderStatus, getOrderStageDetail } from '@/lib/xosOrderStatus';
+import { getClientPaymentStatus, getClientSafeOrderStatus, getOrderStageDetail } from '@/lib/xosOrderStatus';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EmptyState, ErrorState, ListSkeleton, PageHeader, StatusBadge, formatCurrency, formatDate } from './xosUi';
@@ -88,6 +88,7 @@ function OrderItemsSection({ hostname, orderNumber, open }) {
 
 function OrderDetailSheet({ order, hostname, onClose }) {
   const clientStatus = order ? getClientSafeOrderStatus(order) : null;
+  const paymentStatus = order ? getClientPaymentStatus(order) : null;
   const open = Boolean(order);
   return (
     <Sheet open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
@@ -99,7 +100,16 @@ function OrderDetailSheet({ order, hostname, onClose }) {
             </SheetHeader>
             <div className="mt-5 space-y-5">
               <div>
-                <StatusBadge label={clientStatus.label} tone={clientStatus.tone} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge label={clientStatus.label} tone={clientStatus.tone} />
+                  {paymentStatus && (
+                    <StatusBadge
+                      label={paymentStatus.label}
+                      tone={paymentStatus.tone}
+                      className="px-2 py-0 text-[11px] font-normal opacity-80"
+                    />
+                  )}
+                </div>
                 <p className="mt-2 text-sm leading-6 text-zinc-600">{getOrderStageDetail(order)}</p>
               </div>
 
@@ -229,6 +239,7 @@ export default function XOSOrders({ gate }) {
               <TableBody>
                 {filtered.map((order) => {
                   const clientStatus = getClientSafeOrderStatus(order);
+                  const paymentStatus = getClientPaymentStatus(order);
                   return (
                     <TableRow
                       key={order.order_number}
@@ -240,7 +251,18 @@ export default function XOSOrders({ gate }) {
                       <TableCell className="text-zinc-600">{formatDate(order.created_at)}</TableCell>
                       <TableCell className="text-zinc-600">{order.item_count}</TableCell>
                       <TableCell className="text-zinc-600">{formatCurrency(order.total_amount)}</TableCell>
-                      <TableCell><StatusBadge label={clientStatus.label} tone={clientStatus.tone} /></TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusBadge label={clientStatus.label} tone={clientStatus.tone} />
+                          {paymentStatus && (
+                            <StatusBadge
+                              label={paymentStatus.label}
+                              tone={paymentStatus.tone}
+                              className="px-2 py-0 text-[11px] font-normal opacity-80"
+                            />
+                          )}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-zinc-500">{order.tracking_reference || '—'}</TableCell>
                     </TableRow>
                   );
@@ -253,6 +275,7 @@ export default function XOSOrders({ gate }) {
           <div className="space-y-3 px-4 py-4 sm:px-6 md:hidden">
             {filtered.map((order) => {
               const clientStatus = getClientSafeOrderStatus(order);
+              const paymentStatus = getClientPaymentStatus(order);
               return (
                 <button
                   key={order.order_number}
@@ -265,7 +288,16 @@ export default function XOSOrders({ gate }) {
                       <p className="truncate text-sm font-semibold text-zinc-950">{order.order_number}</p>
                       <p className="mt-0.5 truncate text-xs text-zinc-500">{order.client_name}</p>
                     </div>
-                    <StatusBadge label={clientStatus.label} tone={clientStatus.tone} />
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <StatusBadge label={clientStatus.label} tone={clientStatus.tone} />
+                      {paymentStatus && (
+                        <StatusBadge
+                          label={paymentStatus.label}
+                          tone={paymentStatus.tone}
+                          className="px-2 py-0 text-[11px] font-normal opacity-80"
+                        />
+                      )}
+                    </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs text-zinc-500">
                     <span>{formatDate(order.created_at)}</span>
