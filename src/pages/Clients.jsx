@@ -63,13 +63,25 @@ function getOrderDate(order) {
   return Number.isFinite(time) ? time : 0;
 }
 
+// `orders` here is the full VISIBLE set for this client (is_archived
+// only) - excluded_from_reports rows stay in it, and in the returned
+// `orders`/`total_orders`, so a staff member opening this client's
+// account can still see and un-exclude a proof order (Blocker 2: an
+// excluded order is a reporting/operations concern, not a visibility
+// one). Only the OPERATIONAL figures - revenue, active/completed/
+// cancelled counts, and the derived lifecycle `status` badge - are
+// computed off a separately-filtered `operationalOrders` subset, so a
+// client whose only orders are excluded QA/test rows doesn't read as a
+// real "active" business relationship or contribute to their revenue.
 function buildStats(orders) {
-  const totalRevenue = orders.reduce((sum, order) => sum + orderAmount(order), 0);
-  const activeOrders = orders.filter((order) => ACTIVE_ORDER_STATUSES.has(order.status)).length;
-  const completedOrders = orders.filter((order) => DONE_ORDER_STATUSES.has(order.status)).length;
-  const cancelledOrders = orders.filter((order) => order.status === 'cancelled').length;
+  const operationalOrders = orders.filter((order) => !order.excluded_from_reports);
+
+  const totalRevenue = operationalOrders.reduce((sum, order) => sum + orderAmount(order), 0);
+  const activeOrders = operationalOrders.filter((order) => ACTIVE_ORDER_STATUSES.has(order.status)).length;
+  const completedOrders = operationalOrders.filter((order) => DONE_ORDER_STATUSES.has(order.status)).length;
+  const cancelledOrders = operationalOrders.filter((order) => order.status === 'cancelled').length;
   const lastOrderAt = orders.reduce((latest, order) => Math.max(latest, getOrderDate(order)), 0);
-  const hasOnlyClosedOrders = orders.length > 0 && orders.every((order) => CLOSED_ORDER_STATUSES.has(order.status));
+  const hasOnlyClosedOrders = operationalOrders.length > 0 && operationalOrders.every((order) => CLOSED_ORDER_STATUSES.has(order.status));
   const daysSinceLastOrder = lastOrderAt ? (Date.now() - lastOrderAt) / 86400000 : Infinity;
 
   let status = 'lead';
@@ -204,7 +216,10 @@ export default function Clients() {
     const primaryOrdersByClientKey = new Map();
 
     orders
-      .filter((order) => !order.is_archived && !order.excluded_from_reports && orderPrimaryClientKey(order))
+      // Visibility-level only (is_archived) - excluded_from_reports rows
+      // stay linked so staff can still find and inspect them under this
+      // client; buildStats() below is where the operational split happens.
+      .filter((order) => !order.is_archived && orderPrimaryClientKey(order))
       .forEach((order) => {
         const primaryKey = orderPrimaryClientKey(order);
         const primaryGroup = primaryOrdersByClientKey.get(primaryKey) || [];

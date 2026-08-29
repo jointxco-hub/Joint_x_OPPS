@@ -79,9 +79,31 @@ test("Dashboard.jsx: the orders query itself is fetched with excluded_from_repor
   assert.ok(source.includes('ents.Order.filter({ is_archived: false, excluded_from_reports: false }, "-created_date", 100)'));
 });
 
-test("Clients.jsx: per-client revenue/order-count rollups (buildStats) exclude excluded_from_reports orders from the source list before aggregating", async () => {
+test("Clients.jsx: the per-client linked-orders source stays visibility-only (is_archived) - excluded_from_reports rows remain linked and visible under the client, per Blocker 2 (visible != operational)", async () => {
   const source = await readSource("src/pages/Clients.jsx");
-  assert.ok(source.includes('.filter((order) => !order.is_archived && !order.excluded_from_reports && orderPrimaryClientKey(order))'));
+  assert.ok(source.includes('.filter((order) => !order.is_archived && orderPrimaryClientKey(order))'));
+  // Must NOT be over-filtered at the source - that would hide excluded
+  // orders from client.orders (the literal list rendered in
+  // ClientAccountDialog for staff to inspect), not just from stats.
+  const linkStart = source.indexOf("const clientsWithStats = useMemo(");
+  const linkFilterLine = source.slice(linkStart, source.indexOf("orderPrimaryClientKey(order))", linkStart) + 40);
+  assert.ok(!linkFilterLine.includes("!order.excluded_from_reports"));
+});
+
+test("Clients.jsx: buildStats() computes operational figures (revenue, active/completed/cancelled counts, lifecycle status) off a separately-filtered subset, while `orders`/`total_orders` stay the full visible set", async () => {
+  const source = await readSource("src/pages/Clients.jsx");
+  const start = source.indexOf("function buildStats(orders) {");
+  const body = source.slice(start, source.indexOf("\n}\n", start));
+  assert.ok(body.includes("const operationalOrders = orders.filter((order) => !order.excluded_from_reports);"));
+  assert.ok(body.includes("operationalOrders.reduce((sum, order) => sum + orderAmount(order), 0)"));
+  assert.ok(body.includes("operationalOrders.filter((order) => ACTIVE_ORDER_STATUSES.has(order.status))"));
+  assert.ok(body.includes("operationalOrders.filter((order) => DONE_ORDER_STATUSES.has(order.status))"));
+  assert.ok(body.includes("operationalOrders.filter((order) => order.status === 'cancelled')"));
+  // total_orders/orders themselves are NOT derived from operationalOrders -
+  // they stay the full, visible set (client.orders must still show an
+  // excluded proof order for staff to find and un-exclude it).
+  assert.ok(body.includes("total_orders: orders.length,"));
+  assert.ok(body.includes("orders,\n    total_orders:"));
 });
 
 test("dataClient.js: Order.serialize() does NOT whitelist is_test or excluded_from_reports - the generic Order.update() path can never write these columns, by construction", async () => {

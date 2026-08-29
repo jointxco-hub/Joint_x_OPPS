@@ -65,6 +65,64 @@ test("schema: no known real/proof order number is referenced in executable SQL (
   assert.ok(!/XL-2026-647263|XL-2026-268006|ORD-MQNGCL25/.test(sql));
 });
 
+// ── Column-level backstop trigger (Blocker 1) ───────────────────────
+//
+// Correction discovered while building the disposable proof for this
+// trigger: xos1_require_opps_staff on public.orders is a RESTRICTIVE
+// policy (pg_policy.polpermissive = false), not permissive as the
+// original Phase 0 finding assumed - a restrictive policy is AND-ed
+// onto the permissive result, so RLS already requires is_opps_staff()
+// for ANY authenticated access to orders today, not just classification
+// writes. An ordinary non-staff tenant member cannot reach an order row
+// via RLS at all (live-verified: 0 rows visible/updatable for any
+// column). This trigger's real value is therefore protecting these two
+// columns from a write path that bypasses RLS entirely (a service_role
+// connection forwarding a non-staff end user's JWT for auth.uid()
+// purposes) and from any future change to the RLS policies above -
+// independent of whichever write path reaches the table.
+// protect_order_test_classification_columns() enforces the same
+// is_opps_staff() gate at the column level, unconditionally.
+
+test("trigger: protect_order_test_classification_columns fires only on UPDATE OF is_test/excluded_from_reports, and only blocks when one of them actually changes value", async () => {
+  const source = await readSource();
+  assert.ok(source.includes("before update of is_test, excluded_from_reports on public.orders"));
+  const start = source.indexOf("create or replace function public.protect_order_test_classification_columns");
+  const body = source.slice(start, source.indexOf("$function$;", start));
+  assert.ok(body.includes("new.is_test is distinct from old.is_test"));
+  assert.ok(body.includes("new.excluded_from_reports is distinct from old.excluded_from_reports"));
+});
+
+test("trigger: blocks an authenticated non-staff caller (auth.uid() present, is_opps_staff() false), allows staff, and allows a trusted context with no end-user auth.uid()", async () => {
+  const source = await readSource();
+  const start = source.indexOf("create or replace function public.protect_order_test_classification_columns");
+  const body = source.slice(start, source.indexOf("$function$;", start));
+  assert.ok(body.includes("and auth.uid() is not null"), "must not block a service_role/migration context with no end-user JWT");
+  assert.ok(body.includes("and not public.is_opps_staff()"), "must allow when is_opps_staff() is true");
+  assert.ok(body.includes("raise exception 'ORDER_CLASSIFICATION_PROTECTED"));
+  // Never leaks which field changed or its value in the error text.
+  assert.ok(!/raise exception '[^']*(true|false)/i.test(body));
+});
+
+test("trigger: never writes to opps_activity_events itself - the RPC remains the sole audit writer, so a legitimate staff change is never double-logged", async () => {
+  const source = await readSource();
+  const start = source.indexOf("create or replace function public.protect_order_test_classification_columns");
+  const body = source.slice(start, source.indexOf("$function$;", start));
+  assert.ok(!body.includes("opps_activity_events"));
+  const insertCount = (source.match(/insert into public\.opps_activity_events/g) || []).length;
+  assert.equal(insertCount, 1, "still exactly one INSERT into opps_activity_events in the whole file - inside the RPC only");
+});
+
+test("trigger: is defined before (and therefore protects) the classification RPC's own UPDATE statement, and is SECURITY DEFINER matching the RPC's own posture", async () => {
+  const source = await readSource();
+  const triggerFnIndex = source.indexOf("create or replace function public.protect_order_test_classification_columns");
+  const rpcFnIndex = source.indexOf("create or replace function public.set_order_test_classification");
+  const createTriggerIndex = source.indexOf("create trigger trg_orders_protect_test_classification");
+  assert.ok(triggerFnIndex > -1 && triggerFnIndex < rpcFnIndex, "trigger function must be defined before the RPC that will trigger it");
+  assert.ok(createTriggerIndex > triggerFnIndex && createTriggerIndex < rpcFnIndex, "CREATE TRIGGER must be attached before the RPC runs its own UPDATE");
+  const body = source.slice(triggerFnIndex, source.indexOf("$function$;", triggerFnIndex));
+  assert.ok(body.includes("security definer"));
+});
+
 // ── Mutation / control RPC ─────────────────────────────────────────
 
 test("RPC: set_order_test_classification is SECURITY DEFINER, resolves a real actor, and rejects when the caller is not is_opps_staff()", async () => {

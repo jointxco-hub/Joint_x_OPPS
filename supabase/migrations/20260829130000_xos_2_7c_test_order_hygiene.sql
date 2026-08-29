@@ -23,34 +23,110 @@
 -- later, separate staff decision.
 --
 -- Phase 0 write-authorization preflight (checked live before writing
--- this): public.orders already has TWO OR'd RLS UPDATE policies for
--- `authenticated` - tenant_manage_orders (is_app_admin() OR
--- can_access_tenant(tenant_id)) and xos1_require_opps_staff
--- (is_opps_staff()). can_access_tenant() is satisfied by ANY member of
--- that tenant, not staff-only - an ordinary GSB/client tenant member can
--- already UPDATE arbitrary columns on their own tenant's orders via the
--- existing policy. Exposing is_test/excluded_from_reports through the
--- generic order-update path would let a tenant customer hide their own
--- order from reporting. This migration therefore does NOT rely on that
--- path: the two columns are additive (no RLS/grant change - reads
--- follow the existing SELECT policies unchanged, appropriate since
--- reading these flags isn't more sensitive than reading any other order
--- field already visible to a tenant member), and the ONLY write path is
--- the new set_order_test_classification() RPC below, guarded by
--- is_opps_staff() specifically (not can_access_tenant()) - so only
--- Joint X internal staff can ever change classification, regardless of
--- who owns the order's tenant. The frontend additionally never sends
--- these two fields through the generic Order.update() call (see
--- src/api/dataClient.js's Order.serialize - deliberately does not
--- whitelist them), so there is no code path that could accidentally
--- route a classification change through the ordinary tenant-writable
--- update RPC/table path even by mistake.
+-- this, and re-verified more deeply while building the trigger proof
+-- below - see the correction note): public.orders has TWO RLS UPDATE
+-- policies for `authenticated` - tenant_manage_orders (PERMISSIVE:
+-- is_app_admin() OR can_access_tenant(tenant_id)) and
+-- xos1_require_opps_staff (RESTRICTIVE: is_opps_staff()). A RESTRICTIVE
+-- policy is AND-ed onto the result of the permissive set, not OR-ed -
+-- so the actual combined rule for ANY authenticated access to orders,
+-- for every command RLS covers, is
+--   (is_app_admin() OR can_access_tenant(tenant_id)) AND is_opps_staff()
+-- confirmed live via pg_policy.polpermissive (initially missed - the
+-- first pass at this finding only read polqual/polcmd, not
+-- polpermissive, and wrongly assumed both policies were OR-ed). In
+-- practice this means an ordinary, non-staff tenant member cannot reach
+-- ANY order row via RLS today, let alone update one - is_opps_staff()
+-- is already required for all direct table access, not just
+-- classification. Live-verified: an authenticated non-staff tenant
+-- owner sees 0 orders (any column, any tenant, including their own)
+-- through RLS; the same identity going through set_order_test_
+-- classification() gets ORDER_CLASSIFICATION_ACTOR_UNRESOLVED or
+-- ORDER_CLASSIFICATION_FORBIDDEN as appropriate, never a silent write.
+--
+-- That does NOT make the trigger below redundant. RLS only governs
+-- requests that go through PostgREST as `authenticated` - it does not
+-- apply to any connection using service_role (which bypasses RLS by
+-- design) or the migration/superuser role. A backend job or edge
+-- function using a service_role client while still forwarding an end
+-- user's JWT for auth.uid()/auth.jwt() purposes - a real, existing
+-- pattern in this codebase - would bypass RLS entirely but still carry
+-- a non-staff auth.uid(). The trigger (protect_order_test_
+-- classification_columns, below) is a column-level backstop against
+-- exactly that case, and against any future loosening of the RLS
+-- policies above without this column needing to be revisited
+-- separately - proven live (see the disposable proof) by setting only
+-- the JWT-claims GUC, without any role switch, and confirming a
+-- non-staff identity is still rejected while a staff identity and a
+-- no-JWT trusted context both still succeed.
+--
+-- The intended write path is the new set_order_test_classification()
+-- RPC below, guarded by is_opps_staff() specifically. The trigger only
+-- inspects is_test/excluded_from_reports and only blocks when they
+-- actually change; every other order field remains governed solely by
+-- the existing RLS UPDATE policies, unchanged. The two columns
+-- otherwise stay additive (no RLS/grant change - reads follow the
+-- existing SELECT policies unchanged, appropriate since reading these
+-- flags isn't more sensitive than reading any other order field). The
+-- frontend additionally never sends these two fields through the
+-- generic Order.update() call (see src/api/dataClient.js's Order.
+-- serialize - deliberately does not whitelist them).
 
 begin;
 
 alter table public.orders
   add column if not exists is_test boolean not null default false,
   add column if not exists excluded_from_reports boolean not null default false;
+
+-- Column-level backstop (see the header comment above for the full
+-- corrected finding): RLS on public.orders already requires
+-- is_opps_staff() for ANY authenticated access, so this trigger's real
+-- purpose is protecting the two classification columns from any write
+-- path that bypasses RLS while still carrying a non-staff auth.uid()
+-- (a service_role connection forwarding an end user's JWT) and from any
+-- future change to the RLS policies above. Mirrors the existing
+-- enforce_approved_admin_role_change() trigger's shape (BEFORE UPDATE,
+-- `new.x is distinct from old.x`, plain raise exception) - the
+-- established pattern in this repo for protecting a specific column
+-- from an otherwise-broader UPDATE grant.
+--
+-- auth.uid() is null for any context with no end-user JWT (a
+-- service_role/postgres connection - migrations, backend jobs) - that
+-- case is deliberately let through unconditionally, matching existing
+-- project convention for trusted maintenance contexts. Once auth.uid()
+-- IS present, the only distinction that matters is is_opps_staff(): true
+-- passes (covers both the RPC's own internal UPDATE, called only after
+-- it has already verified is_opps_staff() itself, and any other
+-- staff-driven path), false is rejected with a generic error - never a
+-- hint that these two columns specifically exist or what their current
+-- values are. The trigger only inspects is_test/excluded_from_reports
+-- and only blocks when one of them actually changes value; it never
+-- touches or interferes with any other order field, and it never writes
+-- to opps_activity_events itself - the RPC remains the sole place that
+-- change is audited, so a legitimate staff change is never double-logged.
+create or replace function public.protect_order_test_classification_columns()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'pg_catalog', 'public'
+as $function$
+begin
+  if (new.is_test is distinct from old.is_test
+      or new.excluded_from_reports is distinct from old.excluded_from_reports)
+     and auth.uid() is not null
+     and not public.is_opps_staff()
+  then
+    raise exception 'ORDER_CLASSIFICATION_PROTECTED: is_test and excluded_from_reports can only be changed by OPPS staff, via set_order_test_classification()';
+  end if;
+  return new;
+end;
+$function$;
+
+drop trigger if exists trg_orders_protect_test_classification on public.orders;
+create trigger trg_orders_protect_test_classification
+  before update of is_test, excluded_from_reports on public.orders
+  for each row
+  execute function public.protect_order_test_classification_columns();
 
 create or replace function public.set_order_test_classification(
   p_order_id uuid,
