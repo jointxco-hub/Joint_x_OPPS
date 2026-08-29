@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
+import TenantBadge from "@/components/orders/TenantBadge";
+import { getTenantDisplayMeta } from "@/lib/tenantDisplay";
+import { getClientPaymentStatus, getClientSafeOrderStatus } from "@/lib/xosOrderStatus";
 import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
@@ -195,7 +198,7 @@ class DrawerSectionBoundary extends React.Component {
   }
 }
 
-export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate, onArchive }) {
+export default function OrderDrawer({ order, couriers, stages, tenantsById, onClose, onUpdate, onArchive }) {
   const [tab, setTab] = useState("details");
   const [editingField, setEditingField] = useState(null);
   const [fieldValue, setFieldValue] = useState("");
@@ -658,10 +661,41 @@ export default function OrderDrawer({ order, couriers, stages, onClose, onUpdate
                   {statusConfig[order.status]?.label || order.status}
                 </span>
               </div>
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <TenantBadge order={order} tenantsById={tenantsById} />
+                <span className="font-medium text-foreground">{getTenantDisplayMeta(order, tenantsById).name}</span>
+              </p>
               <p className="text-xs text-muted-foreground mb-1.5">
                 #{order.order_number || order.id?.slice(0,8)}
                 {displayWhatsappName ? <span> / WhatsApp: {displayWhatsappName}</span> : null}
               </p>
+              {(() => {
+                // Read-only "what the client sees" preview. Reuses the
+                // exact same xosOrderStatus helpers XOS itself calls -
+                // never a second mapper. OPPS order rows don't carry a
+                // precomputed `stage` field (that coalesce happens inside
+                // the XOS RPCs), so it's replicated here as a single
+                // expression, byte-identical to both
+                // get_xos_orders_for_host and get_xos_order_detail_for_host:
+                // coalesce(production_detail_stage, pipeline_stage, status, 'confirmed').
+                const clientPreviewOrder = {
+                  status: order.status,
+                  stage: order.production_detail_stage || order.pipeline_stage || order.status || "confirmed",
+                  fulfillment_type: order.fulfillment_type,
+                  payment_status: order.payment_status,
+                };
+                const clientStatus = getClientSafeOrderStatus(clientPreviewOrder);
+                const paymentStatus = getClientPaymentStatus(clientPreviewOrder);
+                return (
+                  <p className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="font-semibold uppercase tracking-wide text-muted-foreground/70">Client view</span>
+                    <span className="rounded-full bg-secondary px-2 py-0.5 font-medium text-foreground">{clientStatus.label}</span>
+                    {paymentStatus && (
+                      <span className="rounded-full bg-secondary/70 px-2 py-0.5 font-medium text-muted-foreground">{paymentStatus.label}</span>
+                    )}
+                  </p>
+                );
+              })()}
               {headerExpanded ? (
                 <DrawerSectionBoundary label="Order tags" resetKey={`${order.id}-tags`}>
                   <OrderTagBadges order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }} />

@@ -86,6 +86,16 @@ const PRIMARY_TONE = {
   on_hold: 'destructive',
 };
 
+// Fulfillment-aware wording for the "ready" key only - every other label
+// is untouched. Falls back to the plain "Ready" label whenever
+// fulfillment_type is missing or not one of these two real values
+// (orders.fulfillment_type: 'collection' | 'courier', confirmed live) -
+// never guessed, never left blank.
+const READY_LABEL_BY_FULFILLMENT = {
+  collection: 'Ready for collection',
+  courier: 'Ready for dispatch',
+};
+
 // The single client-safe badge shown on the order list/detail. Combines
 // status (the reliable, low-cardinality field) with stage (more granular,
 // used only to refine within a status or detect a hold condition).
@@ -109,7 +119,37 @@ export function getClientSafeOrderStatus(order) {
     key = 'confirmed';
   }
 
-  return { key, label: PRIMARY_LABELS[key], tone: PRIMARY_TONE[key] };
+  const label = key === 'ready'
+    ? READY_LABEL_BY_FULFILLMENT[order?.fulfillment_type] ?? PRIMARY_LABELS.ready
+    : PRIMARY_LABELS[key];
+
+  return { key, label, tone: PRIMARY_TONE[key] };
+}
+
+// Payment presentation is deliberately independent of order/production
+// progress above - a parallel concept, never merged into the primary
+// status key or label. Real live values only: 'paid', 'pending' (both
+// XOS RPCs now coalesce a missing payment_status to 'pending' before it
+// ever reaches here). Returns null for anything else so callers can
+// choose to render nothing rather than a guessed label.
+const PAYMENT_STATUS_LABELS = {
+  paid: 'Paid',
+  pending: 'Awaiting payment',
+};
+
+const PAYMENT_STATUS_TONE = {
+  paid: 'success',
+  pending: 'warning',
+};
+
+export function getClientPaymentStatus(order) {
+  const paymentStatus = order?.payment_status ?? '';
+  if (!PAYMENT_STATUS_LABELS[paymentStatus]) return null;
+  return {
+    key: paymentStatus,
+    label: PAYMENT_STATUS_LABELS[paymentStatus],
+    tone: PAYMENT_STATUS_TONE[paymentStatus],
+  };
 }
 
 // A secondary, more specific line ("what's happening right now"). Falls

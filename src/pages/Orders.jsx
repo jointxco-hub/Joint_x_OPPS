@@ -11,6 +11,8 @@ import OrderDrawer from "@/components/orders/OrderDrawer";
 import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
+import TenantBadge from "@/components/orders/TenantBadge";
+import { buildTenantsById } from "@/lib/tenantDisplay";
 import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
 import SecureImage from "@/components/common/SecureImage";
@@ -288,6 +290,16 @@ export default function Orders() {
     queryFn: () => dataClient.entities.User.list("name", 100),
     staleTime: 300_000,
   });
+
+  // Small, cacheable, cross-tenant lookup for the tenant-identity badge
+  // (XOS 2.7A) - fetched once here, not per row. Display only; the
+  // authoritative tenant for any order is always order.tenant_id, unchanged.
+  const { data: tenants = [] } = useQuery({
+    queryKey: ["tenants", "directory"],
+    queryFn: () => dataClient.entities.Tenant.list("name", 200),
+    staleTime: 300_000,
+  });
+  const tenantsById = useMemo(() => buildTenantsById(tenants), [tenants]);
 
   // Auto-open drawer when navigated from Dashboard with ?open=<id>
   useEffect(() => {
@@ -577,7 +589,10 @@ export default function Orders() {
                           <p className="mt-0.5 truncate text-xs font-medium text-primary">{aliasText}</p>
                         )}
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                          <span className="font-mono">{order.order_number}</span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <TenantBadge order={order} tenantsById={tenantsById} />
+                            <span className="font-mono">{order.order_number}</span>
+                          </span>
                           <span>{order.due_date ? format(new Date(order.due_date), "d MMM") : "No due date"}</span>
                           {order.total_amount ? <span className="font-semibold text-foreground">R{Number(order.total_amount).toLocaleString()}</span> : null}
                         </div>
@@ -622,7 +637,8 @@ export default function Orders() {
                           )}
                         </div>
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-2 flex items-center gap-1.5">
+                        <TenantBadge order={order} tenantsById={tenantsById} />
                         <p className="text-sm text-muted-foreground font-mono">{order.order_number}</p>
                       </div>
                       <div className="col-span-2">
@@ -661,6 +677,7 @@ export default function Orders() {
                       index={0}
                       onClick={() => openOrderDrawer(order)}
                       isException
+                      tenantsById={tenantsById}
                     />
                   ))}
                 </div>
@@ -701,6 +718,7 @@ export default function Orders() {
                                       index={index}
                                       onClick={() => openOrderDrawer(order)}
                                       isDragging={snapshot.isDragging}
+                                      tenantsById={tenantsById}
                                     />
                                   </div>
                                 )}
@@ -729,6 +747,7 @@ export default function Orders() {
               key={selectedOrder.id}
               order={selectedOrder}
               stages={stages}
+              tenantsById={tenantsById}
               onClose={closeOrderDrawer}
               onUpdate={handleDrawerUpdate}
               onArchive={handleArchiveSelectedOrder}
@@ -1310,7 +1329,7 @@ function getOrderProducts(order) {
   return [];
 }
 
-function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isException }) {
+function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isException, tenantsById }) {
   const sc = statusConfig[order.status] || { label: order.status, color: "bg-secondary text-muted-foreground" };
   const detailLabel = productionDetailLabel(order);
   const aliasText = contactAliasText(order);
@@ -1328,8 +1347,9 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
           : "border-border shadow-sm hover:shadow-md hover:border-primary/20"
       }`}
     >
-      <div className="mb-1">
+      <div className="mb-1 flex items-center gap-1">
         <SourceBadge source={order.source} />
+        <TenantBadge order={order} tenantsById={tenantsById} />
       </div>
       <p className="text-xs font-semibold text-foreground truncate mb-0.5">{order.display_name || order.client_name}</p>
       {aliasText && (

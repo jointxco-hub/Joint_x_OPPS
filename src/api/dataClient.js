@@ -682,6 +682,21 @@ const ENTITY_CONFIG = {
       return row;
     },
   },
+  // Read-only lookup for OPPS tenant-identity display (XOS 2.7A). Not
+  // tenant-scoped: OPPS staff are intentionally cross-tenant (see
+  // is_opps_staff() RLS on both orders and tenants), so this must return
+  // every tenant, not just the caller's own - RLS alone (the same
+  // xos1_require_opps_staff policy already on `tenants`) is the actual
+  // authority here, this entity adds no filtering of its own. Display
+  // only - src/lib/tenantDisplay.js never treats this as an
+  // authorization source.
+  Tenant: {
+    table: 'tenants',
+    tenantScoped: false,
+    normalize(row) {
+      return row;
+    },
+  },
   InventoryVariantAvailability: {
     // Read-only dry-run view: available = on_hand_qty - active reservations,
     // always derived, never a second stored balance. See
