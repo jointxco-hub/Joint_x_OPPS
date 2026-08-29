@@ -10,14 +10,14 @@ const STATUS_FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'published', label: 'Published' },
   { value: 'draft', label: 'Draft' },
-  { value: 'unavailable', label: 'Unavailable' },
+  { value: 'out_of_stock', label: 'Out of stock' },
 ];
 
 const STATUS_TONE = { published: 'success', draft: 'neutral', archived: 'neutral' };
 
 function matchesFilter(product, filter) {
   if (filter === 'all') return true;
-  if (filter === 'unavailable') return product.availability === 'unavailable';
+  if (filter === 'out_of_stock') return product.availability === 'out_of_stock';
   return product.status === filter;
 }
 
@@ -58,7 +58,7 @@ function ProductDetailSheet({ product, onClose }) {
                 <StatusBadge label={product.status} tone={STATUS_TONE[product.status] || 'neutral'} />
                 <StatusBadge
                   label={product.availability?.replace(/_/g, ' ')}
-                  tone={product.availability === 'available' ? 'success' : product.availability === 'unavailable' ? 'destructive' : 'warning'}
+                  tone={product.availability === 'available' ? 'success' : product.availability === 'out_of_stock' ? 'destructive' : 'warning'}
                 />
               </div>
 
@@ -94,7 +94,7 @@ function ProductDetailSheet({ product, onClose }) {
                             )}
                             <StatusBadge
                               label={variant.availability?.replace(/_/g, ' ')}
-                              tone={variant.availability === 'available' ? 'success' : variant.availability === 'unavailable' ? 'destructive' : 'warning'}
+                              tone={variant.availability === 'available' ? 'success' : variant.availability === 'out_of_stock' ? 'destructive' : 'warning'}
                             />
                           </div>
                         </li>
@@ -215,7 +215,7 @@ export default function XOSProducts({ gate }) {
                       <TableCell>
                         <StatusBadge
                           label={product.availability?.replace(/_/g, ' ')}
-                          tone={product.availability === 'available' ? 'success' : product.availability === 'unavailable' ? 'destructive' : 'warning'}
+                          tone={product.availability === 'available' ? 'success' : product.availability === 'out_of_stock' ? 'destructive' : 'warning'}
                         />
                       </TableCell>
                       <TableCell>
@@ -250,7 +250,7 @@ export default function XOSProducts({ gate }) {
                       <StatusBadge label={product.status} tone={STATUS_TONE[product.status] || 'neutral'} />
                       <StatusBadge
                         label={product.availability?.replace(/_/g, ' ')}
-                        tone={product.availability === 'available' ? 'success' : product.availability === 'unavailable' ? 'destructive' : 'warning'}
+                        tone={product.availability === 'available' ? 'success' : product.availability === 'out_of_stock' ? 'destructive' : 'warning'}
                       />
                     </div>
                   </div>
