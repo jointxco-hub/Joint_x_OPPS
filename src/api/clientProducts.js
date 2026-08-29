@@ -21,6 +21,54 @@ export {
   CLIENT_PRODUCT_STATUSES,
 } from "@/lib/clientProductReadiness";
 
+export {
+  PRODUCTION_READONLY_MESSAGE,
+  PRICING_PREVIEW_BOUNDARY,
+  summarizeProduction,
+  deriveProductionGaps,
+  buildAllowedCombinationMatrix,
+} from "@/lib/clientProductProduction";
+
+// Phase 1F-B - the EXACT RLS write-gate for production-configuration
+// tables (product_components, client_product_garment_variants /
+// _treatments / _variant_treatments), exposed as a boolean so the
+// Production tab can render proactive read-only UX instead of only
+// reacting to a rejected write. inventory_can_review_tenant is already
+// granted to `authenticated`; this is a probe, never a grant change.
+export async function canReviewTenant({ tenantId }) {
+  if (!supabase) return { data: false, error: "Supabase not configured" };
+  if (!tenantId) return { data: false, error: null };
+  try {
+    const { data, error } = await supabase.rpc("inventory_can_review_tenant", { p_tenant_id: tenantId });
+    if (error) return { data: false, error: error.message };
+    return { data: data === true, error: null };
+  } catch (error) {
+    return { data: false, error: error?.message || "Could not check production permissions." };
+  }
+}
+
+// Thin wrapper over the existing duplicate_product_composition RPC. The
+// RPC enforces same-tenant, same-client, reviewer access on BOTH sides,
+// non-empty source and empty target; this only normalizes the call and
+// error shape. Never clones artwork / variants / treatments / status -
+// that is the RPC's contract, unchanged.
+export async function duplicateProductComposition({ sourceClientProductId, targetClientProductId }) {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+  if (!sourceClientProductId || !targetClientProductId) {
+    return { data: null, error: "Pick a source client product to copy composition from" };
+  }
+  try {
+    const { data, error } = await supabase.rpc("duplicate_product_composition", {
+      p_source_client_product_id: sourceClientProductId,
+      p_target_client_product_id: targetClientProductId,
+    });
+    if (error) return { data: null, error: error.message };
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error?.message || "Could not duplicate composition." };
+  }
+}
+
 export async function getClientProductArtworkReadiness({ clientProductId }) {
   if (!supabase) return { data: null, error: "Supabase not configured" };
   if (!clientProductId) return { data: null, error: "Missing client product id" };

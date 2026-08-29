@@ -22,7 +22,19 @@ import {
   READINESS_STATES,
   buildClientProductCreatePayload,
   CLIENT_PRODUCT_STATUSES,
+  canReviewTenant,
+  duplicateProductComposition,
+  summarizeProduction,
+  deriveProductionGaps,
+  buildAllowedCombinationMatrix,
+  PRODUCTION_READONLY_MESSAGE,
+  PRICING_PREVIEW_BOUNDARY,
 } from "@/api/clientProducts";
+import { toStaffMessage } from "@/lib/pgErrorMessages";
+import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
+import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
+import TreatmentsSection from "@/components/composition/TreatmentsSection";
+import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
 
@@ -203,6 +215,19 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
     enabled: Boolean(product.id),
   });
 
+  // Phase 1F-B - proactive read-only UX for the Production tab. This is
+  // the EXACT RLS write-gate (inventory_can_review_tenant) for the
+  // production-configuration tables, so the tab renders full editors only
+  // when a write would actually be permitted; otherwise a read-only view
+  // + banner. No grant change - a probe of an already-granted function.
+  const { data: canConfigureRes } = useQuery({
+    queryKey: ["canReviewTenant", product.tenant_id],
+    queryFn: () => canReviewTenant({ tenantId: product.tenant_id }),
+    enabled: Boolean(product.tenant_id),
+    staleTime: 60_000,
+  });
+  const canConfigureProduction = canConfigureRes?.data === true;
+
   const refetchAll = () => {
     queryClient.invalidateQueries({ queryKey: readinessQueryKey });
     queryClient.invalidateQueries({ queryKey: artworkQueryKey });
@@ -236,9 +261,10 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
         </div>
 
         <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-3">
+          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
             <TabsTrigger value="details">Details</TabsTrigger>
             <TabsTrigger value="artwork">Artwork</TabsTrigger>
+            <TabsTrigger value="production">Production</TabsTrigger>
             <TabsTrigger value="status">Status</TabsTrigger>
           </TabsList>
 
@@ -256,8 +282,15 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
                 onPreview={setPreview}
               />
             </TabsContent>
+            <TabsContent value="production" className="mt-0">
+              <ProductionTab
+                product={product}
+                readinessState={readinessState}
+                canConfigure={canConfigureProduction}
+              />
+            </TabsContent>
             <TabsContent value="status" className="mt-0">
-              <StatusTab product={product} onSaved={onChanged} />
+              <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
             </TabsContent>
           </div>
         </Tabs>
@@ -608,9 +641,10 @@ function RequiredPlacementsEditor({ product, initial, onSaved }) {
 }
 
 // ── Status tab ────────────────────────────────────────────────────────
-function StatusTab({ product, onSaved }) {
+function StatusTab({ product, onSaved, readinessState }) {
   const queryClient = useQueryClient();
   const [pendingChange, setPendingChange] = useState(null); // { kind, label, apply }
+  const readyForCustomer = ["ready_for_client_review", "client_changes_requested", "client_approved", "ready_to_order", "active"].includes(product.status || "");
 
   const applyMutation = useMutation({
     mutationFn: async (payload) => dataClient.entities.ClientProduct.update(product.id, payload),
@@ -633,7 +667,14 @@ function StatusTab({ product, onSaved }) {
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 p-3">
-        <Label className="text-[11px] text-slate-500">Lifecycle status</Label>
+        <div className="flex items-center justify-between">
+          <Label className="text-[11px] text-slate-500">Lifecycle status</Label>
+          {readinessState && (
+            <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
+              Artwork: <ReadinessBadge state={readinessState} />
+            </span>
+          )}
+        </div>
         <Select
           value={product.status || "draft"}
           onValueChange={(next) => {
@@ -650,6 +691,11 @@ function StatusTab({ product, onSaved }) {
           draft → ready for client review → client approved / changes requested → ready to order → active (plus archived).
           Marking &quot;ready to order&quot; is blocked by the database until required artwork placements are confirmed.
         </p>
+        {readyForCustomer && readinessState !== "ready" && readinessState !== "no_artwork_required" && (
+          <p className="mt-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+            This product is in a customer-facing status but its artwork is not ready — check the Artwork tab.
+          </p>
+        )}
       </div>
 
       <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
@@ -724,6 +770,294 @@ function PriceField({ initial, onCommit }) {
       >
         Update price
       </Button>
+    </div>
+  );
+}
+
+// ── Production tab (Phase 1F-B) ───────────────────────────────────────
+// Brings the EXISTING OPPS production engine into the 1F-A workspace -
+// never a second engine. Every editor here is a Phase 2B component
+// mounted against this Client Product's id; this tab only fetches the
+// shared queries once, lays them out compactly, and gates editing on the
+// same inventory_can_review_tenant() rule the tables' RLS already
+// enforces.
+function Section({ title, subtitle, count, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-xl border border-slate-200">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
+      >
+        {open ? <ChevronDown className="h-4 w-4 flex-shrink-0 text-slate-400" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-400" />}
+        <span className="flex-1 text-sm font-semibold text-slate-800">{title}</span>
+        {count != null && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">{count}</span>}
+      </button>
+      {open && (
+        <div className="border-t border-slate-100 p-3">
+          {subtitle && <p className="mb-2 text-xs text-slate-500">{subtitle}</p>}
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductionTab({ product, readinessState, canConfigure }) {
+  const queryClient = useQueryClient();
+
+  const { data: components = [] } = useQuery({
+    queryKey: ["productComponents", product.id],
+    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: product.id }, "sort_order", 200),
+    enabled: Boolean(product.id),
+  });
+  const { data: variants = [] } = useQuery({
+    queryKey: ["garmentVariants", product.id],
+    queryFn: () => dataClient.entities.GarmentVariant.filter({ client_product_id: product.id }, "sort_order", 200),
+    enabled: Boolean(product.id),
+  });
+  const { data: treatments = [] } = useQuery({
+    queryKey: ["treatmentsForFamily", product.id],
+    queryFn: () => dataClient.entities.Treatment.filter({ client_product_id: product.id }, "sort_order", 200),
+    enabled: Boolean(product.id),
+  });
+  const { data: mappings = [] } = useQuery({
+    queryKey: ["variantTreatmentMappingsForFamily", product.id],
+    queryFn: () => dataClient.entities.VariantTreatmentMapping.filter({ client_product_id: product.id }, "created_at", 500),
+    enabled: Boolean(product.id),
+  });
+  const { data: internalProducts = [] } = useQuery({
+    queryKey: ["inventoryProductsForProduction"],
+    queryFn: () => dataClient.entities.InventoryProduct.list("internal_name", 300),
+    enabled: canConfigure,
+    staleTime: 60_000,
+  });
+  const { data: pricingDefaults = [] } = useQuery({
+    queryKey: ["productionPricingDefaults"],
+    queryFn: () => dataClient.entities.ProductionPricingDefault.filter({ is_active: true }, "production_method", 100),
+    enabled: canConfigure,
+    staleTime: 60_000,
+  });
+  const { data: currentArtwork = [] } = useQuery({
+    queryKey: ["clientProductArtworkCurrent", product.id],
+    queryFn: () => dataClient.entities.ClientProductArtwork.filter({ client_product_id: product.id, is_current: true }, "placement", 100),
+    enabled: canConfigure && Boolean(product.id),
+  });
+  const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
+
+  const safe = {
+    components: Array.isArray(components) ? components : [],
+    variants: Array.isArray(variants) ? variants : [],
+    treatments: Array.isArray(treatments) ? treatments : [],
+    mappings: Array.isArray(mappings) ? mappings : [],
+  };
+  const summary = summarizeProduction(safe);
+  const gaps = deriveProductionGaps(safe);
+
+  return (
+    <div className="space-y-3">
+      {/* Overview */}
+      <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+          <span>Composition: <b className="text-slate-800">{summary.familyComponentCount}</b> family{summary.totalComponentCount !== summary.familyComponentCount ? ` (+${summary.totalComponentCount - summary.familyComponentCount} scoped)` : ""}</span>
+          <span>Variants: <b className="text-slate-800">{summary.variantCount}</b></span>
+          <span>Treatments: <b className="text-slate-800">{summary.treatmentCount}</b></span>
+          <span>Mappings: <b className="text-slate-800">{summary.mappingCount}</b></span>
+          <ReadinessBadge state={readinessState} />
+        </div>
+        {gaps.length > 0 && (
+          <ul className="mt-2 list-inside list-disc space-y-0.5 text-[11px] text-amber-700">
+            {gaps.map((g, i) => <li key={i}>{g}</li>)}
+          </ul>
+        )}
+      </div>
+
+      {!canConfigure ? (
+        <>
+          <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
+            <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
+            <span>{PRODUCTION_READONLY_MESSAGE}</span>
+          </div>
+          <ProductionReadOnlyView {...safe} />
+        </>
+      ) : (
+        <>
+          <Section title="Composition" subtitle="Family-level production components." count={summary.familyComponentCount} defaultOpen>
+            <ScopedComponentsEditor
+              clientProductId={product.id}
+              scope={{ type: "family" }}
+              allComponents={safe.components}
+              queryKeyForInvalidation={["productComponents", product.id]}
+              internalProducts={internalProducts}
+              pricingDefaultFor={pricingDefaultFor}
+              clientProduct={product}
+              currentArtwork={currentArtwork}
+              onArtworkLinked={() => queryClient.invalidateQueries({ queryKey: ["clientProductArtworkCurrent", product.id] })}
+              addLabel="Add print option"
+            />
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              <DuplicateCompositionInline product={product} hasComposition={summary.familyComponentCount > 0} />
+            </div>
+          </Section>
+
+          <Section title="Garment variants" subtitle="Reusable blank configurations - normalized inventory link where available, manual size fallback otherwise." count={summary.variantCount}>
+            <GarmentVariantsSection
+              clientProductId={product.id}
+              clientProduct={product}
+              internalProducts={internalProducts}
+              pricingDefaultFor={pricingDefaultFor}
+              allComponents={safe.components}
+            />
+          </Section>
+
+          <Section title="Treatments" subtitle="Reusable print/production treatments, independent of the garment blank." count={summary.treatmentCount}>
+            <TreatmentsSection
+              clientProductId={product.id}
+              clientProduct={product}
+              internalProducts={internalProducts}
+              pricingDefaultFor={pricingDefaultFor}
+              allComponents={safe.components}
+            />
+          </Section>
+
+          <Section title="Allowed combinations" subtitle="Which treatments are available on which garment variant. Edit the ticks inside each garment variant above; this is the family-level view." count={summary.mappingCount}>
+            <AllowedCombinationsMatrix {...safe} />
+          </Section>
+
+          <Section title="Pricing preview" defaultOpen>
+            <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">{PRICING_PREVIEW_BOUNDARY}</p>
+            <p className="mt-2 text-xs text-slate-500">Per-variant previews (family price / variant override + treatment surcharge) appear inside each garment variant when expanded.</p>
+          </Section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProductionReadOnlyView({ components, variants, treatments, mappings }) {
+  const family = components.filter((c) => !c.garment_variant_id && !c.treatment_id && c.is_active !== false);
+  return (
+    <div className="space-y-3">
+      <div className="rounded-xl border border-slate-200 p-3">
+        <p className="mb-1.5 text-sm font-semibold text-slate-800">Composition</p>
+        {family.length === 0 ? <p className="text-xs text-slate-400">No family components.</p> : (
+          <ul className="space-y-1 text-xs text-slate-600">
+            {family.map((c) => <li key={c.id}>{c.component_type}{c.placement ? ` · ${c.placement}` : ""}{c.label ? ` (${c.label})` : ""}</li>)}
+          </ul>
+        )}
+      </div>
+      <div className="rounded-xl border border-slate-200 p-3">
+        <p className="mb-1.5 text-sm font-semibold text-slate-800">Garment variants</p>
+        {variants.length === 0 ? <p className="text-xs text-slate-400">None.</p> : (
+          <ul className="space-y-1 text-xs text-slate-600">
+            {variants.map((v) => <li key={v.id}>{v.name}{v.colour_name ? ` / ${v.colour_name}` : ""}{v.is_active === false ? " (inactive)" : ""}</li>)}
+          </ul>
+        )}
+      </div>
+      <div className="rounded-xl border border-slate-200 p-3">
+        <p className="mb-1.5 text-sm font-semibold text-slate-800">Treatments</p>
+        {treatments.length === 0 ? <p className="text-xs text-slate-400">None.</p> : (
+          <ul className="space-y-1 text-xs text-slate-600">
+            {treatments.map((t) => <li key={t.id}>{t.name}{t.production_method ? ` · ${t.production_method}` : ""}{Number(t.surcharge) > 0 ? ` · +R${t.surcharge}` : ""}{t.is_active === false ? " (inactive)" : ""}</li>)}
+          </ul>
+        )}
+      </div>
+      <div className="rounded-xl border border-slate-200 p-3">
+        <p className="mb-1.5 text-sm font-semibold text-slate-800">Allowed combinations</p>
+        <AllowedCombinationsMatrix components={components} variants={variants} treatments={treatments} mappings={mappings} />
+      </div>
+    </div>
+  );
+}
+
+function AllowedCombinationsMatrix({ variants, treatments, mappings }) {
+  const matrix = buildAllowedCombinationMatrix({ variants, treatments, mappings });
+  if (matrix.length === 0) return <p className="text-xs text-slate-400">No active garment variants yet.</p>;
+  const activeTreatments = treatments.filter((t) => t.is_active !== false);
+  if (activeTreatments.length === 0) return <p className="text-xs text-slate-400">No active treatments yet.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-[11px]">
+        <thead>
+          <tr className="text-slate-500">
+            <th className="py-1 pr-2 font-medium">Garment variant</th>
+            {activeTreatments.map((t) => <th key={t.id} className="px-1.5 py-1 font-medium">{t.name}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.map(({ variant, allowed }) => (
+            <tr key={variant.id} className="border-t border-slate-100">
+              <td className="py-1 pr-2 text-slate-700">{variant.name}</td>
+              {allowed.map(({ treatment, allowed: ok }) => (
+                <td key={treatment.id} className="px-1.5 py-1 text-center">{ok ? <span className="text-emerald-600">✓</span> : <span className="text-slate-300">–</span>}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DuplicateCompositionInline({ product, hasComposition }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [sourceId, setSourceId] = useState("");
+
+  const { data: candidates = [] } = useQuery({
+    queryKey: ["clientProductsForCompositionClone", product.client_id],
+    queryFn: () => dataClient.entities.ClientProduct.filter({ client_id: product.client_id }, "client_facing_name", 200),
+    enabled: open && Boolean(product.client_id),
+  });
+  const sources = (Array.isArray(candidates) ? candidates : []).filter((c) => c.id !== product.id && c.client_id === product.client_id);
+
+  const dupMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await duplicateProductComposition({
+        sourceClientProductId: sourceId,
+        targetClientProductId: product.id,
+      });
+      if (error) throw new Error(error);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["productComponents", product.id] });
+      setOpen(false);
+      setSourceId("");
+      toast.success(`Composition copied — ${data?.cloned_count ?? 0} component${data?.cloned_count === 1 ? "" : "s"}. Artwork, variants, treatments and status are not copied.`);
+    },
+    onError: (error) => toast.error(toStaffMessage(error.message)),
+  });
+
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="w-full" onClick={() => setOpen(true)}>
+        Duplicate composition from another Client Product
+      </Button>
+    );
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg bg-slate-50 p-2">
+      <p className="text-[11px] text-slate-500">
+        Copies family production components from another Client Product <b>for this same client</b> into this one. Artwork, garment variants, treatments and customer status are never copied.
+      </p>
+      {hasComposition && (
+        <p className="text-[11px] text-amber-600">This product already has composition — the server will reject the copy until it is empty.</p>
+      )}
+      <Select value={sourceId} onValueChange={setSourceId}>
+        <SelectTrigger className="h-8"><SelectValue placeholder={sources.length ? "Select source client product" : "No other client products for this client"} /></SelectTrigger>
+        <SelectContent>
+          {sources.map((s) => <SelectItem key={s.id} value={s.id}>{s.client_facing_name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" className="flex-1" onClick={() => { setOpen(false); setSourceId(""); }}>Cancel</Button>
+        <Button size="sm" className="flex-1" disabled={!sourceId || dupMutation.isPending} onClick={() => dupMutation.mutate()}>
+          {dupMutation.isPending ? "Copying…" : "Copy composition"}
+        </Button>
+      </div>
     </div>
   );
 }
