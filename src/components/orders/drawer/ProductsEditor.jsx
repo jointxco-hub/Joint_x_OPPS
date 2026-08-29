@@ -11,10 +11,11 @@ import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
 import { isImageReference } from "@/lib/imageReference";
-import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS } from "@/lib/productionStages";
+import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
 import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
+import { findOrCreateClientProductArtworkFromAsset, reviseOrderLineComponentSnapshotArtwork } from "@/api/artworkLinking";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
@@ -151,12 +152,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const clientProductIdsForOrder = Array.from(new Set(
     (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => cp.id)
   ));
-  const { data: currentArtworkRows = [] } = useQuery({
+  // All revisions (not just is_current) so a frozen snapshot pointing at a
+  // superseded client_product_artwork revision can still resolve its
+  // filename/thumbnail for the per-placement Artwork section below. The
+  // "Add print option" flow still only wants current-by-placement, derived
+  // client-side from the same fetch.
+  const { data: clientProductArtworkRows = [] } = useQuery({
     queryKey: ["clientProductArtworkForOrder", clientProductIdsForOrder.join(",")],
     queryFn: async () => {
       const rows = await Promise.all(
         clientProductIdsForOrder.map((id) => dataClient.entities.ClientProductArtwork.filter(
-          { client_product_id: id, is_current: true }, undefined, 50
+          { client_product_id: id }, undefined, 200
         ))
       );
       return rows.flatMap((r) => (Array.isArray(r) ? r : []));
@@ -165,7 +171,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     staleTime: 30_000,
   });
   const artworkByClientProductId = new Map();
-  for (const row of (Array.isArray(currentArtworkRows) ? currentArtworkRows : [])) {
+  const artworkById = new Map();
+  for (const row of (Array.isArray(clientProductArtworkRows) ? clientProductArtworkRows : [])) {
+    artworkById.set(row.id, row);
+    if (!row.is_current) continue;
     const list = artworkByClientProductId.get(row.client_product_id) || [];
     list.push(row);
     artworkByClientProductId.set(row.client_product_id, list);
@@ -610,6 +619,98 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] }),
     onError: () => toast.error("Could not save production tracking for this line"),
+  });
+
+  // Phase 1E - editing a frozen production snapshot. Never a direct table
+  // UPDATE (authenticated has no such grant): the revise_order_line_
+  // component_snapshot RPC appends a new revision and carries tracking
+  // state forward. The modal always submits explicit current values for
+  // every editable field (the RPC's NULL contract is preserve-existing,
+  // and this phase deliberately has no "clear field" path), so a blank
+  // input falls back to the snapshot's own current value rather than
+  // clearing it.
+  const [editingSnapshot, setEditingSnapshot] = useState(null);
+  const reviseProduction = useMutation({
+    mutationFn: async ({ snapshot, values }) => {
+      const { data, error } = await supabase.rpc("revise_order_line_component_snapshot", {
+        p_snapshot_id: snapshot.id,
+        p_label: values.label,
+        p_placement: values.placement,
+        p_production_method: values.production_method,
+        p_production_colour: values.production_colour,
+        p_specification: values.specification,
+        p_production_instructions: values.production_instructions,
+        p_sell_price: values.sell_price,
+        p_billing_mode: values.billing_mode,
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] });
+      const rev = data?.snapshot?.revision;
+      toast.success(rev ? `Production updated — revision ${rev}` : "Production updated");
+      setEditingSnapshot(null);
+    },
+    onError: (err) => {
+      const msg = err?.message || "Could not update production";
+      if (msg.includes("SNAPSHOT_REVISION_STALE")) {
+        queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+        toast.error("Another change was saved first — this component was reloaded. Re-open Edit production and try again.");
+        setEditingSnapshot(null);
+      } else {
+        toast.error(msg);
+      }
+    },
+  });
+
+  // Phase 1E - placement-specific artwork. A selected client asset flows
+  // through the EXISTING find_or_create_client_product_artwork_from_asset
+  // RPC (no second file store) to resolve/create the client_product_artwork
+  // revision for this component's placement, then revise_order_line_
+  // component_snapshot_artwork points THIS snapshot's frozen
+  // artwork_revision_ids at it - again a new revision, never a table
+  // UPDATE, and scoped per placement so Front and Back stay independent.
+  const [artworkPickerSnapshot, setArtworkPickerSnapshot] = useState(null);
+  const relinkArtwork = useMutation({
+    mutationFn: async ({ snapshot, clientProduct, asset }) => {
+      const link = await findOrCreateClientProductArtworkFromAsset({
+        tenantId: clientProduct?.tenant_id,
+        clientProductId: clientProduct?.id,
+        clientAssetId: asset.id,
+        placement: snapshot.placement,
+      });
+      if (link.error) throw new Error(link.error);
+      const revised = await reviseOrderLineComponentSnapshotArtwork({
+        snapshotId: snapshot.id,
+        artworkRevisionIds: [link.data.id],
+        expectedRevision: snapshot.revision,
+      });
+      if (revised.error) throw new Error(revised.error);
+      return revised.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["clientProductArtworkForOrder"] });
+      queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] });
+      const rev = data?.snapshot?.revision;
+      toast.success(rev ? `Artwork linked — revision ${rev}` : "Artwork linked");
+      setArtworkPickerSnapshot(null);
+    },
+    onError: (err) => {
+      const msg = err?.message || "Could not link artwork";
+      if (msg.includes("SNAPSHOT_REVISION_STALE")) {
+        queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+        toast.error("Another change was saved first — this component was reloaded. Open the picker again to relink.");
+        setArtworkPickerSnapshot(null);
+      } else if (msg.includes("SNAPSHOT_ARTWORK_RELINK_NO_CHANGE")) {
+        toast.info("That artwork is already linked to this placement.");
+        setArtworkPickerSnapshot(null);
+      } else {
+        toast.error(msg);
+      }
+    },
   });
 
   const products = Array.isArray(order.products) ? order.products : [];
@@ -1240,6 +1341,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   onArtworkLinked={() => queryClient.invalidateQueries({ queryKey: ["clientProductArtworkForOrder"] })}
                   onReviewForMyProducts={() => reviewForMyProductsMutation.mutate({ lineId: p.line_id, orderLine: p })}
                   reviewingForMyProducts={reviewForMyProductsMutation.isPending}
+                  artworkById={artworkById}
+                  onEditProduction={(snapshot) => setEditingSnapshot(snapshot)}
+                  onChangeArtwork={(snapshot) => setArtworkPickerSnapshot(snapshot)}
+                  relinkingArtworkSnapshotId={relinkArtwork.isPending ? artworkPickerSnapshot?.id : ""}
+                  onPreview={(value, title) => setQuickPreview({ value, title, subtitle: "Linked artwork" })}
                 />
               )}
               </div>
@@ -1681,6 +1787,43 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         title={quickPreview?.title}
         subtitle={quickPreview?.subtitle}
       />
+
+      {/* Phase 1E - Edit production. Compact modal, preloads current
+          values, shows Rev N, explains Save creates a new revision.
+          Cancel writes nothing. */}
+      {editingSnapshot && (
+        <EditProductionModal
+          snapshot={editingSnapshot}
+          saving={reviseProduction.isPending}
+          onCancel={() => setEditingSnapshot(null)}
+          onSave={(values) => reviseProduction.mutate({ snapshot: editingSnapshot, values })}
+        />
+      )}
+
+      {/* Phase 1E - placement-specific artwork picker. Reuses the shared
+          ClientAssetPickerModal (browse existing + Upload new); the
+          selected asset flows through the existing artwork linkage RPCs,
+          never a copy/re-upload. */}
+      {artworkPickerSnapshot && (
+        <ClientAssetPickerModal
+          clientId={order.client_id}
+          selectionMode="single"
+          defaultCategory="Artwork"
+          uploadCategory="Artwork"
+          showApprovalBadge
+          title={`Link artwork — ${artworkPickerSnapshot.placement || "placement"}`}
+          description={`Browse this client's existing files or upload a new one. The selected file becomes the current artwork revision for ${artworkPickerSnapshot.placement || "this placement"} and is linked to this frozen production component as a new revision.`}
+          confirmVerb="Use"
+          onClose={() => setArtworkPickerSnapshot(null)}
+          onConfirm={([asset]) => {
+            if (!asset) return;
+            const cp = clientProductsById.get(artworkPickerSnapshot.client_product_id)
+              || (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).find((c) => c.id === artworkPickerSnapshot.client_product_id)
+              || null;
+            relinkArtwork.mutate({ snapshot: artworkPickerSnapshot, clientProduct: cp, asset });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1787,6 +1930,7 @@ function LineProduction({
   onStartAddPrintOption, onCancelAddPrintOption, onConfirmAddPrintOption, addingPrintOption,
   currentArtworkForClientProduct, onArtworkLinked,
   onReviewForMyProducts, reviewingForMyProducts,
+  artworkById, onEditProduction, onChangeArtwork, relinkingArtworkSnapshotId, onPreview,
 }) {
   const hasSnapshots = snapshots.length > 0;
   return (
@@ -1991,10 +2135,25 @@ function LineProduction({
             const stageBlocked = Boolean(snapshot.inventory_product_id && !snapshot.resolved_inventory_variant_id);
             return (
               <div key={snapshot.id} className="rounded-lg border border-primary/10 bg-background/60 p-1.5">
-                <p className="mb-1 text-[10px] font-semibold text-slate-700">
-                  {snapshot.label || snapshot.component_type}
-                  {snapshot.placement && <span className="text-slate-400"> · {snapshot.placement}</span>}
-                </p>
+                <div className="mb-1 flex items-center gap-1.5">
+                  <p className="min-w-0 flex-1 truncate text-[10px] font-semibold text-slate-700">
+                    {snapshot.label || snapshot.component_type}
+                    {snapshot.placement && <span className="text-slate-400"> · {snapshot.placement}</span>}
+                  </p>
+                  <span
+                    className="flex-shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-500"
+                    title="Configuration revision. Editing production or artwork creates a new revision and preserves history."
+                  >
+                    Rev {snapshot.revision || 1}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onEditProduction?.(snapshot)}
+                    className="flex flex-shrink-0 items-center gap-1 rounded-full border border-primary/30 bg-background px-1.5 py-0.5 text-[9px] font-semibold text-primary hover:bg-primary/5"
+                  >
+                    <Pencil className="h-2.5 w-2.5" /> Edit production
+                  </button>
+                </div>
                 {stageBlocked && (
                   <p className="mb-1 text-[10px] text-red-700">
                     unresolved inventory variant - stock-related production stage is blocked until this is resolved
@@ -2046,12 +2205,219 @@ function LineProduction({
                     {PRODUCTION_DETAIL_STAGES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </div>
+
+                {snapshot.placement && (() => {
+                  const linkedIds = Array.isArray(snapshot.artwork_revision_ids) ? snapshot.artwork_revision_ids : [];
+                  const linked = linkedIds.map((id) => artworkById?.get(id)).find(Boolean) || null;
+                  const relinking = relinkingArtworkSnapshotId === snapshot.id;
+                  return (
+                    <div className="mt-1.5 rounded-lg border border-dashed border-slate-300 bg-slate-50/60 p-1.5 text-[10px]">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-semibold text-slate-600">Artwork · {snapshot.placement}</span>
+                        <button
+                          type="button"
+                          onClick={() => onChangeArtwork?.(snapshot)}
+                          disabled={relinking}
+                          className="rounded-full border border-primary/30 bg-background px-1.5 py-0.5 text-[9px] font-semibold text-primary hover:bg-primary/5 disabled:opacity-50"
+                        >
+                          {relinking ? "Linking…" : (linked ? "Change artwork" : "Link artwork")}
+                        </button>
+                      </div>
+                      {linked ? (
+                        <div className="flex items-center gap-1.5">
+                          {isImageReference(linked.file_path) && (
+                            <SecureImage
+                              value={linked.file_path}
+                              alt=""
+                              className="h-8 w-8 flex-shrink-0 rounded object-cover"
+                            />
+                          )}
+                          <span className="min-w-0 flex-1 truncate text-slate-700">
+                            {linked.file_name || "linked file"}
+                            {linked.status && (
+                              <span className={`ml-1 rounded-full px-1 py-0.5 text-[8px] font-semibold ${
+                                linked.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                              }`}>
+                                {linked.status}
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onPreview?.(linked.file_path, linked.file_name || "Artwork")}
+                            className="flex-shrink-0 rounded-full border border-slate-300 bg-background px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 hover:bg-slate-100"
+                          >
+                            View
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-slate-500">
+                          None linked for this placement yet — link an existing client file or upload a new one.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
         </div>
       )}
     </div>
+  );
+}
+
+// Phase 1E - compact Edit production modal. Every editable field is
+// preloaded from the frozen snapshot and, on Save, submitted as an
+// EXPLICIT current value (never null): the revise_order_line_component_
+// snapshot RPC treats null as preserve-existing, and this phase has no
+// "clear field" semantics, so a blank input falls back to the snapshot's
+// own current value rather than clearing it. Save creates a NEW revision
+// and preserves history; Cancel writes nothing.
+const EDIT_PRODUCTION_METHODS = PRODUCTION_METHODS.filter((m) => m.value !== "__none");
+const EDIT_BILLING_MODES = [
+  { value: "per_unit", label: "Per unit (× quantity)" },
+  { value: "once_per_order", label: "Once-off (not multiplied)" },
+];
+
+function EditProductionModal({ snapshot, saving, onCancel, onSave }) {
+  const presetPlacement = snapshot.placement && PLACEMENT_PRESETS.includes(snapshot.placement);
+  // Phase 1E consistency guard: revise_order_line_component_snapshot copies
+  // artwork_revision_ids forward verbatim, so changing placement here while
+  // artwork is linked would leave the new revision pointing at the OLD
+  // placement's artwork (the artwork-relink RPC forbids exactly that pairing).
+  // Smallest safe behavior for this phase: placement is not editable while
+  // any artwork is linked - relink/clear artwork first, or use a dedicated
+  // placement-change flow later. Artwork is never silently discarded or
+  // re-placed.
+  const artworkLinked = Array.isArray(snapshot.artwork_revision_ids) && snapshot.artwork_revision_ids.length > 0;
+  const [form, setForm] = useState(() => ({
+    label: snapshot.label ?? "",
+    placementChoice: snapshot.placement ? (presetPlacement ? snapshot.placement : "__custom") : "",
+    placementCustom: snapshot.placement && !presetPlacement ? snapshot.placement : "",
+    production_method: snapshot.production_method ?? "",
+    production_colour: snapshot.production_colour ?? "",
+    specification: snapshot.specification ?? "",
+    production_instructions: snapshot.production_instructions ?? "",
+    sell_price: snapshot.sell_price != null ? String(snapshot.sell_price) : "",
+    billing_mode: snapshot.billing_mode ?? "per_unit",
+  }));
+  const set = (patch) => setForm((c) => ({ ...c, ...patch }));
+
+  const keepOr = (raw, current) => {
+    const v = typeof raw === "string" ? raw.trim() : raw;
+    return v === "" || v == null ? current : raw;
+  };
+
+  const submit = () => {
+    if (saving) return;
+    const placementRaw = form.placementChoice === "__custom"
+      ? form.placementCustom
+      : form.placementChoice;
+    const sellRaw = form.sell_price.trim();
+    onSave({
+      label: keepOr(form.label, snapshot.label),
+      // With artwork linked, placement is pinned to the snapshot's current
+      // value no matter what the (disabled) control holds - the modal can
+      // never submit a placement change for a linked-artwork snapshot.
+      placement: artworkLinked ? snapshot.placement : keepOr(placementRaw, snapshot.placement),
+      production_method: keepOr(form.production_method, snapshot.production_method),
+      production_colour: keepOr(form.production_colour, snapshot.production_colour),
+      specification: keepOr(form.specification, snapshot.specification),
+      production_instructions: keepOr(form.production_instructions, snapshot.production_instructions),
+      sell_price: sellRaw === "" ? snapshot.sell_price : Number(sellRaw),
+      billing_mode: form.billing_mode || snapshot.billing_mode || "per_unit",
+    });
+  };
+
+  const inputClass = "h-8 w-full rounded-lg border border-input bg-background px-2 text-[12px]";
+  const areaClass = "min-h-[46px] w-full rounded-lg border border-input bg-background px-2 py-1.5 text-[12px]";
+
+  return (
+    <Dialog open onOpenChange={(next) => { if (!next && !saving) onCancel(); }}>
+      <DialogContent className="max-w-md gap-3 rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            Edit production
+            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+              Rev {snapshot.revision || 1}
+            </span>
+          </DialogTitle>
+          <DialogDescription className="text-[11px]">
+            Save creates a new revision and preserves the current one as history. Production tracking (stage, method, allocation) carries forward unchanged. Cancel writes nothing.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2">
+          <label className="block text-[10px] font-semibold text-slate-500">Label
+            <Input className="mt-0.5" value={form.label} onChange={(e) => set({ label: e.target.value })} />
+          </label>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-[10px] font-semibold text-slate-500">Placement
+              <select
+                className={`${inputClass} mt-0.5 disabled:cursor-not-allowed disabled:opacity-50`}
+                value={form.placementChoice}
+                onChange={(e) => set({ placementChoice: e.target.value })}
+                disabled={artworkLinked}
+                title={artworkLinked ? "Placement is locked while artwork is linked" : undefined}
+              >
+                <option value="">No placement</option>
+                {PLACEMENT_PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
+                <option value="__custom">Custom…</option>
+              </select>
+            </label>
+            <label className="block text-[10px] font-semibold text-slate-500">Production method
+              <select className={`${inputClass} mt-0.5`} value={form.production_method} onChange={(e) => set({ production_method: e.target.value })}>
+                <option value="">Not set</option>
+                {EDIT_PRODUCTION_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </label>
+          </div>
+          {form.placementChoice === "__custom" && (
+            <Input placeholder="Custom placement" value={form.placementCustom} onChange={(e) => set({ placementCustom: e.target.value })} disabled={artworkLinked} />
+          )}
+          {artworkLinked && (
+            <p className="text-[10px] text-amber-700">
+              Placement is locked while artwork is linked. Change/relink artwork first or use a dedicated placement-change flow.
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-[10px] font-semibold text-slate-500">Production colour
+              <Input className="mt-0.5" value={form.production_colour} onChange={(e) => set({ production_colour: e.target.value })} />
+            </label>
+            <label className="block text-[10px] font-semibold text-slate-500">Sell price
+              <Input className="mt-0.5" type="number" min="0" step="0.01" value={form.sell_price} onChange={(e) => set({ sell_price: e.target.value })} />
+            </label>
+          </div>
+
+          <label className="block text-[10px] font-semibold text-slate-500">Billing mode
+            <select className={`${inputClass} mt-0.5`} value={form.billing_mode} onChange={(e) => set({ billing_mode: e.target.value })}>
+              {EDIT_BILLING_MODES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+            </select>
+          </label>
+
+          <label className="block text-[10px] font-semibold text-slate-500">Specification
+            <textarea className={`${areaClass} mt-0.5`} value={form.specification} onChange={(e) => set({ specification: e.target.value })} />
+          </label>
+          <label className="block text-[10px] font-semibold text-slate-500">Production instructions
+            <textarea className={`${areaClass} mt-0.5`} value={form.production_instructions} onChange={(e) => set({ production_instructions: e.target.value })} />
+          </label>
+
+          <p className="rounded-lg bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
+            Immutable: snapshot id, revision lineage, source component, inventory identity, artwork revision ids, timestamps. Blank fields keep their current value — clearing a field is not available yet.
+          </p>
+        </div>
+
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" className="h-8 flex-1 rounded-lg text-[12px]" onClick={onCancel} disabled={saving}>Cancel</Button>
+          <Button size="sm" className="h-8 flex-1 rounded-lg text-[12px]" onClick={submit} disabled={saving}>
+            {saving ? "Saving…" : "Save revision"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
