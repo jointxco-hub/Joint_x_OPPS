@@ -2282,6 +2282,15 @@ const EDIT_BILLING_MODES = [
 
 function EditProductionModal({ snapshot, saving, onCancel, onSave }) {
   const presetPlacement = snapshot.placement && PLACEMENT_PRESETS.includes(snapshot.placement);
+  // Phase 1E consistency guard: revise_order_line_component_snapshot copies
+  // artwork_revision_ids forward verbatim, so changing placement here while
+  // artwork is linked would leave the new revision pointing at the OLD
+  // placement's artwork (the artwork-relink RPC forbids exactly that pairing).
+  // Smallest safe behavior for this phase: placement is not editable while
+  // any artwork is linked - relink/clear artwork first, or use a dedicated
+  // placement-change flow later. Artwork is never silently discarded or
+  // re-placed.
+  const artworkLinked = Array.isArray(snapshot.artwork_revision_ids) && snapshot.artwork_revision_ids.length > 0;
   const [form, setForm] = useState(() => ({
     label: snapshot.label ?? "",
     placementChoice: snapshot.placement ? (presetPlacement ? snapshot.placement : "__custom") : "",
@@ -2308,7 +2317,10 @@ function EditProductionModal({ snapshot, saving, onCancel, onSave }) {
     const sellRaw = form.sell_price.trim();
     onSave({
       label: keepOr(form.label, snapshot.label),
-      placement: keepOr(placementRaw, snapshot.placement),
+      // With artwork linked, placement is pinned to the snapshot's current
+      // value no matter what the (disabled) control holds - the modal can
+      // never submit a placement change for a linked-artwork snapshot.
+      placement: artworkLinked ? snapshot.placement : keepOr(placementRaw, snapshot.placement),
       production_method: keepOr(form.production_method, snapshot.production_method),
       production_colour: keepOr(form.production_colour, snapshot.production_colour),
       specification: keepOr(form.specification, snapshot.specification),
@@ -2343,7 +2355,13 @@ function EditProductionModal({ snapshot, saving, onCancel, onSave }) {
 
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-[10px] font-semibold text-slate-500">Placement
-              <select className={`${inputClass} mt-0.5`} value={form.placementChoice} onChange={(e) => set({ placementChoice: e.target.value })}>
+              <select
+                className={`${inputClass} mt-0.5 disabled:cursor-not-allowed disabled:opacity-50`}
+                value={form.placementChoice}
+                onChange={(e) => set({ placementChoice: e.target.value })}
+                disabled={artworkLinked}
+                title={artworkLinked ? "Placement is locked while artwork is linked" : undefined}
+              >
                 <option value="">No placement</option>
                 {PLACEMENT_PRESETS.map((p) => <option key={p} value={p}>{p}</option>)}
                 <option value="__custom">Custom…</option>
@@ -2357,7 +2375,12 @@ function EditProductionModal({ snapshot, saving, onCancel, onSave }) {
             </label>
           </div>
           {form.placementChoice === "__custom" && (
-            <Input placeholder="Custom placement" value={form.placementCustom} onChange={(e) => set({ placementCustom: e.target.value })} />
+            <Input placeholder="Custom placement" value={form.placementCustom} onChange={(e) => set({ placementCustom: e.target.value })} disabled={artworkLinked} />
+          )}
+          {artworkLinked && (
+            <p className="text-[10px] text-amber-700">
+              Placement is locked while artwork is linked. Change/relink artwork first or use a dedicated placement-change flow.
+            </p>
           )}
 
           <div className="grid grid-cols-2 gap-2">

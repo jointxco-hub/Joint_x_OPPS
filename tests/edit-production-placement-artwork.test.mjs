@@ -326,6 +326,67 @@ test("treatment/family gating is intact - ComponentFieldsForm's allowArtworkLink
   assert.match(src, /allowArtworkLinking && form\.component_type === "print_service" && effectivePlacement/);
 });
 
+// ---- PR #53 review: placement-vs-artwork consistency guard --------
+
+test("a snapshot with linked artwork disables the placement control (select + custom input), derived from artwork_revision_ids.length > 0", async () => {
+  const src = await readSource(PRODUCTS_EDITOR_PATH);
+  assert.match(
+    src,
+    /const artworkLinked = Array\.isArray\(snapshot\.artwork_revision_ids\) && snapshot\.artwork_revision_ids\.length > 0;/,
+  );
+  const modal = src.slice(src.indexOf("function EditProductionModal"), src.indexOf("function OptionChipGroup"));
+  // placement <select> is disabled on artworkLinked
+  assert.match(modal, /<select[\s\S]*?value=\{form\.placementChoice\}[\s\S]*?disabled=\{artworkLinked\}/);
+  // the custom placement <Input> is disabled on artworkLinked too
+  assert.match(modal, /placeholder="Custom placement"[\s\S]*?disabled=\{artworkLinked\}/);
+});
+
+test("submit() can never send a different placement for a linked-artwork snapshot - it is pinned to snapshot.placement", async () => {
+  const src = await readSource(PRODUCTS_EDITOR_PATH);
+  assert.match(
+    src,
+    /placement: artworkLinked \? snapshot\.placement : keepOr\(placementRaw, snapshot\.placement\)/,
+  );
+});
+
+test("a snapshot with NO linked artwork keeps placement fully editable - the disable is gated only on artworkLinked, nothing else", async () => {
+  const src = await readSource(PRODUCTS_EDITOR_PATH);
+  const modal = src.slice(src.indexOf("function EditProductionModal"), src.indexOf("function OptionChipGroup"));
+  // the only `disabled=` on the placement select is artworkLinked (not `saving`, not a constant)
+  const placementSelect = modal.slice(modal.indexOf("value={form.placementChoice}"), modal.indexOf("</select>", modal.indexOf("value={form.placementChoice}")));
+  const disables = placementSelect.match(/disabled=\{[^}]+\}/g) || [];
+  assert.deepEqual(disables, ["disabled={artworkLinked}"]);
+  // placement select still has a live onChange that updates form state
+  assert.match(placementSelect, /onChange=\{\(e\) => set\(\{ placementChoice: e\.target\.value \}\)\}/);
+});
+
+test("the placement lock shows the exact reviewer-specified helper text, and only when artwork is linked", async () => {
+  const src = await readSource(PRODUCTS_EDITOR_PATH);
+  assert.match(
+    src,
+    /\{artworkLinked && \(\s*\n\s*<p[^>]*>\s*\n\s*Placement is locked while artwork is linked\. Change\/relink artwork first or use a dedicated placement-change flow\.\s*\n\s*<\/p>/,
+  );
+});
+
+test("artwork relink behavior is unchanged by the guard - still find_or_create then the relink RPC, still per-snapshot placement", async () => {
+  const src = await readSource(PRODUCTS_EDITOR_PATH);
+  const block = src.slice(src.indexOf("const relinkArtwork = useMutation"), src.indexOf("const relinkArtwork = useMutation") + 1600);
+  assert.match(block, /findOrCreateClientProductArtworkFromAsset\(\{/);
+  assert.match(block, /placement: snapshot\.placement/);
+  assert.match(block, /reviseOrderLineComponentSnapshotArtwork\(\{/);
+  assert.match(block, /expectedRevision: snapshot\.revision/);
+});
+
+test("the guard is client-side only - no change to the migration or the revise RPC signature/params", async () => {
+  const src = await readSource(PRODUCTS_EDITOR_PATH);
+  const migration = await readSource(MIGRATION_PATH);
+  // revise call still passes exactly the original 8 editable params, unchanged
+  const call = src.slice(src.indexOf('supabase.rpc("revise_order_line_component_snapshot"'), src.indexOf('supabase.rpc("revise_order_line_component_snapshot"') + 600);
+  assert.match(call, /p_placement: values\.placement/);
+  // the new migration is still only the artwork-relink function
+  assert.doesNotMatch(migration, /create or replace function public\.revise_order_line_component_snapshot\b(?!_artwork)/);
+});
+
 test("no XOS / PayFast surface is touched by this phase", async () => {
   const editor = await readSource(PRODUCTS_EDITOR_PATH);
   const api = await readSource(ARTWORK_API_PATH);
