@@ -37,6 +37,7 @@ declare
   v_client_name        text := 'REPLACE_ME client contact name';
   v_owner_auth_user_id uuid := null; -- must already exist in auth.users; create the Supabase Auth account first
   v_owner_role         text := 'owner';
+  v_order_prefix       text := null; -- REQUIRED: 2-8 uppercase letters/numbers, e.g. GSB, KM, BARBZ
   -- ==============================================================
 
   v_tenant_id uuid;
@@ -47,6 +48,11 @@ begin
   -- ---- Pre-flight: fail loudly on any conflict, never duplicate silently ----
   if v_owner_auth_user_id is null then
     raise exception 'v_owner_auth_user_id is required - create/confirm the Supabase Auth account for the owner first, then set this value.';
+  end if;
+
+  v_order_prefix := upper(trim(coalesce(v_order_prefix, '')));
+  if v_order_prefix !~ '^[A-Z0-9]{2,8}$' then
+    raise exception 'v_order_prefix must contain 2-8 uppercase letters/numbers (received "%").', v_order_prefix;
   end if;
 
   if exists (select 1 from public.tenants where slug = v_tenant_slug) then
@@ -73,7 +79,12 @@ begin
 
   -- ---- Provision, in dependency order ----
   insert into public.tenants (slug, name, status, settings)
-  values (v_tenant_slug, v_workspace_name, 'active', '{}'::jsonb)
+  values (
+    v_tenant_slug,
+    v_workspace_name,
+    'active',
+    jsonb_build_object('order_prefix', v_order_prefix)
+  )
   returning id into v_tenant_id;
 
   insert into public.clients (tenant_id, name, email, status)
