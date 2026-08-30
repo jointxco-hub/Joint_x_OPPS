@@ -1,0 +1,111 @@
+{
+  "name": "AletheaIdentityData",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "brand_feel": {
+      "type": "string",
+      "enum": [
+        "minimal",
+        "futuristic",
+        "street",
+        "luxury",
+        "sport",
+        "elegant",
+        "other"
+      ],
+      "description": "Visual style"
+    },
+    "primary_mood": {
+      "type": "string",
+      "enum": [
+        "bold",
+        "calm",
+        "aggressive",
+        "soft",
+        "premium",
+        "raw"
+      ],
+      "description": "Mood"
+    },
+    "color_preferences": {
+      "type": "string",
+      "description": "Preferred colors"
+    },
+    "colors_dislike": {
+      "type": "string",
+      "description": "Colors to avoid"
+    },
+    "brand_references": {
+      "type": "string",
+      "description": "Reference brands"
+    },
+    "reference_likes": {
+      "type": "string",
+      "description": "What you like about them"
+    },
+    "reference_dislikes": {
+      "type": "string",
+      "description": "What you dislike"
+    },
+    "typography_preference": {
+      "type": "string",
+      "enum": [
+        "serif",
+        "sans_serif",
+        "modern",
+        "script",
+        "mixed"
+      ],
+      "description": "Typography"
+    },
+    "font_weight": {
+      "type": "string",
+      "enum": [
+        "bold",
+        "thin",
+        "mixed"
+      ],
+      "description": "Font weight"
+    },
+    "embroidery_adaptable": {
+      "type": "boolean",
+      "default": false,
+      "description": "Logo for embroidery"
+    },
+    "logo_printed": {
+      "type": "boolean",
+      "default": true
+    },
+    "logo_embroidered": {
+      "type": "boolean",
+      "default": false
+    },
+    "logo_on_tags": {
+      "type": "boolean",
+      "default": false
+    },
+    "logo_monogram": {
+      "type": "boolean",
+      "default": false
+    },
+    "generated_direction_summary": {
+      "type": "string",
+      "description": "AI generated summary"
+    },
+    "generated_typography_suggestions": {
+      "type": "string",
+      "description": "Typography suggestions"
+    },
+    "generated_color_mood": {
+      "type": "string",
+      "description": "Color mood direction"
+    }
+  },
+  "required": [
+    "alethea_project_id"
+  ]
+}

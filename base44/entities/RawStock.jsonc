@@ -1,0 +1,45 @@
+{
+  "name": "RawStock",
+  "type": "object",
+  "properties": {
+    "item_name": {
+      "type": "string",
+      "description": "Item name"
+    },
+    "batch_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Batch date"
+    },
+    "quantity_purchased": {
+      "type": "number",
+      "description": "Quantity purchased"
+    },
+    "quantity_remaining": {
+      "type": "number",
+      "description": "Quantity remaining"
+    },
+    "cost_per_unit": {
+      "type": "number",
+      "description": "Cost per unit"
+    },
+    "total_value": {
+      "type": "number",
+      "description": "Total value"
+    },
+    "supplier": {
+      "type": "string",
+      "description": "Supplier"
+    },
+    "expense_id": {
+      "type": "string",
+      "description": "Linked expense"
+    }
+  },
+  "required": [
+    "item_name",
+    "batch_date",
+    "quantity_purchased",
+    "cost_per_unit"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "FinishedStock",
+  "type": "object",
+  "properties": {
+    "product_name": {
+      "type": "string",
+      "description": "Product name"
+    },
+    "quantity_produced": {
+      "type": "number",
+      "description": "Quantity produced"
+    },
+    "quantity_available": {
+      "type": "number",
+      "description": "Quantity available"
+    },
+    "production_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Production date"
+    },
+    "cost_per_unit": {
+      "type": "number",
+      "description": "Cost per unit (from FIFO)"
+    },
+    "total_stock_value": {
+      "type": "number",
+      "description": "Total stock value"
+    },
+    "linked_raw_batches": {
+      "type": "array",
+      "description": "Linked raw batch IDs",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "product_name",
+    "quantity_produced",
+    "production_date"
+  ]
+}

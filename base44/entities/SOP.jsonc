@@ -1,0 +1,142 @@
+{
+  "name": "SOP",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "SOP title"
+    },
+    "role_id": {
+      "type": "string",
+      "description": "Role that owns this SOP"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Task owner email - person executing this task"
+    },
+    "purpose": {
+      "type": "string",
+      "description": "Why this SOP exists"
+    },
+    "when_to_use": {
+      "type": "string",
+      "description": "When to use this SOP"
+    },
+    "steps": {
+      "type": "array",
+      "description": "Step-by-step instructions",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step_number": {
+            "type": "number"
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "tips": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "time_expectation": {
+      "type": "string",
+      "description": "Expected time to complete"
+    },
+    "common_mistakes": {
+      "type": "string",
+      "description": "Common mistakes to avoid"
+    },
+    "tools": {
+      "type": "array",
+      "description": "Tools and templates needed",
+      "items": {
+        "type": "string"
+      }
+    },
+    "linked_clients": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "linked_orders": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "linked_projects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "version": {
+      "type": "number",
+      "default": 1,
+      "description": "Current version number"
+    },
+    "last_verified_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Last time SOP was verified as accurate"
+    },
+    "supports_qbr": {
+      "type": "boolean",
+      "default": true
+    },
+    "criticality": {
+      "type": "string",
+      "enum": [
+        "critical",
+        "support",
+        "optional"
+      ],
+      "default": "support"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "title",
+    "role_id",
+    "purpose"
+  ],
+  "rls": {
+    "create": {
+      "created_by": "{{user.email}}"
+    },
+    "read": {},
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

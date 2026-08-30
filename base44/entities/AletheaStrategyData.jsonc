@@ -1,0 +1,77 @@
+{
+  "name": "AletheaStrategyData",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "brand_name": {
+      "type": "string",
+      "description": "Brand name"
+    },
+    "long_term_vision": {
+      "type": "string",
+      "description": "Long-term vision"
+    },
+    "revenue_goal_12m": {
+      "type": "number",
+      "description": "12-month revenue goal"
+    },
+    "current_revenue": {
+      "type": "number",
+      "description": "Current revenue"
+    },
+    "product_categories": {
+      "type": "string",
+      "description": "Main product categories"
+    },
+    "drop_model": {
+      "type": "string",
+      "enum": [
+        "limited",
+        "continuous",
+        "custom",
+        "mixed"
+      ],
+      "description": "Drop model"
+    },
+    "drops_per_year": {
+      "type": "number",
+      "description": "If limited drops"
+    },
+    "collection_size": {
+      "type": "number",
+      "description": "Planned collection size"
+    },
+    "competitors": {
+      "type": "string",
+      "description": "List of 3 competitors"
+    },
+    "pricing_position": {
+      "type": "string",
+      "enum": [
+        "lower",
+        "similar",
+        "premium"
+      ],
+      "description": "Price positioning"
+    },
+    "unique_value": {
+      "type": "string",
+      "description": "Why choose you"
+    },
+    "competitor_weaknesses": {
+      "type": "string",
+      "description": "What competitors do poorly"
+    },
+    "competitor_strengths": {
+      "type": "string",
+      "description": "What competitors do well"
+    }
+  },
+  "required": [
+    "alethea_project_id",
+    "brand_name"
+  ]
+}

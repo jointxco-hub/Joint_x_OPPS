@@ -1,0 +1,82 @@
+{
+  "name": "Project",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Project name"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client or brand name"
+    },
+    "project_code": {
+      "type": "string",
+      "description": "Unique project code"
+    },
+    "goal": {
+      "type": "string",
+      "description": "Project objective"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "planning",
+        "active",
+        "on_hold",
+        "completed",
+        "archived"
+      ],
+      "default": "planning"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ],
+      "default": "normal"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "target_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "total_budget": {
+      "type": "number",
+      "description": "Total project budget"
+    },
+    "blockers": {
+      "type": "string",
+      "description": "Current blockers or issues"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Project notes and context"
+    },
+    "team_members": {
+      "type": "array",
+      "description": "People involved in this project",
+      "items": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "name",
+    "client_name"
+  ]
+}

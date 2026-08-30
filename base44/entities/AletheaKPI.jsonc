@@ -1,0 +1,60 @@
+{
+  "name": "AletheaKPI",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "test_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Test date"
+    },
+    "meta_cpa": {
+      "type": "number",
+      "description": "Meta cost per acquisition"
+    },
+    "tiktok_cpa": {
+      "type": "number",
+      "description": "TikTok cost per acquisition"
+    },
+    "meta_ctr": {
+      "type": "number",
+      "description": "Meta click-through rate"
+    },
+    "tiktok_ctr": {
+      "type": "number",
+      "description": "TikTok click-through rate"
+    },
+    "meta_roas": {
+      "type": "number",
+      "description": "Meta return on ad spend"
+    },
+    "tiktok_roas": {
+      "type": "number",
+      "description": "TikTok return on ad spend"
+    },
+    "platform_recommendation": {
+      "type": "string",
+      "enum": [
+        "meta",
+        "tiktok",
+        "both"
+      ],
+      "description": "AI recommendation"
+    },
+    "scaling_recommendation": {
+      "type": "string",
+      "description": "Scaling advice"
+    },
+    "budget_shift_recommendation": {
+      "type": "string",
+      "description": "Budget shift advice"
+    }
+  },
+  "required": [
+    "alethea_project_id",
+    "test_date"
+  ]
+}

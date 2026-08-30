@@ -1,0 +1,112 @@
+{
+  "name": "WeeklyTask",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Task name"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "complete"
+      ],
+      "default": "not_started",
+      "description": "Task status"
+    },
+    "week_number": {
+      "type": "number",
+      "description": "Week number in 12-week cycle (1-12)"
+    },
+    "day_of_week": {
+      "type": "string",
+      "enum": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ],
+      "description": "Day of the week"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Optional due date"
+    },
+    "assigned_to": {
+      "type": "array",
+      "description": "Team member emails (multi-tag)",
+      "items": {
+        "type": "string"
+      }
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "medium",
+      "description": "Task priority"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "order_id": {
+      "type": "string",
+      "description": "Linked order"
+    },
+    "goal_id": {
+      "type": "string",
+      "description": "Linked goal"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Task notes"
+    },
+    "subtasks": {
+      "type": "array",
+      "description": "Subtasks list",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "assigned_to": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "due_date": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "cycle_start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date of the 12-week cycle"
+    }
+  },
+  "required": [
+    "title",
+    "week_number",
+    "day_of_week"
+  ]
+}

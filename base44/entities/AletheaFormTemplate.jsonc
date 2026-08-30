@@ -1,0 +1,31 @@
+{
+  "name": "AletheaFormTemplate",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Form template name"
+    },
+    "phase_id": {
+      "type": "string",
+      "description": "Linked to phase"
+    },
+    "client_visible": {
+      "type": "boolean",
+      "default": true,
+      "description": "Client can see and fill"
+    },
+    "active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Template active"
+    },
+    "description": {
+      "type": "string",
+      "description": "Form description"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "name": "SOPVideo",
+  "type": "object",
+  "properties": {
+    "sop_id": {
+      "type": "string",
+      "description": "Related SOP"
+    },
+    "title": {
+      "type": "string",
+      "description": "Video title"
+    },
+    "video_type": {
+      "type": "string",
+      "enum": [
+        "overview",
+        "step_by_step",
+        "troubleshooting",
+        "update_changelog"
+      ],
+      "description": "Type of video"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "internal_upload",
+        "youtube",
+        "tiktok",
+        "vimeo",
+        "external_link"
+      ],
+      "description": "Video source"
+    },
+    "video_url": {
+      "type": "string",
+      "description": "Video URL"
+    },
+    "added_by_email": {
+      "type": "string",
+      "description": "Who added this video"
+    },
+    "display_order": {
+      "type": "number",
+      "default": 0,
+      "description": "Order to display videos"
+    }
+  },
+  "required": [
+    "sop_id",
+    "title",
+    "video_url"
+  ]
+}

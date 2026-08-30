@@ -1,0 +1,66 @@
+{
+  "name": "AletheaSampleData",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "number_of_skus": {
+      "type": "number",
+      "description": "Number of SKUs"
+    },
+    "fabric_type": {
+      "type": "string",
+      "description": "Fabric type"
+    },
+    "print_type": {
+      "type": "string",
+      "description": "Print type"
+    },
+    "blank_cost": {
+      "type": "number",
+      "description": "Blank cost"
+    },
+    "print_cost": {
+      "type": "number",
+      "description": "Print cost"
+    },
+    "labor_cost": {
+      "type": "number",
+      "description": "Labor cost"
+    },
+    "packaging_cost": {
+      "type": "number",
+      "description": "Packaging cost"
+    },
+    "target_retail_price": {
+      "type": "number",
+      "description": "Target retail price"
+    },
+    "expected_monthly_volume": {
+      "type": "number",
+      "description": "Expected monthly volume"
+    },
+    "calculated_margin_percentage": {
+      "type": "number",
+      "description": "Margin %"
+    },
+    "calculated_profit_per_unit": {
+      "type": "number",
+      "description": "Profit per unit"
+    },
+    "calculated_breakeven_volume": {
+      "type": "number",
+      "description": "Break-even volume"
+    },
+    "risk_flag": {
+      "type": "boolean",
+      "default": false,
+      "description": "Risk if margin < 50%"
+    }
+  },
+  "required": [
+    "alethea_project_id"
+  ]
+}

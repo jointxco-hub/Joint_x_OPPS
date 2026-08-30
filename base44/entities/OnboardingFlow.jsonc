@@ -1,0 +1,70 @@
+{
+  "name": "OnboardingFlow",
+  "type": "object",
+  "properties": {
+    "role_id": {
+      "type": "string",
+      "description": "Role this onboarding is for"
+    },
+    "team_member_name": {
+      "type": "string",
+      "description": "Person being onboarded"
+    },
+    "team_member_email": {
+      "type": "string",
+      "description": "Email of person being onboarded"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Onboarding start date"
+    },
+    "checklist_items": {
+      "type": "array",
+      "description": "Onboarding checklist",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "sop_id": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "completed_date": {
+            "type": "string"
+          },
+          "order": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "completion_percentage": {
+      "type": "number",
+      "default": 0,
+      "description": "Percentage complete"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "completed",
+        "paused"
+      ],
+      "default": "in_progress"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Onboarding notes"
+    }
+  },
+  "required": [
+    "role_id",
+    "team_member_name",
+    "team_member_email"
+  ]
+}

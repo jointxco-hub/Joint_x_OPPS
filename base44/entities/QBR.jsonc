@@ -1,0 +1,52 @@
+{
+  "name": "QBR",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Queen Bee Role title"
+    },
+    "description": {
+      "type": "string",
+      "description": "Primary value the business must protect"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Currently active QBR"
+    }
+  },
+  "required": [
+    "title",
+    "description"
+  ],
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "SOPVersion",
+  "type": "object",
+  "properties": {
+    "sop_id": {
+      "type": "string",
+      "description": "Related SOP"
+    },
+    "version_number": {
+      "type": "number",
+      "description": "Version number"
+    },
+    "change_type": {
+      "type": "string",
+      "enum": [
+        "improvement",
+        "fix",
+        "new_method",
+        "minor_update"
+      ],
+      "description": "Type of change"
+    },
+    "change_description": {
+      "type": "string",
+      "description": "What changed and why"
+    },
+    "steps_snapshot": {
+      "type": "array",
+      "description": "Snapshot of steps at this version",
+      "items": {
+        "type": "object"
+      }
+    },
+    "updated_by_email": {
+      "type": "string",
+      "description": "Who made the update"
+    }
+  },
+  "required": [
+    "sop_id",
+    "version_number",
+    "change_description"
+  ]
+}

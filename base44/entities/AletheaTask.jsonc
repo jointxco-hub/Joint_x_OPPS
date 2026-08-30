@@ -1,0 +1,49 @@
+{
+  "name": "AletheaTask",
+  "type": "object",
+  "properties": {
+    "step_id": {
+      "type": "string",
+      "description": "Linked step"
+    },
+    "title": {
+      "type": "string",
+      "description": "Task title"
+    },
+    "assigned_user_emails": {
+      "type": "array",
+      "description": "Assigned user emails",
+      "items": {
+        "type": "string"
+      }
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Due date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed"
+      ],
+      "default": "pending",
+      "description": "Task status"
+    },
+    "client_visible": {
+      "type": "boolean",
+      "default": false,
+      "description": "Visible to client"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Task notes"
+    }
+  },
+  "required": [
+    "step_id",
+    "title"
+  ]
+}

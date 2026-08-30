@@ -1,0 +1,54 @@
+{
+  "name": "Invoice",
+  "type": "object",
+  "properties": {
+    "invoice_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Invoice date"
+    },
+    "client": {
+      "type": "string",
+      "description": "Client name"
+    },
+    "invoice_number": {
+      "type": "string",
+      "description": "Invoice number"
+    },
+    "gross_amount": {
+      "type": "number",
+      "description": "Gross amount"
+    },
+    "vat_amount": {
+      "type": "number",
+      "description": "VAT amount"
+    },
+    "net_income": {
+      "type": "number",
+      "description": "Net income (auto-calculated)"
+    },
+    "payment_status": {
+      "type": "string",
+      "enum": [
+        "paid",
+        "unpaid"
+      ],
+      "default": "unpaid",
+      "description": "Payment status"
+    },
+    "payment_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Payment date"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Linked project"
+    }
+  },
+  "required": [
+    "invoice_date",
+    "client",
+    "gross_amount"
+  ]
+}

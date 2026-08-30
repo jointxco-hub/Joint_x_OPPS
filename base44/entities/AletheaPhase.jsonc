@@ -1,0 +1,118 @@
+{
+  "name": "AletheaPhase",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Phase name"
+    },
+    "order": {
+      "type": "number",
+      "description": "Phase order"
+    },
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked Alethea project"
+    },
+    "phase_owner_id": {
+      "type": "string",
+      "description": "Operations Role ID"
+    },
+    "assigned_role_ids": {
+      "type": "array",
+      "description": "Multiple assigned role IDs",
+      "items": {
+        "type": "string"
+      }
+    },
+    "payment_required": {
+      "type": "boolean",
+      "default": false,
+      "description": "Payment required to unlock"
+    },
+    "payment_type": {
+      "type": "string",
+      "enum": [
+        "full",
+        "deposit",
+        "percentage"
+      ],
+      "description": "Payment type"
+    },
+    "payment_percentage": {
+      "type": "number",
+      "description": "If percentage type"
+    },
+    "linked_invoice_id": {
+      "type": "string",
+      "description": "Linked invoice"
+    },
+    "unlock_condition": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "payment",
+        "manual",
+        "combined"
+      ],
+      "default": "auto",
+      "description": "How phase unlocks"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "locked",
+        "active",
+        "completed"
+      ],
+      "default": "locked",
+      "description": "Phase status"
+    }
+  },
+  "required": [
+    "name",
+    "order",
+    "alethea_project_id"
+  ],
+  "rls": {
+    "create": {
+      "created_by": "{{user.email}}"
+    },
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
+}

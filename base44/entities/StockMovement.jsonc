@@ -1,0 +1,55 @@
+{
+  "name": "StockMovement",
+  "type": "object",
+  "properties": {
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Movement date"
+    },
+    "item": {
+      "type": "string",
+      "description": "Item name"
+    },
+    "movement_type": {
+      "type": "string",
+      "enum": [
+        "raw_to_finished",
+        "finished_to_sold"
+      ],
+      "description": "Movement type"
+    },
+    "quantity": {
+      "type": "number",
+      "description": "Quantity moved"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "sale",
+        "sample",
+        "damage",
+        "production"
+      ],
+      "description": "Reason"
+    },
+    "invoice_id": {
+      "type": "string",
+      "description": "Linked invoice"
+    },
+    "order_id": {
+      "type": "string",
+      "description": "Linked order"
+    },
+    "cost_value": {
+      "type": "number",
+      "description": "Cost value (COGS)"
+    }
+  },
+  "required": [
+    "date",
+    "item",
+    "movement_type",
+    "quantity"
+  ]
+}

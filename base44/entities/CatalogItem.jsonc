@@ -1,0 +1,103 @@
+{
+  "name": "CatalogItem",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "code": {
+      "type": "string",
+      "description": "Product code e.g. JV1, JET, JHG"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "tshirts",
+        "hoodies",
+        "sweaters",
+        "hats",
+        "bottoms",
+        "printing",
+        "labels"
+      ],
+      "description": "Product category"
+    },
+    "description": {
+      "type": "string"
+    },
+    "gsm": {
+      "type": "string"
+    },
+    "material": {
+      "type": "string"
+    },
+    "features": {
+      "type": "string"
+    },
+    "base_price": {
+      "type": "number",
+      "description": "Base price in ZAR"
+    },
+    "bulk_pricing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "min_qty": {
+            "type": "number"
+          },
+          "max_qty": {
+            "type": "number"
+          },
+          "price": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "sizes_available": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "colors_available": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Primary product image"
+    },
+    "images": {
+      "type": "array",
+      "description": "Multiple product images",
+      "items": {
+        "type": "string"
+      }
+    },
+    "videos": {
+      "type": "array",
+      "description": "Product videos",
+      "items": {
+        "type": "string"
+      }
+    },
+    "display_order": {
+      "type": "number",
+      "description": "Order for displaying in catalog",
+      "default": 0
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "name",
+    "category",
+    "base_price"
+  ]
+}

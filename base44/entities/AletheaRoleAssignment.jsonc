@@ -1,0 +1,43 @@
+{
+  "name": "AletheaRoleAssignment",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked Alethea project"
+    },
+    "role_id": {
+      "type": "string",
+      "description": "Operations Role ID"
+    },
+    "assigned_user_emails": {
+      "type": "array",
+      "description": "Assigned user emails",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "project",
+        "phase",
+        "task"
+      ],
+      "default": "project",
+      "description": "Assignment scope"
+    },
+    "phase_id": {
+      "type": "string",
+      "description": "If scope is phase"
+    },
+    "task_id": {
+      "type": "string",
+      "description": "If scope is task"
+    }
+  },
+  "required": [
+    "alethea_project_id",
+    "role_id"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "name": "AletheaFormInstance",
+  "type": "object",
+  "properties": {
+    "template_id": {
+      "type": "string",
+      "description": "Form template"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Client who filled it"
+    },
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Related project"
+    },
+    "response_json": {
+      "type": "string",
+      "description": "JSON of responses"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "submitted",
+        "approved"
+      ],
+      "default": "draft",
+      "description": "Instance status"
+    },
+    "submitted_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Submission date"
+    },
+    "reviewed_by": {
+      "type": "string",
+      "description": "Reviewer email"
+    }
+  },
+  "required": [
+    "template_id",
+    "alethea_project_id"
+  ]
+}

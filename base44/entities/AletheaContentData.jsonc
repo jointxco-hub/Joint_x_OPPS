@@ -1,0 +1,62 @@
+{
+  "name": "AletheaContentData",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "number_of_products": {
+      "type": "number",
+      "description": "Products to shoot"
+    },
+    "model_type": {
+      "type": "string",
+      "description": "Model type"
+    },
+    "location": {
+      "type": "string",
+      "description": "Shoot location"
+    },
+    "mood_board_url": {
+      "type": "string",
+      "description": "Mood board reference"
+    },
+    "ad_objective": {
+      "type": "string",
+      "description": "Ad objective"
+    },
+    "primary_platform": {
+      "type": "string",
+      "enum": [
+        "meta",
+        "tiktok",
+        "both"
+      ],
+      "description": "Target platform"
+    },
+    "generated_shot_list": {
+      "type": "string",
+      "description": "AI generated shot list"
+    },
+    "generated_content_angles": {
+      "type": "string",
+      "description": "Content angles"
+    },
+    "generated_ad_concepts": {
+      "type": "string",
+      "description": "Ad concepts"
+    },
+    "generated_video_hooks": {
+      "type": "string",
+      "description": "Video hook scripts"
+    },
+    "generated_content_calendar": {
+      "type": "string",
+      "description": "30-day calendar"
+    }
+  },
+  "required": [
+    "alethea_project_id"
+  ]
+}

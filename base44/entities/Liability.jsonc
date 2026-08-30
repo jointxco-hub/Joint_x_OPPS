@@ -1,0 +1,43 @@
+{
+  "name": "Liability",
+  "type": "object",
+  "properties": {
+    "liability_name": {
+      "type": "string",
+      "description": "Liability name"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "vat",
+        "tax",
+        "loan",
+        "supplier_credit"
+      ],
+      "description": "Liability type"
+    },
+    "amount_owed": {
+      "type": "number",
+      "description": "Amount owed"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Due date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "paid",
+        "unpaid"
+      ],
+      "default": "unpaid",
+      "description": "Status"
+    }
+  },
+  "required": [
+    "liability_name",
+    "type",
+    "amount_owed"
+  ]
+}

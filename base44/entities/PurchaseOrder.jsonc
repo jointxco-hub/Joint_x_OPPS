@@ -1,0 +1,110 @@
+{
+  "name": "PurchaseOrder",
+  "type": "object",
+  "properties": {
+    "po_number": {
+      "type": "string",
+      "description": "Purchase order number"
+    },
+    "supplier_id": {
+      "type": "string",
+      "description": "Supplier ID"
+    },
+    "supplier_ids": {
+      "type": "array",
+      "description": "Multiple supplier IDs",
+      "items": {
+        "type": "string"
+      }
+    },
+    "supplier_name": {
+      "type": "string",
+      "description": "Supplier name for display"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "pending",
+        "approved",
+        "ordered",
+        "partial",
+        "received",
+        "cancelled",
+        "archived"
+      ],
+      "default": "draft"
+    },
+    "items": {
+      "type": "array",
+      "description": "Line items",
+      "items": {
+        "type": "object",
+        "properties": {
+          "inventory_item_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sku": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "unit_price": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "is_custom": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    "subtotal": {
+      "type": "number"
+    },
+    "tax": {
+      "type": "number",
+      "default": 0
+    },
+    "total": {
+      "type": "number"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "order_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "expected_delivery": {
+      "type": "string",
+      "format": "date"
+    },
+    "received_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "auto_generated": {
+      "type": "boolean",
+      "default": false,
+      "description": "Was this PO auto-generated from low stock"
+    },
+    "trigger_item_id": {
+      "type": "string",
+      "description": "Inventory item that triggered auto-generation"
+    }
+  },
+  "required": [
+    "supplier_name"
+  ]
+}

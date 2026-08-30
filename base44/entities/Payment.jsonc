@@ -1,0 +1,69 @@
+{
+  "name": "Payment",
+  "type": "object",
+  "properties": {
+    "order_id": {
+      "type": "string",
+      "description": "Linked order ID"
+    },
+    "order_number": {
+      "type": "string",
+      "description": "Order reference"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "amount": {
+      "type": "number",
+      "description": "Payment amount"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "cash",
+        "card",
+        "eft",
+        "bank_transfer",
+        "paypal",
+        "other"
+      ],
+      "default": "eft"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "completed",
+        "failed",
+        "refunded"
+      ],
+      "default": "pending"
+    },
+    "payment_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "invoice_number": {
+      "type": "string"
+    },
+    "tax_amount": {
+      "type": "number",
+      "default": 0
+    },
+    "is_offline": {
+      "type": "boolean",
+      "default": false
+    },
+    "synced": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "amount",
+    "status"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "name": "AletheaWebsiteData",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "product_count": {
+      "type": "number",
+      "description": "Number of products"
+    },
+    "collection_count": {
+      "type": "number",
+      "description": "Number of collections"
+    },
+    "needs_bundles": {
+      "type": "boolean",
+      "default": false
+    },
+    "needs_upsells": {
+      "type": "boolean",
+      "default": false
+    },
+    "needs_abandoned_cart": {
+      "type": "boolean",
+      "default": false
+    },
+    "website_style": {
+      "type": "string",
+      "enum": [
+        "minimal",
+        "editorial",
+        "bold",
+        "modern",
+        "street"
+      ],
+      "description": "Website style"
+    },
+    "reference_sites": {
+      "type": "string",
+      "description": "Reference websites"
+    },
+    "reference_likes": {
+      "type": "string",
+      "description": "What you like"
+    },
+    "reference_dislikes": {
+      "type": "string",
+      "description": "What you dislike"
+    },
+    "theme": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark",
+        "mixed"
+      ],
+      "default": "light"
+    },
+    "wants_animation": {
+      "type": "boolean",
+      "default": false
+    },
+    "instagram_shop": {
+      "type": "boolean",
+      "default": false
+    },
+    "tiktok_shop": {
+      "type": "boolean",
+      "default": false
+    },
+    "whatsapp_business": {
+      "type": "boolean",
+      "default": false
+    },
+    "meta_business": {
+      "type": "boolean",
+      "default": false
+    },
+    "email_marketing": {
+      "type": "boolean",
+      "default": false
+    },
+    "generated_homepage_structure": {
+      "type": "string",
+      "description": "AI generated homepage"
+    },
+    "generated_product_copy": {
+      "type": "string",
+      "description": "AI generated product copy"
+    },
+    "generated_faq": {
+      "type": "string",
+      "description": "AI generated FAQ"
+    },
+    "generated_shipping_policy": {
+      "type": "string",
+      "description": "AI generated shipping"
+    }
+  },
+  "required": [
+    "alethea_project_id"
+  ]
+}

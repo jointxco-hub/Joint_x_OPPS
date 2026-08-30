@@ -1,0 +1,33 @@
+{
+  "name": "FileComment",
+  "type": "object",
+  "properties": {
+    "file_id": {
+      "type": "string",
+      "description": "ClientAsset ID"
+    },
+    "comment_text": {
+      "type": "string",
+      "description": "Comment content"
+    },
+    "mentioned_user": {
+      "type": "string",
+      "description": "Tagged team member email"
+    },
+    "file_status": {
+      "type": "string",
+      "enum": [
+        "needs_fix",
+        "approved",
+        "pending_review",
+        "none"
+      ],
+      "default": "none",
+      "description": "File-related status"
+    }
+  },
+  "required": [
+    "file_id",
+    "comment_text"
+  ]
+}

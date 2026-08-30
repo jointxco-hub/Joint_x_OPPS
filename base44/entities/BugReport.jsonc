@@ -1,0 +1,46 @@
+{
+  "name": "BugReport",
+  "type": "object",
+  "properties": {
+    "description": {
+      "type": "string",
+      "description": "Bug description"
+    },
+    "page_feature": {
+      "type": "string",
+      "description": "Page/feature where bug occurred"
+    },
+    "screenshot_url": {
+      "type": "string",
+      "description": "Screenshot attachment"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "medium",
+      "description": "Bug priority"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Assigned team member email"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "in_review",
+        "resolved"
+      ],
+      "default": "open",
+      "description": "Bug status"
+    }
+  },
+  "required": [
+    "description",
+    "page_feature"
+  ]
+}

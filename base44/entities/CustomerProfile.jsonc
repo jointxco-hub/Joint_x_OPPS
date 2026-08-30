@@ -1,0 +1,135 @@
+{
+  "name": "CustomerProfile",
+  "type": "object",
+  "properties": {
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked project"
+    },
+    "persona_name": {
+      "type": "string",
+      "description": "Persona name"
+    },
+    "age_range": {
+      "type": "string",
+      "description": "Age range"
+    },
+    "gender": {
+      "type": "string",
+      "description": "Gender"
+    },
+    "income_level": {
+      "type": "string",
+      "description": "Income level"
+    },
+    "occupation": {
+      "type": "string",
+      "description": "Occupation"
+    },
+    "location": {
+      "type": "string",
+      "description": "City/Region"
+    },
+    "lifestyle_description": {
+      "type": "string",
+      "description": "What kind of life they live"
+    },
+    "events_attend": {
+      "type": "string",
+      "description": "Events they attend"
+    },
+    "work_type": {
+      "type": "string",
+      "enum": [
+        "corporate",
+        "creative",
+        "student",
+        "entrepreneur",
+        "mixed"
+      ],
+      "description": "Work type"
+    },
+    "perfect_weekend": {
+      "type": "string",
+      "description": "Perfect weekend description"
+    },
+    "brands_they_wear": {
+      "type": "string",
+      "description": "Current brands"
+    },
+    "primary_platforms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Social platforms used"
+    },
+    "instagram_behavior": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Instagram activities"
+    },
+    "tiktok_content_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "TikTok content engagement"
+    },
+    "daily_online_hours": {
+      "type": "string",
+      "description": "Time spent online"
+    },
+    "buying_behavior": {
+      "type": "string",
+      "enum": [
+        "impulse",
+        "research_first",
+        "mixed"
+      ],
+      "description": "Buying behavior"
+    },
+    "confidence_drivers": {
+      "type": "string",
+      "description": "What makes them confident"
+    },
+    "insecurities": {
+      "type": "string",
+      "description": "Their insecurities"
+    },
+    "identity_signal": {
+      "type": "string",
+      "description": "Identity they signal"
+    },
+    "purchase_blockers": {
+      "type": "string",
+      "description": "What stops them buying"
+    },
+    "shopping_frustrations": {
+      "type": "string",
+      "description": "Shopping frustrations"
+    },
+    "transformation_feeling": {
+      "type": "string",
+      "description": "How they feel wearing brand"
+    },
+    "brand_represents": {
+      "type": "string",
+      "description": "What brand represents"
+    },
+    "brand_enemy": {
+      "type": "string",
+      "description": "Brand enemy/opposite"
+    },
+    "brand_category": {
+      "type": "string",
+      "description": "Brand category"
+    }
+  },
+  "required": [
+    "alethea_project_id",
+    "persona_name"
+  ]
+}

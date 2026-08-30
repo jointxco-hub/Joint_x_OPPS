@@ -1,0 +1,50 @@
+{
+  "name": "AletheaStep",
+  "type": "object",
+  "properties": {
+    "phase_id": {
+      "type": "string",
+      "description": "Linked phase"
+    },
+    "title": {
+      "type": "string",
+      "description": "Step title"
+    },
+    "order": {
+      "type": "number",
+      "description": "Step order"
+    },
+    "assigned_role_ids": {
+      "type": "array",
+      "description": "Assigned role IDs",
+      "items": {
+        "type": "string"
+      }
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Due date"
+    },
+    "completion_percentage": {
+      "type": "number",
+      "default": 0,
+      "description": "Completion percentage"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed"
+      ],
+      "default": "pending",
+      "description": "Step status"
+    }
+  },
+  "required": [
+    "phase_id",
+    "title",
+    "order"
+  ]
+}

@@ -1,0 +1,189 @@
+{
+  "name": "OpsTask",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Task title"
+    },
+    "description": {
+      "type": "string",
+      "description": "Task description / brief"
+    },
+    "production_type": {
+      "type": "string",
+      "enum": [
+        "single",
+        "bulk",
+        "x1_sample_pack",
+        "alethea"
+      ],
+      "description": "Production type"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "on_hold",
+        "complete",
+        "archived"
+      ],
+      "default": "not_started"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "default": "medium"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Due date"
+    },
+    "assigned_to": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Assigned team member emails"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "Linked client ID"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name (quick ref)"
+    },
+    "order_id": {
+      "type": "string",
+      "description": "Linked order ID"
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Linked project ID"
+    },
+    "alethea_project_id": {
+      "type": "string",
+      "description": "Linked Alethea project ID"
+    },
+    "production_stage": {
+      "type": "string",
+      "enum": [
+        "design",
+        "sourcing",
+        "sampling",
+        "cutting",
+        "printing",
+        "pressing",
+        "finishing",
+        "packing",
+        "delivery",
+        "other"
+      ],
+      "description": "Production stage"
+    },
+    "subtasks": {
+      "type": "array",
+      "description": "Subtasks list",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean",
+            "default": false
+          },
+          "assigned_to": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "deliverables": {
+      "type": "string",
+      "description": "What needs to be delivered"
+    },
+    "supporting_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Design files, photos, videos, docs, links"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Internal notes"
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author_email": {
+            "type": "string"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Team comments"
+    },
+    "week_number": {
+      "type": "number",
+      "description": "Week number on the ops calendar"
+    },
+    "day_of_week": {
+      "type": "string",
+      "enum": [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ]
+    }
+  },
+  "required": [
+    "title"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "name": "Asset",
+  "type": "object",
+  "properties": {
+    "asset_name": {
+      "type": "string",
+      "description": "Asset name"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "equipment",
+        "electronics",
+        "furniture",
+        "cash",
+        "inventory"
+      ],
+      "description": "Asset category"
+    },
+    "purchase_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Purchase date"
+    },
+    "purchase_cost": {
+      "type": "number",
+      "description": "Purchase cost"
+    },
+    "useful_life_years": {
+      "type": "number",
+      "description": "Useful life in years"
+    },
+    "current_book_value": {
+      "type": "number",
+      "description": "Current book value (auto-calculated)"
+    }
+  },
+  "required": [
+    "asset_name",
+    "category",
+    "purchase_cost"
+  ]
+}

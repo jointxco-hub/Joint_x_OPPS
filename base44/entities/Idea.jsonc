@@ -1,0 +1,47 @@
+{
+  "name": "Idea",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Idea title"
+    },
+    "description": {
+      "type": "string",
+      "description": "Idea description"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "ui",
+        "automation",
+        "workflow",
+        "other"
+      ],
+      "default": "other",
+      "description": "Idea category"
+    },
+    "attachment_url": {
+      "type": "string",
+      "description": "Optional attachment"
+    },
+    "assigned_to": {
+      "type": "string",
+      "description": "Assigned team member email"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "in_progress"
+      ],
+      "default": "pending",
+      "description": "Idea status"
+    }
+  },
+  "required": [
+    "title",
+    "description"
+  ]
+}

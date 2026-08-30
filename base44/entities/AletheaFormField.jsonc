@@ -1,0 +1,58 @@
+{
+  "name": "AletheaFormField",
+  "type": "object",
+  "properties": {
+    "template_id": {
+      "type": "string",
+      "description": "Form template ID"
+    },
+    "label": {
+      "type": "string",
+      "description": "Field label"
+    },
+    "field_type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "number",
+        "select",
+        "multi-select",
+        "file",
+        "textarea",
+        "date",
+        "email"
+      ],
+      "description": "Field type"
+    },
+    "required": {
+      "type": "boolean",
+      "default": false,
+      "description": "Required field"
+    },
+    "order": {
+      "type": "number",
+      "description": "Field order"
+    },
+    "options": {
+      "type": "array",
+      "description": "Options for select fields",
+      "items": {
+        "type": "string"
+      }
+    },
+    "conditional_logic": {
+      "type": "string",
+      "description": "JSON conditional logic"
+    },
+    "placeholder": {
+      "type": "string",
+      "description": "Field placeholder"
+    }
+  },
+  "required": [
+    "template_id",
+    "label",
+    "field_type",
+    "order"
+  ]
+}

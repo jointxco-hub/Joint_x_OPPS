@@ -1,0 +1,89 @@
+{
+  "name": "ClientAsset",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Linked project ID"
+    },
+    "order_id": {
+      "type": "string",
+      "description": "Related order ID"
+    },
+    "folder_id": {
+      "type": "string",
+      "description": "Folder ID for organization"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Client name for easy filtering"
+    },
+    "asset_type": {
+      "type": "string",
+      "enum": [
+        "mockup",
+        "tech_pack",
+        "project_file",
+        "artwork",
+        "invoice",
+        "note",
+        "photo",
+        "document",
+        "font",
+        "other"
+      ],
+      "description": "Type of asset"
+    },
+    "title": {
+      "type": "string",
+      "description": "Asset title or name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Asset description or notes"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "URL to the file"
+    },
+    "thumbnail_url": {
+      "type": "string",
+      "description": "Thumbnail for images/videos"
+    },
+    "file_type": {
+      "type": "string",
+      "description": "File extension or MIME type"
+    },
+    "tags": {
+      "type": "array",
+      "description": "Tags for organization",
+      "items": {
+        "type": "string"
+      }
+    },
+    "is_client_visible": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether client can view this asset"
+    },
+    "approval_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "needs_revision"
+      ],
+      "default": "pending",
+      "description": "Approval status for client artwork"
+    },
+    "approval_notes": {
+      "type": "string",
+      "description": "Notes about approval/rejection"
+    }
+  },
+  "required": [
+    "asset_type",
+    "title"
+  ]
+}
