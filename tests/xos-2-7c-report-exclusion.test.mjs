@@ -125,3 +125,71 @@ test("dataClient.js: staff.setOrderTestClassification calls the dedicated RPC by
   assert.ok(source.includes("p_is_test: isTest === undefined ? null : isTest,"));
   assert.ok(source.includes("p_excluded_from_reports: excludedFromReports === undefined ? null : excludedFromReports,"));
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Reconciliation follow-up (closing the two gaps a repo-wide search found
+// after the original 2.7C + Blocker 1/2 correction landed): the executive
+// "Finance Insights" outstanding-balance card and a per-project Finance
+// tab both aggregated straight off raw orders, with no excluded_from_
+// reports exclusion at all - a QA/test order with a fake balance could
+// inflate both. Fixed with the same excluded_from_reports-only switch
+// (never is_test alone) used everywhere else in this feature.
+// ─────────────────────────────────────────────────────────────────────
+
+test("FinanceInsights.jsx: outstandingOrders excludes excluded_from_reports rows, and does NOT filter on is_test (A/B/C: a normal order and an is_test=true/excluded=false order both still contribute; only excluded=true is zeroed out)", async () => {
+  const source = await readSource("src/components/executive/FinanceInsights.jsx");
+  const start = source.indexOf("const outstandingOrders = orders.filter(o =>");
+  const filterExpr = source.slice(start, source.indexOf(");", start));
+  assert.ok(filterExpr.includes("!o.excluded_from_reports"), "must exclude excluded_from_reports=true rows");
+  assert.ok(!filterExpr.includes("is_test"), "must NOT filter on is_test - a test-but-not-excluded order still counts");
+  // Pre-existing conditions (is_archived, status, positive balance) must
+  // survive unchanged alongside the new exclusion.
+  assert.ok(filterExpr.includes("!o.is_archived"));
+  assert.ok(filterExpr.includes('!["cancelled", "delivered"].includes(o.status)'));
+  assert.ok(filterExpr.includes("(o.total_amount || 0) - (o.deposit_paid || 0) > 0"));
+});
+
+test("FinanceInsights.jsx: both the outstanding order count and the outstanding total derive from the SAME already-filtered outstandingOrders array, so an excluded order contributes zero to both, never just one", async () => {
+  const source = await readSource("src/components/executive/FinanceInsights.jsx");
+  assert.match(source, /if \(outstandingOrders\.length > 0\) \{\s*\n\s*const outstandingTotal = outstandingOrders\.reduce\(/);
+});
+
+test("FinanceInsights.jsx (D): every other insight (test transactions, no expenses, uncategorised, courier/bank fee gaps, revenue trend, expense spike, pending approvals) is untouched by this fix", async () => {
+  const source = await readSource("src/components/executive/FinanceInsights.jsx");
+  const unrelatedFragments = [
+    'const testTxCount = [...payments, ...expenses].filter(t => t.is_test).length;',
+    'if (totalRevenue > 0 && totalExpenses === 0) {',
+    'const uncatCount = activeExpenses.filter(e => !e.expense_category && !e.category).length +',
+    '!expenseCategories.has("shipping") && !expenseCategories.has("courier_delivery")',
+    '!expenseCategories.has("bank_fees") && !expenseCategories.has("bank_payment_fees")',
+    'if (thisMonthExp > thisMonthRev && thisMonthRev > 0) {',
+    'const pendingExpenses = activeExpenses.filter(e => e.approval_status === "submitted");',
+  ];
+  for (const fragment of unrelatedFragments) {
+    assert.ok(source.includes(fragment), `unrelated insight logic must be byte-for-byte unchanged: ${fragment}`);
+  }
+});
+
+test("ProjectHub.jsx FinanceTab: totals derive from a separately-filtered projectOrders subset that excludes excluded_from_reports, not is_test (E/F/G: a normal order and an is_test=true/excluded=false order both still contribute; only excluded=true contributes zero)", async () => {
+  const source = await readSource("src/pages/ProjectHub.jsx");
+  const start = source.indexOf("function FinanceTab({ project, orders }) {");
+  const body = source.slice(start, source.indexOf("\n  return (", start));
+  assert.ok(body.includes("const projectOrders = orders.filter(o => !o.excluded_from_reports);"));
+  // Scoped to the filter expression's own line, not the whole function
+  // body - the explanatory comment above it legitimately says "is_test"
+  // in prose.
+  const filterLine = body.slice(body.indexOf("const projectOrders"), body.indexOf(";", body.indexOf("const projectOrders")) + 1);
+  assert.ok(!filterLine.includes("is_test"), "must NOT filter on is_test - a test-but-not-excluded order still counts");
+  assert.ok(body.includes("projectOrders.reduce((sum, o) => sum + (o.quoted_price || 0), 0)"));
+  assert.ok(body.includes("projectOrders.reduce((sum, o) => sum + (o.deposit_paid || 0), 0)"));
+  // Must not still be reducing off the raw, unfiltered `orders`.
+  assert.ok(!body.includes("orders.reduce((sum, o) => sum + (o.quoted_price"));
+  assert.ok(!body.includes("orders.reduce((sum, o) => sum + (o.deposit_paid"));
+});
+
+test("ProjectHub.jsx (H): OverviewTab and OrdersTab still receive the raw, unfiltered `orders` - an excluded project order stays internally inspectable outside the Finance tab, only the finance math itself is filtered", async () => {
+  const source = await readSource("src/pages/ProjectHub.jsx");
+  assert.ok(source.includes("<OverviewTab project={project} orders={orders} tasks={tasks} />"));
+  assert.ok(source.includes("<OrdersTab orders={orders} projectId={projectId} clientName={project.client_name} />"));
+  assert.ok(source.includes("<FinanceTab project={project} orders={orders} />"), "FinanceTab still receives the raw set - filtering happens inside it, not at the fetch/prop level, so nothing else regresses");
+});
