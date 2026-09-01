@@ -7,7 +7,7 @@ async function readSource(relativePath) {
   return raw.replace(/\r\n/g, "\n");
 }
 
-const MIGRATION_PATH = "supabase/migrations/20260828090000_order_line_snapshot_lifecycle_foundation.sql";
+const MIGRATION_PATH = "supabase/migrations/20260828090001_order_line_snapshot_lifecycle_foundation.sql";
 
 // ─────────────────────────────────────────────────────────────────────
 // Order Line Coherence Phase 1C/D - Snapshot Lifecycle Foundation.

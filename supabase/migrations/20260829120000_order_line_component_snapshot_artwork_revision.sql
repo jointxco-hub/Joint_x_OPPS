@@ -1,7 +1,7 @@
 -- Order Line Coherence Phase 1E — placement-specific artwork relink.
 --
 -- Sibling to revise_order_line_component_snapshot (PR #49 /
--- 20260828090000_order_line_snapshot_lifecycle_foundation.sql). That RPC
+-- 20260828090001_order_line_snapshot_lifecycle_foundation.sql). That RPC
 -- revises the reusable production-config fields and carries
 -- artwork_revision_ids forward VERBATIM - it has no artwork parameter,
 -- deliberately, so the Edit Production modal can keep "artwork = a
