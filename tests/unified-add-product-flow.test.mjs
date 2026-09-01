@@ -106,21 +106,19 @@ test("blank_garment is excluded from the + Add print option component-type choic
   assert.ok(source.includes('excludeComponentTypes={["blank_garment"]}'), "staff must not be able to pick blank_garment from this entry point at all");
 });
 
-test("Catalog Management's general Add component flow is unaffected - blank_garment stays available there", async () => {
-  // Phase 2B Step 3 extracted the family composition list/add/edit UI out
-  // of CatalogManagement.jsx into the shared ScopedComponentsEditor (also
-  // reused, scoped, by the new Garment Variants/Treatments sections) -
-  // CatalogManagement's OWN family instance still renders it with no
-  // excludeComponentTypes, so blank_garment stays available there exactly
-  // as before.
+test("Catalog Management's production editing is the canonical editor - all component types (incl. blank_garment) stay available there", async () => {
+  // XOS Phase C replaced CatalogManagement's scoped composition editors
+  // with the ONE canonical CanonicalProductionEditor. Its component-type
+  // <Select> offers the full DB CHECK domain, blank_garment included, and
+  // is never restricted with an exclude list (that restriction only
+  // applies to the order-drawer "+ Add print option" entry point, which
+  // this phase does not touch).
   const pageSource = await readSource("src/pages/CatalogManagement.jsx");
-  const familyEditorStart = pageSource.indexOf('scope={{ type: "family" }}');
-  assert.notEqual(familyEditorStart, -1, "CatalogManagement must render the family-scoped composition editor");
-  const familyEditorProps = pageSource.slice(familyEditorStart - 200, familyEditorStart + 600);
-  assert.ok(!familyEditorProps.includes("excludeComponentTypes"), "the family instance must not restrict component types - it is the general composition editor");
+  assert.ok(pageSource.includes('import CanonicalProductionEditor from "@/components/clients/CanonicalProductionEditor";'));
+  assert.ok(!pageSource.includes("excludeComponentTypes"));
 
-  const editorSource = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
-  assert.ok(editorSource.includes("emptyComponentForm()"), "the shared editor still uses the general-purpose (blank_garment-defaulting) factory");
+  const editorSource = await readSource("src/components/clients/CanonicalProductionEditor.jsx");
+  assert.ok(editorSource.includes('"blank_garment"') || editorSource.includes("PRODUCTION_COMPONENT_TYPES"), "the canonical editor's component-type choices are the full DB domain");
 });
 
 test("a print_service component created via + Add print option never carries an inventory identity", async () => {

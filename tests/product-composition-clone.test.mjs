@@ -307,53 +307,25 @@ test("not JET-specific: the function signature takes two arbitrary client_produc
 });
 
 // ── UI ────────────────────────────────────────────────────────────────
+// XOS Phase C retired the Catalog Management "Duplicate composition" UI
+// (and the whole scoped-component / variant / treatment surface) in
+// favour of the ONE canonical production editor. The
+// duplicate_product_composition RPC itself is unchanged (all the
+// migration tests above still apply); it simply has no OPPS caller in
+// this phase.
 
-test("CatalogManagement imports SearchSelect (fixes a pre-existing broken reference this same Composition section already depended on) and supabase for the RPC call", async () => {
+test("Catalog Management no longer hosts a client-side duplicate-composition UI or a raw product_components editor", async () => {
   const source = await readSource(UI_PATH);
-  assert.ok(source.includes('import { SearchSelect } from "@/pages/Inventory";'));
-  assert.ok(source.includes('import { supabase } from "@/lib/supabaseClient";'));
+  assert.ok(!source.includes("duplicateCompositionMutation"), "the duplicate-composition mutation is gone");
+  assert.ok(!source.includes("duplicate_product_composition"), "no supabase.rpc('duplicate_product_composition') caller in the UI");
+  assert.ok(!source.includes("ScopedComponentsEditor"), "no scoped-component editor mounted");
+  assert.ok(!/GarmentVariantsSection|TreatmentsSection/.test(source), "no variant / treatment editors mounted");
 });
 
-test("the Duplicate composition action calls the RPC via supabase.rpc, not a client-side per-component insert loop", async () => {
+test("Catalog Management edits production through the canonical editor + RPC only", async () => {
   const source = await readSource(UI_PATH);
-  const start = source.indexOf("const duplicateCompositionMutation = useMutation({");
-  assert.notEqual(start, -1);
-  const body = source.slice(start, start + 600);
-  assert.ok(body.includes("supabase.rpc('duplicate_product_composition'"));
-  assert.ok(body.includes("p_source_client_product_id: selectedClientProductId"));
-  assert.ok(body.includes("p_target_client_product_id: targetId"));
-});
-
-test("target candidates are filtered to the same client as the source (best-effort UI filter) and exclude the source product itself", async () => {
-  const source = await readSource(UI_PATH);
-  const start = source.indexOf("const { data: cloneTargetCandidates");
-  const body = source.slice(start, start + 500);
-  assert.ok(body.includes("client_id: selectedClientProduct.client_id"));
-  assert.ok(source.includes("cloneTargetOptions = cloneTargetCandidates.filter((cp) => cp.id !== selectedClientProductId)"));
-});
-
-test("UI shows a warning when the selected target already has a composition and disables Confirm - the RPC's own rejection remains authoritative regardless", async () => {
-  const source = await readSource(UI_PATH);
-  assert.ok(source.includes("targetAlreadyHasComposition"));
-  assert.ok(source.includes("Target product already has a composition"));
-  assert.ok(source.includes("disabled={!duplicateTargetId || targetAlreadyHasComposition || duplicateCompositionMutation.isPending}"));
-});
-
-test("v1 UI does not build component selection, merge, replace, or a bulk variant builder", async () => {
-  const source = await readSource(UI_PATH);
-  assert.ok(!/selectedComponentIds|mergeComposition|replaceComposition|bulkVariant/i.test(source));
-});
-
-test("Duplicate composition button only shows when the source has at least one component, and is hidden while add/edit component forms are open", async () => {
-  // Phase 2B Step 3 moved the add/edit form state into the shared
-  // ScopedComponentsEditor - CatalogManagement now tracks whether it's
-  // open via onBusyChange (see ScopedComponentsEditor.jsx) instead of
-  // owning addingComponent/editingComponentId directly, but the same
-  // hide-while-busy behaviour is preserved.
-  const source = await readSource(UI_PATH);
-  assert.ok(source.includes("productComponents.length > 0 && !familyComposerBusy && ("));
-  assert.ok(source.includes("onBusyChange={setFamilyComposerBusy}"), "the family composition editor must report its open/closed state back up");
-
-  const editorSource = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
-  assert.ok(editorSource.includes("onBusyChange?.(addingComponent || Boolean(editingComponentId));"));
+  assert.ok(source.includes('import CanonicalProductionEditor from "@/components/clients/CanonicalProductionEditor";'));
+  assert.ok(source.includes("setClientProductProductionComponents(selectedClientProductId, components)"));
+  assert.ok(source.includes("getClientProductFull(selectedClientProductId)"));
+  assert.ok(!/\.entities\.ProductComponent\.(create|update|delete)\(/.test(source), "no raw product_components write");
 });
