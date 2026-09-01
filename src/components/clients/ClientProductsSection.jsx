@@ -9,59 +9,100 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Package, Plus, X, ExternalLink, Image as ImageIcon, Eye } from "lucide-react";
+import { Package, Plus, X, ExternalLink, Image as ImageIcon, Eye, Sparkles } from "lucide-react";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
-import { PLACEMENT_PRESETS } from "@/lib/productionStages";
-import { findOrCreateClientProductArtworkFromAsset } from "@/api/artworkLinking";
+import { SearchSelect } from "@/pages/Inventory";
 import {
-  getClientProductArtworkReadiness,
-  setClientProductRequiredArtworkPlacements,
-  deriveReadinessState,
-  READINESS_STATES,
   buildClientProductCreatePayload,
   CLIENT_PRODUCT_STATUSES,
   canReviewTenant,
-  duplicateProductComposition,
-  summarizeProduction,
-  deriveProductionGaps,
-  buildAllowedCombinationMatrix,
-  PRODUCTION_READONLY_MESSAGE,
-  PRICING_PREVIEW_BOUNDARY,
 } from "@/api/clientProducts";
-import { toStaffMessage } from "@/lib/pgErrorMessages";
-import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
-import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
-import TreatmentsSection from "@/components/composition/TreatmentsSection";
-import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import {
+  getClientProductFull,
+  setClientProductProductionComponents,
+  setClientProductThumbnailFromAsset,
+  setClientProductMockupFromAsset,
+  linkClientProductArtworkFromAsset,
+  previewClientProductSourceImport,
+  importClientProductFromSource,
+  createClientProductFromOrder,
+  getClientOrderLinesForImport,
+  mapXosCpError,
+  resolveProductThumbRef,
+  formatPlacementName,
+  PRODUCT_READINESS_ROWS,
+} from "@/api/xosClientProduct";
+import CanonicalProductionEditor from "@/components/clients/CanonicalProductionEditor";
 
+// The canonical Client Product is ONE shared record (X LAB migration
+// 20260901150000). OPPS reads it via get_client_product_full and writes
+// production / thumbnail / mockup / artwork through the shared RPCs.
+// "Open in X LAB Admin" stays a secondary escape hatch, never the
+// primary staff workflow.
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
 
-const TONE_CLASS = {
-  emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  amber: "bg-amber-50 text-amber-700 border-amber-200",
-  red: "bg-red-50 text-red-700 border-red-200",
-  slate: "bg-slate-100 text-slate-600 border-slate-200",
-};
+const IMG_FALLBACK = (
+  <div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-4 w-4" /></div>
+);
 
 function StatusBadge({ status }) {
   return <Badge variant="outline" className="capitalize">{String(status || "draft").replace(/_/g, " ")}</Badge>;
 }
 
-function ReadinessBadge({ state }) {
-  const meta = READINESS_STATES[state] || READINESS_STATES.unknown;
-  return <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${TONE_CLASS[meta.tone]}`}>{meta.label}</span>;
+function ReadinessPill({ productReadiness }) {
+  if (!productReadiness || typeof productReadiness !== "object") {
+    return <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">Readiness —</span>;
+  }
+  if (productReadiness.ready) {
+    return <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Ready</span>;
+  }
+  const n = productReadiness.missing_count ?? 0;
+  return <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{n} to finish</span>;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Phase 1F-A - the OPPS operational home for Client Products, mounted in
-// Clients.jsx's ClientAccountDialog beside CommerceProductsSection. One
-// shared record: this reads/writes the SAME client_products /
-// client_product_artwork rows X LAB uses, via the existing RLS + RPCs.
-// No new tables, no second artwork/readiness calculation, no new statuses.
-// Production configuration (composition / variants / treatments / mapping)
-// is Phase 1F-B and is intentionally NOT here.
+function readinessRowText(key, check) {
+  if (!check) return "—";
+  if (key === "artwork") return check.ready ? `Ready (${check.ready_count}/${check.required_count})` : `${check.ready_count}/${check.required_count} ready`;
+  if (key === "thumbnail") return check.ready ? (check.source === "mockup_fallback" ? "Using mockup" : "Set") : "Not set";
+  if (key === "client_price") return check.ready ? "Set" : (check.reason === "pricing_pending" ? "Pricing pending" : "Not set");
+  if (key === "production") return check.ready ? `${check.component_count} component${check.component_count === 1 ? "" : "s"}` : "Not configured";
+  return check.ready ? "Ready" : "Not ready";
+}
+
+function CanonicalReadinessPanel({ productReadiness, artworkReadiness }) {
+  const checks = productReadiness?.checks || {};
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-sm font-medium">Product readiness</p>
+        <ReadinessPill productReadiness={productReadiness} />
+      </div>
+      <ul className="space-y-1 text-xs">
+        {PRODUCT_READINESS_ROWS.map(([key, label]) => {
+          const check = checks[key];
+          const ok = check?.ready;
+          return (
+            <li key={key} className="flex items-center justify-between">
+              <span className="text-slate-500">{label}</span>
+              <span className={ok ? "text-emerald-700" : "text-slate-600"}>{readinessRowText(key, check)}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {artworkReadiness?.blocking_reasons?.length > 0 && (
+        <div className="mt-2 rounded-md bg-amber-50/70 p-2 text-[11px] text-amber-800">
+          <p className="font-semibold">Blocking artwork readiness:</p>
+          <ul className="list-inside list-disc">
+            {artworkReadiness.blocking_reasons.map((r, i) => <li key={i}>{r}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────
 export function ClientProductsSection({ clientId }) {
   const queryClient = useQueryClient();
@@ -75,8 +116,6 @@ export function ClientProductsSection({ clientId }) {
     enabled: Boolean(clientId),
   });
 
-  // Client-scope guard: never render or open a row that is not this
-  // client's, even if a filter regression ever returned one.
   const scopedProducts = useMemo(
     () => (Array.isArray(clientProducts) ? clientProducts : []).filter((p) => p.client_id === clientId),
     [clientProducts, clientId],
@@ -104,21 +143,7 @@ export function ClientProductsSection({ clientId }) {
       ) : (
         <div className="space-y-2">
           {scopedProducts.map((product) => (
-            <button
-              key={product.id}
-              type="button"
-              onClick={() => setOpenProductId(product.id)}
-              className="flex w-full items-center gap-3 rounded-md bg-slate-50 p-2.5 text-left hover:bg-slate-100"
-            >
-              <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-white">
-                <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-4 w-4" /></div>} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{product.client_facing_name}</p>
-                {product.internal_name && <p className="truncate text-xs text-slate-500">{product.internal_name}</p>}
-              </div>
-              <StatusBadge status={product.status} />
-            </button>
+            <ProductCard key={product.id} product={product} onOpen={() => setOpenProductId(product.id)} />
           ))}
         </div>
       )}
@@ -127,16 +152,16 @@ export function ClientProductsSection({ clientId }) {
         <CreateClientProductDialog
           clientId={clientId}
           onClose={() => setCreating(false)}
-          onCreated={(created) => {
+          onCreated={(id) => {
             setCreating(false);
             invalidateProducts();
-            setOpenProductId(created.id);
+            if (id) setOpenProductId(id);
           }}
         />
       )}
 
       {openProduct && (
-        <ClientProductWorkspace
+        <ConfigureClientProductDrawer
           product={openProduct}
           clientId={clientId}
           onClose={() => setOpenProductId("")}
@@ -147,20 +172,85 @@ export function ClientProductsSection({ clientId }) {
   );
 }
 
+function ProductCard({ product, onOpen }) {
+  const { data: fullRes } = useQuery({
+    queryKey: ["xosClientProductFull", product.id],
+    queryFn: () => getClientProductFull(product.id),
+    enabled: Boolean(product.id),
+    staleTime: 30_000,
+  });
+  const full = fullRes?.data || null;
+  const thumbRef = resolveProductThumbRef(full) || product.thumbnail_url || product.primary_mockup_url;
+
+  return (
+    <div className="flex w-full items-center gap-3 rounded-md bg-slate-50 p-2.5">
+      <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-white">
+        <SecureImage value={thumbRef} alt="" className="h-full w-full object-cover" fallback={IMG_FALLBACK} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{product.client_facing_name}</p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+          <StatusBadge status={full?.flags?.status || product.status} />
+          {full && <ReadinessPill productReadiness={full.product_readiness} />}
+          {(full?.flags?.visible_in_account ?? product.visible_in_account) && (
+            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>
+          )}
+        </div>
+      </div>
+      <Button size="sm" onClick={onOpen}>Configure</Button>
+    </div>
+  );
+}
+
+// ─── Create ──────────────────────────────────────────────────────────
 function CreateClientProductDialog({ clientId, onClose, onCreated }) {
+  const [tab, setTab] = useState("blank");
   const [name, setName] = useState("");
   const [internalName, setInternalName] = useState("");
+  const [orderId, setOrderId] = useState("");
+  const [lineId, setLineId] = useState("");
 
-  const createMutation = useMutation({
+  const blankMutation = useMutation({
     mutationFn: async () => {
       const payload = buildClientProductCreatePayload({ clientId, clientFacingName: name, internalName });
       return dataClient.entities.ClientProduct.create(payload);
     },
     onSuccess: (created) => {
       toast.success("Client product created");
-      onCreated(created);
+      onCreated(created?.id);
     },
     onError: (error) => toast.error(error?.message || "Could not create client product"),
+  });
+
+  const { data: ordersRes = [] } = useQuery({
+    queryKey: ["clientOrdersForCpCreate", clientId],
+    queryFn: () => dataClient.entities.Order.filter({ client_id: clientId }, "-created_date", 100),
+    enabled: tab === "order" && Boolean(clientId),
+  });
+  const orders = Array.isArray(ordersRes) ? ordersRes : [];
+
+  const { data: linesRes } = useQuery({
+    queryKey: ["clientOrderLinesForCpCreate", orderId],
+    queryFn: () => getClientOrderLinesForImport(orderId),
+    enabled: tab === "order" && Boolean(orderId),
+  });
+  const lines = Array.isArray(linesRes?.data) ? linesRes.data : [];
+
+  const fromOrderMutation = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await createClientProductFromOrder(orderId, lineId, {});
+      if (error) throw new Error(error);
+      return data;
+    },
+    onSuccess: (data) => {
+      toast.success(
+        data?.deduplicated
+          ? "Existing Client Product found for this order item — opening it."
+          : "Client Product created from order",
+      );
+      onCreated(data?.client_product_id);
+    },
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
   });
 
   return (
@@ -170,56 +260,91 @@ function CreateClientProductDialog({ clientId, onClose, onCreated }) {
           <h2 className="text-lg font-bold">New Client Product</h2>
           <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
         </div>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Client-facing name *</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SFR Signature Tee" />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Internal name</Label>
-            <Input value={internalName} onChange={(e) => setInternalName(e.target.value)} placeholder="Optional staff-only label" />
-          </div>
-          <p className="text-xs text-slate-500">
-            Only a name is required — matches the X LAB model. The new product is not visible to the customer until you publish it. You&apos;ll land in its workspace to finish files, artwork and readiness.
-          </p>
-          <div className="flex gap-2 pt-1">
-            <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
-            <Button className="flex-1" disabled={createMutation.isPending || !name.trim()} onClick={() => createMutation.mutate()}>
-              {createMutation.isPending ? "Creating…" : "Create & open"}
-            </Button>
-          </div>
-        </div>
+
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="order">From an order</TabsTrigger>
+            <TabsTrigger value="blank">Blank</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="order" className="mt-3 space-y-3">
+            <p className="text-xs text-slate-500">
+              Creates ONE canonical Client Product from an order line, pre-configured from what the order already knows. If that line already has a Client Product, it just opens it.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Order</Label>
+              <SearchSelect
+                options={orders}
+                value={orderId}
+                onChange={(id) => { setOrderId(id); setLineId(""); }}
+                getLabel={(o) => `${o.order_number || o.id?.slice(0, 8)} · ${o.status || ""}`}
+                placeholder={orders.length ? "Select an order" : "No orders for this client"}
+              />
+            </div>
+            {orderId && (
+              <div className="space-y-1.5">
+                <Label>Order line</Label>
+                <SearchSelect
+                  options={lines}
+                  value={lineId}
+                  onChange={setLineId}
+                  getLabel={(l) => `${l.name || "Untitled"}${l.color ? ` · ${l.color}` : ""}${l.size ? ` · ${l.size}` : ""}${l.existing_client_product_id ? "  (already linked)" : ""}`}
+                  placeholder={lines.length ? "Select a line" : "No lines on this order"}
+                />
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+              <Button
+                className="flex-1"
+                disabled={!orderId || !lineId || fromOrderMutation.isPending}
+                onClick={() => fromOrderMutation.mutate()}
+              >
+                {fromOrderMutation.isPending ? "Working…" : "Create / open"}
+              </Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="blank" className="mt-3 space-y-3">
+            <div className="space-y-1.5">
+              <Label>Client-facing name *</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. SFR Signature Tee" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Internal name</Label>
+              <Input value={internalName} onChange={(e) => setInternalName(e.target.value)} placeholder="Optional staff-only label" />
+            </div>
+            <p className="text-xs text-slate-500">
+              Only a name is required. The product isn&apos;t visible to the customer until you publish it.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+              <Button className="flex-1" disabled={blankMutation.isPending || !name.trim()} onClick={() => blankMutation.mutate()}>
+                {blankMutation.isPending ? "Creating…" : "Create & open"}
+              </Button>
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
 }
 
-// ── Workspace ──────────────────────────────────────────────────────────
-function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
+// ─── Drawer ──────────────────────────────────────────────────────────
+function ConfigureClientProductDrawer({ product, clientId, onClose, onChanged }) {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
 
-  const readinessQueryKey = ["clientProductReadiness", product.id];
-  const { data: readinessRes } = useQuery({
-    queryKey: readinessQueryKey,
-    queryFn: () => getClientProductArtworkReadiness({ clientProductId: product.id }),
+  const fullQueryKey = ["xosClientProductFull", product.id];
+  const { data: fullRes, isLoading } = useQuery({
+    queryKey: fullQueryKey,
+    queryFn: () => getClientProductFull(product.id),
     enabled: Boolean(product.id),
   });
-  const readiness = readinessRes?.data || null;
-  const readinessState = deriveReadinessState(readiness);
+  const full = fullRes?.data || null;
+  const fullError = fullRes?.error || null;
 
-  const artworkQueryKey = ["clientProductArtworkAll", product.id];
-  const { data: artworkRows = [] } = useQuery({
-    queryKey: artworkQueryKey,
-    queryFn: () => dataClient.entities.ClientProductArtwork.filter({ client_product_id: product.id }, "placement", 300),
-    enabled: Boolean(product.id),
-  });
-
-  // Phase 1F-B - proactive read-only UX for the Production tab. This is
-  // the EXACT RLS write-gate (inventory_can_review_tenant) for the
-  // production-configuration tables, so the tab renders full editors only
-  // when a write would actually be permitted; otherwise a read-only view
-  // + banner. No grant change - a probe of an already-granted function.
   const { data: canConfigureRes } = useQuery({
     queryKey: ["canReviewTenant", product.tenant_id],
     queryFn: () => canReviewTenant({ tenantId: product.tenant_id }),
@@ -229,172 +354,234 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
   const canConfigureProduction = canConfigureRes?.data === true;
 
   const refetchAll = () => {
-    queryClient.invalidateQueries({ queryKey: readinessQueryKey });
-    queryClient.invalidateQueries({ queryKey: artworkQueryKey });
+    queryClient.invalidateQueries({ queryKey: fullQueryKey });
+    queryClient.invalidateQueries({ queryKey: ["clientProductsForClient", clientId] });
     onChanged?.();
   };
+
+  const thumbRef = resolveProductThumbRef(full) || product.primary_mockup_url;
 
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-3 border-b border-slate-200 p-4">
           <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
-            <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
+            <SecureImage value={thumbRef} alt="" className="h-full w-full object-cover" fallback={IMG_FALLBACK} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-semibold">{product.client_facing_name}</p>
+            <p className="truncate text-base font-semibold">{full?.identity?.client_facing_name || product.client_facing_name}</p>
             <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <StatusBadge status={product.status} />
-              <ReadinessBadge state={readinessState} />
-              {product.visible_in_account && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>}
+              <StatusBadge status={full?.flags?.status || product.status} />
+              {full && <ReadinessPill productReadiness={full.product_readiness} />}
+              {full?.flags?.visible_in_account && (
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>
+              )}
             </div>
-            <a
-              href={`${XLAB_ADMIN_BASE}/${product.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
-            >
-              <ExternalLink className="h-3 w-3" /> Advanced · open in X LAB Admin
-            </a>
+            <div className="mt-1.5 flex items-center gap-3">
+              {full?.source_order && (
+                <button
+                  type="button"
+                  onClick={() => setImportOpen(true)}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
+                >
+                  <Sparkles className="h-3 w-3" /> Import missing information
+                </button>
+              )}
+              <a
+                href={`${XLAB_ADMIN_BASE}/${product.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+              >
+                <ExternalLink className="h-3 w-3" /> Open in X LAB Admin
+              </a>
+            </div>
+            {full?.source_order && (
+              <p className="mt-1 text-[11px] text-slate-400">
+                Created from {full.source_order.order_number}
+                {full.source_order.line_id ? ` · line ${full.source_order.line_id}` : ""}
+              </p>
+            )}
           </div>
           <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
         </div>
 
-        <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="artwork">Artwork</TabsTrigger>
-            <TabsTrigger value="production">Production</TabsTrigger>
-            <TabsTrigger value="status">Status</TabsTrigger>
-          </TabsList>
+        {isLoading ? (
+          <p className="p-4 text-sm text-slate-500">Loading…</p>
+        ) : fullError ? (
+          <p className="p-4 text-sm text-red-600">{mapXosCpError(fullError)}</p>
+        ) : (
+          <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
+            <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
+              <TabsTrigger value="details">Details</TabsTrigger>
+              <TabsTrigger value="production">Production</TabsTrigger>
+              <TabsTrigger value="artwork">Artwork</TabsTrigger>
+              <TabsTrigger value="status">Status</TabsTrigger>
+            </TabsList>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <TabsContent value="details" className="mt-0">
-              <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
-            </TabsContent>
-            <TabsContent value="artwork" className="mt-0">
-              <ArtworkTab
-                product={product}
-                clientId={clientId}
-                readiness={readiness}
-                artworkRows={Array.isArray(artworkRows) ? artworkRows : []}
-                onChanged={refetchAll}
-                onPreview={setPreview}
-              />
-            </TabsContent>
-            <TabsContent value="production" className="mt-0">
-              <ProductionTab
-                product={product}
-                readinessState={readinessState}
-                canConfigure={canConfigureProduction}
-              />
-            </TabsContent>
-            <TabsContent value="status" className="mt-0">
-              <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
-            </TabsContent>
-          </div>
-        </Tabs>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <TabsContent value="details" className="mt-0">
+                <DetailsTab product={product} full={full} clientId={clientId} onChanged={refetchAll} onPreview={setPreview} />
+              </TabsContent>
+              <TabsContent value="production" className="mt-0">
+                <ProductionTab product={product} full={full} canConfigure={canConfigureProduction} onChanged={refetchAll} />
+              </TabsContent>
+              <TabsContent value="artwork" className="mt-0">
+                <ArtworkTab product={product} full={full} clientId={clientId} onChanged={refetchAll} onPreview={setPreview} />
+              </TabsContent>
+              <TabsContent value="status" className="mt-0">
+                <StatusTab product={product} full={full} onChanged={refetchAll} />
+              </TabsContent>
+            </div>
+          </Tabs>
+        )}
       </div>
+
+      {importOpen && (
+        <ImportPreviewDialog
+          product={product}
+          onClose={() => setImportOpen(false)}
+          onImported={() => { setImportOpen(false); refetchAll(); }}
+        />
+      )}
 
       <QuickImagePreview open={Boolean(preview)} onClose={() => setPreview(null)} value={preview?.value} title={preview?.title} />
     </div>
   );
 }
 
-// ── Details tab ───────────────────────────────────────────────────────
+// ─── Details tab ─────────────────────────────────────────────────────
+// Pure client_products columns only — RLS-gated ORM update (tenant/client
+// scope already correct). print_method / placement / print_locations /
+// production_instructions are DERIVED from structured production and are
+// never edited here. Thumbnail + mockup go through the shared RPCs.
 const DETAIL_TEXT_FIELDS = [
   ["client_facing_name", "Client-facing name"],
   ["internal_name", "Internal name (staff only)"],
   ["garment_material", "Garment material"],
   ["garment_gsm", "Garment GSM"],
   ["garment_color", "Garment colour"],
-  ["print_method", "Print method"],
-  ["placement", "Placement (legacy)"],
   ["print_size", "Print size"],
 ];
 
-function DetailsTab({ product, clientId, onSaved, onPreview }) {
+function DetailsTab({ product, full, clientId, onChanged, onPreview }) {
   const queryClient = useQueryClient();
-  const [showThumbPicker, setShowThumbPicker] = useState(false);
-  const [form, setForm] = useState(() => {
-    const base = {};
-    for (const [key] of DETAIL_TEXT_FIELDS) base[key] = product[key] ?? "";
-    base.currency = product.currency ?? "ZAR";
-    base.print_locations = product.print_locations != null ? String(product.print_locations) : "";
-    base.production_instructions = product.production_instructions ?? "";
-    base.packaging_instructions = product.packaging_instructions ?? "";
-    base.special_instructions = product.special_instructions ?? "";
-    base.internal_notes = product.internal_notes ?? "";
-    return base;
-  });
+  const [picker, setPicker] = useState(null); // 'thumbnail' | 'mockup'
+  const [linking, setLinking] = useState(false);
+  const details = full?.details || {};
+  const [form, setForm] = useState(() => ({
+    client_facing_name: full?.identity?.client_facing_name ?? product.client_facing_name ?? "",
+    internal_name: full?.identity?.internal_name ?? "",
+    garment_material: details.garment_material ?? "",
+    garment_gsm: details.garment_gsm ?? "",
+    garment_color: details.garment_color ?? "",
+    print_size: details.print_size ?? "",
+    currency: full?.pricing?.currency ?? "ZAR",
+    packaging_instructions: details.packaging_instructions ?? "",
+    special_instructions: details.special_instructions ?? "",
+    internal_notes: details.internal_notes ?? "",
+  }));
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
 
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["xosClientProductFull", product.id] });
+    queryClient.invalidateQueries({ queryKey: ["clientProductsForClient", clientId] });
+    onChanged?.();
+  };
+
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      // Non-sensitive operational fields only. client_price /
-      // visible_in_account / reorder_enabled are NOT here - they live in
-      // the Status tab behind an explicit confirm.
-      const payload = {
-        client_facing_name: form.client_facing_name.trim() || product.client_facing_name,
-        internal_name: form.internal_name.trim(),
-        currency: form.currency.trim() || "ZAR",
-        garment_material: form.garment_material.trim(),
-        garment_gsm: form.garment_gsm.trim(),
-        garment_color: form.garment_color.trim(),
-        print_method: form.print_method.trim(),
-        placement: form.placement.trim(),
-        print_size: form.print_size.trim(),
-        print_locations: form.print_locations,
-        production_instructions: form.production_instructions.trim(),
-        packaging_instructions: form.packaging_instructions.trim(),
-        special_instructions: form.special_instructions.trim(),
-        internal_notes: form.internal_notes.trim(),
-      };
-      return dataClient.entities.ClientProduct.update(product.id, payload);
-    },
-    onSuccess: () => {
-      toast.success("Details saved");
-      queryClient.invalidateQueries({ queryKey: ["clientProductsForClient", clientId] });
-      onSaved?.();
-    },
+    mutationFn: async () => dataClient.entities.ClientProduct.update(product.id, {
+      client_facing_name: form.client_facing_name.trim() || product.client_facing_name,
+      internal_name: form.internal_name.trim(),
+      garment_material: form.garment_material.trim(),
+      garment_gsm: form.garment_gsm.trim(),
+      garment_color: form.garment_color.trim(),
+      print_size: form.print_size.trim(),
+      currency: form.currency.trim() || "ZAR",
+      packaging_instructions: form.packaging_instructions.trim(),
+      special_instructions: form.special_instructions.trim(),
+      internal_notes: form.internal_notes.trim(),
+    }),
+    onSuccess: () => { toast.success("Details saved"); invalidate(); },
     onError: (error) => toast.error(error?.message || "Could not save details"),
   });
 
-  const thumbnailMutation = useMutation({
-    // Audited shared contract: set BOTH primary_mockup_asset_id AND
-    // primary_mockup_url = asset.file_url (verbatim). X LAB and OPPS both
-    // read this pair; the raw ref is resolved to a signed URL at display.
-    mutationFn: async (asset) => dataClient.entities.ClientProduct.update(product.id, {
-      primary_mockup_asset_id: asset.id,
-      primary_mockup_url: asset.file_url,
-    }),
-    onSuccess: () => {
-      toast.success("Thumbnail updated");
-      setShowThumbPicker(false);
-      queryClient.invalidateQueries({ queryKey: ["clientProductsForClient", clientId] });
-      onSaved?.();
+  const thumbMutation = useMutation({
+    mutationFn: async (asset) => {
+      const { error } = await setClientProductThumbnailFromAsset(product.id, asset.id);
+      if (error) throw new Error(error);
     },
-    onError: (error) => toast.error(error?.message || "Could not set thumbnail"),
+    onSuccess: () => { toast.success("Thumbnail set"); setPicker(null); invalidate(); },
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
+    onSettled: () => setLinking(false),
   });
+
+  const mockupMutation = useMutation({
+    mutationFn: async (asset) => {
+      const { error } = await setClientProductMockupFromAsset(product.id, asset.id);
+      if (error) throw new Error(error);
+    },
+    onSuccess: () => { toast.success("Mockup set"); setPicker(null); invalidate(); },
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
+    onSettled: () => setLinking(false),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (which) => dataClient.entities.ClientProduct.update(product.id, which === "thumbnail"
+      ? { thumbnail_asset_id: null, thumbnail_url: null }
+      : { primary_mockup_asset_id: null, primary_mockup_url: null }),
+    onSuccess: (_d, which) => { toast.success(`${which === "thumbnail" ? "Thumbnail" : "Mockup"} removed`); invalidate(); },
+    onError: (error) => toast.error(error?.message || "Could not remove"),
+  });
+
+  const thumb = full?.thumbnail || {};
+  const mockup = full?.mockup || {};
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
-        <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
-          <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
+      <div className="grid grid-cols-2 gap-3">
+        {/* Thumbnail — product visual identity */}
+        <div className="rounded-lg border border-slate-200 p-3">
+          <p className="text-sm font-medium">Thumbnail</p>
+          <p className="text-[11px] text-slate-500">The product&apos;s visual identity.</p>
+          <div className="mt-2 h-20 w-20 overflow-hidden rounded-lg bg-slate-100">
+            <SecureImage value={thumb.url} alt="" className="h-full w-full object-cover" fallback={IMG_FALLBACK} />
+          </div>
+          {thumb.source === "mockup_fallback" && (
+            <p className="mt-1 text-[11px] text-amber-600">No explicit thumbnail — showing the mockup.</p>
+          )}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => setPicker("thumbnail")}>Use existing file</Button>
+            {thumb.source === "thumbnail" && (
+              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => removeMutation.mutate("thumbnail")}>Remove</Button>
+            )}
+            {thumb.url && (
+              <Button variant="ghost" size="sm" onClick={() => onPreview({ value: thumb.url, title: "Thumbnail" })}>
+                <Eye className="mr-1 h-3.5 w-3.5" /> View
+              </Button>
+            )}
+          </div>
         </div>
-        <div className="flex-1">
-          <p className="text-sm font-medium">Thumbnail / mockup</p>
-          <p className="text-xs text-slate-500">Pick an existing client file or upload a new one.</p>
+
+        {/* Mockup — client review / approval image */}
+        <div className="rounded-lg border border-slate-200 p-3">
+          <p className="text-sm font-medium">Mockup</p>
+          <p className="text-[11px] text-slate-500">The client review / approval image.</p>
+          <div className="mt-2 h-20 w-20 overflow-hidden rounded-lg bg-slate-100">
+            <SecureImage value={mockup.url} alt="" className="h-full w-full object-cover" fallback={IMG_FALLBACK} />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => setPicker("mockup")}>Use existing file</Button>
+            {mockup.url && (
+              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10" onClick={() => removeMutation.mutate("mockup")}>Remove</Button>
+            )}
+            {mockup.url && (
+              <Button variant="ghost" size="sm" onClick={() => onPreview({ value: mockup.url, title: "Mockup" })}>
+                <Eye className="mr-1 h-3.5 w-3.5" /> View
+              </Button>
+            )}
+          </div>
         </div>
-        {product.primary_mockup_url && (
-          <Button variant="ghost" size="sm" onClick={() => onPreview({ value: product.primary_mockup_url, title: product.client_facing_name })}>
-            <Eye className="mr-1 h-3.5 w-3.5" /> View
-          </Button>
-        )}
-        <Button variant="outline" size="sm" onClick={() => setShowThumbPicker(true)}>
-          {product.primary_mockup_asset_id ? "Change" : "Set"}
-        </Button>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -408,16 +595,17 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
           <Label className="text-[11px] text-slate-500">Currency</Label>
           <Input value={form.currency} onChange={(e) => set({ currency: e.target.value })} />
         </div>
-        <div className="space-y-1">
-          <Label className="text-[11px] text-slate-500">Print locations</Label>
-          <Input type="number" min="0" value={form.print_locations} onChange={(e) => set({ print_locations: e.target.value })} />
-        </div>
       </div>
 
-      <div className="space-y-1">
-        <Label className="text-[11px] text-slate-500">Production instructions</Label>
-        <Textarea rows={2} value={form.production_instructions} onChange={(e) => set({ production_instructions: e.target.value })} />
+      <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-2.5 text-xs text-slate-600">
+        <p className="font-medium text-slate-700">Production (derived, read-only)</p>
+        <p className="mt-0.5">
+          {full?.production?.summary?.print_method || "—"}
+          {full?.production?.summary?.placement ? ` · ${full.production.summary.placement}` : ""}
+        </p>
+        <p className="mt-1 text-[11px] text-slate-400">Edit these in the Production tab.</p>
       </div>
+
       <div className="space-y-1">
         <Label className="text-[11px] text-slate-500">Packaging instructions</Label>
         <Textarea rows={2} value={form.packaging_instructions} onChange={(e) => set({ packaging_instructions: e.target.value })} />
@@ -426,260 +614,218 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
         <Label className="text-[11px] text-slate-500">Special instructions</Label>
         <Textarea rows={2} value={form.special_instructions} onChange={(e) => set({ special_instructions: e.target.value })} />
       </div>
-
       <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Internal only — never shown to the customer</p>
-        <Textarea rows={3} value={form.internal_notes} onChange={(e) => set({ internal_notes: e.target.value })} placeholder="Staff notes, supplier context, margin reminders…" />
+        <Textarea rows={3} value={form.internal_notes} onChange={(e) => set({ internal_notes: e.target.value })} />
       </div>
 
       <Button className="w-full" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
         {saveMutation.isPending ? "Saving…" : "Save details"}
       </Button>
 
-      {showThumbPicker && (
+      {picker && (
         <ClientAssetPickerModal
           clientId={clientId}
           selectionMode="single"
-          defaultCategory="Mockups"
+          defaultCategory={picker === "thumbnail" ? "Mockups" : "Mockups"}
           uploadCategory="Mockups"
-          title="Set thumbnail / mockup"
-          description="Pick an existing client file (from orders, requests or the library) or upload a new one. Nothing is re-uploaded when the file already exists."
+          title={picker === "thumbnail" ? "Set thumbnail" : "Set mockup"}
+          description="Pick an existing client file (orders, requests, library) or upload a new one. Nothing is re-uploaded when the file already exists."
           confirmVerb="Use"
-          onClose={() => setShowThumbPicker(false)}
-          onConfirm={([asset]) => asset && thumbnailMutation.mutate(asset)}
+          onClose={() => setPicker(null)}
+          onConfirm={([asset]) => {
+            if (!asset) return;
+            setLinking(true);
+            (picker === "thumbnail" ? thumbMutation : mockupMutation).mutate(asset);
+          }}
         />
       )}
+      {linking && <p className="text-center text-xs text-slate-400">Linking…</p>}
     </div>
   );
 }
 
-// ── Artwork tab ───────────────────────────────────────────────────────
-function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPreview }) {
-  const [pickerPlacement, setPickerPlacement] = useState("");
-  const [editingRequirements, setEditingRequirements] = useState(false);
-
-  const requiredFromRpc = Array.isArray(readiness?.required_placements) ? readiness.required_placements : [];
-  const legacyFallback = readiness?.legacy_fallback === true;
-
-  // Placements to show a row for: the authoritative required set, plus any
-  // placement that already has artwork, plus the presets (so staff can add
-  // one). Order: required first, then the rest.
-  const artworkPlacements = Array.from(new Set(artworkRows.map((a) => a.placement).filter(Boolean)));
-  const allPlacements = Array.from(new Set([...requiredFromRpc, ...artworkPlacements, ...PLACEMENT_PRESETS]));
-
-  const currentByPlacement = new Map();
-  const historyCountByPlacement = new Map();
-  for (const row of artworkRows) {
-    if (row.treatment_id) continue; // family scope only
-    historyCountByPlacement.set(row.placement, (historyCountByPlacement.get(row.placement) || 0) + 1);
-    if (row.is_current && !currentByPlacement.has(row.placement)) currentByPlacement.set(row.placement, row);
-  }
-
-  const linkMutation = useMutation({
-    mutationFn: async ({ placement, asset }) => {
-      const { data, error } = await findOrCreateClientProductArtworkFromAsset({
-        tenantId: product.tenant_id,
-        clientProductId: product.id,
-        clientAssetId: asset.id,
-        placement,
-      });
+// ─── Production tab ──────────────────────────────────────────────────
+function ProductionTab({ product, full, canConfigure, onChanged }) {
+  const queryClient = useQueryClient();
+  const saveMutation = useMutation({
+    mutationFn: async (components) => {
+      const { error } = await setClientProductProductionComponents(product.id, components);
       if (error) throw new Error(error);
-      return data;
     },
     onSuccess: () => {
-      toast.success("Artwork linked");
-      setPickerPlacement("");
+      toast.success("Production saved");
+      queryClient.invalidateQueries({ queryKey: ["xosClientProductFull", product.id] });
       onChanged?.();
     },
-    onError: (error) => toast.error(error?.message || "Could not link artwork"),
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
   });
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-slate-200 p-3">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium">Required placements</p>
-          <Button variant="outline" size="sm" onClick={() => setEditingRequirements((v) => !v)}>
-            {editingRequirements ? "Done" : "Edit"}
-          </Button>
-        </div>
-        {legacyFallback ? (
-          <p className="mt-1 text-xs text-amber-700">
-            Requirements unconfirmed — inferred from existing artwork. Confirm the list to lock readiness.
-          </p>
-        ) : requiredFromRpc.length === 0 ? (
-          <p className="mt-1 text-xs text-slate-500">Explicitly no artwork required for this product.</p>
-        ) : (
-          <p className="mt-1 text-xs text-slate-500">{requiredFromRpc.join(", ")}</p>
-        )}
-        {editingRequirements && (
-          <RequiredPlacementsEditor
-            product={product}
-            initial={requiredFromRpc}
-            onSaved={() => { setEditingRequirements(false); onChanged?.(); }}
-          />
-        )}
+    <div className="space-y-3">
+      <CanonicalProductionEditor
+        full={full}
+        saving={saveMutation.isPending}
+        readOnly={!canConfigure}
+        onSave={(components) => saveMutation.mutateAsync(components).catch(() => {})}
+      />
+      <CanonicalReadinessPanel productReadiness={full?.product_readiness} artworkReadiness={full?.artwork_readiness} />
+    </div>
+  );
+}
+
+// ─── Artwork tab ────────────────────────────────────────────────────
+// Shells come from full.required_artwork_placements (DERIVED from
+// production). Never renders a shell from a file-less artwork row and
+// never creates an empty client_product_artwork row.
+function ArtworkTab({ product, full, clientId, onChanged, onPreview }) {
+  const queryClient = useQueryClient();
+  const [pickerSlug, setPickerSlug] = useState("");
+  const required = Array.isArray(full?.required_artwork_placements) ? full.required_artwork_placements : [];
+  const artworkBySlug = useMemo(() => {
+    const map = new Map();
+    for (const entry of Array.isArray(full?.artwork) ? full.artwork : []) {
+      map.set(entry.placement_slug || String(entry.placement || "").toLowerCase(), entry);
+    }
+    return map;
+  }, [full]);
+  const artReadiness = full?.artwork_readiness || {};
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ slug, asset }) => {
+      const hasCurrent = Boolean(artworkBySlug.get(slug)?.current);
+      const { error } = await linkClientProductArtworkFromAsset(product.id, asset.id, slug, !hasCurrent);
+      if (error) throw new Error(error);
+    },
+    onSuccess: () => {
+      toast.success("Artwork linked");
+      setPickerSlug("");
+      queryClient.invalidateQueries({ queryKey: ["xosClientProductFull", product.id] });
+      onChanged?.();
+    },
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-slate-200 p-2.5 text-xs text-slate-600">
+        <p className="font-medium text-slate-700">
+          Required placements: {required.length ? required.map(formatPlacementName).join(", ") : "none"}
+        </p>
+        <p className="mt-0.5 text-[11px] text-slate-400">
+          Derived from print-service production components. Add or change them in the Production tab.
+        </p>
       </div>
 
-      <div className="space-y-2">
-        {allPlacements.map((placement) => {
-          const current = currentByPlacement.get(placement);
-          const historyCount = historyCountByPlacement.get(placement) || 0;
-          const isRequired = requiredFromRpc.includes(placement);
-          return (
-            <div key={placement} className="rounded-lg border border-slate-200 p-2.5">
-              <div className="flex items-center gap-2">
-                <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-slate-100">
-                  {current ? (
-                    <SecureImage value={current.file_path} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-4 w-4" /></div>} />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-4 w-4" /></div>
+      {required.length === 0 ? (
+        <p className="text-xs text-slate-400">
+          No required artwork placements. Configure print-service production first.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {required.map((slug) => {
+            const entry = artworkBySlug.get(slug);
+            const current = entry?.current || null;
+            const history = Array.isArray(entry?.history) ? entry.history : [];
+            return (
+              <div key={slug} className="rounded-lg border border-slate-200 p-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-slate-100">
+                    {current ? (
+                      <SecureImage value={current.file_path} alt="" className="h-full w-full object-cover" fallback={IMG_FALLBACK} />
+                    ) : IMG_FALLBACK}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{formatPlacementName(slug)}</p>
+                    {current ? (
+                      <p className="truncate text-xs text-slate-500">
+                        {current.file_name || "linked file"}
+                        <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${current.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                          {current.status}
+                        </span>
+                        {history.length > 1 && <span className="ml-1.5 text-[10px] text-slate-400">Rev {current.revision} · {history.length} revisions</span>}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-400">No artwork linked</p>
+                    )}
+                  </div>
+                  {current && (
+                    <Button variant="ghost" size="sm" onClick={() => onPreview({ value: current.file_path, title: `${formatPlacementName(slug)} artwork` })}>
+                      <Eye className="mr-1 h-3.5 w-3.5" /> View
+                    </Button>
                   )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium">
-                    {placement}
-                    {isRequired && <span className="ml-1.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">required</span>}
-                  </p>
-                  {current ? (
-                    <p className="truncate text-xs text-slate-500">
-                      {current.file_name || "linked file"}
-                      <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${current.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                        {current.status}
-                      </span>
-                      {historyCount > 1 && <span className="ml-1.5 text-[10px] text-slate-400">Rev {current.revision} · {historyCount} revisions</span>}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-slate-400">No artwork linked</p>
-                  )}
-                </div>
-                {current && (
-                  <Button variant="ghost" size="sm" onClick={() => onPreview({ value: current.file_path, title: `${placement} artwork` })}>
-                    <Eye className="mr-1 h-3.5 w-3.5" /> View
+                  <Button variant="outline" size="sm" disabled={linkMutation.isPending} onClick={() => setPickerSlug(slug)}>
+                    {current ? "Change" : "Link existing"}
                   </Button>
-                )}
-                <Button variant="outline" size="sm" disabled={linkMutation.isPending} onClick={() => setPickerPlacement(placement)}>
-                  {current ? "Change" : "Link"}
-                </Button>
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      {readiness?.blocking_reasons?.length > 0 && (
+      {artReadiness.blocking_reasons?.length > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-800">
           <p className="mb-1 font-semibold">Blocking readiness:</p>
           <ul className="list-inside list-disc space-y-0.5">
-            {readiness.blocking_reasons.map((reason, i) => <li key={i}>{reason}</li>)}
+            {artReadiness.blocking_reasons.map((reason, i) => <li key={i}>{reason}</li>)}
           </ul>
         </div>
       )}
 
-      {pickerPlacement && (
+      {pickerSlug && (
         <ClientAssetPickerModal
           clientId={clientId}
           selectionMode="single"
           defaultCategory="Artwork"
           uploadCategory="Artwork"
           showApprovalBadge
-          title={`Link artwork — ${pickerPlacement}`}
-          description="Pick an existing client file (orders, requests, library) or upload a new one. It becomes the current artwork revision for this placement; older revisions are kept."
+          title={`Link artwork — ${formatPlacementName(pickerSlug)}`}
+          description="Pick an existing client file (orders, requests, library) or upload a new one. It becomes a revision for this placement; older revisions are kept and the current approved artwork is never silently replaced."
           confirmVerb="Use"
-          onClose={() => setPickerPlacement("")}
-          onConfirm={([asset]) => asset && linkMutation.mutate({ placement: pickerPlacement, asset })}
+          onClose={() => setPickerSlug("")}
+          onConfirm={([asset]) => asset && linkMutation.mutate({ slug: pickerSlug, asset })}
         />
       )}
     </div>
   );
 }
 
-function RequiredPlacementsEditor({ product, initial, onSaved }) {
-  const [selected, setSelected] = useState(() => new Set(initial));
-  const options = Array.from(new Set([...PLACEMENT_PRESETS, ...initial]));
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await setClientProductRequiredArtworkPlacements({
-        clientProductId: product.id,
-        placements: Array.from(selected),
-      });
-      if (error) throw new Error(error);
-      return data;
-    },
-    onSuccess: () => {
-      toast.success("Required placements updated");
-      onSaved?.();
-    },
-    onError: (error) => toast.error(error?.message || "Could not update required placements"),
-  });
-
-  const toggle = (placement) => setSelected((cur) => {
-    const next = new Set(cur);
-    if (next.has(placement)) next.delete(placement); else next.add(placement);
-    return next;
-  });
-
-  return (
-    <div className="mt-2 space-y-2 rounded-md bg-slate-50 p-2">
-      <div className="grid grid-cols-2 gap-1">
-        {options.map((placement) => (
-          <label key={placement} className="flex items-center gap-2 text-xs text-slate-700">
-            <input type="checkbox" checked={selected.has(placement)} onChange={() => toggle(placement)} />
-            {placement}
-          </label>
-        ))}
-      </div>
-      <p className="text-[11px] text-slate-500">
-        Saving an empty list means &quot;explicitly no artwork required&quot;. This is the only readiness input — nothing is recalculated here.
-      </p>
-      <Button size="sm" className="w-full" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate()}>
-        {saveMutation.isPending ? "Saving…" : `Save (${selected.size} placement${selected.size === 1 ? "" : "s"})`}
-      </Button>
-    </div>
-  );
-}
-
-// ── Status tab ────────────────────────────────────────────────────────
-function StatusTab({ product, onSaved, readinessState }) {
+// ─── Status tab ─────────────────────────────────────────────────────
+// Pure client_products columns + DB lifecycle triggers — RLS-gated ORM
+// update behind an explicit confirm, unchanged. Readiness comes from the
+// canonical projection.
+function StatusTab({ product, full, onChanged }) {
   const queryClient = useQueryClient();
-  const [pendingChange, setPendingChange] = useState(null); // { kind, label, apply }
-  const readyForCustomer = ["ready_for_client_review", "client_changes_requested", "client_approved", "ready_to_order", "active"].includes(product.status || "");
+  const [pendingChange, setPendingChange] = useState(null);
+  const status = full?.flags?.status || product.status || "draft";
+  const productReadiness = full?.product_readiness;
 
   const applyMutation = useMutation({
     mutationFn: async (payload) => dataClient.entities.ClientProduct.update(product.id, payload),
     onSuccess: () => {
       toast.success("Updated");
       setPendingChange(null);
+      queryClient.invalidateQueries({ queryKey: ["xosClientProductFull", product.id] });
       queryClient.invalidateQueries({ queryKey: ["clientProductsForClient", product.client_id] });
-      queryClient.invalidateQueries({ queryKey: ["clientProductReadiness", product.id] });
-      onSaved?.();
+      onChanged?.();
     },
-    onError: (error) => {
-      // Surfaces the DB ready-to-order artwork guard verbatim.
-      toast.error(error?.message || "Could not update");
-      setPendingChange(null);
-    },
+    onError: (error) => { toast.error(error?.message || "Could not update"); setPendingChange(null); },
   });
 
-  const requestChange = (kind, label, payload) => setPendingChange({ kind, label, payload });
+  const requestChange = (label, payload) => setPendingChange({ label, payload });
 
   return (
     <div className="space-y-4">
+      <CanonicalReadinessPanel productReadiness={productReadiness} artworkReadiness={full?.artwork_readiness} />
+
       <div className="rounded-lg border border-slate-200 p-3">
-        <div className="flex items-center justify-between">
-          <Label className="text-[11px] text-slate-500">Lifecycle status</Label>
-          {readinessState && (
-            <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
-              Artwork: <ReadinessBadge state={readinessState} />
-            </span>
-          )}
-        </div>
+        <Label className="text-[11px] text-slate-500">Lifecycle status</Label>
         <Select
-          value={product.status || "draft"}
+          value={status}
           onValueChange={(next) => {
-            if (next === product.status) return;
-            requestChange("status", `Change status to "${next.replace(/_/g, " ")}"`, { status: next });
+            if (next === status) return;
+            requestChange(`Change status to "${next.replace(/_/g, " ")}"`, { status: next });
           }}
         >
           <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
@@ -688,14 +834,8 @@ function StatusTab({ product, onSaved, readinessState }) {
           </SelectContent>
         </Select>
         <p className="mt-1.5 text-[11px] text-slate-500">
-          draft → ready for client review → client approved / changes requested → ready to order → active (plus archived).
-          Marking &quot;ready to order&quot; is blocked by the database until required artwork placements are confirmed.
+          Marking &quot;ready to order&quot; is blocked by the database until required artwork is ready.
         </p>
-        {readyForCustomer && readinessState !== "ready" && readinessState !== "no_artwork_required" && (
-          <p className="mt-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
-            This product is in a customer-facing status but its artwork is not ready — check the Artwork tab.
-          </p>
-        )}
       </div>
 
       <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
@@ -705,9 +845,8 @@ function StatusTab({ product, onSaved, readinessState }) {
           <span>Visible in client account</span>
           <input
             type="checkbox"
-            checked={Boolean(product.visible_in_account)}
+            checked={Boolean(full?.flags?.visible_in_account ?? product.visible_in_account)}
             onChange={(e) => requestChange(
-              "visible_in_account",
               `${e.target.checked ? "Show" : "Hide"} this product in the customer's account`,
               { visible_in_account: e.target.checked },
             )}
@@ -718,9 +857,8 @@ function StatusTab({ product, onSaved, readinessState }) {
           <span>Reorder enabled</span>
           <input
             type="checkbox"
-            checked={Boolean(product.reorder_enabled)}
+            checked={Boolean(full?.flags?.reorder_enabled ?? product.reorder_enabled)}
             onChange={(e) => requestChange(
-              "reorder_enabled",
               `${e.target.checked ? "Allow" : "Block"} customer reordering of this product`,
               { reorder_enabled: e.target.checked },
             )}
@@ -730,8 +868,8 @@ function StatusTab({ product, onSaved, readinessState }) {
         <div className="py-1.5">
           <Label className="text-[11px] text-slate-500">Customer / service price</Label>
           <PriceField
-            initial={product.client_price}
-            onCommit={(value) => requestChange("client_price", `Set customer price to ${value === null ? "— (cleared)" : `R${value}`}`, { client_price: value ?? "" })}
+            initial={full?.pricing?.client_price ?? product.client_price}
+            onCommit={(value) => requestChange(`Set customer price to ${value === null ? "— (cleared)" : `R${value}`}`, { client_price: value ?? "" })}
           />
         </div>
       </div>
@@ -774,289 +912,78 @@ function PriceField({ initial, onCommit }) {
   );
 }
 
-// ── Production tab (Phase 1F-B) ───────────────────────────────────────
-// Brings the EXISTING OPPS production engine into the 1F-A workspace -
-// never a second engine. Every editor here is a Phase 2B component
-// mounted against this Client Product's id; this tab only fetches the
-// shared queries once, lays them out compactly, and gates editing on the
-// same inventory_can_review_tenant() rule the tables' RLS already
-// enforces.
-function Section({ title, subtitle, count, children, defaultOpen = false }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="rounded-xl border border-slate-200">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left"
-      >
-        {open ? <ChevronDown className="h-4 w-4 flex-shrink-0 text-slate-400" /> : <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-400" />}
-        <span className="flex-1 text-sm font-semibold text-slate-800">{title}</span>
-        {count != null && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">{count}</span>}
-      </button>
-      {open && (
-        <div className="border-t border-slate-100 p-3">
-          {subtitle && <p className="mb-2 text-xs text-slate-500">{subtitle}</p>}
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
+// ─── Import missing information ──────────────────────────────────────
+const DIFF_TONE = {
+  add: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  normalize: "border-sky-200 bg-sky-50 text-sky-700",
+  conflict: "border-red-200 bg-red-50 text-red-700",
+  no_change: "border-slate-200 bg-slate-50 text-slate-500",
+};
 
-function ProductionTab({ product, readinessState, canConfigure }) {
-  const queryClient = useQueryClient();
-
-  const { data: components = [] } = useQuery({
-    queryKey: ["productComponents", product.id],
-    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: product.id }, "sort_order", 200),
+function ImportPreviewDialog({ product, onClose, onImported }) {
+  const { data: previewRes, isLoading } = useQuery({
+    queryKey: ["xosCpSourcePreview", product.id],
+    queryFn: () => previewClientProductSourceImport(product.id),
     enabled: Boolean(product.id),
   });
-  const { data: variants = [] } = useQuery({
-    queryKey: ["garmentVariants", product.id],
-    queryFn: () => dataClient.entities.GarmentVariant.filter({ client_product_id: product.id }, "sort_order", 200),
-    enabled: Boolean(product.id),
-  });
-  const { data: treatments = [] } = useQuery({
-    queryKey: ["treatmentsForFamily", product.id],
-    queryFn: () => dataClient.entities.Treatment.filter({ client_product_id: product.id }, "sort_order", 200),
-    enabled: Boolean(product.id),
-  });
-  const { data: mappings = [] } = useQuery({
-    queryKey: ["variantTreatmentMappingsForFamily", product.id],
-    queryFn: () => dataClient.entities.VariantTreatmentMapping.filter({ client_product_id: product.id }, "created_at", 500),
-    enabled: Boolean(product.id),
-  });
-  const { data: internalProducts = [] } = useQuery({
-    queryKey: ["inventoryProductsForProduction"],
-    queryFn: () => dataClient.entities.InventoryProduct.list("internal_name", 300),
-    enabled: canConfigure,
-    staleTime: 60_000,
-  });
-  const { data: pricingDefaults = [] } = useQuery({
-    queryKey: ["productionPricingDefaults"],
-    queryFn: () => dataClient.entities.ProductionPricingDefault.filter({ is_active: true }, "production_method", 100),
-    enabled: canConfigure,
-    staleTime: 60_000,
-  });
-  const { data: currentArtwork = [] } = useQuery({
-    queryKey: ["clientProductArtworkCurrent", product.id],
-    queryFn: () => dataClient.entities.ClientProductArtwork.filter({ client_product_id: product.id, is_current: true }, "placement", 100),
-    enabled: canConfigure && Boolean(product.id),
-  });
-  const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
+  const preview = previewRes?.data || null;
+  const previewError = previewRes?.error || null;
 
-  const safe = {
-    components: Array.isArray(components) ? components : [],
-    variants: Array.isArray(variants) ? variants : [],
-    treatments: Array.isArray(treatments) ? treatments : [],
-    mappings: Array.isArray(mappings) ? mappings : [],
-  };
-  const summary = summarizeProduction(safe);
-  const gaps = deriveProductionGaps(safe);
-
-  return (
-    <div className="space-y-3">
-      {/* Overview */}
-      <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-          <span>Composition: <b className="text-slate-800">{summary.familyComponentCount}</b> family{summary.totalComponentCount !== summary.familyComponentCount ? ` (+${summary.totalComponentCount - summary.familyComponentCount} scoped)` : ""}</span>
-          <span>Variants: <b className="text-slate-800">{summary.variantCount}</b></span>
-          <span>Treatments: <b className="text-slate-800">{summary.treatmentCount}</b></span>
-          <span>Mappings: <b className="text-slate-800">{summary.mappingCount}</b></span>
-          <ReadinessBadge state={readinessState} />
-        </div>
-        {gaps.length > 0 && (
-          <ul className="mt-2 list-inside list-disc space-y-0.5 text-[11px] text-amber-700">
-            {gaps.map((g, i) => <li key={i}>{g}</li>)}
-          </ul>
-        )}
-      </div>
-
-      {!canConfigure ? (
-        <>
-          <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
-            <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-400" />
-            <span>{PRODUCTION_READONLY_MESSAGE}</span>
-          </div>
-          <ProductionReadOnlyView {...safe} />
-        </>
-      ) : (
-        <>
-          <Section title="Composition" subtitle="Family-level production components." count={summary.familyComponentCount} defaultOpen>
-            <ScopedComponentsEditor
-              clientProductId={product.id}
-              scope={{ type: "family" }}
-              allComponents={safe.components}
-              queryKeyForInvalidation={["productComponents", product.id]}
-              internalProducts={internalProducts}
-              pricingDefaultFor={pricingDefaultFor}
-              clientProduct={product}
-              currentArtwork={currentArtwork}
-              onArtworkLinked={() => queryClient.invalidateQueries({ queryKey: ["clientProductArtworkCurrent", product.id] })}
-              addLabel="Add print option"
-            />
-            <div className="mt-3 border-t border-slate-100 pt-3">
-              <DuplicateCompositionInline product={product} hasComposition={summary.familyComponentCount > 0} />
-            </div>
-          </Section>
-
-          <Section title="Garment variants" subtitle="Reusable blank configurations - normalized inventory link where available, manual size fallback otherwise." count={summary.variantCount}>
-            <GarmentVariantsSection
-              clientProductId={product.id}
-              clientProduct={product}
-              internalProducts={internalProducts}
-              pricingDefaultFor={pricingDefaultFor}
-              allComponents={safe.components}
-            />
-          </Section>
-
-          <Section title="Treatments" subtitle="Reusable print/production treatments, independent of the garment blank." count={summary.treatmentCount}>
-            <TreatmentsSection
-              clientProductId={product.id}
-              clientProduct={product}
-              internalProducts={internalProducts}
-              pricingDefaultFor={pricingDefaultFor}
-              allComponents={safe.components}
-            />
-          </Section>
-
-          <Section title="Allowed combinations" subtitle="Which treatments are available on which garment variant. Edit the ticks inside each garment variant above; this is the family-level view." count={summary.mappingCount}>
-            <AllowedCombinationsMatrix {...safe} />
-          </Section>
-
-          <Section title="Pricing preview" defaultOpen>
-            <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">{PRICING_PREVIEW_BOUNDARY}</p>
-            <p className="mt-2 text-xs text-slate-500">Per-variant previews (family price / variant override + treatment surcharge) appear inside each garment variant when expanded.</p>
-          </Section>
-        </>
-      )}
-    </div>
-  );
-}
-
-function ProductionReadOnlyView({ components, variants, treatments, mappings }) {
-  const family = components.filter((c) => !c.garment_variant_id && !c.treatment_id && c.is_active !== false);
-  return (
-    <div className="space-y-3">
-      <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-1.5 text-sm font-semibold text-slate-800">Composition</p>
-        {family.length === 0 ? <p className="text-xs text-slate-400">No family components.</p> : (
-          <ul className="space-y-1 text-xs text-slate-600">
-            {family.map((c) => <li key={c.id}>{c.component_type}{c.placement ? ` · ${c.placement}` : ""}{c.label ? ` (${c.label})` : ""}</li>)}
-          </ul>
-        )}
-      </div>
-      <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-1.5 text-sm font-semibold text-slate-800">Garment variants</p>
-        {variants.length === 0 ? <p className="text-xs text-slate-400">None.</p> : (
-          <ul className="space-y-1 text-xs text-slate-600">
-            {variants.map((v) => <li key={v.id}>{v.name}{v.colour_name ? ` / ${v.colour_name}` : ""}{v.is_active === false ? " (inactive)" : ""}</li>)}
-          </ul>
-        )}
-      </div>
-      <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-1.5 text-sm font-semibold text-slate-800">Treatments</p>
-        {treatments.length === 0 ? <p className="text-xs text-slate-400">None.</p> : (
-          <ul className="space-y-1 text-xs text-slate-600">
-            {treatments.map((t) => <li key={t.id}>{t.name}{t.production_method ? ` · ${t.production_method}` : ""}{Number(t.surcharge) > 0 ? ` · +R${t.surcharge}` : ""}{t.is_active === false ? " (inactive)" : ""}</li>)}
-          </ul>
-        )}
-      </div>
-      <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-1.5 text-sm font-semibold text-slate-800">Allowed combinations</p>
-        <AllowedCombinationsMatrix components={components} variants={variants} treatments={treatments} mappings={mappings} />
-      </div>
-    </div>
-  );
-}
-
-function AllowedCombinationsMatrix({ variants, treatments, mappings }) {
-  const matrix = buildAllowedCombinationMatrix({ variants, treatments, mappings });
-  if (matrix.length === 0) return <p className="text-xs text-slate-400">No active garment variants yet.</p>;
-  const activeTreatments = treatments.filter((t) => t.is_active !== false);
-  if (activeTreatments.length === 0) return <p className="text-xs text-slate-400">No active treatments yet.</p>;
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-left text-[11px]">
-        <thead>
-          <tr className="text-slate-500">
-            <th className="py-1 pr-2 font-medium">Garment variant</th>
-            {activeTreatments.map((t) => <th key={t.id} className="px-1.5 py-1 font-medium">{t.name}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {matrix.map(({ variant, allowed }) => (
-            <tr key={variant.id} className="border-t border-slate-100">
-              <td className="py-1 pr-2 text-slate-700">{variant.name}</td>
-              {allowed.map(({ treatment, allowed: ok }) => (
-                <td key={treatment.id} className="px-1.5 py-1 text-center">{ok ? <span className="text-emerald-600">✓</span> : <span className="text-slate-300">–</span>}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function DuplicateCompositionInline({ product, hasComposition }) {
-  const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [sourceId, setSourceId] = useState("");
-
-  const { data: candidates = [] } = useQuery({
-    queryKey: ["clientProductsForCompositionClone", product.client_id],
-    queryFn: () => dataClient.entities.ClientProduct.filter({ client_id: product.client_id }, "client_facing_name", 200),
-    enabled: open && Boolean(product.client_id),
-  });
-  const sources = (Array.isArray(candidates) ? candidates : []).filter((c) => c.id !== product.id && c.client_id === product.client_id);
-
-  const dupMutation = useMutation({
+  const importMutation = useMutation({
     mutationFn: async () => {
-      const { data, error } = await duplicateProductComposition({
-        sourceClientProductId: sourceId,
-        targetClientProductId: product.id,
-      });
+      const { error } = await importClientProductFromSource(product.id);
       if (error) throw new Error(error);
-      return data;
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["productComponents", product.id] });
-      setOpen(false);
-      setSourceId("");
-      toast.success(`Composition copied — ${data?.cloned_count ?? 0} component${data?.cloned_count === 1 ? "" : "s"}. Artwork, variants, treatments and status are not copied.`);
-    },
-    onError: (error) => toast.error(toStaffMessage(error.message)),
+    onSuccess: () => { toast.success("Imported from source order"); onImported(); },
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
   });
 
-  if (!open) {
-    return (
-      <Button variant="outline" size="sm" className="w-full" onClick={() => setOpen(true)}>
-        Duplicate composition from another Client Product
-      </Button>
-    );
-  }
+  const diff = Array.isArray(preview?.diff) ? preview.diff : [];
 
   return (
-    <div className="space-y-2 rounded-lg bg-slate-50 p-2">
-      <p className="text-[11px] text-slate-500">
-        Copies family production components from another Client Product <b>for this same client</b> into this one. Artwork, garment variants, treatments and customer status are never copied.
-      </p>
-      {hasComposition && (
-        <p className="text-[11px] text-amber-600">This product already has composition — the server will reject the copy until it is empty.</p>
-      )}
-      <Select value={sourceId} onValueChange={setSourceId}>
-        <SelectTrigger className="h-8"><SelectValue placeholder={sources.length ? "Select source client product" : "No other client products for this client"} /></SelectTrigger>
-        <SelectContent>
-          {sources.map((s) => <SelectItem key={s.id} value={s.id}>{s.client_facing_name}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" className="flex-1" onClick={() => { setOpen(false); setSourceId(""); }}>Cancel</Button>
-        <Button size="sm" className="flex-1" disabled={!sourceId || dupMutation.isPending} onClick={() => dupMutation.mutate()}>
-          {dupMutation.isPending ? "Copying…" : "Copy composition"}
-        </Button>
+    <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-semibold">Import missing information</p>
+          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+
+        {isLoading ? (
+          <p className="text-sm text-slate-500">Loading…</p>
+        ) : previewError ? (
+          <p className="text-sm text-red-600">{mapXosCpError(previewError)}</p>
+        ) : (
+          <>
+            <p className="text-xs text-slate-500">
+              From {preview?.source_order?.order_number || "the source order"}
+              {preview?.source_order?.line_id ? ` · line ${preview.source_order.line_id}` : ""}.
+              Curated values are never overwritten, current artwork is never replaced, and no files are copied.
+            </p>
+            <div className="mt-3 max-h-72 space-y-1.5 overflow-y-auto">
+              {diff.length === 0 ? (
+                <p className="text-xs text-slate-400">Nothing to import — everything is already set.</p>
+              ) : diff.map((row, i) => (
+                <div key={i} className={`rounded-md border px-2.5 py-1.5 text-xs ${DIFF_TONE[row.op] || DIFF_TONE.no_change}`}>
+                  <span className="font-semibold uppercase tracking-wide">{String(row.op || "").replace(/_/g, " ")}</span>
+                  {" · "}
+                  <span className="font-medium">{String(row.field || "").replace(/_/g, " ")}</span>
+                  {row.to != null && row.to !== "" && <> → {String(row.to)}</>}
+                  {row.reason && <span className="ml-1 opacity-70">({String(row.reason).replace(/_/g, " ")})</span>}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
+              <Button
+                className="flex-1"
+                disabled={importMutation.isPending || diff.every((r) => r.op === "no_change")}
+                onClick={() => importMutation.mutate()}
+              >
+                {importMutation.isPending ? "Importing…" : "Import missing information"}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

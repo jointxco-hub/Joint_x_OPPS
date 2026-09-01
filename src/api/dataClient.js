@@ -682,6 +682,12 @@ const ENTITY_CONFIG = {
         internal_notes: payload.internal_notes,
         primary_mockup_url: payload.primary_mockup_url,
         primary_mockup_asset_id: payload.primary_mockup_asset_id,
+        // Canonical product visual identity (XOS unification 20260901150000),
+        // separate from the client-review mockup above. Writes go through
+        // admin_set_client_product_thumbnail_from_asset; this pass-through
+        // exists only so the drawer's "remove thumbnail" can null the pair.
+        thumbnail_url: payload.thumbnail_url,
+        thumbnail_asset_id: payload.thumbnail_asset_id,
         visible_in_account: payload.visible_in_account,
         reorder_enabled: payload.reorder_enabled,
         updated_by: payload.updated_by,
