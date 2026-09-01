@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Lock } from "lucide-react";
+import { toast } from "sonner";
 import { PRODUCTION_COMPONENT_TYPES, PRODUCTION_METHODS } from "@/api/xosClientProduct";
 
 // ─────────────────────────────────────────────────────────────────────
@@ -34,6 +35,12 @@ function toRow(c, ix) {
     specification: c?.specification || "",
     production_instructions: c?.production_instructions || "",
     sort_order: c?.sort_order ?? ix,
+    // Price fields live in the Pricing tab — carried through here verbatim
+    // so a structural save never wipes them (P1 made the RPC accept them,
+    // so an omitted field would be written as null).
+    _billing_mode: c?.billing_mode || null,
+    _default_sell_price: c?.default_sell_price ?? null,
+    _price_label: c?.price_label ?? null,
   };
 }
 
@@ -77,7 +84,15 @@ export default function CanonicalProductionEditor({ full, onSave, saving = false
     setRows((cur) => [...cur, toRow({ component_type: "print_service" }, cur.length)]);
   const removeRow = (ix) => setRows((cur) => cur.filter((_, i) => i !== ix));
 
+  const allowMultipleBase = Boolean(full?.pricing?.allow_multiple_base);
+  const baseConflict = !allowMultipleBase
+    && rows.filter((r) => r.component_type === "blank_garment").length > 1;
+
   const save = async () => {
+    if (baseConflict) {
+      toast.error("Only one base / blank garment per product. Remove the extra, or enable a multi-base bundle.");
+      return;
+    }
     const payload = rows.map((r, ix) => ({
       ...(r.id ? { id: r.id } : {}),
       component_type: r.component_type,
@@ -86,6 +101,10 @@ export default function CanonicalProductionEditor({ full, onSave, saving = false
       specification: (r.specification || "").trim() || null,
       production_instructions: (r.production_instructions || "").trim() || null,
       sort_order: ix,
+      // carry price fields through unchanged (edited in the Pricing tab)
+      ...(r._billing_mode ? { billing_mode: r._billing_mode } : {}),
+      ...(r._default_sell_price != null ? { default_sell_price: r._default_sell_price } : {}),
+      ...(r._price_label ? { price_label: r._price_label } : {}),
     }));
     await onSave?.(payload);
   };
@@ -197,11 +216,16 @@ export default function CanonicalProductionEditor({ full, onSave, saving = false
             ))}
           </div>
 
+          {baseConflict && (
+            <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              More than one base / blank garment. A normal product has exactly one — remove the extra, or enable a multi-base bundle. Saving is blocked until resolved.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={addRow}>
               <Plus className="mr-1.5 h-3.5 w-3.5" /> Add component
             </Button>
-            <Button size="sm" disabled={!dirty || saving} onClick={save}>
+            <Button size="sm" disabled={!dirty || saving || baseConflict} onClick={save}>
               {saving ? "Saving…" : "Save production"}
             </Button>
           </div>
