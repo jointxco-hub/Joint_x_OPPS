@@ -17,6 +17,7 @@ import { computeStockDryRun } from "@/lib/stockDryRun";
 import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 import { findOrCreateClientProductArtworkFromAsset, reviseOrderLineComponentSnapshotArtwork } from "@/api/artworkLinking";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
+import { xosAddComposedClientProductToOrder, mapXosCpError } from "@/api/xosClientProduct";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
@@ -42,6 +43,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [pickerSource, setPickerSource] = useState("all");
   const [pickerCategory, setPickerCategory] = useState("all");
   const [showPicker, setShowPicker] = useState(false);
+  const [composedCpId, setComposedCpId] = useState("");
+  const [composedQty, setComposedQty] = useState(1);
   const [sizeRun, setSizeRun] = useState({});
   const [expandedProductionLineId, setExpandedProductionLineId] = useState("");
 
@@ -497,11 +500,42 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // order_line_component_snapshots row using the same pricing hierarchy
   // as the existing attach flow - orderPrice overrides only ever affect
   // the snapshot, never default_sell_price.
+  // P4 — canonical composed Client Product -> parent product line +
+  // setup_fee companion(s) + frozen snapshots, server-side. Re-syncs the
+  // drawer from what the RPC actually persisted (never a client rebuild).
+  const addComposedMutation = useMutation({
+    mutationFn: async ({ clientProductId, quantity }) => {
+      const { data, error } = await xosAddComposedClientProductToOrder(order.id, clientProductId, quantity);
+      if (error) throw new Error(error);
+      return data;
+    },
+    onSuccess: async () => {
+      let freshOrder = null;
+      try {
+        const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+        freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+      } catch { freshOrder = null; }
+      if (Array.isArray(freshOrder?.products)) onUpdate(order.id, { products: freshOrder.products });
+      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
+      setComposedCpId("");
+      setComposedQty(1);
+      setAddMode(false);
+      toast.success("Composed product added — parent line + setup fee(s) + snapshots");
+    },
+    onError: (err) => toast.error(mapXosCpError(err?.message)),
+  });
+
   const addPrintOptionMutation = useMutation({
     mutationFn: async ({ lineId, orderLine, form }) => {
       const { clientProduct, clientProductCreated } = await resolveOrCreateClientProductForLine(orderLine);
       if (!clientProduct) {
         throw new Error("This line has no catalog or inventory product to compose against");
+      }
+      // P4 §21 defence in depth — never let this legacy writer run on a
+      // canonical composed line (see the onStartAddPrintOption guard).
+      if (orderLine?.line_role === "setup_fee" || (orderLine?.line_role === "product" && orderLine?.price_breakdown?.mode === "composed")) {
+        throw new Error("This line's pricing is managed by the Client Product composition — edit it in the Pricing tab.");
       }
 
       const existingCount = (Array.isArray(lineSnapshots) ? lineSnapshots : []).filter((s) => s.line_id === lineId).length;
@@ -978,12 +1012,18 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     : sourceFiltered.slice(0, 10);
   const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
   const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.catalog_item_id || editRow.inventory_item_id));
+  // P4 §10 / §19: a setup_fee companion is billable (price x 1) so it
+  // stays in the commercial subtotal, but it is NOT a unit — keep it out
+  // of the unit count so analytics / staff "N units" stay honest. A
+  // reserved "breakdown" line is informational only — never billed.
   const productLineTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
+    if (product.line_role === "breakdown") return sum;
     return sum + (Number(product.price || 0) * Number(product.quantity || 1));
   }, 0);
   const productQuantityTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
+    if (product.line_role && product.line_role !== "product") return sum;
     return sum + Number(product.quantity || 0);
   }, 0);
   const orderTotal = Number(order.total_amount || 0);
@@ -1334,7 +1374,19 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                       ? artworkByClientProductId.get(clientProductForLine(p).id) || []
                       : []
                   }
-                  onStartAddPrintOption={() => { setAddingPrintOptionLineId(p.line_id); setPrintOptionForm(emptyPrintOptionForm()); }}
+                  onStartAddPrintOption={() => {
+                    // P4 §21 — "+ Add print option" stays LEGACY. It must not
+                    // run on a canonical composed line (a bridge/native
+                    // parent whose pricing is the Client Product composition,
+                    // or a setup_fee companion) — that would create a second
+                    // setup-fee mechanism on the same line.
+                    if (p.line_role === "setup_fee" || (p.line_role === "product" && p?.price_breakdown?.mode === "composed")) {
+                      toast.error("This line's pricing is managed by the Client Product composition. Edit prices in the Pricing tab, not here.");
+                      return;
+                    }
+                    setAddingPrintOptionLineId(p.line_id);
+                    setPrintOptionForm(emptyPrintOptionForm());
+                  }}
                   onCancelAddPrintOption={() => setAddingPrintOptionLineId("")}
                   onConfirmAddPrintOption={() => addPrintOptionMutation.mutate({ lineId: p.line_id, orderLine: p, form: printOptionForm })}
                   addingPrintOption={addPrintOptionMutation.isPending}
@@ -1439,6 +1491,42 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               Custom
             </button>
           </div>
+
+          {/* P4 — canonical composed Client Product: one action creates the
+              parent product line + setup-fee companion(s) + frozen
+              snapshots. Never make staff hand-build a generic setup line. */}
+          {Boolean(order.client_id) && Array.isArray(clientProductsForOrder) && clientProductsForOrder.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-dashed border-border p-2">
+              <span className="text-[11px] font-semibold text-muted-foreground">Composed Client Product</span>
+              <select
+                value={composedCpId}
+                onChange={(e) => setComposedCpId(e.target.value)}
+                className="h-8 min-w-[10rem] flex-1 rounded-lg border border-input bg-background px-2 text-xs"
+              >
+                <option value="">Pick a client product…</option>
+                {clientProductsForOrder.map((cp) => (
+                  <option key={cp.id} value={cp.id}>{cp.client_facing_name || "Untitled"}</option>
+                ))}
+              </select>
+              <Input
+                type="number"
+                min="1"
+                value={composedQty}
+                onChange={(e) => setComposedQty(e.target.value)}
+                className="h-8 w-16 text-xs"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 rounded-lg text-[11px]"
+                disabled={!composedCpId || addComposedMutation.isPending || locked}
+                onClick={() => addComposedMutation.mutate({ clientProductId: composedCpId, quantity: Number(composedQty) || 1 })}
+              >
+                {addComposedMutation.isPending ? "Adding…" : "Add composed"}
+              </Button>
+            </div>
+          )}
+
           {pickerCategories.length > 0 && (
             <select
               value={pickerCategory}

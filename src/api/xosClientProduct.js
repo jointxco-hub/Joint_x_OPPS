@@ -137,6 +137,26 @@ export async function createClientProductFromOrder(orderId, lineId, overrides = 
   );
 }
 
+// P4 — OPPS-native composed order line. Appends a canonical parent
+// product line + one setup_fee companion per once-off fee to
+// orders.products, and auto-snapshots the frozen composition. Here the
+// order is being built now, so the CURRENT Client Product composition is
+// the transaction truth (unlike an X LAB reprice). The RPC enforces the
+// reviewer/tenant gate and the parent/companion line-role integrity.
+export async function xosAddComposedClientProductToOrder(orderId, clientProductId, quantity, unitPrice = null) {
+  if (!orderId || !clientProductId) return { data: null, error: "Pick an order and a client product" };
+  return callRpc(
+    "xos_add_composed_client_product_to_order",
+    {
+      p_order_id: orderId,
+      p_client_product_id: clientProductId,
+      p_quantity: Number(quantity) > 0 ? Number(quantity) : 1,
+      p_unit_price: unitPrice == null || unitPrice === "" ? null : Number(unitPrice),
+    },
+    "Could not add the composed client product to this order.",
+  );
+}
+
 // Read-only order line items for the "create from order" picker. The
 // line price is REFERENCE ONLY (line_price_raw) and is never imported as
 // the reusable Client Product price.
@@ -184,6 +204,11 @@ export function mapXosCpError(raw) {
   if (/XOS_CP_PRODUCTION_METHOD_INVALID/.test(m)) return "One of the components has an unknown print method.";
   if (/XOS_CP_(BILLING_MODE|QUANTITY_PER_UNIT)_INVALID/.test(m)) return "One of the components has an invalid value.";
   if (/XOS_CP_COMPONENTS_INVALID/.test(m)) return "The production list couldn't be read — reload and try again.";
+  if (/ORDER_SETUP_FEE_PARENT_NOT_FOUND/.test(m)) return "A setup-fee line is missing a valid parent product line — reload and try again.";
+  if (/ORDER_LINE_ROLE_INVALID/.test(m)) return "An order line has an unrecognised role — reload and try again.";
+  if (/XOS_ORDER_NOT_FOUND/.test(m)) return "That order could not be found.";
+  if (/XOS_PRICE_BREAKDOWN_INVALID/.test(m)) return "The price breakdown for this line is malformed and was rejected.";
+  if (/TENANT_ACCESS_DENIED/.test(m)) return "You don't have access to this order's tenant.";
   if (/CLIENT_PRODUCT_ARTWORK_PLACEMENT_CONFLICT/.test(m)) {
     let placement = "A placement";
     try {
