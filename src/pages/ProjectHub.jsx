@@ -305,8 +305,16 @@ function PeopleTab({ project }) {
 }
 
 function FinanceTab({ project, orders }) {
-  const totalQuoted = orders.reduce((sum, o) => sum + (o.quoted_price || 0), 0);
-  const totalDeposits = orders.reduce((sum, o) => sum + (o.deposit_paid || 0), 0);
+  // XOS 2.7C: `orders` here is the project's full visible set (used
+  // as-is by OverviewTab/OrdersTab so staff can still find and inspect
+  // an excluded QA/test order under this project) - the finance totals
+  // below are the operational/reporting surface, so they run off a
+  // separately-filtered subset instead, same split as Clients.jsx's
+  // buildStats(). is_test alone is deliberately NOT filtered here - a
+  // test order that hasn't also been excluded still counts.
+  const projectOrders = orders.filter(o => !o.excluded_from_reports);
+  const totalQuoted = projectOrders.reduce((sum, o) => sum + (o.quoted_price || 0), 0);
+  const totalDeposits = projectOrders.reduce((sum, o) => sum + (o.deposit_paid || 0), 0);
   const balance = totalQuoted - totalDeposits;
 
   return (

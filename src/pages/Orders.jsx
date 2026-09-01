@@ -12,6 +12,7 @@ import { useArchive } from "@/hooks/useArchive";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { SourceBadge } from "@/lib/opsDisplay";
 import TenantBadge from "@/components/orders/TenantBadge";
+import OrderClassificationBadge from "@/components/orders/OrderClassificationBadge";
 import { buildTenantsById } from "@/lib/tenantDisplay";
 import { toast } from "sonner";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
@@ -367,11 +368,15 @@ export default function Orders() {
   }), [orders, statusFilter, assigneeFilter, search]);
 
   const counts = useMemo(() => ({
-    active:    orders.filter(o => !o.is_archived && !["delivered","cancelled"].includes(o.status)).length,
-    delivered: orders.filter(o => !o.is_archived && o.status === "delivered").length,
-    cancelled: orders.filter(o => !o.is_archived && o.status === "cancelled").length,
+    active:    orders.filter(o => !o.is_archived && !o.excluded_from_reports && !["delivered","cancelled"].includes(o.status)).length,
+    delivered: orders.filter(o => !o.is_archived && !o.excluded_from_reports && o.status === "delivered").length,
+    cancelled: orders.filter(o => !o.is_archived && !o.excluded_from_reports && o.status === "cancelled").length,
   }), [orders]);
-  const healthSummary = useMemo(() => getOrderHealthSummary(filtered), [filtered]);
+  // Payment-health flagging is an operational/reporting signal - a QA/test
+  // order marked excluded_from_reports should not surface here even though
+  // it stays visible (with a badge) in the list/table itself via `filtered`.
+  const reportableFiltered = useMemo(() => filtered.filter(o => !o.excluded_from_reports), [filtered]);
+  const healthSummary = useMemo(() => getOrderHealthSummary(reportableFiltered), [reportableFiltered]);
 
   // ONE batched query for every order currently visible in the list view -
   // never one ClientAsset/context lookup per row. Same canonical primitive
@@ -400,7 +405,9 @@ export default function Orders() {
   const exceptionStages = useMemo(() => stages.filter(s => s.is_exception), [stages]);
   const exceptionKeys = useMemo(() => new Set(exceptionStages.map(s => s.key)), [exceptionStages]);
 
-  const activeOrders = useMemo(() => orders.filter(o => !o.is_archived), [orders]);
+  // Kanban/production lanes are operational queues, not just a display -
+  // an excluded order must not occupy a stage lane or exception queue.
+  const activeOrders = useMemo(() => orders.filter(o => !o.is_archived && !o.excluded_from_reports), [orders]);
   const exceptionOrders = useMemo(
     () => activeOrders.filter(o => exceptionKeys.has(o.pipeline_stage)),
     [activeOrders, exceptionKeys]
@@ -591,6 +598,7 @@ export default function Orders() {
                         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                           <span className="inline-flex items-center gap-1.5">
                             <TenantBadge order={order} tenantsById={tenantsById} />
+                            <OrderClassificationBadge order={order} />
                             <span className="font-mono">{order.order_number}</span>
                           </span>
                           <span>{order.due_date ? format(new Date(order.due_date), "d MMM") : "No due date"}</span>
@@ -639,6 +647,7 @@ export default function Orders() {
                       </div>
                       <div className="col-span-2 flex items-center gap-1.5">
                         <TenantBadge order={order} tenantsById={tenantsById} />
+                        <OrderClassificationBadge order={order} />
                         <p className="text-sm text-muted-foreground font-mono">{order.order_number}</p>
                       </div>
                       <div className="col-span-2">
@@ -885,7 +894,7 @@ function OrdersProductionSummary({ type, orders, stages, onClose }) {
   const [groupBy, setGroupBy] = useState(type === "due" ? "due" : "stage");
   const [focus, setFocus] = useState("all");
   const activeOrders = orders
-    .filter(order => !order.is_archived && !["delivered", "cancelled"].includes(order.status))
+    .filter(order => !order.is_archived && !order.excluded_from_reports && !["delivered", "cancelled"].includes(order.status))
     .sort((a, b) => {
       const aDue = Date.parse(a.due_date || "") || Number.MAX_SAFE_INTEGER;
       const bDue = Date.parse(b.due_date || "") || Number.MAX_SAFE_INTEGER;
@@ -1350,6 +1359,11 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
       <div className="mb-1 flex items-center gap-1">
         <SourceBadge source={order.source} />
         <TenantBadge order={order} tenantsById={tenantsById} />
+        {/* Excluded orders never reach a kanban lane (see activeOrders
+            above), so only is_test=true (still operationally visible)
+            can ever render here - that's the "clearly marked" case the
+            task calls out for kanban specifically. */}
+        <OrderClassificationBadge order={order} />
       </div>
       <p className="text-xs font-semibold text-foreground truncate mb-0.5">{order.display_name || order.client_name}</p>
       {aliasText && (

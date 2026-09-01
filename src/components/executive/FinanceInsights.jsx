@@ -55,8 +55,13 @@ function generateInsights({ payments = [], expenses = [], orders = [] }) {
   }
 
   // ── 3. Outstanding payments ──────────────────────────────────
+  // XOS 2.7C: excluded_from_reports=true orders (QA/test rows a staff
+  // member has explicitly taken out of reporting) never contribute here,
+  // even though they remain visible elsewhere in OPPS. is_test alone is
+  // deliberately NOT filtered - a test order that hasn't also been
+  // excluded still participates operationally, per the 2.7C model.
   const outstandingOrders = orders.filter(o =>
-    !o.is_archived && !["cancelled", "delivered"].includes(o.status) &&
+    !o.is_archived && !o.excluded_from_reports && !["cancelled", "delivered"].includes(o.status) &&
     (o.total_amount || 0) - (o.deposit_paid || 0) > 0
   );
   if (outstandingOrders.length > 0) {

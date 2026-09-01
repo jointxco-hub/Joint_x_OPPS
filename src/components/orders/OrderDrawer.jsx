@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import TenantBadge from "@/components/orders/TenantBadge";
+import OrderClassificationBadge from "@/components/orders/OrderClassificationBadge";
 import { getTenantDisplayMeta } from "@/lib/tenantDisplay";
 import { getClientPaymentStatus, getClientSafeOrderStatus } from "@/lib/xosOrderStatus";
 import {
@@ -215,6 +216,18 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   const [showException, setShowException] = useState(false);
   const [printView, setPrintView] = useState(null);
   const [localPipelineStage, setLocalPipelineStage] = useState(order.pipeline_stage);
+  // XOS 2.7C - local optimistic mirror for the two classification
+  // toggles, same pattern as localPipelineStage above: the write goes
+  // through a dedicated RPC, never the generic onUpdate path, so the
+  // drawer's own view of the fields is updated directly from the RPC's
+  // response rather than by round-tripping through Order.update()
+  // (whose serialize() allowlist deliberately excludes these columns).
+  const [localIsTest, setLocalIsTest] = useState(order.is_test);
+  const [localExcludedFromReports, setLocalExcludedFromReports] = useState(order.excluded_from_reports);
+  const effectiveOrderForClassification = {
+    is_test: localIsTest ?? order.is_test,
+    excluded_from_reports: localExcludedFromReports ?? order.excluded_from_reports,
+  };
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
@@ -411,6 +424,24 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
       toast.success("Payment updated");
     },
     onError: (err) => toast.error("Payment update failed - " + ((/** @type {any} */ err)?.message || "check Supabase transactions table")),
+  });
+
+  // XOS 2.7C - staff-only QA/test classification. Goes through the
+  // dedicated set_order_test_classification RPC (is_opps_staff()-gated),
+  // never the generic order update path - see dataClient.staff for why.
+  // is_test and excluded_from_reports are independent: only the field
+  // actually being toggled is sent, the other stays untouched server-side.
+  const setClassificationMutation = useMutation({
+    mutationFn: (patch) => dataClient.staff.setOrderTestClassification(order.id, patch),
+    onSuccess: (result) => {
+      if (result) {
+        setLocalIsTest(result.is_test);
+        setLocalExcludedFromReports(result.excluded_from_reports);
+      }
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success("Classification updated");
+    },
+    onError: (err) => toast.error("Could not update classification - " + ((/** @type {any} */ err)?.message || "please try again")),
   });
 
   const deletePaymentMutation = useMutation({
@@ -663,6 +694,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               </div>
               <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <TenantBadge order={order} tenantsById={tenantsById} />
+                <OrderClassificationBadge order={effectiveOrderForClassification} />
                 <span className="font-medium text-foreground">{getTenantDisplayMeta(order, tenantsById).name}</span>
               </p>
               <p className="text-xs text-muted-foreground mb-1.5">
@@ -1170,6 +1202,44 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                   {['in_production', 'ready', 'shipped', 'delivered'].filter(s => progressStages.indexOf(s) <= currentStageIndex).map(s => (
                     <TimelineEntry key={s} icon={<CheckCircle2 className="w-3 h-3" />} label={statusConfig[s]?.label} />
                   ))}
+                </div>
+              </div>
+
+              {/* QA / reporting classification - XOS 2.7C. Staff-only;
+                  authorization is enforced server-side by
+                  set_order_test_classification (is_opps_staff()), this
+                  panel is just the control surface. The two toggles are
+                  deliberately independent - flipping one never touches
+                  the other. */}
+              <div className="bg-secondary/30 rounded-xl p-4">
+                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">QA &amp; reporting</h3>
+                <div className="space-y-3">
+                  <label className="flex items-start justify-between gap-3">
+                    <span>
+                      <span className="block text-sm font-medium text-foreground">Test / QA order</span>
+                      <span className="block text-xs text-muted-foreground">Marks this as a QA/proof/test order, not a real customer order. Does not hide it anywhere by itself.</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 flex-shrink-0 accent-primary"
+                      checked={Boolean(effectiveOrderForClassification.is_test)}
+                      disabled={setClassificationMutation.isPending}
+                      onChange={(e) => setClassificationMutation.mutate({ isTest: e.target.checked })}
+                    />
+                  </label>
+                  <label className="flex items-start justify-between gap-3">
+                    <span>
+                      <span className="block text-sm font-medium text-foreground">Exclude from reports &amp; operations</span>
+                      <span className="block text-xs text-muted-foreground">Excludes this order from operational counts, finance totals, production queues and client-facing XOS views.</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 flex-shrink-0 accent-primary"
+                      checked={Boolean(effectiveOrderForClassification.excluded_from_reports)}
+                      disabled={setClassificationMutation.isPending}
+                      onChange={(e) => setClassificationMutation.mutate({ excludedFromReports: e.target.checked })}
+                    />
+                  </label>
                 </div>
               </div>
             </div>

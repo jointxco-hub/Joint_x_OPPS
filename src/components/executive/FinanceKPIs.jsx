@@ -77,10 +77,10 @@ export default function FinanceKPIs({ payments, expenses, orders, monthlyData, o
 
   // ── Orders ───────────────────────────────────────────────────
   const activeOrders = orders.filter(o =>
-    !["delivered", "cancelled"].includes(o.status) && !o.is_archived
+    !["delivered", "cancelled"].includes(o.status) && !o.is_archived && !o.excluded_from_reports
   );
   const outstandingBalance = orders
-    .filter(o => !o.is_archived && !["cancelled"].includes(o.status))
+    .filter(o => !o.is_archived && !o.excluded_from_reports && !["cancelled"].includes(o.status))
     .reduce((s, o) => s + Math.max(0, (o.total_amount || 0) - (o.deposit_paid || 0)), 0);
 
   // ── Test / archived counts ────────────────────────────────────

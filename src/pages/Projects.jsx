@@ -83,15 +83,27 @@ export default function Projects() {
   const getProjectOrders = (projectId) =>
     orders.filter((o) => o.project_id === projectId);
 
+  // XOS 2.7C: the raw project-order relationship (getProjectOrders above)
+  // stays intact and unfiltered for internal inspection (ProjectHub's own
+  // orders query is separate and untouched) - this operational subset
+  // exists only for health derivation and the project-card order count,
+  // so an excluded QA/proof order can never mark a real project Blocked,
+  // make it read as operationally "healthy", or inflate the shown count.
+  // is_test alone is deliberately NOT filtered - a test order that
+  // hasn't also been excluded still counts, same rule as every other
+  // 2.7C consumer.
+  const getOperationalProjectOrders = (projectId) =>
+    getProjectOrders(projectId).filter((o) => !o.excluded_from_reports);
+
   const getProjectHealth = (project) => {
-    const projectOrders = getProjectOrders(project.id);
-    const blockedOrders = projectOrders.filter(
+    const operationalOrders = getOperationalProjectOrders(project.id);
+    const blockedOrders = operationalOrders.filter(
       (o) => o.stuck_reason && o.stuck_reason !== "none"
     );
 
     if (blockedOrders.length > 0) return "blocked";
     if (project.blockers) return "blocked";
-    if (projectOrders.some((o) => o.status === "in_production")) return "healthy";
+    if (operationalOrders.some((o) => o.status === "in_production")) return "healthy";
     return "normal";
   };
 
@@ -156,7 +168,7 @@ export default function Projects() {
               const config = statusConfig[project.status] || statusConfig.planning;
               const StatusIcon = config.icon;
               const health = getProjectHealth(project);
-              const projectOrders = getProjectOrders(project.id);
+              const operationalOrders = getOperationalProjectOrders(project.id);
 
               return (
                 <Link
@@ -219,7 +231,7 @@ export default function Projects() {
                       )}
 
                       <div className="text-xs text-slate-500">
-                        {projectOrders.length} orders
+                        {operationalOrders.length} orders
                       </div>
 
                     </CardContent>

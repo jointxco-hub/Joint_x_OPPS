@@ -2478,6 +2478,33 @@ export const dataClient = {
     async updateVisibleClient(id, payload = {}) {
       return runStaffUpdate('Client', id, payload);
     },
+    // XOS 2.7C - explicit, staff-only QA/test order classification.
+    // Deliberately NOT exposed via Order.update()/the generic tenant
+    // write path: is_test and excluded_from_reports are not part of that
+    // whitelist at all, so classification goes through this dedicated
+    // set_order_test_classification RPC instead, which explicitly
+    // requires is_opps_staff() (see the
+    // 20260829130000_xos_2_7c_test_order_hygiene.sql migration header
+    // for the full model). Current RLS on public.orders already
+    // restricts authenticated direct-table access to OPPS staff too
+    // (xos1_require_opps_staff is a RESTRICTIVE policy, AND-ed onto the
+    // ordinary can_access_tenant() UPDATE grant) - the migration's
+    // column-level trigger is a second, independent backstop for
+    // contexts RLS doesn't cover (a trusted/service connection
+    // forwarding a non-staff end-user JWT) and for any future change to
+    // those RLS policies. Pass only the field(s) being changed; is_test
+    // and excluded_from_reports are independent - omitting one leaves it
+    // untouched.
+    async setOrderTestClassification(orderId, { isTest, excludedFromReports } = {}) {
+      if (!supabase || !orderId) return null;
+      const { data, error } = await supabase.rpc('set_order_test_classification', {
+        p_order_id: orderId,
+        p_is_test: isTest === undefined ? null : isTest,
+        p_excluded_from_reports: excludedFromReports === undefined ? null : excludedFromReports,
+      });
+      if (error) throw error;
+      return data || null;
+    },
   },
   auth: {
     async me() {
