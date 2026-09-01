@@ -627,7 +627,6 @@ function DetailsTab({ product, full, clientId, onChanged, onPreview }) {
         <ClientAssetPickerModal
           clientId={clientId}
           selectionMode="single"
-          defaultCategory={picker === "thumbnail" ? "Mockups" : "Mockups"}
           uploadCategory="Mockups"
           title={picker === "thumbnail" ? "Set thumbnail" : "Set mockup"}
           description="Pick an existing client file (orders, requests, library) or upload a new one. Nothing is re-uploaded when the file already exists."
@@ -777,7 +776,6 @@ function ArtworkTab({ product, full, clientId, onChanged, onPreview }) {
         <ClientAssetPickerModal
           clientId={clientId}
           selectionMode="single"
-          defaultCategory="Artwork"
           uploadCategory="Artwork"
           showApprovalBadge
           title={`Link artwork — ${formatPlacementName(pickerSlug)}`}
