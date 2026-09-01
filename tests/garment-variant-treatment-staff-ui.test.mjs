@@ -259,21 +259,10 @@ test("TreatmentsSection: the treatment-scoped ScopedComponentsEditor instance is
   assert.ok(source.includes("<TreatmentArtworkState"), "the only treatment artwork surface must still be TreatmentArtworkState");
 });
 
-test("CatalogManagement: the family-scoped ScopedComponentsEditor instance is the ONLY place currentArtwork/onArtworkLinked are still wired through - family scope's existing artwork behaviour is unchanged", async () => {
+test("CatalogManagement no longer mounts the scoped-component / variant / treatment editors (XOS Phase C — canonical production only)", async () => {
   const source = await readSource("src/pages/CatalogManagement.jsx");
-  const familyEditorStart = source.indexOf('scope={{ type: "family" }}');
-  assert.notEqual(familyEditorStart, -1);
-  const familyEditorEnd = source.indexOf("/>", familyEditorStart);
-  const familyEditorProps = source.slice(familyEditorStart, familyEditorEnd);
-  assert.ok(familyEditorProps.includes("currentArtwork={currentArtwork}"));
-  assert.ok(familyEditorProps.includes("onArtworkLinked={invalidateCurrentArtwork}"));
-  // And GarmentVariantsSection/TreatmentsSection are no longer even passed these props.
-  const gvStart = source.indexOf("<GarmentVariantsSection");
-  const gvProps = source.slice(gvStart, source.indexOf("/>", gvStart));
-  assert.ok(!gvProps.includes("currentArtwork") && !gvProps.includes("onArtworkLinked"));
-  const tsStart = source.indexOf("<TreatmentsSection");
-  const tsProps = source.slice(tsStart, source.indexOf("/>", tsStart));
-  assert.ok(!tsProps.includes("currentArtwork") && !tsProps.includes("onArtworkLinked"));
+  assert.ok(!/ScopedComponentsEditor|GarmentVariantsSection|TreatmentsSection/.test(source));
+  assert.ok(source.includes('import CanonicalProductionEditor from "@/components/clients/CanonicalProductionEditor";'));
 });
 
 test("VariantTreatmentMappingEditor: a mapping toggle invalidates BOTH the per-variant mapping query and the family-wide mapping-count query used by the visible variant/treatment lists - not just the former", async () => {
@@ -306,15 +295,12 @@ test("TreatmentsSection: duplicating a treatment invalidates the treatments list
   assert.ok(source.includes("onSuccess={() => { invalidateAfterDuplicate(); setDuplicatingTreatment(null); }}"));
 });
 
-test("a newly duplicated variant can immediately render its cloned component count/state from refreshed query data - the invalidated productComponents key EXACTLY matches CatalogManagement's own query key (the single source ScopedComponentsEditor derives every scope's list from via filterComponentsByScope), so no separate per-variant component query can go stale", async () => {
-  const catalogSource = await readSource("src/pages/CatalogManagement.jsx");
-  assert.ok(catalogSource.includes("queryKey: ['productComponents', selectedClientProductId]"));
-
+test("the scoped-component / variant / treatment editors are still self-consistent in isolation (files kept, unmounted) — GarmentVariantsSection reads the shared productComponents key its duplication invalidates", async () => {
   const variantSectionSource = await readSource("src/components/composition/GarmentVariantsSection.jsx");
-  assert.ok(variantSectionSource.includes('queryKey: ["productComponents", clientProductId]'), "the same logical key (clientProductId === selectedClientProductId at the call site) must be invalidated after duplication");
+  assert.ok(variantSectionSource.includes('queryKey: ["productComponents", clientProductId]'));
 
   const editorSource = await readSource("src/components/composition/ScopedComponentsEditor.jsx");
-  assert.ok(editorSource.includes("const scopedComponents = filterComponentsByScope(allComponents, scope);"), "the variant's expanded detail reads from the SAME allComponents list CatalogManagement fetches - once that query is invalidated and refetched, expanding the new variant shows the cloned components with no additional fetch to go stale");
+  assert.ok(editorSource.includes("const scopedComponents = filterComponentsByScope(allComponents, scope);"));
 });
 
 test("no real SFR data is referenced anywhere in this phase's changed files - UI/data-layer only, no client_product id is hardcoded", async () => {

@@ -327,7 +327,6 @@ export default function ComponentFieldsForm({
         <ClientAssetPickerModal
           clientId={clientProduct?.client_id}
           selectionMode="single"
-          defaultCategory="Artwork"
           uploadCategory="Artwork"
           showApprovalBadge
           title="Select artwork"

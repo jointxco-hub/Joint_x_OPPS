@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -6,6 +6,7 @@ import { dataClient } from "@/api/dataClient";
 import MediaPreview from "@/components/common/MediaPreview";
 import { ORDER_ASSET_CATEGORIES } from "@/lib/orderAssetFolders";
 import { resolveClientCategoryFromFolder, determineAlreadyLinkedState } from "@/lib/clientAssetOrderLink";
+import { filterClientAssetsByCategoryAndSearch, normalizeCategoryFilter } from "@/lib/clientAssetPickerFilter";
 
 // Shared client_assets browser/picker - the canonical client file library
 // (client_id-scoped, tenant-scoped, already correctly RLS-isolated - see
@@ -42,7 +43,6 @@ export default function ClientAssetPickerModal({
   onConfirm,
   currentOrderUrls,
   selectionMode = "multi",
-  defaultCategory = "",
   uploadCategory = "",
   showApprovalBadge = false,
   title = "Add from client library",
@@ -50,7 +50,11 @@ export default function ClientAssetPickerModal({
   confirmVerb = "Link",
 }) {
   const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState(defaultCategory);
+  // null === "All categories" === no category restriction. The picker always
+  // opens unrestricted so the client's files show immediately, without the
+  // user having to touch the category control first. A specific category is
+  // only ever applied because the user explicitly picked one here.
+  const [categoryFilter, setCategoryFilter] = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const fileInputRef = useRef(null);
   const queryClient = useQueryClient();
@@ -100,14 +104,25 @@ export default function ClientAssetPickerModal({
     return ORDER_ASSET_CATEGORIES.filter((category) => category !== "Invoices & Quotes" && present.has(category));
   }, [selectableAssets, categoryByFolderId]);
 
-  const filteredAssets = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return selectableAssets.filter((asset) => {
-      if (categoryFilter && (categoryByFolderId[asset.folder_id] || "General") !== categoryFilter) return false;
-      if (term && !String(asset.title || "").toLowerCase().includes(term)) return false;
-      return true;
-    });
-  }, [selectableAssets, categoryFilter, categoryByFolderId, search]);
+  // If the active category stops existing among the loaded assets (its last
+  // file archived/removed while the picker is open, or a stale value), fall
+  // back to "All" so the <select> value can never point at an option that
+  // isn't rendered — the exact state that made the control read "All
+  // categories" while silently filtering everything out.
+  useEffect(() => {
+    const active = normalizeCategoryFilter(categoryFilter);
+    if (active && !availableCategories.includes(active)) setCategoryFilter(null);
+  }, [availableCategories, categoryFilter]);
+
+  const filteredAssets = useMemo(
+    () => filterClientAssetsByCategoryAndSearch({
+      assets: selectableAssets,
+      categoryByFolderId,
+      categoryFilter,
+      search,
+    }),
+    [selectableAssets, categoryByFolderId, categoryFilter, search],
+  );
 
   const toggleSelected = (assetId) => {
     if (selectionMode === "single") {
@@ -221,8 +236,8 @@ export default function ClientAssetPickerModal({
             />
           </div>
           <select
-            value={categoryFilter}
-            onChange={(event) => setCategoryFilter(event.target.value)}
+            value={normalizeCategoryFilter(categoryFilter) ?? ""}
+            onChange={(event) => setCategoryFilter(event.target.value || null)}
             className="h-9 rounded-full border border-border bg-background px-3 text-xs outline-none focus:border-primary/50"
           >
             <option value="">All categories</option>

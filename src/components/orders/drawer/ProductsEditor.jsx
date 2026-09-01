@@ -1767,7 +1767,6 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         <ClientAssetPickerModal
           clientId={order.client_id}
           selectionMode="single"
-          defaultCategory="Mockups"
           uploadCategory="Mockups"
           title="Set line thumbnail"
           description="Pick a file from this client's library, or upload a new one, to use as this line's thumbnail. This replaces any current thumbnail."
@@ -1808,7 +1807,6 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         <ClientAssetPickerModal
           clientId={order.client_id}
           selectionMode="single"
-          defaultCategory="Artwork"
           uploadCategory="Artwork"
           showApprovalBadge
           title={`Link artwork — ${artworkPickerSnapshot.placement || "placement"}`}

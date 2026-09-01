@@ -1,6 +1,5 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { dataClient } from "@/api/dataClient";
-import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,12 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, Pencil, X, Image as ImageIcon, Plus, Trash2, Video, Factory, Copy } from "lucide-react";
+import { Upload, Pencil, X, Plus, Trash2, Video, Factory } from "lucide-react";
 import { toast } from "sonner";
 import { SearchSelect } from "@/pages/Inventory";
-import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
-import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
-import TreatmentsSection from "@/components/composition/TreatmentsSection";
+import CanonicalProductionEditor from "@/components/clients/CanonicalProductionEditor";
+import { getClientProductFull, setClientProductProductionComponents, mapXosCpError } from "@/api/xosClientProduct";
 
 const CATEGORIES = [
   { value: "tshirts", label: "T-Shirts" },
@@ -55,96 +53,39 @@ export default function CatalogManagement() {
     }
   });
 
-  // Product Composition (Phase 1) - what a client_products row is made
-  // of. Composition belongs to client_products (client-specific name,
-  // price, mockup, artwork, approval lifecycle already live there), not
-  // to this global catalog product - so editing it here first requires
-  // picking WHICH client product, among those based on this catalog
-  // item (via client_products.opps_product_id), to compose. One client
-  // product edited at a time, deliberately no bulk-apply action.
+  // Product Composition — production configuration belongs to ONE
+  // canonical client_products row (XOS unification 20260901150000). This
+  // page picks which client product (linked via
+  // client_products.opps_product_id) and edits its structured production
+  // through the SAME canonical editor + RPC the client-profile drawer
+  // uses — never a second engine, never a raw product_components write.
   const [selectedClientProductId, setSelectedClientProductId] = useState("");
-  const [familyComposerBusy, setFamilyComposerBusy] = useState(false);
 
-  // Phase 2A - Product Composition clone. Duplicate an existing
-  // composition onto another client_product for the SAME client, so
-  // staff never have to rebuild a near-identical setup component by
-  // component. v1 is deliberately narrow: whole-composition only, no
-  // component selection/merge/replace - see duplicate_product_composition
-  // (20260824100000) for the authoritative server-side rules this UI
-  // only mirrors for a faster/clearer failure, never enforces alone.
-  const [duplicatingComposition, setDuplicatingComposition] = useState(false);
-  const [duplicateTargetId, setDuplicateTargetId] = useState("");
-
-  const { data: internalProducts = [] } = useQuery({
-    queryKey: ['inventoryProducts'],
-    queryFn: () => dataClient.entities.InventoryProduct.list('internal_name', 200),
-    enabled: Boolean(editingItem),
-  });
   const { data: linkedClientProducts = [] } = useQuery({
     queryKey: ['clientProductsForCatalogItem', editingItem?.id],
     queryFn: () => dataClient.entities.ClientProduct.filter({ opps_product_id: editingItem.id }, 'client_facing_name', 100),
     enabled: Boolean(editingItem?.id),
   });
-  const { data: productComponents = [] } = useQuery({
-    queryKey: ['productComponents', selectedClientProductId],
-    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: selectedClientProductId }, 'sort_order', 100),
+
+  const clientProductFullKey = ['xosClientProductFull', selectedClientProductId];
+  const { data: clientProductFullRes } = useQuery({
+    queryKey: clientProductFullKey,
+    queryFn: () => getClientProductFull(selectedClientProductId),
     enabled: Boolean(selectedClientProductId),
   });
-  const { data: currentArtwork = [] } = useQuery({
-    queryKey: ['clientProductArtworkCurrent', selectedClientProductId],
-    queryFn: () => dataClient.entities.ClientProductArtwork.filter({ client_product_id: selectedClientProductId, is_current: true }, 'placement', 50),
-    enabled: Boolean(selectedClientProductId),
-  });
-  // Master/default pricing tier - staff-editable, tenant-scoped,
-  // production_pricing_defaults. Used only to PREFILL new components;
-  // never re-read once a component/snapshot already has its own price.
-  const { data: pricingDefaults = [] } = useQuery({
-    queryKey: ['productionPricingDefaults'],
-    queryFn: () => dataClient.entities.ProductionPricingDefault.filter({ is_active: true }, 'production_method', 100),
-    enabled: Boolean(selectedClientProductId),
-    staleTime: 60_000,
-  });
-  const pricingDefaultFor = (method) => (Array.isArray(pricingDefaults) ? pricingDefaults : []).find((d) => d.production_method === method);
+  const clientProductFull = clientProductFullRes?.data || null;
+  const clientProductFullError = clientProductFullRes?.error || null;
 
-  const selectedClientProduct = (Array.isArray(linkedClientProducts) ? linkedClientProducts : []).find((cp) => cp.id === selectedClientProductId) || null;
-  const invalidateCurrentArtwork = () => queryClient.invalidateQueries({ queryKey: ['clientProductArtworkCurrent', selectedClientProductId] });
-
-  // Candidate targets - best-effort same-client filter for a faster/
-  // clearer picker. The RPC re-validates same-tenant/same-client itself
-  // and is the only authority that actually matters (see 20260824100000).
-  const { data: cloneTargetCandidates = [] } = useQuery({
-    queryKey: ['clientProductsForCompositionClone', selectedClientProduct?.client_id],
-    queryFn: () => dataClient.entities.ClientProduct.filter({ client_id: selectedClientProduct.client_id }, 'client_facing_name', 200),
-    enabled: Boolean(duplicatingComposition && selectedClientProduct?.client_id),
-  });
-  const cloneTargetOptions = cloneTargetCandidates.filter((cp) => cp.id !== selectedClientProductId);
-  const selectedCloneTarget = cloneTargetOptions.find((cp) => cp.id === duplicateTargetId) || null;
-
-  // Faster/clearer warning only - the RPC's own "Target product already
-  // has a composition." rejection is what actually enforces this.
-  const { data: targetExistingComponents = [] } = useQuery({
-    queryKey: ['productComponents', duplicateTargetId],
-    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: duplicateTargetId }, 'sort_order', 100),
-    enabled: Boolean(duplicateTargetId),
-  });
-  const targetAlreadyHasComposition = Boolean(duplicateTargetId) && targetExistingComponents.length > 0;
-
-  const duplicateCompositionMutation = useMutation({
-    mutationFn: async (targetId) => {
-      const { data, error } = await supabase.rpc('duplicate_product_composition', {
-        p_source_client_product_id: selectedClientProductId,
-        p_target_client_product_id: targetId,
-      });
-      if (error) throw new Error(error.message);
-      return data;
+  const saveProductionMutation = useMutation({
+    mutationFn: async (components) => {
+      const { error } = await setClientProductProductionComponents(selectedClientProductId, components);
+      if (error) throw new Error(error);
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['productComponents', data.target_client_product_id] });
-      setDuplicatingComposition(false);
-      setDuplicateTargetId("");
-      toast.success(`Composition duplicated - ${data.cloned_count} component${data.cloned_count === 1 ? '' : 's'} copied`);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: clientProductFullKey });
+      toast.success("Production saved");
     },
-    onError: (error) => toast.error(error.message || "Could not duplicate composition"),
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
   });
 
   const handleImageUpload = async (e, item) => {
@@ -159,7 +100,7 @@ export default function CatalogManagement() {
         data: { ...item, image_url: file_url } 
       });
       toast.success("Image updated!");
-    } catch (error) {
+    } catch {
       toast.error("Failed to upload image");
     } finally {
       setUploadingImage(false);
@@ -587,11 +528,12 @@ export default function CatalogManagement() {
                   <div className="space-y-2 rounded-xl border border-slate-200 p-4">
                     <div className="flex items-center gap-2">
                       <Factory className="h-4 w-4 text-slate-500" />
-                      <Label className="mb-0">Composition</Label>
+                      <Label className="mb-0">Production</Label>
                     </div>
                     <p className="text-xs text-slate-500">
-                      Composition belongs to the client product this catalog item is used in, not the catalog item itself -
-                      pick which client product (based on this catalog item via opps_product_id) to compose.
+                      Structured production belongs to ONE canonical client product (shared with X LAB) — pick which one
+                      (linked to this catalog item via opps_product_id). Full identity, artwork, thumbnail and readiness
+                      live in the client&apos;s profile → Client Products.
                     </p>
 
                     <SearchSelect
@@ -602,83 +544,15 @@ export default function CatalogManagement() {
                       placeholder={linkedClientProducts.length ? "Select client product" : "No client products link to this catalog item yet"}
                     />
 
-                    {selectedClientProductId && (
-                      <>
-                        <ScopedComponentsEditor
-                          clientProductId={selectedClientProductId}
-                          scope={{ type: "family" }}
-                          allComponents={productComponents}
-                          queryKeyForInvalidation={['productComponents', selectedClientProductId]}
-                          internalProducts={internalProducts}
-                          pricingDefaultFor={pricingDefaultFor}
-                          clientProduct={selectedClientProduct}
-                          currentArtwork={currentArtwork}
-                          onArtworkLinked={invalidateCurrentArtwork}
-                          addLabel="Add print option"
-                          emptyLabel=""
-                          onBusyChange={setFamilyComposerBusy}
-                        />
-
-                        <GarmentVariantsSection
-                          clientProductId={selectedClientProductId}
-                          clientProduct={selectedClientProduct}
-                          internalProducts={internalProducts}
-                          pricingDefaultFor={pricingDefaultFor}
-                          allComponents={productComponents}
-                        />
-
-                        <TreatmentsSection
-                          clientProductId={selectedClientProductId}
-                          clientProduct={selectedClientProduct}
-                          internalProducts={internalProducts}
-                          pricingDefaultFor={pricingDefaultFor}
-                          allComponents={productComponents}
-                        />
-
-                        {productComponents.length > 0 && !familyComposerBusy && (
-                          duplicatingComposition ? (
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
-                              <p className="text-xs text-slate-500">
-                                Duplicating from <span className="font-medium text-slate-700">{selectedClientProduct?.client_facing_name}</span> ({productComponents.length} component{productComponents.length === 1 ? '' : 's'}) into another client product for the same client.
-                              </p>
-                              <SearchSelect
-                                options={cloneTargetOptions}
-                                value={duplicateTargetId}
-                                onChange={(id) => setDuplicateTargetId(id)}
-                                getLabel={(cp) => cp.client_facing_name}
-                                placeholder={cloneTargetOptions.length ? "Select target client product" : "No other client products for this client yet"}
-                              />
-                              {selectedCloneTarget && targetAlreadyHasComposition && (
-                                <p className="text-xs text-amber-600">
-                                  Target product already has a composition ({targetExistingComponents.length} row{targetExistingComponents.length === 1 ? '' : 's'}) - choose a different target.
-                                </p>
-                              )}
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="flex-1"
-                                  onClick={() => { setDuplicatingComposition(false); setDuplicateTargetId(""); }}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  className="flex-1"
-                                  disabled={!duplicateTargetId || targetAlreadyHasComposition || duplicateCompositionMutation.isPending}
-                                  onClick={() => duplicateCompositionMutation.mutate(duplicateTargetId)}
-                                >
-                                  {duplicateCompositionMutation.isPending ? "Duplicating…" : "Confirm duplicate"}
-                                </Button>
-                              </div>
-                            </div>
-                          ) : (
-                            <Button variant="outline" size="sm" className="w-full" onClick={() => setDuplicatingComposition(true)}>
-                              <Copy className="mr-1.5 h-3.5 w-3.5" /> Duplicate composition
-                            </Button>
-                          )
-                        )}
-                      </>
+                    {selectedClientProductId && clientProductFullError && (
+                      <p className="text-xs text-red-600">{mapXosCpError(clientProductFullError)}</p>
+                    )}
+                    {selectedClientProductId && clientProductFull && (
+                      <CanonicalProductionEditor
+                        full={clientProductFull}
+                        saving={saveProductionMutation.isPending}
+                        onSave={(components) => saveProductionMutation.mutateAsync(components).catch(() => {})}
+                      />
                     )}
                   </div>
 
