@@ -193,3 +193,51 @@ test("ProjectHub.jsx (H): OverviewTab and OrdersTab still receive the raw, unfil
   assert.ok(source.includes("<OrdersTab orders={orders} projectId={projectId} clientName={project.client_name} />"));
   assert.ok(source.includes("<FinanceTab project={project} orders={orders} />"), "FinanceTab still receives the raw set - filtering happens inside it, not at the fetch/prop level, so nothing else regresses");
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// Final closeout gap: Projects.jsx's project-card health derivation
+// (Blocked/Healthy) and its "{N} orders" count both ran off the raw,
+// unfiltered project-order relationship - an excluded QA/proof order
+// could mark a real project Blocked, make it read as operationally
+// "healthy", or inflate the shown count. Fixed with the same
+// excluded_from_reports-only operational subset used everywhere else in
+// this feature; the raw relationship (getProjectOrders) is untouched.
+// ─────────────────────────────────────────────────────────────────────
+
+test("Projects.jsx (A/B/C): getOperationalProjectOrders excludes excluded_from_reports rows and does NOT filter on is_test - a normal order and an is_test=true/excluded=false order both still contribute, only excluded=true contributes zero", async () => {
+  const source = await readSource("src/pages/Projects.jsx");
+  const start = source.indexOf("const getOperationalProjectOrders = (projectId) =>");
+  const line = source.slice(start, source.indexOf(";", start) + 1);
+  assert.ok(line.includes("getProjectOrders(projectId).filter((o) => !o.excluded_from_reports)"));
+  assert.ok(!line.includes("is_test"), "must NOT filter on is_test - a test-but-not-excluded order still counts");
+});
+
+test("Projects.jsx: getProjectOrders itself (the raw project-order relationship) is unchanged - still returns every project-linked order with no excluded_from_reports filter", async () => {
+  const source = await readSource("src/pages/Projects.jsx");
+  assert.ok(source.includes('const getProjectOrders = (projectId) =>\n    orders.filter((o) => o.project_id === projectId);'));
+});
+
+test("Projects.jsx (D): getProjectHealth's blockedOrders derives from the operational subset, not the raw project-order list, so an excluded stuck/blocked order cannot mark a real project Blocked", async () => {
+  const source = await readSource("src/pages/Projects.jsx");
+  const start = source.indexOf("const getProjectHealth = (project) => {");
+  const body = source.slice(start, source.indexOf("\n  };", start));
+  assert.ok(body.includes("const operationalOrders = getOperationalProjectOrders(project.id);"));
+  assert.ok(body.includes('const blockedOrders = operationalOrders.filter(\n      (o) => o.stuck_reason && o.stuck_reason !== "none"\n    );'));
+});
+
+test("Projects.jsx (E): the in_production health check derives from the operational subset, so an excluded in_production order cannot make a project read as operationally healthy", async () => {
+  const source = await readSource("src/pages/Projects.jsx");
+  assert.ok(source.includes('if (operationalOrders.some((o) => o.status === "in_production")) return "healthy";'));
+});
+
+test("Projects.jsx: the project-card order count uses the operational subset, not the raw project-order list", async () => {
+  const source = await readSource("src/pages/Projects.jsx");
+  const cardStart = source.indexOf("const operationalOrders = getOperationalProjectOrders(project.id);", source.indexOf("filteredProjects.map"));
+  assert.ok(cardStart > -1, "expected the render loop to compute operationalOrders per project card");
+  assert.ok(source.includes("{operationalOrders.length} orders"));
+});
+
+test("Projects.jsx (F): the raw, unfiltered order relationship remains available for internal inspection - ProjectHub's own orders query is a separate, untouched fetch (see the ProjectHub.jsx (H) test above), and getProjectOrders itself is never removed from this file", async () => {
+  const source = await readSource("src/pages/Projects.jsx");
+  assert.match(source, /const getProjectOrders = \(projectId\) =>\s*\n\s*orders\.filter\(\(o\) => o\.project_id === projectId\);/);
+});
