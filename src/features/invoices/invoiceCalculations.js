@@ -28,8 +28,18 @@ export function isEmptyInvoiceItem(item = {}) {
   );
 }
 
+// P5 — a reserved line_role='breakdown' item (never emitted by the
+// order->invoice mapper) is informational only and must never enter the
+// billable totals.
+function isInformationalOnlyItem(item = {}) {
+  const role = item.line_role || (item.source_metadata && item.source_metadata.line_role);
+  return role === "breakdown";
+}
+
 export function normalizeInvoiceItems(items = []) {
-  return (Array.isArray(items) ? items : []).filter((item) => !isEmptyInvoiceItem(item));
+  return (Array.isArray(items) ? items : []).filter(
+    (item) => !isEmptyInvoiceItem(item) && !isInformationalOnlyItem(item),
+  );
 }
 
 export function calculateInvoiceLine(item = {}) {

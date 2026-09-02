@@ -221,6 +221,26 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
                       {[item.item_description, item.variant_details, specificationText(item.specifications)].filter(Boolean).join("\n")}
                     </p>
                   )}
+                  {item.source_metadata?.price_breakdown?.mode === "composed"
+                    && Array.isArray(item.source_metadata.price_breakdown.per_unit)
+                    && item.source_metadata.price_breakdown.per_unit.length > 0 && (
+                    <div className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+                      <p className="font-semibold uppercase tracking-wide text-slate-400">Price breakdown</p>
+                      <ul className="mt-1 space-y-0.5">
+                        {item.source_metadata.price_breakdown.per_unit.map((row, i) => (
+                          <li key={i} className="flex justify-between gap-3">
+                            <span className="truncate">{row.label}</span>
+                            <span className="shrink-0">{money(row.amount)} / item</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {item.source_metadata.price_breakdown.reconciled === false && (
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          Agreed price {money(item.source_metadata.price_breakdown.unit_price)} / item — differs from the component breakdown.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <MobileAmount label="Qty" value={item.quantity} />
                 <MobileAmount label="Unit" value={money(item.rate)} />

@@ -319,6 +319,24 @@ export default function InvoiceDetailDrawer({
                       <div>
                         <p className="font-semibold text-foreground">{item.item_name}</p>
                         {item.item_description && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.item_description}</p>}
+                        {item.source_metadata?.price_breakdown?.mode === "composed"
+                          && Array.isArray(item.source_metadata.price_breakdown.per_unit)
+                          && item.source_metadata.price_breakdown.per_unit.length > 0 && (
+                          <div className="mt-1.5 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[11px] leading-4 text-muted-foreground">
+                            <p className="font-semibold uppercase tracking-wide text-muted-foreground/70">Price breakdown (informational)</p>
+                            <ul className="mt-1 space-y-0.5">
+                              {item.source_metadata.price_breakdown.per_unit.map((row, i) => (
+                                <li key={i} className="flex justify-between gap-2">
+                                  <span className="truncate">{row.label}</span>
+                                  <span className="shrink-0">{money(row.amount)} / item</span>
+                                </li>
+                              ))}
+                            </ul>
+                            {item.source_metadata.price_breakdown.reconciled === false && (
+                              <p className="mt-1">Agreed {money(item.source_metadata.price_breakdown.unit_price)} / item — differs from the breakdown.</p>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <p className="text-muted-foreground">Qty {item.quantity}</p>
                       <p className="text-muted-foreground">{money(item.rate)}</p>

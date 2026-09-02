@@ -64,13 +64,88 @@ export function orderProductKey(product = {}) {
   return product.line_id || uuidOrEmpty(product.id) || uuidOrEmpty(product.catalog_item_id) || uuidOrEmpty(product.inventory_item_id) || null;
 }
 
+// P5 — the render/customer-facing invoice breakdown. Whitelisted from the
+// FROZEN order-line price_breakdown: label / role / amount / method /
+// placement + the header facts (mode / reconciled / difference /
+// unit_price). Internal component_id (the P4 transport identity) and any
+// once_per_order_fees (they are separate billable setup_fee lines now)
+// are stripped. This is what P6 will later expose to customers.
+export function sanitizeInvoicePriceBreakdown(pb) {
+  if (!pb || typeof pb !== "object" || pb.mode !== "composed") return null;
+  const perUnit = (Array.isArray(pb.per_unit) ? pb.per_unit : []).map((r) => ({
+    label: String(r?.label ?? "Item"),
+    role: r?.role ?? null,
+    amount: numberOrZero(r?.amount),
+    production_method: r?.production_method ?? null,
+    placement: r?.placement ?? null,
+  }));
+  return {
+    mode: "composed",
+    per_unit: perUnit,
+    reconciled: pb.reconciled === true ? true : pb.reconciled === false ? false : null,
+    difference: typeof pb.difference === "number" ? pb.difference : null,
+    unit_price: typeof pb.unit_price === "number" ? pb.unit_price : null,
+  };
+}
+
+// P5 — a reserved line_role='breakdown' order line is informational only
+// and never becomes an invoice item.
+export function isBillableOrderLine(product = {}) {
+  return (product.line_role || "product") !== "breakdown";
+}
+
 export function itemFromProduct(product = {}, index = 0) {
+  const lineRole = product.line_role || "product";
   const name = product.name || product.product_name || product.title || "Custom item";
   const quantity = numberOrZero(product.quantity) > 0 ? numberOrZero(product.quantity) : 1;
   const unitRate = product.price ?? product.rate ?? product.unit_price;
   const rate = unitRate !== undefined && unitRate !== null && unitRate !== ""
     ? numberOrZero(unitRate)
     : numberOrZero(product.line_total) / quantity;
+
+  const baseMeta = {
+    source: product.source || "order",
+    category: product.category || product.product_category || "",
+    image_url: product.image_url || product.thumbnail_url || product.cover_image_url || "",
+    size: product.size || product.variant_size || "",
+    color: product.color || product.colour || product.variant_color || "",
+    selected_print_options: Array.isArray(product.selected_print_options) ? product.selected_print_options : [],
+    selected_addons: Array.isArray(product.selected_addons) ? product.selected_addons : [],
+  };
+
+  // P5 §6/§7 — a setup_fee companion is a NORMAL billable invoice item
+  // (qty 1, rate = fee amount, billed once) whose subtype (setup vs
+  // once-off add-on) and parent are preserved for UI grouping + sync.
+  if (lineRole === "setup_fee") {
+    return {
+      line_number: index + 1,
+      item_name: name,
+      item_description: "Once-off",
+      item_type: "services",
+      quantity: 1,
+      unit: product.unit || "",
+      rate,
+      discount: numberOrZero(product.discount),
+      tax_name: "",
+      tax_percentage: 0,
+      account_name: "",
+      source_order_item_id: orderProductKey(product),
+      catalog_item_id: "",
+      inventory_item_id: "",
+      source_metadata: {
+        ...baseMeta,
+        line_role: "setup_fee",
+        fee_role: product.breakdown_role === "addon" ? "addon" : "setup",
+        parent_order_line_id: product.parent_line_id || null,
+      },
+    };
+  }
+
+  // P5 §4/§5 — a composed product line's per-unit breakdown rides along
+  // as INFORMATIONAL metadata; the parent still bills the single agreed
+  // per-unit price (never a billable row per component — that would
+  // double-count).
+  const priceBreakdown = sanitizeInvoicePriceBreakdown(product.price_breakdown);
 
   return {
     line_number: index + 1,
@@ -87,22 +162,15 @@ export function itemFromProduct(product = {}, index = 0) {
     source_order_item_id: orderProductKey(product),
     catalog_item_id: uuidOrEmpty(product.catalog_item_id || product.product_id),
     inventory_item_id: uuidOrEmpty(product.inventory_item_id),
-    source_metadata: {
-      source: product.source || "order",
-      category: product.category || product.product_category || "",
-      image_url: product.image_url || product.thumbnail_url || product.cover_image_url || "",
-      size: product.size || product.variant_size || "",
-      color: product.color || product.colour || product.variant_color || "",
-      selected_print_options: Array.isArray(product.selected_print_options) ? product.selected_print_options : [],
-      selected_addons: Array.isArray(product.selected_addons) ? product.selected_addons : [],
-    },
+    source_metadata: priceBreakdown ? { ...baseMeta, price_breakdown: priceBreakdown } : baseMeta,
   };
 }
 
 export function invoiceFromOrder(order = {}, totalPaid = 0, defaults = {}) {
-  const products = Array.isArray(order.products) && order.products.length
+  const products = (Array.isArray(order.products) && order.products.length
     ? order.products
-    : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }];
+    : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }]
+  ).filter(isBillableOrderLine);
   const items = products.map(itemFromProduct);
   const shippingCharge = numberOrZero(order.shipping_charge ?? order.delivery_fee ?? order.delivery_cost ?? order.courier_fee ?? defaults.shippingCharge);
   const amountPaid = resolveOrderAmountPaid(order, totalPaid);
@@ -163,7 +231,10 @@ export function buildShippingDiff({ orderApplyShippingFee, orderShippingFee, inv
 // are dropped, reported in diff.removedFromOrder so the caller can warn
 // before applying.
 export function buildOrderInvoiceSyncPlan(orderProducts = [], currentItems = [], shipping) {
-  const products = Array.isArray(orderProducts) ? orderProducts : [];
+  // P5 — reserved 'breakdown' lines are informational, never invoice
+  // items; product + setup_fee lines both reconcile by line_id <->
+  // source_order_item_id, independently.
+  const products = (Array.isArray(orderProducts) ? orderProducts : []).filter(isBillableOrderLine);
   const items = Array.isArray(currentItems) ? currentItems : [];
 
   const itemsByKey = new Map();

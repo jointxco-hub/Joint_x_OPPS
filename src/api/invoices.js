@@ -157,6 +157,8 @@ const ATOMIC_SAVE_ERROR_MESSAGES = {
   INVOICE_STALE_VERSION: "This invoice changed after you opened it. Reload it before saving.",
   INVOICE_ITEM_COUNT_CHANGED: "The saved invoice items changed after you opened the editor. Reload before saving.",
   INVOICE_FALSE_EMPTY_BLOCKED: "Saved invoice items are missing from the editor. Reload before saving.",
+  INVOICE_TOTAL_MISMATCH: "The invoice total does not match its billable line items. Fix the amounts, or record an explicit total override with a reason.",
+  INVOICE_TOTAL_OVERRIDE_REASON_REQUIRED: "A total override needs a written reason.",
 };
 
 const POSTGRES_SAVE_ERROR_MESSAGES = {
@@ -179,7 +181,7 @@ function atomicSaveError(error) {
   );
 }
 
-async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null }) {
+async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null, allowTotalOverride = false }) {
   const itemRows = items.map((item, index) => invoiceItemRpcRecord(item, index));
   const { data, error } = await supabase.rpc("save_opps_invoice_with_items", {
     p_tenant_id: tenantId,
@@ -188,6 +190,11 @@ async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, inv
     p_items: itemRows,
     p_expected_updated_at: expectedUpdatedAt,
     p_expected_item_count: expectedItemCount,
+    // P5 — the server proves the stored total reconciles to the billable
+    // items (invoiceCalculations formula). A normal save's total already
+    // comes from applyInvoiceTotals so it matches; this is only ever true
+    // for a deliberate staff override (needs invoice.total_override_reason).
+    p_allow_total_override: Boolean(allowTotalOverride),
   });
 
   if (error) {

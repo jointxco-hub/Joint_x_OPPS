@@ -91,7 +91,14 @@ export function invoiceShareSummaryText(invoice = {}) {
     `Date: ${invoice.invoice_date || ""}`,
     `Due: ${invoice.due_date || invoice.payment_terms || ""}`,
     "",
-    ...items.map((item) => `${item.quantity || 1} x ${item.item_name || "Item"} @ ${money(item.rate)} = ${money(item.item_total)}`),
+    ...items.flatMap((item) => {
+      const line = `${item.quantity || 1} x ${item.item_name || "Item"} @ ${money(item.rate)} = ${money(item.item_total)}`;
+      const pb = item.source_metadata && item.source_metadata.price_breakdown;
+      const sub = pb && pb.mode === "composed" && Array.isArray(pb.per_unit)
+        ? pb.per_unit.map((row) => `    ${row.label}: ${money(row.amount)} / item`)
+        : [];
+      return [line, ...sub];
+    }),
     "",
     `Total: ${money(invoice.total)}`,
     `Balance due: ${money(invoice.balance_due)}`,
