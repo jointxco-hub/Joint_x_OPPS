@@ -45,7 +45,10 @@ export async function getClientProductFull(clientProductId) {
 // atomic placement per element:
 //   { id?, component_type, production_method, placement, production_colour?,
 //     specification?, production_instructions?, quantity_per_unit?,
-//     billing_mode?, sort_order?, is_active? }
+//     billing_mode?, default_sell_price?, price_label?, sort_order?, is_active? }
+// default_sell_price / price_label / billing_mode drive the P2 customer
+// price composition; the RPC enforces one active blank_garment per
+// product unless client_products.allow_multiple_base.
 // The RPC upserts product_components, deletes rows absent from the
 // payload, derives the flat summary + required_artwork_placements in the
 // same transaction, audits, and returns get_client_product_full.
@@ -203,6 +206,10 @@ export function mapXosCpError(raw) {
   if (/XOS_CP_COMPONENT_TYPE_INVALID/.test(m)) return "One of the components has an unknown type.";
   if (/XOS_CP_PRODUCTION_METHOD_INVALID/.test(m)) return "One of the components has an unknown print method.";
   if (/XOS_CP_(BILLING_MODE|QUANTITY_PER_UNIT)_INVALID/.test(m)) return "One of the components has an invalid value.";
+  if (/XOS_CP_SELL_PRICE_INVALID/.test(m)) return "A component sell price can't be negative.";
+  if (/XOS_CP_MULTIPLE_BASE_COMPONENTS/.test(m)) {
+    return "A product can have only one base / blank garment. Remove the extra, or enable a multi-base bundle for this product.";
+  }
   if (/XOS_CP_COMPONENTS_INVALID/.test(m)) return "The production list couldn't be read — reload and try again.";
   if (/ORDER_SETUP_FEE_PARENT_NOT_FOUND/.test(m)) return "A setup-fee line is missing a valid parent product line — reload and try again.";
   if (/ORDER_LINE_ROLE_INVALID/.test(m)) return "An order line has an unrecognised role — reload and try again.";

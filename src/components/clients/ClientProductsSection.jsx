@@ -35,6 +35,7 @@ import {
   PRODUCT_READINESS_ROWS,
 } from "@/api/xosClientProduct";
 import CanonicalProductionEditor from "@/components/clients/CanonicalProductionEditor";
+import CanonicalPriceComposition from "@/components/clients/CanonicalPriceComposition";
 
 // The canonical Client Product is ONE shared record (X LAB migration
 // 20260901150000). OPPS reads it via get_client_product_full and writes
@@ -412,9 +413,10 @@ function ConfigureClientProductDrawer({ product, clientId, onClose, onChanged })
           <p className="p-4 text-sm text-red-600">{mapXosCpError(fullError)}</p>
         ) : (
           <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-            <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
+            <TabsList className="mx-4 mt-3 grid w-auto grid-cols-5">
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="production">Production</TabsTrigger>
+              <TabsTrigger value="pricing">Pricing</TabsTrigger>
               <TabsTrigger value="artwork">Artwork</TabsTrigger>
               <TabsTrigger value="status">Status</TabsTrigger>
             </TabsList>
@@ -425,6 +427,9 @@ function ConfigureClientProductDrawer({ product, clientId, onClose, onChanged })
               </TabsContent>
               <TabsContent value="production" className="mt-0">
                 <ProductionTab product={product} full={full} canConfigure={canConfigureProduction} onChanged={refetchAll} />
+              </TabsContent>
+              <TabsContent value="pricing" className="mt-0">
+                <PricingTab product={product} full={full} canConfigure={canConfigureProduction} onChanged={refetchAll} />
               </TabsContent>
               <TabsContent value="artwork" className="mt-0">
                 <ArtworkTab product={product} full={full} clientId={clientId} onChanged={refetchAll} onPreview={setPreview} />
@@ -670,6 +675,35 @@ function ProductionTab({ product, full, canConfigure, onChanged }) {
       />
       <CanonicalReadinessPanel productReadiness={full?.product_readiness} artworkReadiness={full?.artwork_readiness} />
     </div>
+  );
+}
+
+// ─── Pricing tab (P2) ──────────────────────────────────────────────
+// The customer sell-price composition. Same view X LAB Admin shows;
+// reads full.pricing, writes through the SAME canonical RPC as
+// Production. No second pricing truth, no cost/margin UI.
+function PricingTab({ product, full, canConfigure, onChanged }) {
+  const queryClient = useQueryClient();
+  const saveMutation = useMutation({
+    mutationFn: async (components) => {
+      const { error } = await setClientProductProductionComponents(product.id, components);
+      if (error) throw new Error(error);
+    },
+    onSuccess: () => {
+      toast.success("Price composition updated");
+      queryClient.invalidateQueries({ queryKey: ["xosClientProductFull", product.id] });
+      onChanged?.();
+    },
+    onError: (error) => toast.error(mapXosCpError(error?.message)),
+  });
+
+  return (
+    <CanonicalPriceComposition
+      full={full}
+      saving={saveMutation.isPending}
+      readOnly={!canConfigure}
+      onSave={(components) => saveMutation.mutateAsync(components).catch(() => {})}
+    />
   );
 }
 
