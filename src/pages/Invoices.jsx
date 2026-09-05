@@ -12,6 +12,7 @@ import {
   createInvoiceExportRecord,
   duplicateInvoiceAsDraft,
   getInvoice,
+  issueInvoiceShare,
   linkInvoiceToOrder,
   listInvoiceActivity,
   listSiblingInvoicesForOrder,
@@ -23,6 +24,8 @@ import {
   markInvoiceVoid,
   refreshInvoiceContactDetails,
   reopenInvoice,
+  revokeInvoiceShare,
+  rotateInvoiceShareToken,
   syncInvoiceItemsFromOrder,
   syncOrderItemsFromInvoice,
   unlinkInvoiceFromOrder,
@@ -185,6 +188,36 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
     },
     onError: (error) => toast.error(error?.message || "Could not reopen invoice"),
+  });
+
+  const issueShareMutation = useMutation({
+    mutationFn: (invoice) => issueInvoiceShare(invoice.id),
+    onSuccess: () => {
+      toast.success("Public link created");
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not create a public link"),
+  });
+
+  const revokeShareMutation = useMutation({
+    mutationFn: (invoice) => revokeInvoiceShare(invoice.id),
+    onSuccess: () => {
+      toast.success("Public link revoked");
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not revoke the public link"),
+  });
+
+  const rotateShareMutation = useMutation({
+    mutationFn: (invoice) => rotateInvoiceShareToken(invoice.id),
+    onSuccess: () => {
+      toast.success("Public link rotated — the old link no longer works");
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not rotate the public link"),
   });
 
   const refreshContactMutation = useMutation({
@@ -446,6 +479,12 @@ export default function Invoices() {
         isReopenPending={reopenMutation.isPending}
         onRefreshContact={(invoice, fields) => refreshContactMutation.mutate({ invoice, fields })}
         isRefreshContactPending={refreshContactMutation.isPending}
+        onIssueShare={(invoice) => issueShareMutation.mutate(invoice)}
+        isIssueSharePending={issueShareMutation.isPending}
+        onRevokeShare={(invoice) => revokeShareMutation.mutate(invoice)}
+        isRevokeSharePending={revokeShareMutation.isPending}
+        onRotateShare={(invoice) => rotateShareMutation.mutate(invoice)}
+        isRotateSharePending={rotateShareMutation.isPending}
         onEditDraft={(invoice) => {
           if (!isCompleteInvoiceDetail(detailQuery.data || invoice)) {
             toast.error("Invoice details must load completely before editing.");
