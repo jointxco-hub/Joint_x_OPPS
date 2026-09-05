@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer, RefreshCw, RotateCcw } from "lucide-react";
+import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer, RefreshCw, RotateCcw, RotateCw, Share2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,9 +26,19 @@ import OrderLinkPanel from "./OrderLinkPanel";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
 import { printIminReceipt } from "@/lib/pos/iminPrinter";
-import { getClientContactSnapshot, clientToInvoiceContactFields } from "@/api/invoices";
+import { getClientContactSnapshot, clientToInvoiceContactFields, buildPublicInvoiceUrl } from "@/api/invoices";
 import { getCourierRequirementGap } from "@/lib/shippingRequirements";
 import { toast } from "sonner";
+
+// An issued share is "active" only while it is currently resolvable by the
+// public route — matches get_public_invoice()'s own checks (P3) so the
+// staff UI never offers to "copy" a link that would actually 404 for the
+// client: public_visible, not revoked, not expired.
+function hasActiveShare(invoice) {
+  if (!invoice?.share_token || invoice.public_visible !== true || invoice.share_revoked_at) return false;
+  if (invoice.share_expires_at && new Date(invoice.share_expires_at).getTime() < Date.now()) return false;
+  return true;
+}
 
 const CONTACT_FIELD_LABELS = {
   contact_person: "Contact person",
@@ -103,11 +113,18 @@ export default function InvoiceDetailDrawer({
   isReopenPending = false,
   onRefreshContact,
   isRefreshContactPending = false,
+  onIssueShare,
+  isIssueSharePending = false,
+  onRevokeShare,
+  isRevokeSharePending = false,
+  onRotateShare,
+  isRotateSharePending = false,
 }) {
   const [partialPaymentOpen, setPartialPaymentOpen] = useState(false);
   const [partialAmount, setPartialAmount] = useState("");
   const [partialNote, setPartialNote] = useState("");
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
+  const [revokeShareConfirmOpen, setRevokeShareConfirmOpen] = useState(false);
   const [duplicateToVoid, setDuplicateToVoid] = useState(null);
   const [showMoreActions, setShowMoreActions] = useState(false);
   const [unlinkedApproveWarningOpen, setUnlinkedApproveWarningOpen] = useState(false);
@@ -142,6 +159,13 @@ export default function InvoiceDetailDrawer({
   const displayStates = getInvoiceDisplayStates(invoice);
   const isDraft = invoice?.status === "draft";
   const canTakePayment = invoice && !["draft", "paid", "void"].includes(invoice.status);
+  // Eligible to issue a public link at all: matches issue_invoice()'s own
+  // guard (void refused) plus a client-side rule the RPC doesn't enforce —
+  // a draft invoice technically CAN be issued (the RPC auto-approves it as
+  // a side effect), but this UI keeps that a distinct, deliberate action
+  // (Approve) rather than something a share click does silently.
+  const shareEligible = Boolean(invoice) && !isDraft && invoice.status !== "void";
+  const shareActive = hasActiveShare(invoice);
   const partialAmountNumber = Number(partialAmount);
   const partialAmountInvalid = !Number.isFinite(partialAmountNumber)
     || partialAmountNumber < 0
@@ -195,6 +219,17 @@ export default function InvoiceDetailDrawer({
     const reason = reopenReasonDetail.trim() ? `${presetLabel}: ${reopenReasonDetail.trim()}` : presetLabel;
     onReopen?.(invoice, reason);
     setReopenDialogOpen(false);
+  };
+
+  const copyPublicLink = async () => {
+    if (!invoice?.share_token) return;
+    const url = buildPublicInvoiceUrl(invoice.share_token);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Public invoice link copied");
+    } catch {
+      toast.error("Couldn't copy the link — copy it from " + url + " instead.");
+    }
   };
 
   const printPosInvoiceSummary = async () => {
@@ -392,6 +427,47 @@ export default function InvoiceDetailDrawer({
                     <Button variant="outline" size="sm" onClick={printPosInvoiceSummary} className="h-8 rounded-xl text-xs">
                       <Printer className="h-3.5 w-3.5" /> POS print
                     </Button>
+                    {shareEligible && !shareActive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onIssueShare?.(invoice)}
+                        disabled={isIssueSharePending}
+                        className="h-11 rounded-xl text-xs sm:h-8"
+                      >
+                        <Share2 className="h-3.5 w-3.5" /> {isIssueSharePending ? "Creating link..." : "Share invoice"}
+                      </Button>
+                    )}
+                    {shareActive && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={copyPublicLink}
+                          className="h-11 rounded-xl text-xs sm:h-8"
+                        >
+                          <Copy className="h-3.5 w-3.5" /> Copy public link
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onRotateShare?.(invoice)}
+                          disabled={isRotateSharePending}
+                          className="h-11 rounded-xl text-xs sm:h-8"
+                        >
+                          <RotateCw className="h-3.5 w-3.5" /> {isRotateSharePending ? "Rotating..." : "Rotate link"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setRevokeShareConfirmOpen(true)}
+                          disabled={isRevokeSharePending}
+                          className="h-11 rounded-xl text-xs text-destructive hover:text-destructive sm:h-8"
+                        >
+                          <Unlink className="h-3.5 w-3.5" /> Revoke link
+                        </Button>
+                      </>
+                    )}
                     {["approved", "exported", "imported_to_zoho"].includes(invoice.status) && (
                       <Button variant="outline" size="sm" onClick={exportSingle} className="h-8 rounded-xl text-xs">
                         <Download className="h-3.5 w-3.5" /> {invoice.status === "approved" ? "Export" : "Re-export"}
@@ -588,6 +664,18 @@ export default function InvoiceDetailDrawer({
       onConfirm={() => {
         if (invoice) onMarkVoid?.(invoice);
         setVoidConfirmOpen(false);
+      }}
+    />
+    <ConfirmDialog
+      open={revokeShareConfirmOpen}
+      onOpenChange={setRevokeShareConfirmOpen}
+      title="Revoke public link?"
+      description="The current link stops working immediately for the client. You can issue a new one later."
+      confirmText="Revoke link"
+      variant="destructive"
+      onConfirm={() => {
+        if (invoice) onRevokeShare?.(invoice);
+        setRevokeShareConfirmOpen(false);
       }}
     />
     <ConfirmDialog
