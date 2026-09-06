@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { getCurrentTenantId } from '@/lib/tenantContext';
 import { toPrivateUploadRef } from '@/lib/privateFiles';
 import { resolveOfflineUserFromSession, resolveOnlineUserFromAuthCheck } from '@/lib/authIdentity';
+import { supabaseErrorMessage } from '@/lib/supabaseErrorMessage';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -2136,14 +2137,6 @@ async function runStaffSelect(entityName, filter = {}, sort, limit) {
   return (data ?? []).map((row) => entityConfig.normalize(row));
 }
 
-function supabaseErrorMessage(error) {
-  if (!error) return 'Unknown error';
-  const msg = error.message || error.hint || JSON.stringify(error);
-  if (msg.includes('does not exist')) return `DB table/column missing — run the purchase_orders migration in Supabase SQL Editor. (${msg})`;
-  if (msg.includes('violates row-level security')) return `Supabase RLS is blocking this insert — add an INSERT policy for purchase_orders in Supabase → Auth → Policies. (${msg})`;
-  return msg;
-}
-
 async function runInsert(entityName, payload = {}) {
   if (!supabase) {
     return null;
@@ -2166,7 +2159,7 @@ async function runInsert(entityName, payload = {}) {
     .single();
 
   if (error) {
-    const msg = supabaseErrorMessage(error);
+    const msg = supabaseErrorMessage(error, entityName);
     console.error(`[dataClient] ${entityName} insert failed:`, msg, error);
     throw new Error(msg);
   }
@@ -2196,7 +2189,7 @@ async function runUpdate(entityName, id, payload = {}) {
   const { data, error } = await query.select('*').single();
 
   if (error) {
-    const msg = supabaseErrorMessage(error);
+    const msg = supabaseErrorMessage(error, entityName);
     console.error(`[dataClient] ${entityName} update failed:`, msg, error);
     throw new Error(msg);
   }
@@ -2231,7 +2224,7 @@ async function runStaffUpdate(entityName, id, payload = {}) {
     .single();
 
   if (error) {
-    const msg = supabaseErrorMessage(error);
+    const msg = supabaseErrorMessage(error, entityName);
     console.error(`[dataClient] staff ${entityName} update failed:`, msg, error);
     throw new Error(msg);
   }
