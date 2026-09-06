@@ -90,6 +90,123 @@ test("5c · a rate+qty swap that nets to the same total STILL requires a reason 
   assert.equal(r.changed, true, "line-level change is audited even when the total is unchanged");
 });
 
+// ── I. stable line identity — persisted id beats a mutable/regenerated key ──
+// The editor regenerates line_key for a persisted row that had none
+// (InvoiceCreateFlow: `line_key: item.line_key || uniqueLineKey()`), so a
+// simple line_key match reported the SAME line as Added + Removed. Match
+// on the immutable opps_invoice_items.id first.
+
+const persisted = (over = {}) => ({
+  id: "row-1", line_key: null, source_order_item_id: null,
+  item_name: "Artwork Setup", quantity: 1, rate: 300, discount: 0, tax_percentage: 0, ...over,
+});
+// what the editor holds after mapping a persisted row: same id, FRESH line_key
+const editorCopy = (over = {}) => ({ ...persisted(), line_key: "fresh-uuid-xyz", ...over });
+
+test("I1 · same id + price change => ONE price entry, no Added/Removed pair", () => {
+  const r = detectCommercialTotalChange(
+    savedInvoice([persisted()]),
+    savedInvoice([editorCopy({ rate: 305 })]),
+    [editorCopy({ rate: 305 })],
+  );
+  assert.equal(r.changed, true);
+  assert.deepEqual(
+    r.changes.map((c) => c.label).sort(),
+    ["Artwork Setup price"],
+  );
+  const price = r.changes.find((c) => c.label === "Artwork Setup price");
+  assert.ok(/300/.test(price.from) && /305/.test(price.to));
+  assert.ok(!r.changes.some((c) => /^Added:|^Removed:/.test(c.label)), "no fake add/remove");
+});
+
+test("I2 · same id + quantity change => ONE quantity entry", () => {
+  const r = detectCommercialTotalChange(
+    savedInvoice([persisted({ quantity: 5 })]),
+    savedInvoice([editorCopy({ quantity: 6 })]),
+    [editorCopy({ quantity: 6 })],
+  );
+  assert.deepEqual(r.changes.map((c) => c.label), ["Artwork Setup quantity"]);
+  assert.equal(r.changes[0].from, "5");
+  assert.equal(r.changes[0].to, "6");
+});
+
+test("I3 · same id + discount change => ONE discount entry", () => {
+  const r = detectCommercialTotalChange(
+    savedInvoice([persisted({ discount: 0 })]),
+    savedInvoice([editorCopy({ discount: 30 })]),
+    [editorCopy({ discount: 30 })],
+  );
+  assert.deepEqual(r.changes.map((c) => c.label), ["Artwork Setup discount"]);
+  assert.ok(!r.changes.some((c) => /^Added:|^Removed:/.test(c.label)));
+});
+
+test("I4 · same id + several field changes => grouped under the line, no add/remove", () => {
+  const r = detectCommercialTotalChange(
+    savedInvoice([persisted({ rate: 300, quantity: 5, tax_percentage: 0 })]),
+    savedInvoice([editorCopy({ rate: 305, quantity: 6, tax_percentage: 15 })]),
+    [editorCopy({ rate: 305, quantity: 6, tax_percentage: 15 })],
+  );
+  assert.equal(r.changed, true);
+  const labels = r.changes.map((c) => c.label).sort();
+  assert.deepEqual(labels, ["Artwork Setup price", "Artwork Setup quantity", "Artwork Setup tax"]);
+  assert.ok(labels.every((l) => l.startsWith("Artwork Setup ")), "all grouped under the one line");
+  assert.ok(!r.changes.some((c) => /^Added:|^Removed:/.test(c.label)));
+});
+
+test("I5 · a genuinely new editor line (no id) => Added", () => {
+  const r = detectCommercialTotalChange(
+    savedInvoice([persisted()]),
+    savedInvoice([editorCopy(), { line_key: "new-1", item_name: "Embroidery Setup", quantity: 1, rate: 120, discount: 0, tax_percentage: 0 }]),
+    [editorCopy(), { line_key: "new-1", item_name: "Embroidery Setup", quantity: 1, rate: 120, discount: 0, tax_percentage: 0 }],
+  );
+  assert.ok(r.changes.some((c) => c.label === "Added: Embroidery Setup"));
+  assert.ok(!r.changes.some((c) => /Artwork Setup/.test(c.label)), "the unchanged persisted line is not touched");
+});
+
+test("I6 · a genuinely removed persisted line => Removed", () => {
+  const dtf = persisted({ id: "row-2", item_name: "DTF Printing", rate: 150 });
+  const r = detectCommercialTotalChange(
+    savedInvoice([persisted(), dtf]),
+    savedInvoice([editorCopy()]),
+    [editorCopy()],
+  );
+  assert.ok(r.changes.some((c) => c.label === "Removed: DTF Printing"));
+  assert.ok(!r.changes.some((c) => c.label === "Removed: Artwork Setup"));
+});
+
+test("I7 · two lines with identical names but different ids => matched by id", () => {
+  const a = persisted({ id: "row-A", item_name: "Setup", rate: 100 });
+  const b = persisted({ id: "row-B", item_name: "Setup", rate: 200 });
+  // editor changes only row-B's rate
+  const r = detectCommercialTotalChange(
+    savedInvoice([a, b]),
+    savedInvoice([{ ...a, line_key: "lkA" }, { ...b, line_key: "lkB", rate: 250 }]),
+    [{ ...a, line_key: "lkA" }, { ...b, line_key: "lkB", rate: 250 }],
+  );
+  assert.deepEqual(r.changes.map((c) => c.label), ["Setup price"]);
+  assert.ok(/200/.test(r.changes[0].from) && /250/.test(r.changes[0].to), "row-B (200→250), not row-A");
+});
+
+test("I8 · line reorder only => no commercial change", () => {
+  const a = persisted({ id: "row-A", item_name: "A", rate: 100 });
+  const b = persisted({ id: "row-B", item_name: "B", rate: 200 });
+  const r = detectCommercialTotalChange(
+    savedInvoice([a, b]),
+    savedInvoice([{ ...b, line_key: "x" }, { ...a, line_key: "y" }]), // swapped order, fresh keys
+    [{ ...b, line_key: "x" }, { ...a, line_key: "y" }],
+  );
+  assert.equal(r.changed, false);
+  assert.equal(r.changes.length, 0);
+});
+
+test("I9 · identity priority: source_order_item_id when there is no id", () => {
+  const prevLine = { source_order_item_id: "soi-9", line_key: null, item_name: "JET T-Shirt", quantity: 5, rate: 155, discount: 0, tax_percentage: 0 };
+  const curLine = { ...prevLine, line_key: "regen", rate: 160 };
+  const r = detectCommercialTotalChange(savedInvoice([prevLine]), savedInvoice([curLine]), [curLine]);
+  assert.deepEqual(r.changes.map((c) => c.label), ["JET T-Shirt price"]);
+  assert.ok(!r.changes.some((c) => /^Added:|^Removed:/.test(c.label)));
+});
+
 // ── 6-9. reason serialization ────────────────────────────────────────
 
 test("6 · a preset reason alone is valid and serializes to just its label", () => {

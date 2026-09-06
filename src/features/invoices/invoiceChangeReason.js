@@ -64,8 +64,27 @@ function itemName(item) {
   return String(item?.item_name || item?.name || "Item").trim() || "Item";
 }
 
-function itemKey(item, index) {
-  return item?.line_key || item?.id || `idx:${index}`;
+function present(v) {
+  return v !== undefined && v !== null && v !== "";
+}
+
+// Stable line identity for matching the persisted invoice items against
+// the current editor items. Priority, most-canonical first:
+//   1. opps_invoice_items.id       — the immutable PK (both the persisted
+//                                    row and the editor copy carry it)
+//   2. source_order_item_id        — stable link to the order line
+//   3. line_key                    — stable within one editor session,
+//                                    BUT the editor regenerates it for a
+//                                    persisted row that had none, so it
+//                                    only matches when both sides share it
+//   4. position index              — last-resort fallback only
+// Never keyed on name / description / rate / quantity — all of those can
+// legitimately change on the same line.
+function itemIdentity(item, index) {
+  if (present(item?.id)) return `id:${item.id}`;
+  if (present(item?.source_order_item_id)) return `soi:${item.source_order_item_id}`;
+  if (present(item?.line_key)) return `lk:${item.line_key}`;
+  return `idx:${index}`;
 }
 
 // Compare current editor state to the last SAVED invoice and decide
@@ -93,11 +112,11 @@ export function detectCommercialTotalChange(previousInvoice, nextInvoice, nextIt
   const totalMoved = Math.abs(nextTotal - previousTotal) >= 0.005;
 
   const changes = [];
-  const prevByKey = new Map(prevItems.map((it, i) => [itemKey(it, i), it]));
+  const prevByKey = new Map(prevItems.map((it, i) => [itemIdentity(it, i), it]));
   const seen = new Set();
 
   curItems.forEach((cur, i) => {
-    const key = itemKey(cur, i);
+    const key = itemIdentity(cur, i);
     seen.add(key);
     const before = prevByKey.get(key);
     if (!before) {
@@ -119,7 +138,7 @@ export function detectCommercialTotalChange(previousInvoice, nextInvoice, nextIt
   });
 
   prevItems.forEach((before, i) => {
-    if (!seen.has(itemKey(before, i))) {
+    if (!seen.has(itemIdentity(before, i))) {
       changes.push({ label: `Removed: ${itemName(before)}`, from: money(calculateTotalsForLine(before)), to: null });
     }
   });
