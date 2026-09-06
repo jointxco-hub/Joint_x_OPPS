@@ -107,6 +107,12 @@ function invoiceRecord(invoice = {}, userId = null) {
     notes: nullableField(invoice, "notes"),
     terms: nullableField(invoice, "terms"),
     internal_notes: nullableField(invoice, "internal_notes"),
+    // The written reason for a commercial-total change. The server RPC
+    // reads p_invoice->>'total_override_reason' and stamps
+    // total_override_by (= auth.uid()) / total_override_at (= now())
+    // itself, and only when the stated total actually diverges from the
+    // billable items (v_did_override) — inert on a normal save.
+    total_override_reason: nullableField(invoice, "total_override_reason"),
     updated_by: userId,
   });
 }
@@ -179,7 +185,7 @@ function atomicSaveError(error) {
   );
 }
 
-async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null }) {
+async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null, allowTotalOverride = false }) {
   const itemRows = items.map((item, index) => invoiceItemRpcRecord(item, index));
   const { data, error } = await supabase.rpc("save_opps_invoice_with_items", {
     p_tenant_id: tenantId,
@@ -188,6 +194,9 @@ async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, inv
     p_items: itemRows,
     p_expected_updated_at: expectedUpdatedAt,
     p_expected_item_count: expectedItemCount,
+    // P5 total-validation guard: only ever true for a deliberate staff
+    // reason capture (the invoice payload then carries total_override_reason).
+    p_allow_total_override: Boolean(allowTotalOverride),
   });
 
   if (error) {
@@ -500,6 +509,7 @@ export async function createInvoice(input = {}, options = {}) {
     tenantId,
     invoice: invoiceRecord(invoice, userId),
     items: linkedItems,
+    allowTotalOverride: Boolean(input.allow_total_override),
     expectedItemCount: 0,
   });
   await recordInvoiceItemVersionsSafely(linkedItems, createdInvoice, tenantId, userId);
@@ -561,6 +571,7 @@ export async function updateInvoice(id, input = {}, options = {}) {
       invoiceId: id,
       invoice: invoiceRecord(invoice, userId),
       items: linkedItems,
+      allowTotalOverride: Boolean(input.allow_total_override),
       expectedUpdatedAt: input.expected_updated_at || currentInvoice.updated_at,
       expectedItemCount: Number(input.expected_item_count),
     });
@@ -689,6 +700,68 @@ export async function reopenInvoice(invoiceId, reason) {
   });
   if (error) {
     throw rpcSafetyError(error, REOPEN_INVOICE_ERROR_MESSAGES, "Could not reopen this invoice.");
+  }
+  return data;
+}
+
+// Production public-invoice host — X LAB's customer-facing app, never a
+// preview/staging URL. The share token itself is the only variable part;
+// this constant is deliberately not env-driven so a preview deploy can
+// never accidentally mint a link pointing at itself.
+const PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";
+
+export function buildPublicInvoiceUrl(shareToken) {
+  return `${PUBLIC_INVOICE_BASE_URL}/${shareToken}`;
+}
+
+const INVOICE_SHARE_ERROR_MESSAGES = {
+  INVOICE_AUTH_REQUIRED: "Sign in again to manage this invoice's public link.",
+  INVOICE_NOT_FOUND: "This invoice could not be found.",
+  INVOICE_ACCESS_DENIED: "You don't have permission to manage this invoice's public link.",
+  INVOICE_VOID_CANNOT_ISSUE: "A void invoice cannot be issued a public link.",
+  INVOICE_SHARE_NOT_ACTIVE: "This invoice has no active public link to rotate — issue one first.",
+};
+
+// Mints (or reuses, if one already exists and isn't revoked) the invoice's
+// public share token via the existing server RPC — never writes
+// share_token/public_visible directly from the client. p_expires_at stays
+// null (no expiry) for this first release; the RPC already supports one
+// for later.
+export async function issueInvoiceShare(invoiceId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("issue_invoice", {
+    p_invoice_id: invoiceId,
+    p_expires_at: null,
+  });
+  if (error) {
+    throw rpcSafetyError(error, INVOICE_SHARE_ERROR_MESSAGES, "Could not create a public link for this invoice.");
+  }
+  return data;
+}
+
+// Immediately invalidates the invoice's public link. The row keeps its
+// token (rotate can issue a fresh one later) but the public route refuses
+// it from this instant on.
+export async function revokeInvoiceShare(invoiceId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("revoke_invoice_share", {
+    p_invoice_id: invoiceId,
+  });
+  if (error) {
+    throw rpcSafetyError(error, INVOICE_SHARE_ERROR_MESSAGES, "Could not revoke this invoice's public link.");
+  }
+  return data;
+}
+
+// Invalidates the current token and mints a new one — the old link stops
+// working immediately. Requires an already-issued, non-revoked share.
+export async function rotateInvoiceShareToken(invoiceId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("rotate_invoice_share_token", {
+    p_invoice_id: invoiceId,
+  });
+  if (error) {
+    throw rpcSafetyError(error, INVOICE_SHARE_ERROR_MESSAGES, "Could not rotate this invoice's public link.");
   }
   return data;
 }
