@@ -107,6 +107,12 @@ function invoiceRecord(invoice = {}, userId = null) {
     notes: nullableField(invoice, "notes"),
     terms: nullableField(invoice, "terms"),
     internal_notes: nullableField(invoice, "internal_notes"),
+    // The written reason for a commercial-total change. The server RPC
+    // reads p_invoice->>'total_override_reason' and stamps
+    // total_override_by (= auth.uid()) / total_override_at (= now())
+    // itself, and only when the stated total actually diverges from the
+    // billable items (v_did_override) — inert on a normal save.
+    total_override_reason: nullableField(invoice, "total_override_reason"),
     updated_by: userId,
   });
 }
@@ -179,7 +185,7 @@ function atomicSaveError(error) {
   );
 }
 
-async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null }) {
+async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, invoice, items, expectedUpdatedAt = null, expectedItemCount = null, allowTotalOverride = false }) {
   const itemRows = items.map((item, index) => invoiceItemRpcRecord(item, index));
   const { data, error } = await supabase.rpc("save_opps_invoice_with_items", {
     p_tenant_id: tenantId,
@@ -188,6 +194,9 @@ async function saveInvoiceWithItemsTransaction({ tenantId, invoiceId = null, inv
     p_items: itemRows,
     p_expected_updated_at: expectedUpdatedAt,
     p_expected_item_count: expectedItemCount,
+    // P5 total-validation guard: only ever true for a deliberate staff
+    // reason capture (the invoice payload then carries total_override_reason).
+    p_allow_total_override: Boolean(allowTotalOverride),
   });
 
   if (error) {
@@ -500,6 +509,7 @@ export async function createInvoice(input = {}, options = {}) {
     tenantId,
     invoice: invoiceRecord(invoice, userId),
     items: linkedItems,
+    allowTotalOverride: Boolean(input.allow_total_override),
     expectedItemCount: 0,
   });
   await recordInvoiceItemVersionsSafely(linkedItems, createdInvoice, tenantId, userId);
@@ -561,6 +571,7 @@ export async function updateInvoice(id, input = {}, options = {}) {
       invoiceId: id,
       invoice: invoiceRecord(invoice, userId),
       items: linkedItems,
+      allowTotalOverride: Boolean(input.allow_total_override),
       expectedUpdatedAt: input.expected_updated_at || currentInvoice.updated_at,
       expectedItemCount: Number(input.expected_item_count),
     });

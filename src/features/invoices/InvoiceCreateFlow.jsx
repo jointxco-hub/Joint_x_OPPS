@@ -13,6 +13,8 @@ import { validateInvoice } from "./invoiceValidation";
 import { INVOICE_SETTING_KEYS, normalizeInvoiceDefaultsSetting } from "./invoiceSettings";
 import ClientInvoiceView from "./ClientInvoiceView";
 import InvoiceLineItemsEditor from "./InvoiceLineItemsEditor";
+import InvoiceTotalChangeReasonModal from "./InvoiceTotalChangeReasonModal";
+import { detectCommercialTotalChange } from "./invoiceChangeReason";
 import InvoicePdfDownloadButton from "./InvoicePdfDownloadButton";
 import InvoiceSharePdfButton from "./InvoiceSharePdfButton";
 import { invoiceShareSummaryText } from "./invoicePdfBuilder";
@@ -242,6 +244,10 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
   const savedInvoiceUrl = clientInvoiceUrl(initialInvoice?.id);
   const savedPrintUrl = clientInvoiceUrl(initialInvoice?.id, { print: true });
 
+  // When a commercial edit changes the SAVED total, the save is held here
+  // until a written reason is captured. { status } is the pending action.
+  const [pendingReason, setPendingReason] = useState(null);
+
   useEffect(() => {
     topRef.current?.scrollIntoView({ block: "start" });
   }, [step]);
@@ -279,8 +285,12 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
     setShowClientSuggestions(false);
   };
 
-  const submit = (status) => {
-    if (isSaving || !detailReady) return;
+  // Actually dispatch the save. `overrideReason` (when present) is a
+  // single human-readable string that goes to opps_invoices.total_override_
+  // reason AND to every line's change_reason, so the server's per-line
+  // change-reason guard and its total-override guard are both satisfied
+  // with one entry.
+  const performSubmit = (status, overrideReason = null) => {
     // Explicit opt-in only - matches NewOrderDrawer.jsx's "Update client
     // defaults" checkbox exactly. Without it, contact/shipping edits made
     // here stay local to this invoice and never touch the client record.
@@ -300,17 +310,36 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
         // action and should not be blocked by a client-defaults failure.
       });
     }
+    const reason = String(overrideReason || "").trim();
     onSave({
       ...calculated.invoice,
       id: initialInvoice?.id,
       invoice_number: initialInvoice?.invoice_number,
       status,
-      items: calculated.items,
+      items: reason
+        ? calculated.items.map((it) => ({
+            ...it,
+            change_reason: String(it.change_reason || "").trim() || reason,
+          }))
+        : calculated.items,
+      ...(reason ? { total_override_reason: reason, allow_total_override: true } : {}),
       items_loaded: initialInvoice?.items_loaded,
       item_load_state: initialInvoice?.item_load_state,
       expected_item_count: initialInvoice?.loaded_item_count,
       expected_updated_at: initialInvoice?.updated_at,
     });
+  };
+
+  const submit = (status) => {
+    if (isSaving || !detailReady) return;
+    const change = detectCommercialTotalChange(initialInvoice, calculated.invoice, calculated.items);
+    if (change.changed) {
+      // Hold the save; the modal collects one reason, then calls
+      // performSubmit via onConfirm.
+      setPendingReason({ status, ...change });
+      return;
+    }
+    performSubmit(status);
   };
 
   if (isEditing && !detailReady) {
@@ -664,6 +693,23 @@ export default function InvoiceCreateFlow({ initialInvoice, onSave, onCancel, is
           </CardContent>
         </Card>
       </div>
+
+      <InvoiceTotalChangeReasonModal
+        open={Boolean(pendingReason)}
+        mode={pendingReason?.status === "approved" ? "approve" : "save"}
+        previousTotal={pendingReason?.previousTotal ?? 0}
+        nextTotal={pendingReason?.nextTotal ?? 0}
+        changes={pendingReason?.changes ?? []}
+        isSubmitting={isSaving}
+        onCancel={() => setPendingReason(null)}
+        onConfirm={(reasonString) => {
+          const status = pendingReason?.status || "draft";
+          // Keep pendingReason set: on a retriable save failure the parent
+          // leaves this flow mounted, so the modal stays open with the
+          // reason still typed. onSuccess unmounts the whole flow.
+          performSubmit(status, reasonString);
+        }}
+      />
     </div>
   );
 }
