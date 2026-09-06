@@ -186,6 +186,114 @@ test("F · transport failures classify as NETWORK (retriable), non-network as no
   assert.equal(propagated.code, OP_ERROR_CODES.NO_ACTIVE_TENANT, "an OpError passes straight through");
 });
 
+// ── F2. the REAL postgrest-js v2 fetch-failure shape (the staging bug) ─
+// supabase-js keeps the HTTP status on the RESPONSE, not on res.error; on
+// a blocked/offline request postgrest-js returns
+//   { data:null, error:{ message:'<name>: <msg>', code:'', hint:'', details:'<stack>' }, status:0 }
+// The message wording is browser-specific, so status:0 / empty code must
+// be enough on its own.
+
+const PGRST_FETCH_FAIL = {
+  data: null,
+  error: { message: "TypeError: Failed to fetch", details: "TypeError: Failed to fetch\n  at ...", hint: "", code: "" },
+  count: null,
+  status: 0,
+  statusText: "",
+};
+
+test("F2 · performCheckedUpdate on a blocked request => NETWORK, via the response status not the message", async () => {
+  const client = makeClient({ updateResult: PGRST_FETCH_FAIL });
+  const err = await performCheckedUpdate({
+    client, table: "orders", id: "o1", patch: { special_instructions: "x" },
+    tenantId: "tenant-A", expectedUpdatedAt: "2026-02-01T00:00:00Z", operation: "order_update", entityLabel: "Order",
+  }).then(() => null, (e) => e);
+  assert.ok(isOpError(err) && err.code === OP_ERROR_CODES.NETWORK, `expected NETWORK, got ${err && err.code}`);
+  assert.equal(err.retriable, true);
+});
+
+test("F2 · status:0 / empty code classifies as NETWORK even when the message wording is unfamiliar", () => {
+  for (const shape of [
+    { error: { message: "FetchError: ", code: "" }, status: 0 },
+    { error: { message: "Something went wrong at the edge", code: "" }, status: 0 },
+    { error: { message: "TypeError: Load failed" }, status: undefined }, // Safari, no status supplied
+    { error: { message: "TypeError: NetworkError when attempting to fetch resource." } },
+  ]) {
+    const e = classifySupabaseWriteError(shape.error, { operation: "order_update", status: shape.status });
+    assert.equal(e.code, OP_ERROR_CODES.NETWORK, `${JSON.stringify(shape)} -> NETWORK`);
+  }
+});
+
+test("F2 · a REAL PostgREST/PG error with a status + code is NEVER misread as NETWORK", () => {
+  const rls = classifySupabaseWriteError(
+    { message: "permission denied for table orders", code: "42501" },
+    { operation: "order_update", status: 403 },
+  );
+  assert.equal(rls.code, OP_ERROR_CODES.ENTITY_UPDATE_NOT_VISIBLE);
+
+  const dup = classifySupabaseWriteError(
+    { message: "duplicate key value violates unique constraint", code: "23505" },
+    { operation: "order_update", status: 409 },
+  );
+  assert.equal(dup.code, OP_ERROR_CODES.ENTITY_UPDATE_FAILED);
+
+  const pgrst = classifySupabaseWriteError(
+    { message: "column orders.foo does not exist", code: "PGRST204" },
+    { operation: "order_update", status: 400 },
+  );
+  assert.equal(pgrst.code, OP_ERROR_CODES.ENTITY_UPDATE_FAILED);
+
+  const bad400 = classifySupabaseWriteError({ message: "malformed", code: "" }, { operation: "order_update", status: 400 });
+  assert.notEqual(bad400.code, OP_ERROR_CODES.NETWORK, "a real 400 with no code is still not a transport failure");
+});
+
+test("F2 · a blocked classification PROBE (0-row update) surfaces NETWORK, not NOT_VISIBLE", async () => {
+  const client = makeClient({
+    updateResult: { data: [], error: null, status: 200 }, // update itself got through, matched nothing
+    probeResult: PGRST_FETCH_FAIL,                          // the follow-up probe is what got blocked
+  });
+  const err = await performCheckedUpdate({
+    client, table: "orders", id: "o1", patch: {}, tenantId: "tenant-A", expectedUpdatedAt: "T1", operation: "order_update",
+  }).then(() => null, (e) => e);
+  assert.equal(err && err.code, OP_ERROR_CODES.NETWORK);
+});
+
+// ── F3. the EXACT drawer field-edit path: blocked save -> the right toast ─
+// EditableField.onSave -> saveEdit -> onUpdate -> handleDrawerUpdate ->
+// updateMutation.mutate -> Order.update -> runUpdate -> performCheckedUpdate
+// -> throws -> updateMutation.onError -> describeCheckedUpdateError.
+// Everything below the mutation is exercised for real; the two component
+// layers are asserted structurally (they add no catch/toast of their own).
+
+test("F3 · drawer field-edit save on a blocked request => \"Connection problem. Try again.\" and NEVER the old generic toast", async () => {
+  const client = makeClient({ updateResult: PGRST_FETCH_FAIL });
+
+  // runUpdate's core: performCheckedUpdate then the onError mapper the
+  // mutation uses.
+  const thrown = await performCheckedUpdate({
+    client, table: "orders", id: "o1", patch: { special_instructions: "note" },
+    tenantId: "tenant-A", expectedUpdatedAt: "2026-02-01T00:00:00Z",
+    operation: "order_update", entityLabel: "Order",
+  }).then(() => null, (e) => e);
+
+  const shown = describeCheckedUpdateError(thrown, { entityNoun: "order" });
+  assert.equal(shown.message, "Connection problem. Try again.");
+  assert.equal(shown.retriable, true);
+  assert.equal(shown.shouldRefetch, false);
+  assert.doesNotMatch(shown.message, /Failed to update order/i);
+  assert.doesNotMatch(shown.message, /please try again/i);
+
+  // the component layers add NO error handling of their own between
+  // EditableField and the mutation
+  const read = async (p) => (await readFile(new URL(`../${p}`, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  const drawer = await read("src/components/orders/OrderDrawer.jsx");
+  const saveEdit = drawer.slice(drawer.indexOf("const saveEdit ="), drawer.indexOf("const saveEdit =") + 220);
+  assert.doesNotMatch(saveEdit, /try\s*\{|toast\.|catch/, "saveEdit just calls onUpdate — no catch/toast wrapper");
+  const ordersPage = await read("src/pages/Orders.jsx");
+  assert.match(ordersPage, /onError:\s*\(\/\*\* @type \{any\} \*\/ err\) =>\s*\{[\s\S]*?describeCheckedUpdateError\(err/,
+    "the ONE order-update mutation maps every failure through describeCheckedUpdateError");
+  assert.doesNotMatch(ordersPage, /Failed to update order/i, "the old generic string is gone from the page");
+});
+
 // ── G. two-tab concurrency: stale writer is rejected, no overwrite ────
 
 test("G · tab A saves; tab B saves a stale copy -> tab B gets ENTITY_STALE_VERSION and never overwrites", async () => {

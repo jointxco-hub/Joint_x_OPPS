@@ -24,22 +24,58 @@
 import { OP_ERROR_CODES, createOpError, isOpError } from "./opError.js";
 
 // Map a raw PostgREST/supabase-js error to a typed OpError.
-export function classifySupabaseWriteError(error, { operation = "entity_update", entityLabel = null } = {}) {
+//
+// `status` is the HTTP status from the PostgREST *response* (res.status),
+// passed in explicitly by the caller — supabase-js keeps it on the
+// response, NOT on res.error. It is the most reliable network signal:
+// postgrest-js's fetch-failure path (blocked request, offline, DNS, TLS,
+// CORS) returns `{ error: { message: '<name>: <msg>', code: '' }, status: 0 }`,
+// where the exact message wording is browser/runtime-specific and can't be
+// relied on. status === 0 (or ≥ 500) is unambiguous; the message regex is
+// only a fallback for callers that can't supply a status.
+export function classifySupabaseWriteError(
+  error,
+  { operation = "entity_update", entityLabel = null, status = undefined } = {},
+) {
   if (isOpError(error)) return error;
 
   const msg = String((error && (error.message || error.hint)) || error || "");
-  const code = (error && error.code) || "";
-  const status = (error && (error.status || error.statusCode)) || null;
+  const code = String((error && error.code) || "");
+  const httpStatus =
+    typeof status === "number"
+      ? status
+      : typeof (error && (error.status ?? error.statusCode)) === "number"
+        ? error.status ?? error.statusCode
+        : null;
+
+  // A PostgREST / Postgres error always carries a code: `PGRST###` or a
+  // 5-char SQLSTATE (e.g. 42501, 23505). A client-side transport failure
+  // does not.
+  const hasUpstreamCode = /^PGRST/i.test(code) || /^[0-9A-Za-z]{5}$/.test(code);
+  const looksUpstreamMessage =
+    /row-level security|violates|duplicate key|constraint|permission denied|invalid input|out of range/i.test(msg);
 
   const looksNetwork =
-    /failed to fetch|networkerror|network error|load failed|timed? ?out|ECONNRESET|ENOTFOUND|ECONNREFUSED|fetch failed|socket hang up/i.test(msg) ||
-    /^(500|502|503|504)$/.test(String(code)) ||
-    (typeof status === "number" && status >= 500);
+    httpStatus === 0 ||
+    (httpStatus != null && httpStatus >= 500) ||
+    /^(0|5\d\d)$/.test(code) ||
+    /failed to fetch|networkerror|network error|load ?failed|timed? ?out|ECONNRESET|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|fetch failed|socket hang up|network request failed|internet connection appears to be offline/i.test(
+      msg,
+    ) ||
+    // No status, no upstream code, not an upstream-shaped message -> this
+    // is the postgrest-js `code:'' / status:0` transport failure even when
+    // the message wording is unfamiliar.
+    (httpStatus == null && !hasUpstreamCode && code === "" && !looksUpstreamMessage);
 
   if (looksNetwork) {
-    return createOpError({ code: OP_ERROR_CODES.NETWORK, operation, retriable: true, technical: msg });
+    return createOpError({
+      code: OP_ERROR_CODES.NETWORK,
+      operation,
+      retriable: true,
+      technical: `${entityLabel ? entityLabel + ": " : ""}status=${httpStatus ?? "n/a"} code=${code || "n/a"} msg=${msg}`,
+    });
   }
-  if (code === "42501" || /violates row-level security|row-level security/i.test(msg)) {
+  if (code === "42501" || /violates row-level security|row-level security|permission denied/i.test(msg)) {
     return createOpError({
       code: OP_ERROR_CODES.ENTITY_UPDATE_NOT_VISIBLE,
       operation,
@@ -64,6 +100,7 @@ async function diagnoseZeroRowUpdate({ client, table, id, tenantId, expectedUpda
 
   let probe = null;
   let probeError = null;
+  let probeStatus;
   try {
     const res = await client
       .from(table)
@@ -72,13 +109,18 @@ async function diagnoseZeroRowUpdate({ client, table, id, tenantId, expectedUpda
       .maybeSingle();
     probe = res && res.data;
     probeError = res && res.error;
+    probeStatus = res && res.status;
   } catch (e) {
     probeError = e;
   }
 
   if (probeError) {
-    // Could not confirm why the update matched nothing — do NOT guess
-    // "stale". Fail closed as not-visible with the probe detail logged.
+    // If the probe ITSELF failed on the network (blocked / offline), the
+    // save is a connection problem, not a permissions one — surface that.
+    const classified = classifySupabaseWriteError(probeError, { operation, status: probeStatus });
+    if (classified.code === OP_ERROR_CODES.NETWORK) throw classified;
+    // Otherwise: could not confirm why the update matched nothing — do NOT
+    // guess "stale". Fail closed as not-visible with the probe detail logged.
     throw createOpError({
       code: OP_ERROR_CODES.ENTITY_UPDATE_NOT_VISIBLE,
       operation,
@@ -140,15 +182,18 @@ export async function performCheckedUpdate({
 
   let data;
   let error;
+  let httpStatus;
   try {
     const res = await query.select("*"); // NOT .single() — inspect the rows ourselves
     data = res && res.data;
     error = res && res.error;
+    httpStatus = res && res.status; // supabase-js keeps status on the response, not res.error
   } catch (e) {
     error = e;
+    httpStatus = e && (e.status ?? e.statusCode);
   }
 
-  if (error) throw classifySupabaseWriteError(error, { operation, entityLabel });
+  if (error) throw classifySupabaseWriteError(error, { operation, entityLabel, status: httpStatus });
 
   const rows = Array.isArray(data) ? data : data == null ? [] : [data];
 
