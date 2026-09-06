@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { describeCheckedUpdateError } from "@/lib/checkedUpdate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,12 +39,16 @@ export default function OrderLinker({ projectId, clientName, onClose }) {
   });
 
   const linkOrderMutation = useMutation({
+    // Deliberately no version guard passed here: this screen holds a bulk
+    // order list, not a freshly-read row — an optimistic-concurrency check
+    // would false-positive on a slightly stale list.
     mutationFn: (orderId) => dataClient.entities.Order.update(orderId, { project_id: projectId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projectOrders', projectId] });
       toast.success("Order linked to project!");
       onClose();
-    }
+    },
+    onError: (err) => toast.error(describeCheckedUpdateError(err, { entityNoun: "order" }).message),
   });
 
   const createOrderMutation = useMutation({

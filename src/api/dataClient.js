@@ -3,6 +3,8 @@ import { getCurrentTenantId } from '@/lib/tenantContext';
 import { toPrivateUploadRef } from '@/lib/privateFiles';
 import { resolveOfflineUserFromSession, resolveOnlineUserFromAuthCheck } from '@/lib/authIdentity';
 import { supabaseErrorMessage } from '@/lib/supabaseErrorMessage';
+import { OP_ERROR_CODES, createOpError, isOpError } from '@/lib/opError';
+import { performCheckedUpdate, classifySupabaseWriteError } from '@/lib/checkedUpdate';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -2167,7 +2169,33 @@ async function runInsert(entityName, payload = {}) {
   return entityConfig.normalize(data);
 }
 
-async function runUpdate(entityName, id, payload = {}) {
+// A tenant-scoped write must NEVER run with a missing tenant (the old
+// `if (tenantId) query = query.eq(...)` silently dropped the scope). Fail
+// typed before any DB call. Passes a P0 OpError straight through.
+async function resolveTenantForWrite(operation) {
+  let tenantId;
+  try {
+    tenantId = await getCurrentTenantId();
+  } catch (err) {
+    if (isOpError(err)) throw err;
+    throw createOpError({
+      code: OP_ERROR_CODES.TENANT_CONTEXT_UNRESOLVED,
+      operation,
+      retriable: true,
+      technical: err?.message || String(err),
+    });
+  }
+  if (tenantId == null || tenantId === '') {
+    throw createOpError({
+      code: OP_ERROR_CODES.NO_ACTIVE_TENANT,
+      operation,
+      technical: 'getCurrentTenantId() returned no tenant for a tenant-scoped write',
+    });
+  }
+  return tenantId;
+}
+
+async function runUpdate(entityName, id, payload = {}, options = {}) {
   if (!supabase) {
     return null;
   }
@@ -2177,24 +2205,42 @@ async function runUpdate(entityName, id, payload = {}) {
     return null;
   }
 
+  const operation = `${String(entityName).toLowerCase()}_update`;
   const record = entityConfig.serialize(payload);
-  let query = supabase
-    .from(entityConfig.table)
-    .update(record)
-    .eq('id', id);
+
+  let tenantId = null;
   if (entityConfig.tenantScoped) {
-    const tenantId = await getCurrentTenantId();
-    if (tenantId) query = query.eq('tenant_id', tenantId);
-  }
-  const { data, error } = await query.select('*').single();
-
-  if (error) {
-    const msg = supabaseErrorMessage(error, entityName);
-    console.error(`[dataClient] ${entityName} update failed:`, msg, error);
-    throw new Error(msg);
+    tenantId = await resolveTenantForWrite(operation);
   }
 
-  return entityConfig.normalize(data);
+  // Optimistic concurrency: opt-in. Only paths that hold a freshly-read
+  // row version pass it (see PR notes for which order call sites do).
+  const expectedUpdatedAt =
+    options.expectedUpdatedAt != null ? options.expectedUpdatedAt : null;
+
+  try {
+    const row = await performCheckedUpdate({
+      client: supabase,
+      table: entityConfig.table,
+      id,
+      patch: record,
+      tenantId,
+      expectedUpdatedAt,
+      operation,
+      entityLabel: entityName,
+    });
+    return entityConfig.normalize(row);
+  } catch (err) {
+    const opErr = isOpError(err)
+      ? err
+      : classifySupabaseWriteError(err, { operation, entityLabel: entityName });
+    console.error(
+      `[dataClient] ${entityName} update failed:`,
+      opErr.code,
+      opErr.technical || opErr.message,
+    );
+    throw opErr;
+  }
 }
 
 // Staff-safe update path for internal OPPS admin surfaces - the write
@@ -2350,9 +2396,9 @@ function createEntityApi(entityName) {
       return handleLocalEntity(entityName, 'create', cleanPayload);
     },
 
-    async update(id, payload = {}) {
+    async update(id, payload = {}, options = {}) {
       if (isSupported) {
-        const row = await runUpdate(entityName, id, payload);
+        const row = await runUpdate(entityName, id, payload, options);
         if (row) return row;
       }
       return handleLocalEntity(entityName, 'update', id, payload);

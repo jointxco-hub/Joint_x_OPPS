@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
+import { describeCheckedUpdateError } from "@/lib/checkedUpdate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -321,15 +322,26 @@ export default function Orders() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (/** @type {any} */ { id, data }) => dataClient.entities.Order.update(id, data),
+    mutationFn: (/** @type {any} */ { id, data, expectedUpdatedAt }) =>
+      dataClient.entities.Order.update(id, data, { expectedUpdatedAt }),
     onSuccess: (/** @type {any} */ updatedOrder) => {
       queryClient.invalidateQueries({ queryKey: ["orders"] });
-      // Keep the open drawer in sync so selects don't snap back to stale values
-      if (updatedOrder && selectedOrder?.id === updatedOrder.id) {
-        setSelectedOrder((/** @type {any} */ prev) => ({ ...prev, ...updatedOrder }));
+      // Merge the SERVER row back (fresh updated_at) so a follow-up edit's
+      // optimistic-concurrency check uses the current version, not a stale one.
+      if (updatedOrder?.id) {
+        setSelectedOrder((/** @type {any} */ prev) =>
+          prev && prev.id === updatedOrder.id ? { ...prev, ...updatedOrder } : prev);
       }
     },
-    onError: () => toast.error("Failed to update order — please try again"),
+    onError: (/** @type {any} */ err) => {
+      const { message, shouldRefetch } = describeCheckedUpdateError(err, { entityNoun: "order" });
+      toast.error(message);
+      if (shouldRefetch) {
+        // The drawer is showing a version the server has moved past / can't
+        // write — pull fresh so the next attempt starts from current state.
+        queryClient.invalidateQueries({ queryKey: ["orders"] });
+      }
+    },
   });
 
   const { archive: archiveOrder, isPending: isArchiving } = useArchive("Order", {
@@ -346,7 +358,18 @@ export default function Orders() {
   }, []);
 
   const handleDrawerUpdate = useCallback((id, data) => {
-    updateMutation.mutate({ id, data });
+    const current = selectedOrder && selectedOrder.id === id ? selectedOrder : null;
+    updateMutation.mutate({
+      id,
+      data,
+      // The drawer holds a freshly-read row, so the version check is safe —
+      // EXCEPT while our own previous save is still in flight: the server
+      // will have moved past `current.updated_at` and onSuccess hasn't
+      // refreshed it yet, so a fast second edit would trip a false "stale".
+      expectedUpdatedAt: updateMutation.isPending
+        ? null
+        : (current?.updated_at ?? current?.updated_date ?? null),
+    });
     setSelectedOrder(prev => ({ ...(prev || selectedOrder), ...data }));
   }, [selectedOrder, updateMutation]);
 
@@ -427,7 +450,12 @@ export default function Orders() {
     if (!result.destination) return;
     const { draggableId, destination } = result;
     const newStage = destination.droppableId;
-    updateMutation.mutate({ id: draggableId, data: { pipeline_stage: newStage } });
+    const dragged = orders.find((/** @type {any} */ o) => o.id === draggableId);
+    updateMutation.mutate({
+      id: draggableId,
+      data: { pipeline_stage: newStage },
+      expectedUpdatedAt: dragged?.updated_at ?? dragged?.updated_date ?? null,
+    });
   };
 
   return (

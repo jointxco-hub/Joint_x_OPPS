@@ -1,16 +1,26 @@
-// Minimal typed operational-error structure (P0 slice).
+// Minimal typed operational-error structure.
 //
-// This is NOT the full observability contract — only the small, reusable
-// shape the tenant-context hardening needs so callers can tell a
-// retriable "we couldn't confirm your workspace" apart from a hard
-// "you have no workspace", and so customer-facing copy never leaks
-// membership / internal detail.
+// The small, reusable shape callers use to tell a retriable failure
+// ("we couldn't confirm your workspace", "connection problem") from a
+// terminal one ("you have no workspace", "someone else changed this
+// first"), and to keep customer-facing copy free of membership / RLS /
+// internal-id detail.
+//
+//   tenant-context codes  — added by the tenant-context reliability hotfix
+//   ENTITY_* / NETWORK     — added by the order-update safety hotfix
 //
 // Pure: no imports, safe for `node --test`.
 
 export const OP_ERROR_CODES = Object.freeze({
+  // tenant context
   NO_ACTIVE_TENANT: "NO_ACTIVE_TENANT",
   TENANT_CONTEXT_UNRESOLVED: "TENANT_CONTEXT_UNRESOLVED",
+  // checked entity update
+  ENTITY_STALE_VERSION: "ENTITY_STALE_VERSION",
+  ENTITY_UPDATE_NOT_VISIBLE: "ENTITY_UPDATE_NOT_VISIBLE",
+  ENTITY_UPDATE_AMBIGUOUS: "ENTITY_UPDATE_AMBIGUOUS",
+  ENTITY_UPDATE_FAILED: "ENTITY_UPDATE_FAILED",
+  NETWORK: "NETWORK",
 });
 
 const CODE_DEFAULTS = Object.freeze({
@@ -22,6 +32,27 @@ const CODE_DEFAULTS = Object.freeze({
   TENANT_CONTEXT_UNRESOLVED: {
     retriable: true,
     userMessage: "We couldn't confirm your workspace just now. Please try again.",
+  },
+  ENTITY_STALE_VERSION: {
+    retriable: false, // not retriable until the caller reloads / refetches
+    userMessage: "This record was updated elsewhere. Reload it before saving your changes.",
+  },
+  ENTITY_UPDATE_NOT_VISIBLE: {
+    retriable: false,
+    userMessage:
+      "This record could not be updated. It may belong to another workspace or you may no longer have access.",
+  },
+  ENTITY_UPDATE_AMBIGUOUS: {
+    retriable: false,
+    userMessage: "This record could not be updated safely. Reload and try again.",
+  },
+  ENTITY_UPDATE_FAILED: {
+    retriable: false,
+    userMessage: "Couldn't save your changes. Try again.",
+  },
+  NETWORK: {
+    retriable: true,
+    userMessage: "Connection problem. Try again.",
   },
 });
 
