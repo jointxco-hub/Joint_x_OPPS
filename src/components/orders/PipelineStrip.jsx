@@ -1,4 +1,5 @@
 import { dataClient } from '@/api/dataClient';
+import { describeCheckedUpdateError } from '@/lib/checkedUpdate';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
@@ -19,13 +20,21 @@ export default function PipelineStrip({ order, stages: providedStages, onStageCh
 
   const updateMutation = useMutation({
     mutationFn: (stageKey) =>
-      dataClient.entities.Order.update(order.id, { pipeline_stage: stageKey }),
+      dataClient.entities.Order.update(
+        order.id,
+        { pipeline_stage: stageKey },
+        { expectedUpdatedAt: order.updated_at ?? order.updated_date ?? null },
+      ),
     onSuccess: (_, stageKey) => {
       qc.invalidateQueries({ queryKey: ['orders'] });
       onStageChange?.(stageKey);
       toast.success('Stage updated');
     },
-    onError: (err) => toast.error(err?.message || 'Failed to update stage'),
+    onError: (err) => {
+      const { message, shouldRefetch } = describeCheckedUpdateError(err, { entityNoun: 'order' });
+      toast.error(message);
+      if (shouldRefetch) qc.invalidateQueries({ queryKey: ['orders'] });
+    },
   });
 
   const currentKey = order.pipeline_stage || 'received';

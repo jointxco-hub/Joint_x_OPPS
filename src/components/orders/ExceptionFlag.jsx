@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
 import { dataClient } from '@/api/dataClient';
+import { describeCheckedUpdateError } from '@/lib/checkedUpdate';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -43,7 +44,10 @@ export default function ExceptionFlag({ open, onClose, order, onStageChange }) {
         });
       }
 
-      // 2. Advance pipeline_stage to the exception key (fires auto-tag trigger)
+      // 2. Advance pipeline_stage to the exception key (fires auto-tag trigger).
+      //    No optimistic-concurrency version here on purpose: this is a
+      //    one-shot escalation, not a field edit, and a false "stale"
+      //    would strand the order_exceptions row inserted above.
       await dataClient.entities.Order.update(order.id, { pipeline_stage: exceptionType });
     },
     onSuccess: () => {
@@ -52,7 +56,7 @@ export default function ExceptionFlag({ open, onClose, order, onStageChange }) {
       onStageChange?.(exceptionType);
       onClose();
     },
-    onError: (err) => toast.error(err?.message || 'Failed to flag exception'),
+    onError: (err) => toast.error(describeCheckedUpdateError(err, { entityNoun: 'order' }).message),
   });
 
   return (
