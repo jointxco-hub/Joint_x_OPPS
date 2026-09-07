@@ -13,6 +13,9 @@ import {
   ZOHO_INVOICE_TEMPLATE_VERSION,
 } from "@/features/invoices/zohoInvoiceExportConfig";
 import { buildOrderInvoiceSyncPlan, buildInvoiceOrderSyncPlan, buildShippingDiff, annotateProductionDataConflicts } from "@/features/invoices/orderToInvoiceItems";
+import { normalisePaymentProjection } from "@/features/invoices/paymentProjection";
+import { PAYMENT_PROOF_ACCEPT, PAYMENT_PROOF_MAX_BYTES } from "@/features/invoices/paymentProofRules";
+import { toPrivateUploadRef, getSignedFileUrl } from "@/lib/privateFiles";
 import {
   INVOICE_SETTING_KEYS,
   defaultCustomerMappingSetting,
@@ -444,6 +447,7 @@ const ACTIVITY_LABELS = {
   invoice_imported_to_zoho: "Invoice imported to Zoho",
   invoice_marked_partially_paid: "Invoice marked partially paid",
   invoice_marked_paid: "Invoice marked paid",
+  invoice_payment_recorded: "Payment recorded",
   invoice_voided: "Invoice voided",
   invoice_duplicated: "Invoice duplicated",
   invoice_linked_to_order: "Linked to order",
@@ -704,11 +708,18 @@ export async function reopenInvoice(invoiceId, reason) {
   return data;
 }
 
-// Production public-invoice host — X LAB's customer-facing app, never a
-// preview/staging URL. The share token itself is the only variable part;
-// this constant is deliberately not env-driven so a preview deploy can
-// never accidentally mint a link pointing at itself.
-const PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";
+// Production public-invoice host — X LAB's customer-facing app. Production
+// and every real deploy leave VITE_PUBLIC_INVOICE_BASE_URL UNSET, so this
+// falls back to the hardcoded production base and a preview deploy can
+// never mint a link pointing at itself. The override exists ONLY for a
+// local dev build wired to a non-production database (e.g. the staging
+// project): set it in an uncommitted .env.local to a local X LAB
+// dev-server base (its dev origin + "/i"). It must never be set in a
+// production or preview deployment environment.
+const PRODUCTION_PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";
+const PUBLIC_INVOICE_BASE_URL =
+  String(import.meta.env.VITE_PUBLIC_INVOICE_BASE_URL || "").trim().replace(/\/+$/, "") ||
+  PRODUCTION_PUBLIC_INVOICE_BASE_URL;
 
 export function buildPublicInvoiceUrl(shareToken) {
   return `${PUBLIC_INVOICE_BASE_URL}/${shareToken}`;
@@ -1093,82 +1104,332 @@ export async function duplicateInvoiceAsDraft(id) {
   return duplicated;
 }
 
-export async function markInvoicePaid(id) {
-  ensureSupabase();
-  const invoice = await getInvoice(id);
-  if (invoice.status === "draft") {
-    throw new Error("Approve the invoice before marking it paid.");
-  }
-  if (invoice.status === "void") {
-    throw new Error("Void invoices cannot be marked paid.");
-  }
+// ── canonical manual-payment ledger (P1A) ──────────────────────────────
+// OPPS payments no longer write opps_invoices.status/amount_paid/balance_due
+// directly, and the client no longer writes the payment audit event. One
+// call to record_manual_invoice_payment() does it all in a single DB
+// transaction: the invoice_payments row, the P1A cache refresh, the
+// compat-status mirror, and the opps_invoice_activity event. The client's
+// only job afterwards is to refresh what it displays. See
+// supabase/migrations/20260907120000_record_manual_invoice_payment.sql.
+const MANUAL_PAYMENT_ERROR_MESSAGES = {
+  INVOICE_PAYMENT_AUTH_REQUIRED: "Sign in again to record this payment.",
+  INVOICE_NOT_FOUND: "This invoice could not be found.",
+  INVOICE_PAYMENT_ACCESS_DENIED: "You do not have permission to record payments on this invoice.",
+  INVOICE_PAYMENT_INVOICE_NOT_APPROVED: "Approve the invoice before recording a payment.",
+  INVOICE_PAYMENT_INVOICE_VOID: "Void invoices cannot take payments.",
+  INVOICE_PAYMENT_AMOUNT_REQUIRED: "Enter the payment amount.",
+  INVOICE_PAYMENT_AMOUNT_INVALID: "The payment amount must be greater than zero.",
+  INVOICE_PAYMENT_AMOUNT_PRECISION: "Use at most two decimal places for the amount.",
+  INVOICE_PAYMENT_REFERENCE_REQUIRED: "A payment reference is required.",
+  INVOICE_PAYMENT_IDEMPOTENCY_CONFLICT: "This reference is already recorded with a different amount, date or method.",
+  INVOICE_PAYMENT_OPERATION_CONFLICT: "This payment was already recorded with different details. Reload before trying again.",
+  INVOICE_PAYMENT_UNRECONCILED_ORDER_PAYMENT: "The linked order has a platform payment that has not been reconciled onto this invoice yet. Reconcile that first, then record only the outstanding amount.",
+  INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING: "Could not verify existing order payments for this invoice. Ask an administrator to check the order/payment sync before recording this payment.",
+  INVOICE_PAYMENT_OVERPAYMENT: "That amount is more than the outstanding balance on this invoice.",
+  INVOICE_PAYMENT_OPERATION_KEY_REQUIRED: "Something went wrong preparing this payment. Close the dialog and try again.",
+  PAYMENT_ATTACHMENT_PATH_NOT_TENANT_SCOPED: "That file could not be attached to this invoice's workspace. Try uploading it again.",
+  PAYMENT_ATTACHMENT_PATH_NOT_OPERATION_SCOPED: "That file could not be attached to this payment. Upload it again from this dialog.",
+  PAYMENT_ATTACHMENT_OBJECT_NOT_FOUND: "The uploaded file could not be found. Upload it again.",
+  PAYMENT_ATTACHMENT_OBJECT_NOT_OWNED: "That file was uploaded by someone else and cannot be attached here.",
+  PAYMENT_ATTACHMENT_OPERATION_KEY_REQUIRED: "Something went wrong preparing this attachment. Close the dialog and try again.",
+  PAYMENT_ATTACHMENT_LINKED_IMMUTABLE: "This proof of payment is already linked and cannot be removed here — retire it instead.",
+  PAYMENT_ATTACHMENT_NOT_LINKED: "That proof is not linked to a payment yet.",
+  PAYMENT_ATTACHMENT_REASON_REQUIRED: "Give a reason before retiring this proof of payment.",
+  PAYMENT_ATTACHMENT_NOT_FOUND: "That attachment no longer exists.",
+  PAYMENT_ATTACHMENT_BAD_TYPE: "Only JPG, PNG or PDF files can be attached as proof of payment.",
+  PAYMENT_ATTACHMENT_TOO_LARGE: "Proof-of-payment files must be 15 MB or smaller.",
+  INVOICE_PAYMENT_NOT_FOUND: "That payment record no longer exists.",
+};
 
-  const { data, error } = await supabase
-    .from("opps_invoices")
-    .update({
-      status: "paid",
-      amount_paid: invoice.total || 0,
-      balance_due: 0,
-      updated_by: await getAuthUserId(),
-    })
-    .eq("id", id)
-    .select(INVOICE_LIST_COLUMNS)
-    .single();
+// Re-exported for callers that already import proof rules from the api
+// module. The definitions live in the leaf module paymentProofRules.js.
+export { PAYMENT_PROOF_ACCEPT, PAYMENT_PROOF_MAX_BYTES };
 
-  if (error) throw new Error(error.message);
-  await createInvoiceActivity(id, {
-    activity_type: "invoice_marked_paid",
-    from_status: invoice.status,
-    to_status: "paid",
-  });
-  return data;
+function assertPaymentProofFile(file) {
+  const type = String(file?.type || "").toLowerCase();
+  if (!PAYMENT_PROOF_ACCEPT.includes(type)) {
+    throw Object.assign(new Error("Only JPG, PNG or PDF files can be attached as proof of payment."), {
+      code: "PAYMENT_ATTACHMENT_BAD_TYPE",
+    });
+  }
+  if (Number(file?.size || 0) > PAYMENT_PROOF_MAX_BYTES) {
+    throw Object.assign(new Error("Proof-of-payment files must be 15 MB or smaller."), {
+      code: "PAYMENT_ATTACHMENT_TOO_LARGE",
+    });
+  }
 }
 
-export async function markInvoicePartiallyPaid(id, amountPaid, note = "") {
-  ensureSupabase();
-  const invoice = await getInvoice(id);
-  if (invoice.status === "draft") {
-    throw new Error("Approve the invoice before recording a payment.");
-  }
-  if (invoice.status === "void") {
-    throw new Error("Void invoices cannot be marked paid.");
-  }
-
-  const paid = Number(amountPaid);
-  const total = Number(invoice.total || 0);
-  if (!Number.isFinite(paid) || paid < 0) {
-    throw new Error("Amount paid must be 0 or more.");
-  }
-  if (paid > total) {
-    throw new Error("Amount paid cannot be greater than the invoice total.");
-  }
-
-  const internalNote = note
-    ? [invoice.internal_notes, `Partial payment note: ${note}`].filter(Boolean).join("\n")
-    : invoice.internal_notes;
-
-  const { data, error } = await supabase
-    .from("opps_invoices")
-    .update({
-      status: "partially_paid",
-      amount_paid: paid,
-      balance_due: Math.max(total - paid, 0),
-      internal_notes: internalNote || null,
-      updated_by: await getAuthUserId(),
-    })
-    .eq("id", id)
-    .select(INVOICE_LIST_COLUMNS)
-    .single();
-
-  if (error) throw new Error(error.message);
-  await createInvoiceActivity(id, {
-    activity_type: "invoice_marked_partially_paid",
-    activity_note: note || null,
-    from_status: invoice.status,
-    to_status: "partially_paid",
-    metadata: { amount_paid: paid, balance_due: Math.max(total - paid, 0) },
+// Upload one proof file into the private `uploads` bucket under a
+// tenant-prefixed, operation-scoped path (mirrors dataClient UploadFile's
+// convention). Returns { bucket, path, ref } — never a public URL.
+async function uploadPaymentProofObject({ operationKey, file }) {
+  const tenantId = await getCurrentTenantId();
+  if (!tenantId) throw new Error("No active tenant is selected for this upload.");
+  const safeName = String(file.name || "proof").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+  const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
+  const rand = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const safeOp = String(operationKey || "adhoc").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+  const path = `${tenantId}/finance/payment-proof/${safeOp}/${datePrefix}/${rand}-${safeName}`;
+  const { error } = await supabase.storage.from("uploads").upload(path, file, {
+    cacheControl: "300",
+    upsert: false,
+    contentType: file.type || undefined,
   });
-  return data;
+  if (error) {
+    throw Object.assign(new Error(error.message || "Proof-of-payment upload failed."), {
+      code: "PAYMENT_ATTACHMENT_UPLOAD_FAILED",
+      isStorageError: true,
+    });
+  }
+  return { bucket: "uploads", path, ref: toPrivateUploadRef("uploads", path) };
+}
+
+// Stage a proof file BEFORE the payment exists, grouped by operationKey.
+// The upload lands in the private bucket first; stage_payment_proof (RPC,
+// SECURITY DEFINER) then verifies the object actually exists, sits under
+// this tenant + this operation's folder, and was uploaded by this user,
+// and creates the staged row. record_manual_invoice_payment() links it
+// atomically when the operation key matches. NO direct table write.
+export async function stagePaymentProof({ invoiceId, operationKey, file }) {
+  ensureSupabase();
+  if (!invoiceId || !operationKey) throw new Error("An invoice and operation key are required to stage proof.");
+  assertPaymentProofFile(file);
+  const uploaded = await uploadPaymentProofObject({ operationKey, file });
+  const { data, error } = await supabase.rpc("stage_payment_proof", {
+    p_invoice_id: invoiceId,
+    p_operation_key: operationKey,
+    p_storage_path: uploaded.path,
+    p_filename: file.name || null,
+    p_mime_type: String(file.type || "").toLowerCase() || null,
+    p_byte_size: Number(file.size || 0) || null,
+  });
+  if (error) {
+    await supabase.storage.from(uploaded.bucket).remove([uploaded.path]).catch(() => {});
+    throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not attach the proof of payment.");
+  }
+  return {
+    id: data?.attachment_id || null,
+    storage_bucket: uploaded.bucket,
+    storage_path: uploaded.path,
+    filename: file.name || null,
+    mime_type: String(file.type || "").toLowerCase() || null,
+    byte_size: Number(file.size || 0) || null,
+    status: "staged",
+  };
+}
+
+// Remove a still-staged, unlinked proof before the payment is confirmed.
+// RPC-only; the RPC refuses anything already linked and returns the path
+// so the client can delete the private object too.
+export async function removeStagedPaymentProof(attachmentId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("remove_staged_payment_proof", {
+    p_attachment_id: attachmentId,
+  });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not remove the attachment.");
+  if (data?.storage_path) {
+    await supabase.storage.from(data.storage_bucket || "uploads").remove([data.storage_path]).catch(() => {});
+  }
+  return { ok: true };
+}
+
+// Bounded sweep of one operation's abandoned staged uploads (age floor 5
+// min server-side; never touches linked/superseded). Call on modal
+// cancel/close. Returns nothing; also removes the private objects.
+export async function cleanupAbandonedPaymentProof(operationKey, olderThanMinutes = 30) {
+  ensureSupabase();
+  if (!operationKey) return { ok: true, removed: 0 };
+  const { data, error } = await supabase.rpc("cleanup_abandoned_payment_proof", {
+    p_operation_key: operationKey,
+    p_older_than_minutes: olderThanMinutes,
+  });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not clean up abandoned uploads.");
+  const removed = Array.isArray(data?.removed) ? data.removed : [];
+  if (removed.length) {
+    await supabase.storage.from("uploads").remove(removed).catch(() => {});
+  }
+  return { ok: true, removed: removed.length };
+}
+
+// One stable key per intentional payment attempt. Reused across retries so
+// the canonical RPC replays instead of double-charging.
+export function newPaymentOperationKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// Ledger entries for an invoice + their proof attachments, for the drawer's
+// Payments history. Finance-only (RLS enforced). Superseded proof is
+// included so retired evidence stays visible with its reason.
+export async function listInvoicePaymentsWithProof(invoiceId) {
+  ensureSupabase();
+  if (!invoiceId) return [];
+  const { data: payments, error } = await supabase
+    .from("invoice_payments")
+    .select("id, amount, paid_at, method, reference, source, client_operation_key, created_at, created_by, metadata")
+    .eq("invoice_id", invoiceId)
+    .order("paid_at", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load payments.");
+  const rows = payments || [];
+  if (!rows.length) return [];
+
+  const { data: attachments, error: attErr } = await supabase
+    .from("payment_attachments")
+    .select("*")
+    .eq("invoice_id", invoiceId)
+    .order("created_at", { ascending: true });
+  if (attErr) throw rpcSafetyError(attErr, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load proof of payment.");
+
+  const byPayment = new Map();
+  for (const a of attachments || []) {
+    if (!a.payment_id) continue;
+    if (!byPayment.has(a.payment_id)) byPayment.set(a.payment_id, []);
+    byPayment.get(a.payment_id).push(a);
+  }
+  return rows.map((p) => ({ ...p, attachments: byPayment.get(p.id) || [] }));
+}
+
+// Proof rows for a recorded payment (excludes superseded unless asked).
+export async function listPaymentAttachments({ paymentId, includeSuperseded = false }) {
+  ensureSupabase();
+  if (!paymentId) return [];
+  let query = supabase
+    .from("payment_attachments")
+    .select("*")
+    .eq("payment_id", paymentId)
+    .order("created_at", { ascending: true });
+  if (!includeSuperseded) query = query.neq("status", "superseded");
+  const { data, error } = await query;
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load proof of payment.");
+  return data || [];
+}
+
+// A short-lived signed URL for one proof row (preview / open). No public URL.
+export async function getPaymentProofSignedUrl(row, { expiresIn = 300 } = {}) {
+  if (!row?.storage_path) return "";
+  return getSignedFileUrl(toPrivateUploadRef(row.storage_bucket || "uploads", row.storage_path), { expiresIn });
+}
+
+// Attach proof to an ALREADY-recorded payment (staff got the screenshot
+// later). Never creates a ledger row or changes paid amounts — the RPC
+// inserts the linked row + an audit event atomically.
+export async function attachProofToPayment({ paymentId, file }) {
+  ensureSupabase();
+  if (!paymentId) throw new Error("A payment is required to attach proof.");
+  assertPaymentProofFile(file);
+  const uploaded = await uploadPaymentProofObject({ operationKey: `late-${paymentId}`, file });
+  const { data, error } = await supabase.rpc("attach_payment_proof", {
+    p_payment_id: paymentId,
+    p_storage_path: uploaded.path,
+    p_filename: file.name || null,
+    p_mime_type: String(file.type || "").toLowerCase() || null,
+    p_byte_size: Number(file.size || 0) || null,
+  });
+  if (error) {
+    await supabase.storage.from(uploaded.bucket).remove([uploaded.path]).catch(() => {});
+    throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not attach the proof of payment.");
+  }
+  return { ok: data?.ok === true, attachment_id: data?.attachment_id || null };
+}
+
+// Retire a linked proof through an auditable action (finance/admin only).
+// Never deletes the ledger row or changes amounts.
+export async function supersedePaymentAttachment(attachmentId, reason) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("supersede_payment_attachment", {
+    p_attachment_id: attachmentId,
+    p_reason: reason,
+  });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not retire this proof of payment.");
+  return { ok: data?.ok === true, attachment_id: data?.attachment_id || null };
+}
+
+
+// Ledger-derived payment truth for one invoice (staff read RPC, P1A).
+export async function getInvoicePaymentSummary(invoiceId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("get_invoice_payment_summary", {
+    p_invoice_id: invoiceId,
+  });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load the payment summary.");
+  return normalisePaymentProjection(data);
+}
+
+// Thin caller for the canonical RPC. p_amount is a NEW payment (not a
+// running total). p_operation_key is REQUIRED — the client generates one
+// per intentional payment and reuses it on retry. p_reference (bank) is
+// optional and never fabricated. Returns { ok, replayed, payment_id,
+// proof_linked, projection }. The RPC writes the ledger row, compat
+// status, staged-proof link and audit event atomically.
+export async function recordManualInvoicePayment({
+  invoiceId,
+  amount,
+  reference = null,
+  paidAt = null,
+  method = "eft",
+  note = null,
+  operationKey = null,
+}) {
+  ensureSupabase();
+  const opKey = operationKey && String(operationKey).trim();
+  if (!opKey) {
+    throw Object.assign(new Error("Something went wrong preparing this payment. Close the dialog and try again."), {
+      code: "INVOICE_PAYMENT_OPERATION_KEY_REQUIRED",
+    });
+  }
+  const params = {
+    p_invoice_id: invoiceId,
+    p_amount: amount,
+    p_method: method || "eft",
+    p_operation_key: opKey,
+  };
+  const ref = reference && String(reference).trim();
+  if (ref) params.p_reference = ref;
+  if (paidAt) params.p_paid_at = paidAt;
+  if (note && String(note).trim()) params.p_note = String(note).trim();
+
+  const { data, error } = await supabase.rpc("record_manual_invoice_payment", params);
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not record the payment.");
+  return {
+    ok: data?.ok === true,
+    replayed: data?.replayed === true,
+    payment_id: data?.payment_id || null,
+    proof_linked: Number(data?.proof_linked || 0),
+    projection: normalisePaymentProjection(data?.projection),
+  };
+}
+
+// UI-facing entry point: record the payment through the canonical RPC (all
+// canonical writes — ledger, cache, compat status, audit event — happen
+// server-side in one transaction), then return the fresh invoice row so
+// the caller can refresh its display. It performs NO payment audit write
+// and NO status write of its own.
+export async function recordInvoicePayment({
+  invoice,
+  amount,
+  method = "eft",
+  reference = null,
+  paidAt = null,
+  note = null,
+  operationKey = null,
+}) {
+  ensureSupabase();
+  if (!invoice?.id) throw new Error("An invoice is required to record a payment.");
+
+  const result = await recordManualInvoicePayment({
+    invoiceId: invoice.id,
+    amount,
+    reference,
+    paidAt,
+    method,
+    note,
+    operationKey,
+  });
+
+  const fresh = await getInvoice(invoice.id);
+  return { ...result, invoice: fresh };
 }
 
 export async function markInvoiceVoid(id) {

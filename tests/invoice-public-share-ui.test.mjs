@@ -28,13 +28,17 @@ test("issueInvoiceShare/revokeInvoiceShare/rotateInvoiceShareToken call the exac
     "no direct .update() ever sets public_visible from the client — only the RPCs do");
 });
 
-test("buildPublicInvoiceUrl targets the real production X LAB domain, never a preview/staging URL", async () => {
+test("buildPublicInvoiceUrl defaults to the real production X LAB domain; only an explicit env var overrides it", async () => {
   const s = await src(API);
-  assert.ok(s.includes('const PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";'),
-    "exact production host + path, not env-driven (a preview deploy can't point at itself)");
-  assert.ok(!/vercel\.app|localhost|tijiamrfnxrbitafiflj/.test(s), "no preview/staging host anywhere in this file");
+  assert.ok(s.includes('const PRODUCTION_PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";'),
+    "exact production host + path is the hardcoded fallback");
+  const resolver = s.match(/const PUBLIC_INVOICE_BASE_URL =[\s\S]*?PRODUCTION_PUBLIC_INVOICE_BASE_URL;/)[0];
+  assert.ok(resolver.includes("import.meta.env.VITE_PUBLIC_INVOICE_BASE_URL"), "reads the override from an env var");
+  assert.ok(resolver.includes('|| ""') && resolver.includes(".trim()"), "treats an unset/blank env var as no override");
+  assert.ok(/\|\|\s*\n?\s*PRODUCTION_PUBLIC_INVOICE_BASE_URL;/.test(resolver), "falls back to the production constant");
+  assert.ok(!/vercel\.app|localhost|tijiamrfnxrbitafiflj/.test(s), "no preview/staging host literal anywhere in this file");
   const fn = s.match(/export function buildPublicInvoiceUrl\([\s\S]*?\n\}/)[0];
-  assert.ok(fn.includes("PUBLIC_INVOICE_BASE_URL"), "the URL builder uses the one constant, not a re-typed literal");
+  assert.ok(fn.includes("PUBLIC_INVOICE_BASE_URL"), "the URL builder uses the one resolved constant, not a re-typed literal");
 });
 
 test("issue/revoke/rotate RPC failures map to human-readable messages via the same rpcSafetyError pattern every other invoice RPC uses", async () => {
