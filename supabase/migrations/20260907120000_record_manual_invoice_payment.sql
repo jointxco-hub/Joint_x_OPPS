@@ -224,7 +224,8 @@ begin
         join public.xlab_orders xo on xp.order_id = xo.id
         where xp.status = 'completed'
           and (
-            xo.opps_order_id = v_invoice.source_order_id
+            -- xlab_orders.opps_order_id is TEXT; source_order_id is UUID.
+            xo.opps_order_id = v_invoice.source_order_id::text
             or (xo.opps_order_number is not null
                 and xo.opps_order_number = (select order_number from public.orders where id = v_invoice.source_order_id))
           )

@@ -81,6 +81,33 @@ test("9 · cross-source guard blocks manual entry while a linked order has an un
   assert.match(sql, /INVOICE_PAYMENT_UNRECONCILED_ORDER_PAYMENT/);
 });
 
+test("9b · P0 REGRESSION — opps_order_id (text) is compared to source_order_id::text, never a bare text=uuid", async () => {
+  // Production/staging public.xlab_orders.opps_order_id is TEXT; opps_invoices
+  // .source_order_id is UUID. A bare `xo.opps_order_id = v_invoice.source_order_id`
+  // raised `operator does not exist: text = uuid` on every order-linked invoice.
+  const HOTFIX = "supabase/migrations/20260907160000_fix_manual_payment_opps_order_id_text_cast.sql";
+  for (const rel of [MIGRATION, "supabase/migrations/20260907130000_manual_payment_operation_key_and_proof.sql", HOTFIX]) {
+    // executable SQL only — drop `--` line comments so the header explainer
+    // (which quotes the old bare expression) does not trip the negative check.
+    const exec = (await src(rel)).split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+    assert.match(exec, /xo\.opps_order_id = v_invoice\.source_order_id::text/,
+      `${rel}: the cross-source guard must cast the uuid to text`);
+    assert.doesNotMatch(exec, /xo\.opps_order_id = v_invoice\.source_order_id(?!::text)/,
+      `${rel}: must not compare opps_order_id (text) to a bare uuid`);
+  }
+  // the hotfix is a pure forward `create or replace` of the 7-arg RPC — no
+  // schema / policy / data changes. Check executable SQL only (comment-stripped).
+  const hotfixExec = (await src(HOTFIX)).split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+  assert.match(hotfixExec, /create or replace function public\.record_manual_invoice_payment\(/);
+  assert.match(hotfixExec, /p_operation_key text\s+default null/);
+  assert.equal((hotfixExec.match(/create or replace function/gi) || []).length, 1);
+  assert.doesNotMatch(hotfixExec, /create table|alter table|(create|drop|alter) policy|(create|drop) trigger|create index|drop function/i);
+  assert.doesNotMatch(hotfixExec, /payfast/i);
+  // no data writes at migration scope — insert/update tokens only inside the fn body
+  const beforeFn = hotfixExec.slice(0, hotfixExec.search(/create or replace function/i));
+  assert.doesNotMatch(beforeFn, /insert into|update public\.|delete from/i);
+});
+
 test("10 · overpayment guard is ledger-derived with a currency tolerance", async () => {
   const sql = await src(MIGRATION);
   assert.match(sql, /v_paid\s*:=\s*public\.invoice_amount_paid\(p_invoice_id\)/);

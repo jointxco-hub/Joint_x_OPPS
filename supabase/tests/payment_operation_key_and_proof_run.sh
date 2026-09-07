@@ -9,6 +9,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 MIG1="$ROOT/supabase/migrations/20260907120000_record_manual_invoice_payment.sql"
 MIG2="$ROOT/supabase/migrations/20260907130000_manual_payment_operation_key_and_proof.sql"
+MIG3="$ROOT/supabase/migrations/20260907160000_fix_manual_payment_opps_order_id_text_cast.sql"
 CID="pay-proof-$$"
 cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -60,7 +61,9 @@ create table storage.objects (
 
 create table public.tenants (id uuid primary key);
 create table public.orders (id uuid primary key, order_number text, tenant_id uuid, total_amount numeric);
-create table public.xlab_orders (id uuid primary key, opps_order_id uuid, opps_order_number text, tenant_id uuid, order_number text, created_at timestamptz default now());
+-- opps_order_id is TEXT in production/staging (stores the OPPS order id as a
+-- string); opps_invoices.source_order_id is UUID — the RPC casts across it.
+create table public.xlab_orders (id uuid primary key, opps_order_id text, opps_order_number text, tenant_id uuid, order_number text, created_at timestamptz default now());
 create table public.xlab_payments (id uuid primary key default gen_random_uuid(), order_id uuid, status text, amount numeric,
   method text, payfast_pf_payment_id text, payfast_payment_id text, payment_environment text,
   last_itn_at timestamptz, updated_at timestamptz default now(), created_at timestamptz default now());
@@ -130,6 +133,14 @@ insert into public.opps_invoices (id, tenant_id, invoice_number, status, total) 
   ('aaaaaaaa-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','INV-B','approved',5000.00),
   ('aaaaaaaa-0000-0000-0000-000000000009','11111111-1111-1111-1111-111111111111','INV-Z','imported_to_zoho',500.00),
   ('bbbbbbbb-0000-0000-0000-000000000005','22222222-2222-2222-2222-222222222222','INV-OT','approved',900.00);
+-- INV-LP mirrors production OPPS-INV-2026-0085: order-linked, already 'paid'
+-- from a legacy direct write, canonical ledger empty. xlab_orders.opps_order_id
+-- holds the OPPS order UUID as TEXT and there is no completed platform payment.
+insert into public.orders values ('00000000-0000-0000-0000-0000000000dd','ORD-LEGACY','11111111-1111-1111-1111-111111111111',1715.00);
+insert into public.opps_invoices (id, tenant_id, invoice_number, status, total, amount_paid, balance_due, source_order_id) values
+  ('aaaaaaaa-0000-0000-0000-00000000000d','11111111-1111-1111-1111-111111111111','INV-LP','paid',1715.00,1715.00,0.00,'00000000-0000-0000-0000-0000000000dd');
+insert into public.xlab_orders values
+  ('00000000-0000-0000-0000-0000000000ee','00000000-0000-0000-0000-0000000000dd',null,'11111111-1111-1111-1111-111111111111','X-LEG',now());
 -- legacy pre-upgrade manual payment (mirrors staging OPPS-INV-2026-0001 R430)
 insert into public.invoice_payments (invoice_id, amount, method, reference, source, created_by)
 values ('aaaaaaaa-0000-0000-0000-000000000001', 430.00, 'eft', 'LEGACY-430', 'manual', '99999999-9999-9999-9999-999999999999');
@@ -142,6 +153,10 @@ if ! run < "$MIG2" >/tmp/pp2.out 2>&1; then echo "MIG2 FAILED:"; cat /tmp/pp2.ou
 echo "20260907130000 applied"
 if ! run < "$MIG2" >/tmp/pp2b.out 2>&1; then echo "MIG2 SECOND APPLY FAILED:"; cat /tmp/pp2b.out; exit 1; fi
 echo "20260907130000 idempotent"
+if ! run < "$MIG3" >/tmp/pp3.out 2>&1; then echo "MIG3 FAILED:"; cat /tmp/pp3.out; exit 1; fi
+echo "20260907160000 applied"
+if ! run < "$MIG3" >/tmp/pp3b.out 2>&1; then echo "MIG3 SECOND APPLY FAILED:"; cat /tmp/pp3b.out; exit 1; fi
+echo "20260907160000 idempotent"
 
 docker exec -i "$CID" psql -X -q -U postgres -d m 2>&1 <<'SQL' | grep -E 'PASS|FAIL|RESULT|ERROR'
 do $$
@@ -149,9 +164,10 @@ declare
   A  constant uuid := 'aaaaaaaa-0000-0000-0000-000000000001';  -- INV-A  R1000 (also holds LEGACY-430)
   B  constant uuid := 'aaaaaaaa-0000-0000-0000-000000000002';  -- INV-B  R5000
   Z  constant uuid := 'aaaaaaaa-0000-0000-0000-000000000009';  -- imported_to_zoho R500
+  LP constant uuid := 'aaaaaaaa-0000-0000-0000-00000000000d';  -- INV-LP order-linked, already 'paid', empty ledger
   T1 constant text := '11111111-1111-1111-1111-111111111111';
   U1 constant text := '99999999-9999-9999-9999-999999999999';
-  r jsonb; n int; att int; st text; pid uuid; aid uuid; p1 text; p2 text;
+  r jsonb; n int; att int; st text; pid uuid; aid uuid; p1 text; p2 text; fs text; ts text;
 begin
   perform set_config('test.uid', U1, false);
   perform set_config('test.tenants', T1, false);
@@ -409,8 +425,35 @@ begin
   end;
   drop trigger trg_break_audit on public.opps_invoice_activity;
 
+  -- 22 · P0 REGRESSION (7-arg) — legacy-paid reconciliation, production
+  --      OPPS-INV-2026-0085 shape: order-linked invoice already 'paid' from a
+  --      legacy direct write, empty canonical ledger, xlab_orders.opps_order_id
+  --      is TEXT, no completed platform payment. The cross-source guard must
+  --      compare xo.opps_order_id = v_invoice.source_order_id::text (was
+  --      `operator does not exist: text = uuid`). After: guard passes, one
+  --      ledger row + one audit event, commercial 'paid' status preserved.
+  r := public.record_manual_invoice_payment(LP, 1715.00, 'EFT-LEGACY-0085', now(), 'eft', 'reconcile legacy paid status', 'opLEGACY');
+  select status into st from public.opps_invoices where id = LP;
+  select count(*) into n from public.invoice_payments where invoice_id = LP;
+  select count(*) into att from public.opps_invoice_activity
+    where invoice_id = LP and activity_type = 'invoice_payment_recorded';
+  select from_status, to_status into fs, ts from public.opps_invoice_activity
+    where invoice_id = LP and activity_type = 'invoice_payment_recorded' order by created_at desc limit 1;
+  if (r->>'replayed')::boolean = false and n = 1 and att = 1
+     and public.invoice_payment_status(LP) = 'paid'
+     and st = 'paid' and fs = 'paid' and ts = 'paid'
+  then raise notice 'PASS 22 legacy-paid order-linked reconciliation (7-arg): ledger recorded, commercial paid preserved, no text=uuid error';
+  else raise notice 'FAIL 22 r=% st=% n=% att=% from=% to=%', r, st, n, att, fs, ts; end if;
+  -- replay with the same operation key: still one row, still one event
+  r := public.record_manual_invoice_payment(LP, 1715.00, 'EFT-LEGACY-0085', now(), 'eft', 'reconcile legacy paid status', 'opLEGACY');
+  select count(*) into n from public.invoice_payments where invoice_id = LP;
+  select count(*) into att from public.opps_invoice_activity where invoice_id = LP and activity_type='invoice_payment_recorded';
+  if (r->>'replayed')::boolean = true and n = 1 and att = 1
+  then raise notice 'PASS 22b legacy-paid reconciliation replay -> replayed=true, still 1 row / 1 event';
+  else raise notice 'FAIL 22b r=% n=% att=%', r, n, att; end if;
+
   raise notice 'RESULT: DONE';
 end $$;
 SQL
 echo "-----------------------------------------"
-echo "RESULT: PASS (both migrations apply + idempotent; 24 corrected-contract assertions green)"
+echo "RESULT: PASS (120000 + 130000 + 160000 apply + idempotent; 26 corrected-contract assertions green, incl. legacy-paid text/uuid reconciliation + replay)"
