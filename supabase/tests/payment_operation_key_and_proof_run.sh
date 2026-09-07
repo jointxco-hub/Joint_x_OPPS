@@ -351,20 +351,27 @@ begin
       else raise notice 'FAIL 18 %', sqlerrm; end if; end;
   else raise notice 'FAIL 18 retired proof not visible'; end if;
 
-  -- 19 · cleanup_abandoned_payment_proof: sweeps only old, staged, unlinked
-  insert into storage.objects (bucket_id, name, owner_id)
-  values ('uploads', T1 || '/finance/payment-proof/opCLEAN/2026/09/07/old.png', U1);
+  -- 19 · cleanup_abandoned_payment_proof: sweeps ONLY the old staged row;
+  --      a fresh staged row (inside the 5-min floor) is left alone, and
+  --      linked/superseded evidence for any operation is never touched
+  insert into storage.objects (bucket_id, name, owner_id) values
+    ('uploads', T1 || '/finance/payment-proof/opCLEAN/2026/09/07/old.png', U1),
+    ('uploads', T1 || '/finance/payment-proof/opCLEAN/2026/09/07/fresh.png', U1);
   perform public.stage_payment_proof(B, 'opCLEAN', T1 || '/finance/payment-proof/opCLEAN/2026/09/07/old.png', 'old.png', 'image/png', 1000);
-  -- created_at is trigger-immutable; backdate via a harness-only trigger bypass
+  perform public.stage_payment_proof(B, 'opCLEAN', T1 || '/finance/payment-proof/opCLEAN/2026/09/07/fresh.png', 'fresh.png', 'image/png', 1000);
+  -- created_at is trigger-immutable; backdate only the "old" row via a harness-only bypass
   alter table public.payment_attachments disable trigger trg_payment_attachments_immutable;
-  update public.payment_attachments set created_at = now() - interval '2 hours' where operation_key='opCLEAN';
+  update public.payment_attachments set created_at = now() - interval '2 hours'
+    where operation_key='opCLEAN' and storage_path like '%/old.png';
   alter table public.payment_attachments enable trigger trg_payment_attachments_immutable;
   r := public.cleanup_abandoned_payment_proof('opCLEAN', 30);
   if jsonb_array_length(r->'removed') = 1
-     and not exists (select 1 from public.payment_attachments where operation_key='opCLEAN')
-     -- a LINKED row of the same age is never swept
-     and exists (select 1 from public.payment_attachments where operation_key='opX1' and status='linked')
-  then raise notice 'PASS 19 abandoned staged upload swept; linked evidence untouched';
+     and (r#>>'{removed,0}') like '%/old.png'
+     and not exists (select 1 from public.payment_attachments where storage_path like '%/old.png')
+     and exists (select 1 from public.payment_attachments where operation_key='opCLEAN' and storage_path like '%/fresh.png' and status='staged')
+     -- superseded evidence from opZ1 (scenario 17) is still present
+     and exists (select 1 from public.payment_attachments where operation_key='opZ1' and status='superseded')
+  then raise notice 'PASS 19 abandoned old staged upload swept; fresh staged + retired evidence untouched';
   else raise notice 'FAIL 19 r=%', r; end if;
 
   -- 20 · cross-source + overpayment guards still fire under the new RPC
