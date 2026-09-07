@@ -1119,9 +1119,18 @@ const MANUAL_PAYMENT_ERROR_MESSAGES = {
   INVOICE_PAYMENT_UNRECONCILED_ORDER_PAYMENT: "The linked order has a platform payment that has not been reconciled onto this invoice yet. Reconcile that first, then record only the outstanding amount.",
   INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING: "Could not verify existing order payments for this invoice. Ask an administrator to check the order/payment sync before recording this payment.",
   INVOICE_PAYMENT_OVERPAYMENT: "That amount is more than the outstanding balance on this invoice.",
+  INVOICE_PAYMENT_OPERATION_KEY_REQUIRED: "Something went wrong preparing this payment. Close the dialog and try again.",
   PAYMENT_ATTACHMENT_PATH_NOT_TENANT_SCOPED: "That file could not be attached to this invoice's workspace. Try uploading it again.",
+  PAYMENT_ATTACHMENT_PATH_NOT_OPERATION_SCOPED: "That file could not be attached to this payment. Upload it again from this dialog.",
+  PAYMENT_ATTACHMENT_OBJECT_NOT_FOUND: "The uploaded file could not be found. Upload it again.",
+  PAYMENT_ATTACHMENT_OBJECT_NOT_OWNED: "That file was uploaded by someone else and cannot be attached here.",
+  PAYMENT_ATTACHMENT_OPERATION_KEY_REQUIRED: "Something went wrong preparing this attachment. Close the dialog and try again.",
+  PAYMENT_ATTACHMENT_LINKED_IMMUTABLE: "This proof of payment is already linked and cannot be removed here — retire it instead.",
+  PAYMENT_ATTACHMENT_NOT_LINKED: "That proof is not linked to a payment yet.",
   PAYMENT_ATTACHMENT_REASON_REQUIRED: "Give a reason before retiring this proof of payment.",
   PAYMENT_ATTACHMENT_NOT_FOUND: "That attachment no longer exists.",
+  PAYMENT_ATTACHMENT_BAD_TYPE: "Only JPG, PNG or PDF files can be attached as proof of payment.",
+  PAYMENT_ATTACHMENT_TOO_LARGE: "Proof-of-payment files must be 15 MB or smaller.",
   INVOICE_PAYMENT_NOT_FOUND: "That payment record no longer exists.",
 };
 
@@ -1170,52 +1179,70 @@ async function uploadPaymentProofObject({ operationKey, file }) {
 }
 
 // Stage a proof file BEFORE the payment exists, grouped by operationKey.
-// Row is created with status='staged'; record_manual_invoice_payment()
-// links it atomically when the operation key matches.
+// The upload lands in the private bucket first; stage_payment_proof (RPC,
+// SECURITY DEFINER) then verifies the object actually exists, sits under
+// this tenant + this operation's folder, and was uploaded by this user,
+// and creates the staged row. record_manual_invoice_payment() links it
+// atomically when the operation key matches. NO direct table write.
 export async function stagePaymentProof({ invoiceId, operationKey, file }) {
   ensureSupabase();
   if (!invoiceId || !operationKey) throw new Error("An invoice and operation key are required to stage proof.");
   assertPaymentProofFile(file);
   const uploaded = await uploadPaymentProofObject({ operationKey, file });
-  const { data, error } = await supabase
-    .from("payment_attachments")
-    .insert({
-      invoice_id: invoiceId,
-      operation_key: operationKey,
-      storage_bucket: uploaded.bucket,
-      storage_path: uploaded.path,
-      filename: file.name || null,
-      mime_type: String(file.type || "").toLowerCase() || null,
-      byte_size: Number(file.size || 0) || null,
-      status: "staged",
-      uploaded_by: await getAuthUserId(),
-    })
-    .select("*")
-    .single();
+  const { data, error } = await supabase.rpc("stage_payment_proof", {
+    p_invoice_id: invoiceId,
+    p_operation_key: operationKey,
+    p_storage_path: uploaded.path,
+    p_filename: file.name || null,
+    p_mime_type: String(file.type || "").toLowerCase() || null,
+    p_byte_size: Number(file.size || 0) || null,
+  });
   if (error) {
-    // best-effort: the orphaned object is swept by the storage janitor;
-    // do not fail loudly on cleanup.
     await supabase.storage.from(uploaded.bucket).remove([uploaded.path]).catch(() => {});
     throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not attach the proof of payment.");
   }
-  return data;
+  return {
+    id: data?.attachment_id || null,
+    storage_bucket: uploaded.bucket,
+    storage_path: uploaded.path,
+    filename: file.name || null,
+    mime_type: String(file.type || "").toLowerCase() || null,
+    byte_size: Number(file.size || 0) || null,
+    status: "staged",
+  };
 }
 
-// Remove a still-staged proof before the payment is confirmed. RLS only
-// permits deleting rows with status='staged'.
+// Remove a still-staged, unlinked proof before the payment is confirmed.
+// RPC-only; the RPC refuses anything already linked and returns the path
+// so the client can delete the private object too.
 export async function removeStagedPaymentProof(attachmentId) {
   ensureSupabase();
-  const { data: row } = await supabase
-    .from("payment_attachments")
-    .select("id, storage_bucket, storage_path, status")
-    .eq("id", attachmentId)
-    .maybeSingle();
-  const { error } = await supabase.from("payment_attachments").delete().eq("id", attachmentId);
+  const { data, error } = await supabase.rpc("remove_staged_payment_proof", {
+    p_attachment_id: attachmentId,
+  });
   if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not remove the attachment.");
-  if (row?.storage_path) {
-    await supabase.storage.from(row.storage_bucket || "uploads").remove([row.storage_path]).catch(() => {});
+  if (data?.storage_path) {
+    await supabase.storage.from(data.storage_bucket || "uploads").remove([data.storage_path]).catch(() => {});
   }
   return { ok: true };
+}
+
+// Bounded sweep of one operation's abandoned staged uploads (age floor 5
+// min server-side; never touches linked/superseded). Call on modal
+// cancel/close. Returns nothing; also removes the private objects.
+export async function cleanupAbandonedPaymentProof(operationKey, olderThanMinutes = 30) {
+  ensureSupabase();
+  if (!operationKey) return { ok: true, removed: 0 };
+  const { data, error } = await supabase.rpc("cleanup_abandoned_payment_proof", {
+    p_operation_key: operationKey,
+    p_older_than_minutes: olderThanMinutes,
+  });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not clean up abandoned uploads.");
+  const removed = Array.isArray(data?.removed) ? data.removed : [];
+  if (removed.length) {
+    await supabase.storage.from("uploads").remove(removed).catch(() => {});
+  }
+  return { ok: true, removed: removed.length };
 }
 
 // Proof rows for a recorded payment (excludes superseded unless asked).
@@ -1285,9 +1312,11 @@ export async function getInvoicePaymentSummary(invoiceId) {
 }
 
 // Thin caller for the canonical RPC. p_amount is a NEW payment (not a
-// running total); p_reference is the sole idempotency key. Returns
-// { ok, replayed, payment_id, projection }. The RPC itself writes the
-// ledger row, the compat status, and the audit event atomically.
+// running total). p_operation_key is REQUIRED — the client generates one
+// per intentional payment and reuses it on retry. p_reference (bank) is
+// optional and never fabricated. Returns { ok, replayed, payment_id,
+// proof_linked, projection }. The RPC writes the ledger row, compat
+// status, staged-proof link and audit event atomically.
 export async function recordManualInvoicePayment({
   invoiceId,
   amount,
@@ -1298,16 +1327,22 @@ export async function recordManualInvoicePayment({
   operationKey = null,
 }) {
   ensureSupabase();
+  const opKey = operationKey && String(operationKey).trim();
+  if (!opKey) {
+    throw Object.assign(new Error("Something went wrong preparing this payment. Close the dialog and try again."), {
+      code: "INVOICE_PAYMENT_OPERATION_KEY_REQUIRED",
+    });
+  }
   const params = {
     p_invoice_id: invoiceId,
     p_amount: amount,
     p_method: method || "eft",
+    p_operation_key: opKey,
   };
   const ref = reference && String(reference).trim();
   if (ref) params.p_reference = ref;
   if (paidAt) params.p_paid_at = paidAt;
   if (note && String(note).trim()) params.p_note = String(note).trim();
-  if (operationKey && String(operationKey).trim()) params.p_operation_key = String(operationKey).trim();
 
   const { data, error } = await supabase.rpc("record_manual_invoice_payment", params);
   if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not record the payment.");
