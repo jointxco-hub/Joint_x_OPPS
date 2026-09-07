@@ -49,6 +49,16 @@ create table public.opps_invoices (
   amount_paid numeric(14,2) default 0, balance_due numeric(14,2) default 0,
   source_order_id uuid, updated_by uuid, updated_at timestamptz default now());
 
+-- opps_invoice_activity (phase-4 shape + multi-tenant tenant_id column)
+create table public.opps_invoice_activity (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid references public.opps_invoices(id) on delete cascade,
+  tenant_id uuid references public.tenants(id),
+  activity_type text not null, activity_label text not null,
+  activity_note text, from_status text, to_status text,
+  metadata jsonb default '{}'::jsonb, created_by uuid,
+  created_at timestamptz default now());
+
 -- P1A invoice_payments ledger (verbatim shape) + P6 payfast idempotency index
 create table public.invoice_payments (
   id uuid primary key default gen_random_uuid(),
@@ -110,7 +120,8 @@ insert into public.opps_invoices (id, tenant_id, invoice_number, status, total) 
   ('aaaaaaaa-0000-0000-0000-000000000003','11111111-1111-1111-1111-111111111111','INV-DRAFT','draft',500.00),
   ('aaaaaaaa-0000-0000-0000-000000000004','11111111-1111-1111-1111-111111111111','INV-VOID','void',500.00),
   ('bbbbbbbb-0000-0000-0000-000000000005','22222222-2222-2222-2222-222222222222','INV-OT','approved',900.00),
-  ('aaaaaaaa-0000-0000-0000-000000000007','11111111-1111-1111-1111-111111111111','INV-C','approved',100.00);
+  ('aaaaaaaa-0000-0000-0000-000000000007','11111111-1111-1111-1111-111111111111','INV-C','approved',100.00),
+  ('aaaaaaaa-0000-0000-0000-000000000008','11111111-1111-1111-1111-111111111111','INV-D','approved',250.00);
 insert into public.orders values ('00000000-0000-0000-0000-0000000000aa','ORD-LINK','11111111-1111-1111-1111-111111111111',2000.00);
 insert into public.opps_invoices (id, tenant_id, invoice_number, status, total, source_order_id) values
   ('aaaaaaaa-0000-0000-0000-000000000006','11111111-1111-1111-1111-111111111111','INV-LINKED','approved',2000.00,'00000000-0000-0000-0000-0000000000aa');
@@ -126,7 +137,7 @@ if ! run < "$MIG" >/tmp/mp2.out 2>&1; then echo "SECOND APPLY FAILED:"; cat /tmp
 echo "migration idempotent"
 
 # ── one scripted session: every scenario, PASS/FAIL via RAISE NOTICE ─
-docker exec -i "$CID" psql -X -q -U postgres -d m 2>&1 <<'SQL' | grep -E 'PASS|FAIL|RESULT'
+docker exec -i "$CID" psql -X -q -U postgres -d m 2>&1 <<'SQL' | grep -E 'PASS|FAIL|RESULT|ERROR'
 do $$
 declare
   A constant uuid := 'aaaaaaaa-0000-0000-0000-000000000001';  -- INV-A  R1715
@@ -135,7 +146,8 @@ declare
   V constant uuid := 'aaaaaaaa-0000-0000-0000-000000000004';  -- void
   O constant uuid := 'bbbbbbbb-0000-0000-0000-000000000005';  -- other tenant
   L constant uuid := 'aaaaaaaa-0000-0000-0000-000000000006';  -- order-linked, unreconciled xlab payment
-  r jsonb; n int; msg text; s text; cache text;
+  D2 constant uuid := 'aaaaaaaa-0000-0000-0000-000000000008'; -- INV-D  R250 (audit-rollback)
+  r jsonb; n int; msg text; s text; cache text; act int; meta jsonb; st text;
   procedure_ok boolean;
 begin
   perform set_config('test.uid','99999999-9999-9999-9999-999999999999', false);
@@ -143,22 +155,36 @@ begin
   perform set_config('test.finance_level','1', false);
   perform set_config('test.is_staff','true', false);
 
-  -- 1 · full EFT settles the invoice; ledger + cache both correct
+  -- 1 · full EFT settles the invoice; ledger + cache + compat status +
+  --     exactly one audit event, all in one transaction
   r := public.record_manual_invoice_payment(A, 1715.00, 'EFT-REF-1', now(), 'eft', 'client bank transfer');
   select amount_paid || '/' || balance_due into cache from public.opps_invoices where id = A;
+  select status into st from public.opps_invoices where id = A;
+  select count(*) into act from public.opps_invoice_activity
+    where invoice_id = A and activity_type = 'invoice_payment_recorded';
+  select metadata into meta from public.opps_invoice_activity
+    where invoice_id = A and activity_type = 'invoice_payment_recorded' order by created_at desc limit 1;
   if (r->>'replayed')::boolean = false
      and public.invoice_payment_status(A) = 'paid'
      and (r#>>'{projection,balance_due}')::numeric = 0
      and cache = '1715.00/0.00'
-  then raise notice 'PASS 1 full EFT -> paid, ledger balance 0, cache %', cache;
-  else raise notice 'FAIL 1 r=% status=% cache=%', r, public.invoice_payment_status(A), cache; end if;
+     and st = 'paid'
+     and act = 1
+     and meta ? 'payment_id' and meta ? 'amount' and (meta->>'source') = 'manual'
+     and (meta->>'method') = 'eft' and (meta->>'reference') = 'EFT-REF-1'
+     and (meta->>'actor') = '99999999-9999-9999-9999-999999999999'
+  then raise notice 'PASS 1 full EFT -> paid, cache %, status %, 1 audit event', cache, st;
+  else raise notice 'FAIL 1 r=% status=% cache=% st=% act=% meta=%', r, public.invoice_payment_status(A), cache, st, act, meta; end if;
 
-  -- 2 · idempotent replay: same reference -> replayed, still one row
+  -- 2 · idempotent replay: same reference -> replayed, still ONE payment
+  --     row AND still ONE audit event
   r := public.record_manual_invoice_payment(A, 1715.00, 'EFT-REF-1', now(), 'eft');
   select count(*) into n from public.invoice_payments where invoice_id = A;
-  if (r->>'replayed')::boolean = true and n = 1
-  then raise notice 'PASS 2 replay same ref -> replayed=true, 1 row';
-  else raise notice 'FAIL 2 replayed=% rows=%', r->>'replayed', n; end if;
+  select count(*) into act from public.opps_invoice_activity
+    where invoice_id = A and activity_type = 'invoice_payment_recorded';
+  if (r->>'replayed')::boolean = true and n = 1 and act = 1
+  then raise notice 'PASS 2 replay same ref -> replayed=true, 1 payment row, 1 audit event';
+  else raise notice 'FAIL 2 replayed=% rows=% audit=%', r->>'replayed', n, act; end if;
 
   -- 3 · same reference, different amount -> reject
   begin
@@ -169,14 +195,21 @@ begin
     else raise notice 'FAIL 3 wrong error: %', sqlerrm; end if;
   end;
 
-  -- 4 · partial then remaining settlement (two rows, no double count)
+  -- 4 · partial then remaining settlement: two rows, no double count,
+  --     compat status tracks (partially_paid -> paid), two audit events
   perform public.record_manual_invoice_payment(B, 400.00, 'EFT-B1', now(), 'eft');
   s := public.invoice_payment_status(B);
+  select status into st from public.opps_invoices where id = B;
   perform public.record_manual_invoice_payment(B, 600.00, 'EFT-B2', now(), 'cash');
   select count(*) into n from public.invoice_payments where invoice_id = B;
-  if s = 'partial' and public.invoice_payment_status(B) = 'paid' and n = 2
-  then raise notice 'PASS 4 400 -> partial, +600 -> paid, 2 rows';
-  else raise notice 'FAIL 4 after400=% after600=% rows=%', s, public.invoice_payment_status(B), n; end if;
+  select count(*) into act from public.opps_invoice_activity
+    where invoice_id = B and activity_type = 'invoice_payment_recorded';
+  if s = 'partial' and st = 'partially_paid'
+     and public.invoice_payment_status(B) = 'paid'
+     and (select status from public.opps_invoices where id = B) = 'paid'
+     and n = 2 and act = 2
+  then raise notice 'PASS 4 400 -> partially_paid, +600 -> paid, 2 rows, 2 audit events';
+  else raise notice 'FAIL 4 after400=%/% after600=%/% rows=% audit=%', s, st, public.invoice_payment_status(B), (select status from public.opps_invoices where id = B), n, act; end if;
 
   -- 5 · overpayment beyond R0.02 -> reject
   begin
@@ -248,8 +281,45 @@ begin
   if n = 1 and (r->>'replayed')::boolean then raise notice 'PASS 10 duplicate submit -> 1 row, replayed';
   else raise notice 'FAIL 10 rows=% replayed=%', n, r->>'replayed'; end if;
 
+  -- 11 · an audit-event insert failure rolls the payment back entirely.
+  --      Arm a BEFORE-INSERT trigger on opps_invoice_activity that raises
+  --      for the payment event, then attempt a full payment on INV-D.
+  execute $q$
+    create or replace function public._break_audit() returns trigger language plpgsql as $b$
+    begin
+      if new.activity_type = 'invoice_payment_recorded'
+         and current_setting('test.break_audit', true) = 'on' then
+        raise exception 'FORCED_AUDIT_FAILURE';
+      end if;
+      return new;
+    end $b$;
+  $q$;
+  create trigger trg_break_audit before insert on public.opps_invoice_activity
+    for each row execute function public._break_audit();
+  perform set_config('test.break_audit', 'on', false);
+  begin
+    perform public.record_manual_invoice_payment(D2, 250.00, 'EFT-D-ROLLBACK', now(), 'eft');
+    raise notice 'FAIL 11 expected FORCED_AUDIT_FAILURE, none raised';
+  exception when others then
+    perform set_config('test.break_audit', 'off', false);
+    select count(*) into n from public.invoice_payments where invoice_id = D2;
+    select status into st from public.opps_invoices where id = D2;
+    if sqlerrm like 'FORCED_AUDIT_FAILURE%' and n = 0 and st = 'approved'
+       and (select amount_paid from public.opps_invoices where id = D2) = 0
+    then raise notice 'PASS 11 audit failure rolled back the payment (0 ledger rows, status/cache untouched)';
+    else raise notice 'FAIL 11 err=% rows=% status=% cache=%', sqlerrm, n, st, (select amount_paid from public.opps_invoices where id = D2); end if;
+  end;
+  drop trigger trg_break_audit on public.opps_invoice_activity;
+  -- and a clean retry now succeeds end-to-end
+  r := public.record_manual_invoice_payment(D2, 250.00, 'EFT-D-RETRY', now(), 'eft');
+  select count(*) into act from public.opps_invoice_activity
+    where invoice_id = D2 and activity_type = 'invoice_payment_recorded';
+  if (r->>'replayed')::boolean = false and public.invoice_payment_status(D2) = 'paid' and act = 1
+  then raise notice 'PASS 11b clean retry after rollback -> paid, exactly 1 audit event';
+  else raise notice 'FAIL 11b r=% status=% audit=%', r, public.invoice_payment_status(D2), act; end if;
+
   raise notice 'RESULT: DONE';
 end $$;
 SQL
 echo "-----------------------------------------"
-echo "RESULT: PASS (migration applies + idempotent; 16 acceptance scenarios green)"
+echo "RESULT: PASS (migration applies + idempotent; 20 acceptance assertions green, incl. atomic audit event + audit-failure rollback)"

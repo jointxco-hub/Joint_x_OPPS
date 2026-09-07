@@ -13,6 +13,7 @@ import {
   ZOHO_INVOICE_TEMPLATE_VERSION,
 } from "@/features/invoices/zohoInvoiceExportConfig";
 import { buildOrderInvoiceSyncPlan, buildInvoiceOrderSyncPlan, buildShippingDiff, annotateProductionDataConflicts } from "@/features/invoices/orderToInvoiceItems";
+import { normalisePaymentProjection } from "@/features/invoices/paymentProjection";
 import {
   INVOICE_SETTING_KEYS,
   defaultCustomerMappingSetting,
@@ -1096,10 +1097,11 @@ export async function duplicateInvoiceAsDraft(id) {
 
 // ── canonical manual-payment ledger (P1A) ──────────────────────────────
 // OPPS payments no longer write opps_invoices.status/amount_paid/balance_due
-// directly. They insert ONE row into public.invoice_payments via
-// record_manual_invoice_payment(); the P1A AFTER trigger refreshes the
-// opps_invoices cache and the P3 public projection derives customer-visible
-// truth from the same ledger. See
+// directly, and the client no longer writes the payment audit event. One
+// call to record_manual_invoice_payment() does it all in a single DB
+// transaction: the invoice_payments row, the P1A cache refresh, the
+// compat-status mirror, and the opps_invoice_activity event. The client's
+// only job afterwards is to refresh what it displays. See
 // supabase/migrations/20260907120000_record_manual_invoice_payment.sql.
 const MANUAL_PAYMENT_ERROR_MESSAGES = {
   INVOICE_PAYMENT_AUTH_REQUIRED: "Sign in again to record this payment.",
@@ -1116,15 +1118,6 @@ const MANUAL_PAYMENT_ERROR_MESSAGES = {
   INVOICE_PAYMENT_OVERPAYMENT: "That amount is more than the outstanding balance on this invoice.",
 };
 
-function normalisePaymentProjection(projection) {
-  const row = Array.isArray(projection) ? projection[0] : projection;
-  return {
-    amount_paid: Number(row?.amount_paid || 0),
-    balance_due: Number(row?.balance_due || 0),
-    payment_status: row?.payment_status || "unpaid",
-    overdue: Boolean(row?.overdue),
-  };
-}
 
 // Ledger-derived payment truth for one invoice (staff read RPC, P1A).
 export async function getInvoicePaymentSummary(invoiceId) {
@@ -1137,7 +1130,9 @@ export async function getInvoicePaymentSummary(invoiceId) {
 }
 
 // Thin caller for the canonical RPC. p_amount is a NEW payment (not a
-// running total). Returns { ok, replayed, payment_id, projection }.
+// running total); p_reference is the sole idempotency key. Returns
+// { ok, replayed, payment_id, projection }. The RPC itself writes the
+// ledger row, the compat status, and the audit event atomically.
 export async function recordManualInvoicePayment({
   invoiceId,
   amount,
@@ -1145,7 +1140,6 @@ export async function recordManualInvoicePayment({
   paidAt = null,
   method = "eft",
   note = null,
-  idempotencyKey = null,
 }) {
   ensureSupabase();
   const params = {
@@ -1156,7 +1150,6 @@ export async function recordManualInvoicePayment({
   };
   if (paidAt) params.p_paid_at = paidAt;
   if (note && String(note).trim()) params.p_note = String(note).trim();
-  if (idempotencyKey && String(idempotencyKey).trim()) params.p_idempotency_key = String(idempotencyKey).trim();
 
   const { data, error } = await supabase.rpc("record_manual_invoice_payment", params);
   if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not record the payment.");
@@ -1168,35 +1161,11 @@ export async function recordManualInvoicePayment({
   };
 }
 
-const PAYMENT_METHOD_LABELS = {
-  eft: "EFT / bank transfer",
-  cash: "Cash",
-  card: "Card",
-  other: "Other",
-};
-
-// opps_invoices.status is a DISPLAY enum for the OPPS list/badge only; the
-// ledger is authoritative. After a payment the P1A trigger refreshes
-// amount_paid/balance_due but not status, so mirror the ledger-derived
-// payment_status onto it. Non-fatal: a failure here never masks a
-// successful ledger write.
-async function syncInvoiceDisplayStatusFromLedger(id, currentStatus, projection) {
-  const next = projection.payment_status === "paid"
-    ? "paid"
-    : projection.payment_status === "partial"
-      ? "partially_paid"
-      : null;
-  if (!next || next === currentStatus || ["void", "draft"].includes(currentStatus)) return;
-  const { error } = await supabase
-    .from("opps_invoices")
-    .update({ status: next, updated_by: await getAuthUserId() })
-    .eq("id", id);
-  if (error) invoiceDiagnostic("invoice-status-sync-failed", { invoiceId: id, error });
-}
-
-// UI-facing orchestrator: record one payment, mirror display status, log
-// activity, return the fresh invoice row. `mode` is 'pay' | 'partial' |
-// 'reconcile' (audit only).
+// UI-facing entry point: record the payment through the canonical RPC (all
+// canonical writes — ledger, cache, compat status, audit event — happen
+// server-side in one transaction), then return the fresh invoice row so
+// the caller can refresh its display. It performs NO payment audit write
+// and NO status write of its own.
 export async function recordInvoicePayment({
   invoice,
   amount,
@@ -1204,7 +1173,6 @@ export async function recordInvoicePayment({
   reference,
   paidAt = null,
   note = null,
-  mode = "pay",
 }) {
   ensureSupabase();
   if (!invoice?.id) throw new Error("An invoice is required to record a payment.");
@@ -1217,29 +1185,6 @@ export async function recordInvoicePayment({
     method,
     note,
   });
-
-  if (!result.replayed) {
-    await syncInvoiceDisplayStatusFromLedger(invoice.id, invoice.status, result.projection);
-    const methodLabel = PAYMENT_METHOD_LABELS[method] || method || "Payment";
-    const amountLabel = `R${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    await createInvoiceActivity(invoice.id, {
-      activity_type: "invoice_payment_recorded",
-      activity_note: `${methodLabel} ${amountLabel} · ref ${reference}${note ? ` · ${note}` : ""}`,
-      from_status: invoice.status,
-      to_status: result.projection.payment_status === "paid" ? "paid" : invoice.status,
-      metadata: {
-        amount: Number(amount),
-        method,
-        reference,
-        paid_at: paidAt,
-        payment_id: result.payment_id,
-        mode,
-        amount_paid: result.projection.amount_paid,
-        balance_due: result.projection.balance_due,
-        payment_status: result.projection.payment_status,
-      },
-    });
-  }
 
   const fresh = await getInvoice(invoice.id);
   return { ...result, invoice: fresh };

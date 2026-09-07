@@ -99,9 +99,28 @@ test("11 · one auditable row; cache left to the P1A trigger; on-conflict is a s
 
 test("12 · grants: revoked from public/anon, executable by authenticated only", async () => {
   const sql = await src(MIGRATION);
-  assert.match(sql, /revoke all on function public\.record_manual_invoice_payment\([^)]*\) from public, anon/);
-  assert.match(sql, /grant execute on function public\.record_manual_invoice_payment\([^)]*\) to authenticated/);
+  assert.match(sql, /revoke all on function public\.record_manual_invoice_payment\(uuid, numeric, text, timestamptz, text, text\) from public, anon/);
+  assert.match(sql, /grant execute on function public\.record_manual_invoice_payment\(uuid, numeric, text, timestamptz, text, text\) to authenticated/);
   assert.doesNotMatch(sql, /to anon;/);
+});
+
+test("12b · idempotency key removed - reference is the only key; 6-arg signature", async () => {
+  const sql = await src(MIGRATION);
+  // no idempotency_key metadata key persisted
+  assert.doesNotMatch(sql, /'idempotency_key'/);
+  // the nominal 7-arg version is dropped defensively before (re)create
+  assert.match(sql, /drop function if exists public\.record_manual_invoice_payment\(uuid, numeric, text, timestamptz, text, text, text\)/);
+  const sig = sql.slice(
+    sql.indexOf("create or replace function public.record_manual_invoice_payment("),
+    sql.indexOf("returns jsonb")
+  );
+  assert.match(sig, /p_invoice_id\s+uuid,/);
+  assert.match(sig, /p_amount\s+numeric,/);
+  assert.match(sig, /p_reference\s+text,/);
+  assert.match(sig, /p_paid_at\s+timestamptz default now\(\),/);
+  assert.match(sig, /p_method\s+text\s+default 'eft',/);
+  assert.match(sig, /p_note\s+text\s+default null\s*\n\s*\)/);
+  assert.doesNotMatch(sig, /p_idempotency_key/);
 });
 
 // ── api/invoices.js: RPC-only payment path ────────────────────────────
@@ -114,11 +133,12 @@ test("13 · legacy direct-write payment functions are gone", async () => {
   assert.doesNotMatch(js, /\.update\(\{\s*\n?\s*status: "paid",\s*\n?\s*amount_paid:/);
 });
 
-test("14 · recordManualInvoicePayment calls the canonical RPC with mapped errors", async () => {
+test("14 · recordManualInvoicePayment calls the canonical RPC with mapped errors, no idempotency key", async () => {
   const js = await src(API);
   assert.match(js, /export async function recordManualInvoicePayment\(/);
   assert.match(js, /supabase\.rpc\("record_manual_invoice_payment", params\)/);
   assert.match(js, /rpcSafetyError\(error, MANUAL_PAYMENT_ERROR_MESSAGES/);
+  assert.doesNotMatch(js, /idempotencyKey|p_idempotency_key/);
   for (const code of [
     "INVOICE_PAYMENT_AUTH_REQUIRED",
     "INVOICE_PAYMENT_ACCESS_DENIED",
@@ -137,22 +157,77 @@ test("15 · getInvoicePaymentSummary reads the ledger projection RPC", async () 
   assert.match(js, /supabase\.rpc\("get_invoice_payment_summary", \{\s*\n?\s*p_invoice_id: invoiceId,?\s*\n?\s*\}\)/);
 });
 
-test("16 · recordInvoicePayment orchestrator: RPC -> display status sync -> activity -> fresh row", async () => {
+test("16 · recordInvoicePayment is RPC + refetch only - NO client-side audit or status write", async () => {
   const js = await src(API);
   assert.match(js, /export async function recordInvoicePayment\(/);
   assert.match(js, /await recordManualInvoicePayment\(/);
-  assert.match(js, /if \(!result\.replayed\) \{/);
-  assert.match(js, /syncInvoiceDisplayStatusFromLedger\(invoice\.id, invoice\.status, result\.projection\)/);
-  assert.match(js, /activity_type: "invoice_payment_recorded"/);
   assert.match(js, /const fresh = await getInvoice\(invoice\.id\)/);
+  // the whole recordInvoicePayment body must not write activity or status
+  const body = js.slice(js.indexOf("export async function recordInvoicePayment("));
+  const fnEnd = body.indexOf("\n}\n");
+  const fn = body.slice(0, fnEnd);
+  assert.doesNotMatch(fn, /createInvoiceActivity/);
+  assert.doesNotMatch(fn, /opps_invoice_activity/);
+  assert.doesNotMatch(fn, /\.update\(/);
+  assert.doesNotMatch(fn, /invoice_payment_recorded/);
 });
 
-test("17 · display status sync is derived + non-fatal, never touches draft/void", async () => {
-  const js = await src(API);
-  assert.match(js, /payment_status === "paid"\s*\n?\s*\?\s*"paid"/);
-  assert.match(js, /"partial"\s*\n?\s*\?\s*"partially_paid"/);
-  assert.match(js, /\["void", "draft"\]\.includes\(currentStatus\)/);
-  assert.match(js, /invoiceDiagnostic\("invoice-status-sync-failed"/);
+test("17 · the migration RPC does the status mirror + audit event atomically (server-side)", async () => {
+  const sql = await src(MIGRATION);
+  // compat status mirror, derived, guarded, no amount write
+  assert.match(sql, /v_status_after := public\.invoice_payment_status\(p_invoice_id\)/);
+  assert.match(sql, /when 'paid'\s+then 'paid'/);
+  assert.match(sql, /when 'partial' then 'partially_paid'/);
+  assert.match(sql, /v_invoice\.status not in \('void', 'draft'\)\s*\n\s*and v_invoice\.status is distinct from v_new_status/);
+  assert.match(sql, /update public\.opps_invoices\s*\n\s*set status = v_new_status, updated_by = v_user_id/);
+  assert.doesNotMatch(sql, /update public\.opps_invoices[\s\S]{0,120}(amount_paid|balance_due)\s*=/);
+  // one audit row, same txn, on the non-replay path
+  assert.match(sql, /insert into public\.opps_invoice_activity \(/);
+  assert.match(sql, /'invoice_payment_recorded', 'Payment recorded'/);
+  for (const key of ["'payment_id'", "'amount'", "'source'", "'method'", "'reference'", "'actor'", "'paid_at'"]) {
+    assert.match(sql, new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `audit metadata missing ${key}`);
+  }
+});
+
+test("17b · both replay paths return before the audit insert (no second event on replay)", async () => {
+  const sql = await src(MIGRATION);
+  const auditAt = sql.indexOf("insert into public.opps_invoice_activity (");
+  assert.ok(auditAt > 0);
+  // the "found" replay early-return and the lost-race early-return both precede the audit insert
+  const foundReturn = sql.indexOf("'replayed', true, 'payment_id', v_existing.id");
+  const raceReturn = sql.indexOf("'replayed', true, 'payment_id', v_row_id");
+  assert.ok(foundReturn > 0 && foundReturn < auditAt, "found-replay return must precede the audit insert");
+  assert.ok(raceReturn > 0 && raceReturn < auditAt, "lost-race return must precede the audit insert");
+});
+
+test("17c · preflight also requires opps_invoice_activity + the balance/status derivations", async () => {
+  const sql = await src(MIGRATION);
+  assert.match(sql, /to_regclass\('public\.opps_invoice_activity'\) is null/);
+  assert.match(sql, /to_regprocedure\('public\.invoice_balance_due\(uuid\)'\)/);
+  assert.match(sql, /to_regprocedure\('public\.invoice_payment_status\(uuid\)'\)/);
+});
+
+// ── payment summary contract ─────────────────────────────────────────
+
+test("17d · normalisePaymentProjection handles every plausible RPC shape", async () => {
+  const { normalisePaymentProjection: n } = await import("../src/features/invoices/paymentProjection.js");
+  // bare jsonb object - fully paid
+  assert.deepEqual(n({ amount_paid: 1715, balance_due: 0, payment_status: "paid", overdue: false }),
+    { amount_paid: 1715, balance_due: 0, payment_status: "paid", overdue: false });
+  // single-row array (SETOF / RETURNS TABLE) - partial
+  assert.deepEqual(n([{ amount_paid: 400, balance_due: 600, payment_status: "partial", overdue: true }]),
+    { amount_paid: 400, balance_due: 600, payment_status: "partial", overdue: true });
+  // string numerics from PostgREST numeric columns
+  assert.deepEqual(n({ amount_paid: "1715.00", balance_due: "0.00", payment_status: "paid" }),
+    { amount_paid: 1715, balance_due: 0, payment_status: "paid", overdue: false });
+  // payment_status absent -> derived
+  assert.equal(n({ amount_paid: 0, balance_due: 100 }).payment_status, "unpaid");
+  assert.equal(n({ amount_paid: 50, balance_due: 50 }).payment_status, "partial");
+  assert.equal(n({ amount_paid: 100, balance_due: 0 }).payment_status, "paid");
+  // null / undefined / garbage -> safe zeros
+  assert.deepEqual(n(null), { amount_paid: 0, balance_due: 0, payment_status: "unpaid", overdue: false });
+  assert.deepEqual(n(undefined), { amount_paid: 0, balance_due: 0, payment_status: "unpaid", overdue: false });
+  assert.equal(n({ amount_paid: "not-a-number", balance_due: NaN }).amount_paid, 0);
 });
 
 // ── payment modal ────────────────────────────────────────────────────
