@@ -40,7 +40,20 @@
 -- Does NOT touch: the P1A/P3/P6 functions, the public invoice projection,
 -- any PayFast function, opps_invoices/opps_invoice_activity schema, or
 -- reconcile_invoice_with_order. opps_invoices.amount_paid/balance_due stay
--- a trigger-maintained CACHE; status stays a derived compat column.
+-- a trigger-maintained CACHE.
+--
+-- COMMERCIAL LIFECYCLE: opps_invoices.status carries BOTH payment-cycle
+-- states (approved / partially_paid / overdue / paid) AND commercial
+-- lifecycle states (draft / void / exported / imported_to_zoho). The
+-- compat mirror advances ONLY the payment-cycle ones, and only on
+-- explicitly safe transitions — it never overwrites exported /
+-- imported_to_zoho / void / draft. OPPS badges and balances read payment
+-- truth from the P1A ledger summary, not from this column.
+--
+-- FAIL CLOSED: the cross-source check for existing platform money on an
+-- order-linked invoice raises INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING if the
+-- xlab_orders / xlab_payments / orders bridge is absent or incompatible.
+-- It never silently assumes "no platform payment exists".
 --
 -- DEPENDS ON: P1A (20260904120000_invoice_p1a_payment_reconciliation.sql).
 --   The `source` CHECK on invoice_payments ALREADY allows 'manual' — no
@@ -71,6 +84,14 @@ begin
   end if;
   if to_regclass('public.opps_invoice_activity') is null then
     raise exception 'MANUAL_PAYMENT: public.opps_invoice_activity is missing — the invoicing schema is not present';
+  end if;
+  -- the order/payment bridge must be present: the cross-source safeguard
+  -- fails CLOSED at run time, and this stops the migration landing on a
+  -- schema where that check could never run.
+  if to_regclass('public.orders') is null
+     or to_regclass('public.xlab_orders') is null
+     or to_regclass('public.xlab_payments') is null then
+    raise exception 'MANUAL_PAYMENT: the order/payment bridge (orders / xlab_orders / xlab_payments) is missing — cannot guarantee the cross-source safeguard';
   end if;
   -- the source domain must accept 'manual' (P1A defines it; assert, don't alter)
   begin
@@ -122,8 +143,9 @@ declare
   v_paid          numeric(14,2);
   v_total         numeric(14,2);
   v_row_id        uuid;
-  v_status_after  text;
-  v_new_status    text;
+  v_status_after     text;   -- ledger-derived: unpaid | partial | paid
+  v_new_status       text;   -- the compat status to advance to, if any
+  v_effective_status text;   -- the status that actually ends up on the row
   v_has_unreconciled boolean := false;
 begin
   -- ── auth ──────────────────────────────────────────────────────────
@@ -212,7 +234,11 @@ begin
           )
       ) into v_has_unreconciled;
     exception when undefined_table or undefined_column then
-      v_has_unreconciled := false;   -- bridge tables absent in this env
+      -- FAIL CLOSED: never assume "no platform payment" just because the
+      -- bridge schema drifted. Aborting here rolls back nothing yet (the
+      -- ledger insert has not happened) and writes no audit row.
+      raise exception using errcode = 'P0001',
+        message = 'INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING: the order/payment bridge schema needed to check for existing platform payments on this order-linked invoice is absent or incompatible — resolve the sync schema before recording a manual payment';
     end;
     if v_has_unreconciled then
       raise exception using errcode = 'P0001',
@@ -263,24 +289,34 @@ begin
   -- opps_invoices.amount_paid / balance_due from the ledger.
 
   -- ── compat status mirror (same transaction as the ledger row) ───
-  -- opps_invoices.status is a DISPLAY enum for the OPPS list/badge; the
-  -- ledger is the authority. Move it in lock-step so a recorded payment
-  -- can never be left showing e.g. "approved". Never touched for
-  -- draft/void, and only the derived value is written — no amount_paid /
-  -- balance_due write (that is the AFTER trigger's job).
-  v_status_after := public.invoice_payment_status(p_invoice_id);  -- unpaid | partial | paid
-  v_new_status := case v_status_after
-                    when 'paid'    then 'paid'
-                    when 'partial' then 'partially_paid'
-                    else null
-                  end;
-  if v_new_status is not null
-     and v_invoice.status not in ('void', 'draft')
-     and v_invoice.status is distinct from v_new_status
-  then
+  -- opps_invoices.status is a flat column carrying BOTH payment-cycle
+  -- states and commercial lifecycle states. Advance ONLY the payment-cycle
+  -- ones, and only on explicitly safe transitions:
+  --     approved        -> partially_paid | paid
+  --     partially_paid  -> paid
+  --     overdue         -> paid            (only when fully settled)
+  -- draft / void / exported / imported_to_zoho are NEVER overwritten by a
+  -- payment — a paid, exported invoice stays 'exported' and its payment
+  -- truth lives in the ledger. Only the derived status value is written,
+  -- never amount_paid / balance_due (the AFTER trigger owns those).
+  v_status_after     := public.invoice_payment_status(p_invoice_id);  -- unpaid | partial | paid
+  v_effective_status := v_invoice.status;                             -- default: unchanged
+
+  if v_invoice.status in ('approved', 'partially_paid') then
+    v_new_status := case v_status_after
+                      when 'paid'    then 'paid'
+                      when 'partial' then 'partially_paid'
+                      else null
+                    end;
+  elsif v_invoice.status = 'overdue' and v_status_after = 'paid' then
+    v_new_status := 'paid';
+  end if;
+
+  if v_new_status is not null and v_new_status is distinct from v_invoice.status then
     update public.opps_invoices
        set status = v_new_status, updated_by = v_user_id
      where id = p_invoice_id;
+    v_effective_status := v_new_status;
   end if;
 
   -- ── canonical payment audit event (same transaction) ────────────
@@ -297,8 +333,9 @@ begin
            coalesce(v_method, 'eft'),
            to_char(v_amount, 'FM999999999990.00'),
            v_ref),
-    v_invoice.status,
-    coalesce(v_new_status, v_invoice.status),
+    v_invoice.status,        -- from_status: the real lifecycle state before
+    v_effective_status,      -- to_status: the real lifecycle state after
+                             --   (unchanged for exported / imported_to_zoho)
     jsonb_strip_nulls(jsonb_build_object(
       'payment_id',     v_row_id,
       'amount',         v_amount,
@@ -325,6 +362,6 @@ revoke all on function public.record_manual_invoice_payment(uuid, numeric, text,
 grant execute on function public.record_manual_invoice_payment(uuid, numeric, text, timestamptz, text, text) to authenticated;
 
 comment on function public.record_manual_invoice_payment(uuid, numeric, text, timestamptz, text, text) is
-  'Records ONE off-platform (EFT/cash/card/other) invoice payment. In a single transaction: inserts one public.invoice_payments row (source=manual), lets the P1A AFTER trigger refresh the opps_invoices amount_paid/balance_due cache, mirrors the ledger-derived payment_status onto the opps_invoices.status compat column (never amount_paid/balance_due), and inserts one opps_invoice_activity row (invoice_payment_recorded) carrying payment_id/amount/source/method/reference/actor. Finance-authorised staff only, tenant enforced, invoice locked FOR UPDATE. p_amount is a new payment (not a running total). p_reference is the real bank reference, mandatory, and is the sole idempotency key: a replay with the same (invoice_id, reference) returns the original result and writes neither a second payment nor a second activity row; a replay with a different amount/date/method is rejected. Rejects overpayment beyond R0.02 and manual entry while a linked order has an unreconciled completed platform payment. A failure of the status mirror or the audit insert rolls the payment back.';
+  'Records ONE off-platform (EFT/cash/card/other) invoice payment. In a single transaction: inserts one public.invoice_payments row (source=manual), lets the P1A AFTER trigger refresh the opps_invoices amount_paid/balance_due cache, advances the opps_invoices.status compat column ONLY on safe payment-cycle transitions (approved->partially_paid|paid, partially_paid->paid, overdue->paid when fully settled) and NEVER over draft/void/exported/imported_to_zoho, and inserts one opps_invoice_activity row (invoice_payment_recorded, from/to = real lifecycle status) carrying payment_id/amount/source/method/reference/actor. Finance-authorised staff only, tenant enforced, invoice locked FOR UPDATE. p_amount is a new payment (not a running total). p_reference is the real bank reference, mandatory, and is the sole idempotency key: a replay with the same (invoice_id, reference) returns the original result and writes neither a second payment nor a second activity row; a replay with a different amount/date/method is rejected. Rejects overpayment beyond R0.02, manual entry while a linked order has an unreconciled completed platform payment, and (fail-closed) manual entry on an order-linked invoice when the order/payment bridge schema is missing. A failure of the status mirror or the audit insert rolls the payment back.';
 
 commit;

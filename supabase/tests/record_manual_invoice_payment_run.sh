@@ -121,10 +121,15 @@ insert into public.opps_invoices (id, tenant_id, invoice_number, status, total) 
   ('aaaaaaaa-0000-0000-0000-000000000004','11111111-1111-1111-1111-111111111111','INV-VOID','void',500.00),
   ('bbbbbbbb-0000-0000-0000-000000000005','22222222-2222-2222-2222-222222222222','INV-OT','approved',900.00),
   ('aaaaaaaa-0000-0000-0000-000000000007','11111111-1111-1111-1111-111111111111','INV-C','approved',100.00),
-  ('aaaaaaaa-0000-0000-0000-000000000008','11111111-1111-1111-1111-111111111111','INV-D','approved',250.00);
-insert into public.orders values ('00000000-0000-0000-0000-0000000000aa','ORD-LINK','11111111-1111-1111-1111-111111111111',2000.00);
+  ('aaaaaaaa-0000-0000-0000-000000000008','11111111-1111-1111-1111-111111111111','INV-D','approved',250.00),
+  ('aaaaaaaa-0000-0000-0000-000000000009','11111111-1111-1111-1111-111111111111','INV-Z','imported_to_zoho',500.00),
+  ('aaaaaaaa-0000-0000-0000-00000000000a','11111111-1111-1111-1111-111111111111','INV-X','exported',500.00);
+insert into public.orders values
+  ('00000000-0000-0000-0000-0000000000aa','ORD-LINK','11111111-1111-1111-1111-111111111111',2000.00),
+  ('00000000-0000-0000-0000-0000000000cc','ORD-BRIDGE','11111111-1111-1111-1111-111111111111',300.00);
 insert into public.opps_invoices (id, tenant_id, invoice_number, status, total, source_order_id) values
-  ('aaaaaaaa-0000-0000-0000-000000000006','11111111-1111-1111-1111-111111111111','INV-LINKED','approved',2000.00,'00000000-0000-0000-0000-0000000000aa');
+  ('aaaaaaaa-0000-0000-0000-000000000006','11111111-1111-1111-1111-111111111111','INV-LINKED','approved',2000.00,'00000000-0000-0000-0000-0000000000aa'),
+  ('aaaaaaaa-0000-0000-0000-00000000000b','11111111-1111-1111-1111-111111111111','INV-BR','approved',300.00,'00000000-0000-0000-0000-0000000000cc');
 insert into public.xlab_orders values ('00000000-0000-0000-0000-0000000000bb','00000000-0000-0000-0000-0000000000aa',null,'11111111-1111-1111-1111-111111111111','X-1',now());
 insert into public.xlab_payments (order_id, status, amount, payfast_pf_payment_id) values
   ('00000000-0000-0000-0000-0000000000bb','completed',2000.00,'PF-XYZ');
@@ -147,7 +152,10 @@ declare
   O constant uuid := 'bbbbbbbb-0000-0000-0000-000000000005';  -- other tenant
   L constant uuid := 'aaaaaaaa-0000-0000-0000-000000000006';  -- order-linked, unreconciled xlab payment
   D2 constant uuid := 'aaaaaaaa-0000-0000-0000-000000000008'; -- INV-D  R250 (audit-rollback)
-  r jsonb; n int; msg text; s text; cache text; act int; meta jsonb; st text;
+  Z  constant uuid := 'aaaaaaaa-0000-0000-0000-000000000009'; -- INV-Z  imported_to_zoho R500
+  X  constant uuid := 'aaaaaaaa-0000-0000-0000-00000000000a'; -- INV-X  exported R500
+  BR constant uuid := 'aaaaaaaa-0000-0000-0000-00000000000b'; -- INV-BR order-linked, bridge-missing test
+  r jsonb; n int; msg text; s text; cache text; act int; meta jsonb; st text; fs text; ts text;
   procedure_ok boolean;
 begin
   perform set_config('test.uid','99999999-9999-9999-9999-999999999999', false);
@@ -318,8 +326,45 @@ begin
   then raise notice 'PASS 11b clean retry after rollback -> paid, exactly 1 audit event';
   else raise notice 'FAIL 11b r=% status=% audit=%', r, public.invoice_payment_status(D2), act; end if;
 
+  -- 12 · a commercial-lifecycle invoice (imported_to_zoho) that receives a
+  --      full payment: payment truth becomes paid, but the commercial
+  --      status is PRESERVED and the audit before/after reflect that
+  r := public.record_manual_invoice_payment(Z, 500.00, 'EFT-Z-FULL', now(), 'eft');
+  select status into st from public.opps_invoices where id = Z;
+  select amount_paid || '/' || balance_due into cache from public.opps_invoices where id = Z;
+  select from_status, to_status into fs, ts from public.opps_invoice_activity
+    where invoice_id = Z and activity_type = 'invoice_payment_recorded' order by created_at desc limit 1;
+  if public.invoice_payment_status(Z) = 'paid'
+     and (r#>>'{projection,payment_status}') = 'paid'
+     and st = 'imported_to_zoho'
+     and cache = '500.00/0.00'
+     and fs = 'imported_to_zoho' and ts = 'imported_to_zoho'
+  then raise notice 'PASS 12 imported_to_zoho invoice paid via ledger, commercial status preserved, audit from/to = imported_to_zoho';
+  else raise notice 'FAIL 12 status=% cache=% pay=% from=% to=%', st, cache, public.invoice_payment_status(Z), fs, ts; end if;
+
+  -- 12b · an exported invoice taking a partial payment keeps status 'exported'
+  r := public.record_manual_invoice_payment(X, 200.00, 'EFT-X-PART', now(), 'eft');
+  select status into st from public.opps_invoices where id = X;
+  if public.invoice_payment_status(X) = 'partial' and st = 'exported'
+  then raise notice 'PASS 12b exported invoice partial payment -> payment_status partial, commercial status still exported';
+  else raise notice 'FAIL 12b status=% pay=%', st, public.invoice_payment_status(X); end if;
+
+  -- 13 · FAIL CLOSED: with the order/payment bridge gone, a manual payment
+  --      on an order-linked invoice must REJECT (typed), writing nothing
+  drop table public.xlab_payments cascade;
+  begin
+    perform public.record_manual_invoice_payment(BR, 300.00, 'EFT-BR-1', now(), 'eft');
+    raise notice 'FAIL 13 expected BRIDGE_SCHEMA_MISSING, none raised';
+  exception when others then
+    select count(*) into n from public.invoice_payments where invoice_id = BR;
+    select count(*) into act from public.opps_invoice_activity where invoice_id = BR;
+    if sqlerrm like 'INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING%' and n = 0 and act = 0
+    then raise notice 'PASS 13 bridge schema missing -> rejected, 0 ledger rows, 0 audit rows';
+    else raise notice 'FAIL 13 err=% ledger=% audit=%', sqlerrm, n, act; end if;
+  end;
+
   raise notice 'RESULT: DONE';
 end $$;
 SQL
 echo "-----------------------------------------"
-echo "RESULT: PASS (migration applies + idempotent; 20 acceptance assertions green, incl. atomic audit event + audit-failure rollback)"
+echo "RESULT: PASS (migration applies + idempotent; 23 acceptance assertions green, incl. atomic audit event, audit-failure rollback, commercial-status preservation, fail-closed bridge)"

@@ -1115,6 +1115,7 @@ const MANUAL_PAYMENT_ERROR_MESSAGES = {
   INVOICE_PAYMENT_REFERENCE_REQUIRED: "A payment reference is required.",
   INVOICE_PAYMENT_IDEMPOTENCY_CONFLICT: "This reference is already recorded with a different amount, date or method.",
   INVOICE_PAYMENT_UNRECONCILED_ORDER_PAYMENT: "The linked order has a platform payment that has not been reconciled onto this invoice yet. Reconcile that first, then record only the outstanding amount.",
+  INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING: "Could not verify existing order payments for this invoice. Ask an administrator to check the order/payment sync before recording this payment.",
   INVOICE_PAYMENT_OVERPAYMENT: "That amount is more than the outstanding balance on this invoice.",
 };
 

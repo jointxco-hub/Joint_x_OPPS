@@ -175,18 +175,52 @@ test("16 · recordInvoicePayment is RPC + refetch only - NO client-side audit or
 test("17 · the migration RPC does the status mirror + audit event atomically (server-side)", async () => {
   const sql = await src(MIGRATION);
   // compat status mirror, derived, guarded, no amount write
-  assert.match(sql, /v_status_after := public\.invoice_payment_status\(p_invoice_id\)/);
+  assert.match(sql, /v_status_after\s+:= public\.invoice_payment_status\(p_invoice_id\)/);
+  assert.match(sql, /v_effective_status := v_invoice\.status;\s+-- default: unchanged/);
   assert.match(sql, /when 'paid'\s+then 'paid'/);
   assert.match(sql, /when 'partial' then 'partially_paid'/);
-  assert.match(sql, /v_invoice\.status not in \('void', 'draft'\)\s*\n\s*and v_invoice\.status is distinct from v_new_status/);
   assert.match(sql, /update public\.opps_invoices\s*\n\s*set status = v_new_status, updated_by = v_user_id/);
+  assert.match(sql, /v_effective_status := v_new_status;/);
   assert.doesNotMatch(sql, /update public\.opps_invoices[\s\S]{0,120}(amount_paid|balance_due)\s*=/);
-  // one audit row, same txn, on the non-replay path
+  // one audit row, same txn, on the non-replay path; from/to = real lifecycle
   assert.match(sql, /insert into public\.opps_invoice_activity \(/);
   assert.match(sql, /'invoice_payment_recorded', 'Payment recorded'/);
+  assert.match(sql, /v_invoice\.status,\s+-- from_status[\s\S]{0,80}v_effective_status,\s+-- to_status/);
+  assert.doesNotMatch(sql, /coalesce\(v_new_status, v_invoice\.status\)/);
   for (const key of ["'payment_id'", "'amount'", "'source'", "'method'", "'reference'", "'actor'", "'paid_at'"]) {
     assert.match(sql, new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `audit metadata missing ${key}`);
   }
+});
+
+test("17-lifecycle · compat mirror advances ONLY safe payment-cycle states, never commercial ones", async () => {
+  const sql = await src(MIGRATION);
+  // the write allow-list is exactly approved / partially_paid, plus overdue only when fully paid
+  assert.match(sql, /if v_invoice\.status in \('approved', 'partially_paid'\) then/);
+  assert.match(sql, /elsif v_invoice\.status = 'overdue' and v_status_after = 'paid' then\s*\n\s*v_new_status := 'paid';/);
+  // the mutable predicate is on v_new_status, not a blunt "not in (void,draft)"
+  assert.match(sql, /if v_new_status is not null and v_new_status is distinct from v_invoice\.status then/);
+  assert.doesNotMatch(sql, /v_invoice\.status not in \('void', 'draft'\)/);
+  // exported / imported_to_zoho must never appear in a status-write allow-list
+  const mirror = sql.slice(sql.indexOf("compat status mirror"), sql.indexOf("canonical payment audit event"));
+  assert.doesNotMatch(mirror, /status in \([^)]*exported/);
+  assert.doesNotMatch(mirror, /status in \([^)]*imported_to_zoho/);
+  assert.doesNotMatch(mirror, /set status = 'exported'|set status = 'imported_to_zoho'/);
+});
+
+test("17-failclosed · the cross-source guard fails closed on a missing/incompatible bridge", async () => {
+  const sql = await src(MIGRATION);
+  // no fail-open assignment in the handler
+  assert.doesNotMatch(sql, /exception when undefined_table or undefined_column then\s*\n\s*v_has_unreconciled := false/);
+  assert.doesNotMatch(sql, /bridge tables absent in this env/);
+  // typed reject instead
+  assert.match(sql, /exception when undefined_table or undefined_column then[\s\S]{0,400}raise exception using errcode = 'P0001',[\s\S]{0,200}INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING/);
+  // migration preflight also requires the bridge tables
+  assert.match(sql, /to_regclass\('public\.orders'\) is null\s*\n\s*or to_regclass\('public\.xlab_orders'\) is null\s*\n\s*or to_regclass\('public\.xlab_payments'\) is null/);
+});
+
+test("17-failclosed-fe · the frontend error map surfaces the bridge-schema code", async () => {
+  const js = await src(API);
+  assert.match(js, /INVOICE_PAYMENT_BRIDGE_SCHEMA_MISSING:\s*"[^"]+"/);
 });
 
 test("17b · both replay paths return before the audit insert (no second event on replay)", async () => {
