@@ -17,11 +17,11 @@ import {
   listInvoiceActivity,
   listSiblingInvoicesForOrder,
   listInvoices,
+  getInvoicePaymentSummary,
   markInvoiceExported,
   markInvoiceImportedToZoho,
-  markInvoicePaid,
-  markInvoicePartiallyPaid,
   markInvoiceVoid,
+  recordInvoicePayment,
   refreshInvoiceContactDetails,
   reopenInvoice,
   revokeInvoiceShare,
@@ -103,6 +103,12 @@ export default function Invoices() {
   const activityQuery = useQuery({
     queryKey: ["invoiceActivity", selectedInvoice?.id],
     queryFn: () => listInvoiceActivity(selectedInvoice.id),
+    enabled: canAccess && Boolean(selectedInvoice?.id),
+  });
+
+  const paymentSummaryQuery = useQuery({
+    queryKey: ["invoicePaymentSummary", selectedInvoice?.id],
+    queryFn: () => getInvoicePaymentSummary(selectedInvoice.id),
     enabled: canAccess && Boolean(selectedInvoice?.id),
   });
 
@@ -263,26 +269,17 @@ export default function Invoices() {
     onError: (error) => toast.error(error?.message || "Could not mark imported"),
   });
 
-  const paidMutation = useMutation({
-    mutationFn: (invoice) => markInvoicePaid(invoice.id),
-    onSuccess: () => {
-      toast.success("Invoice marked paid");
+  const recordPaymentMutation = useMutation({
+    mutationFn: ({ invoice, amount, method, reference, paidAt, note, mode }) =>
+      recordInvoicePayment({ invoice, amount, method, reference, paidAt, note, mode }),
+    onSuccess: (result) => {
+      toast.success(result?.replayed ? "That payment was already recorded" : "Payment recorded");
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoicePaymentSummary", selectedInvoice?.id] });
     },
-    onError: (error) => toast.error(error?.message || "Could not mark paid"),
-  });
-
-  const partialPaymentMutation = useMutation({
-    mutationFn: ({ invoice, amountPaid, note }) => markInvoicePartiallyPaid(invoice.id, amountPaid, note),
-    onSuccess: () => {
-      toast.success("Payment status updated");
-      queryClient.invalidateQueries({ queryKey: ["invoices"] });
-      queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
-      queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
-    },
-    onError: (error) => toast.error(error?.message || "Could not update payment"),
+    onError: (error) => toast.error(error?.message || "Could not record the payment"),
   });
 
   const voidMutation = useMutation({
@@ -496,8 +493,9 @@ export default function Invoices() {
         }}
         onMarkExported={(invoice, result) => markExportedMutation.mutate({ invoice, result })}
         onMarkImported={(invoice) => importedMutation.mutate(invoice)}
-        onMarkPaid={(invoice) => paidMutation.mutate(invoice)}
-        onMarkPartiallyPaid={(invoice, amountPaid, note) => partialPaymentMutation.mutate({ invoice, amountPaid, note })}
+        onRecordPayment={(invoice, payload) => recordPaymentMutation.mutateAsync({ invoice, ...payload })}
+        isRecordPaymentPending={recordPaymentMutation.isPending}
+        ledgerSummary={paymentSummaryQuery.data}
         onMarkVoid={(invoice) => voidMutation.mutate(invoice)}
         onVoidDuplicate={(invoice) => voidMutation.mutate(invoice)}
         onDuplicateDraft={(invoice) => duplicateMutation.mutate(invoice)}

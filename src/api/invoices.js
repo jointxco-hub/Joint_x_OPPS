@@ -444,6 +444,7 @@ const ACTIVITY_LABELS = {
   invoice_imported_to_zoho: "Invoice imported to Zoho",
   invoice_marked_partially_paid: "Invoice marked partially paid",
   invoice_marked_paid: "Invoice marked paid",
+  invoice_payment_recorded: "Payment recorded",
   invoice_voided: "Invoice voided",
   invoice_duplicated: "Invoice duplicated",
   invoice_linked_to_order: "Linked to order",
@@ -1093,82 +1094,155 @@ export async function duplicateInvoiceAsDraft(id) {
   return duplicated;
 }
 
-export async function markInvoicePaid(id) {
-  ensureSupabase();
-  const invoice = await getInvoice(id);
-  if (invoice.status === "draft") {
-    throw new Error("Approve the invoice before marking it paid.");
-  }
-  if (invoice.status === "void") {
-    throw new Error("Void invoices cannot be marked paid.");
-  }
+// ── canonical manual-payment ledger (P1A) ──────────────────────────────
+// OPPS payments no longer write opps_invoices.status/amount_paid/balance_due
+// directly. They insert ONE row into public.invoice_payments via
+// record_manual_invoice_payment(); the P1A AFTER trigger refreshes the
+// opps_invoices cache and the P3 public projection derives customer-visible
+// truth from the same ledger. See
+// supabase/migrations/20260907120000_record_manual_invoice_payment.sql.
+const MANUAL_PAYMENT_ERROR_MESSAGES = {
+  INVOICE_PAYMENT_AUTH_REQUIRED: "Sign in again to record this payment.",
+  INVOICE_NOT_FOUND: "This invoice could not be found.",
+  INVOICE_PAYMENT_ACCESS_DENIED: "You do not have permission to record payments on this invoice.",
+  INVOICE_PAYMENT_INVOICE_NOT_APPROVED: "Approve the invoice before recording a payment.",
+  INVOICE_PAYMENT_INVOICE_VOID: "Void invoices cannot take payments.",
+  INVOICE_PAYMENT_AMOUNT_REQUIRED: "Enter the payment amount.",
+  INVOICE_PAYMENT_AMOUNT_INVALID: "The payment amount must be greater than zero.",
+  INVOICE_PAYMENT_AMOUNT_PRECISION: "Use at most two decimal places for the amount.",
+  INVOICE_PAYMENT_REFERENCE_REQUIRED: "A payment reference is required.",
+  INVOICE_PAYMENT_IDEMPOTENCY_CONFLICT: "This reference is already recorded with a different amount, date or method.",
+  INVOICE_PAYMENT_UNRECONCILED_ORDER_PAYMENT: "The linked order has a platform payment that has not been reconciled onto this invoice yet. Reconcile that first, then record only the outstanding amount.",
+  INVOICE_PAYMENT_OVERPAYMENT: "That amount is more than the outstanding balance on this invoice.",
+};
 
-  const { data, error } = await supabase
-    .from("opps_invoices")
-    .update({
-      status: "paid",
-      amount_paid: invoice.total || 0,
-      balance_due: 0,
-      updated_by: await getAuthUserId(),
-    })
-    .eq("id", id)
-    .select(INVOICE_LIST_COLUMNS)
-    .single();
-
-  if (error) throw new Error(error.message);
-  await createInvoiceActivity(id, {
-    activity_type: "invoice_marked_paid",
-    from_status: invoice.status,
-    to_status: "paid",
-  });
-  return data;
+function normalisePaymentProjection(projection) {
+  const row = Array.isArray(projection) ? projection[0] : projection;
+  return {
+    amount_paid: Number(row?.amount_paid || 0),
+    balance_due: Number(row?.balance_due || 0),
+    payment_status: row?.payment_status || "unpaid",
+    overdue: Boolean(row?.overdue),
+  };
 }
 
-export async function markInvoicePartiallyPaid(id, amountPaid, note = "") {
+// Ledger-derived payment truth for one invoice (staff read RPC, P1A).
+export async function getInvoicePaymentSummary(invoiceId) {
   ensureSupabase();
-  const invoice = await getInvoice(id);
-  if (invoice.status === "draft") {
-    throw new Error("Approve the invoice before recording a payment.");
-  }
-  if (invoice.status === "void") {
-    throw new Error("Void invoices cannot be marked paid.");
-  }
-
-  const paid = Number(amountPaid);
-  const total = Number(invoice.total || 0);
-  if (!Number.isFinite(paid) || paid < 0) {
-    throw new Error("Amount paid must be 0 or more.");
-  }
-  if (paid > total) {
-    throw new Error("Amount paid cannot be greater than the invoice total.");
-  }
-
-  const internalNote = note
-    ? [invoice.internal_notes, `Partial payment note: ${note}`].filter(Boolean).join("\n")
-    : invoice.internal_notes;
-
-  const { data, error } = await supabase
-    .from("opps_invoices")
-    .update({
-      status: "partially_paid",
-      amount_paid: paid,
-      balance_due: Math.max(total - paid, 0),
-      internal_notes: internalNote || null,
-      updated_by: await getAuthUserId(),
-    })
-    .eq("id", id)
-    .select(INVOICE_LIST_COLUMNS)
-    .single();
-
-  if (error) throw new Error(error.message);
-  await createInvoiceActivity(id, {
-    activity_type: "invoice_marked_partially_paid",
-    activity_note: note || null,
-    from_status: invoice.status,
-    to_status: "partially_paid",
-    metadata: { amount_paid: paid, balance_due: Math.max(total - paid, 0) },
+  const { data, error } = await supabase.rpc("get_invoice_payment_summary", {
+    p_invoice_id: invoiceId,
   });
-  return data;
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load the payment summary.");
+  return normalisePaymentProjection(data);
+}
+
+// Thin caller for the canonical RPC. p_amount is a NEW payment (not a
+// running total). Returns { ok, replayed, payment_id, projection }.
+export async function recordManualInvoicePayment({
+  invoiceId,
+  amount,
+  reference,
+  paidAt = null,
+  method = "eft",
+  note = null,
+  idempotencyKey = null,
+}) {
+  ensureSupabase();
+  const params = {
+    p_invoice_id: invoiceId,
+    p_amount: amount,
+    p_reference: reference,
+    p_method: method || "eft",
+  };
+  if (paidAt) params.p_paid_at = paidAt;
+  if (note && String(note).trim()) params.p_note = String(note).trim();
+  if (idempotencyKey && String(idempotencyKey).trim()) params.p_idempotency_key = String(idempotencyKey).trim();
+
+  const { data, error } = await supabase.rpc("record_manual_invoice_payment", params);
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not record the payment.");
+  return {
+    ok: data?.ok === true,
+    replayed: data?.replayed === true,
+    payment_id: data?.payment_id || null,
+    projection: normalisePaymentProjection(data?.projection),
+  };
+}
+
+const PAYMENT_METHOD_LABELS = {
+  eft: "EFT / bank transfer",
+  cash: "Cash",
+  card: "Card",
+  other: "Other",
+};
+
+// opps_invoices.status is a DISPLAY enum for the OPPS list/badge only; the
+// ledger is authoritative. After a payment the P1A trigger refreshes
+// amount_paid/balance_due but not status, so mirror the ledger-derived
+// payment_status onto it. Non-fatal: a failure here never masks a
+// successful ledger write.
+async function syncInvoiceDisplayStatusFromLedger(id, currentStatus, projection) {
+  const next = projection.payment_status === "paid"
+    ? "paid"
+    : projection.payment_status === "partial"
+      ? "partially_paid"
+      : null;
+  if (!next || next === currentStatus || ["void", "draft"].includes(currentStatus)) return;
+  const { error } = await supabase
+    .from("opps_invoices")
+    .update({ status: next, updated_by: await getAuthUserId() })
+    .eq("id", id);
+  if (error) invoiceDiagnostic("invoice-status-sync-failed", { invoiceId: id, error });
+}
+
+// UI-facing orchestrator: record one payment, mirror display status, log
+// activity, return the fresh invoice row. `mode` is 'pay' | 'partial' |
+// 'reconcile' (audit only).
+export async function recordInvoicePayment({
+  invoice,
+  amount,
+  method = "eft",
+  reference,
+  paidAt = null,
+  note = null,
+  mode = "pay",
+}) {
+  ensureSupabase();
+  if (!invoice?.id) throw new Error("An invoice is required to record a payment.");
+
+  const result = await recordManualInvoicePayment({
+    invoiceId: invoice.id,
+    amount,
+    reference,
+    paidAt,
+    method,
+    note,
+  });
+
+  if (!result.replayed) {
+    await syncInvoiceDisplayStatusFromLedger(invoice.id, invoice.status, result.projection);
+    const methodLabel = PAYMENT_METHOD_LABELS[method] || method || "Payment";
+    const amountLabel = `R${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    await createInvoiceActivity(invoice.id, {
+      activity_type: "invoice_payment_recorded",
+      activity_note: `${methodLabel} ${amountLabel} · ref ${reference}${note ? ` · ${note}` : ""}`,
+      from_status: invoice.status,
+      to_status: result.projection.payment_status === "paid" ? "paid" : invoice.status,
+      metadata: {
+        amount: Number(amount),
+        method,
+        reference,
+        paid_at: paidAt,
+        payment_id: result.payment_id,
+        mode,
+        amount_paid: result.projection.amount_paid,
+        balance_due: result.projection.balance_due,
+        payment_status: result.projection.payment_status,
+      },
+    });
+  }
+
+  const fresh = await getInvoice(invoice.id);
+  return { ...result, invoice: fresh };
 }
 
 export async function markInvoiceVoid(id) {

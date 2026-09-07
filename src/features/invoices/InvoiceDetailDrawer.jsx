@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Ban, Clock3, Copy, CreditCard, Download, CheckCircle2, MoreHorizontal, Pencil, Printer, RefreshCw, RotateCcw, RotateCw, Share2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Drawer,
@@ -21,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
+import InvoicePaymentModal from "./InvoicePaymentModal";
 import InvoiceStatusBadge from "./InvoiceStatusBadge";
 import OrderLinkPanel from "./OrderLinkPanel";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
@@ -98,8 +98,9 @@ export default function InvoiceDetailDrawer({
   onEditDraft,
   onMarkExported,
   onMarkImported,
-  onMarkPaid,
-  onMarkPartiallyPaid,
+  onRecordPayment,
+  isRecordPaymentPending = false,
+  ledgerSummary,
   onMarkVoid,
   onVoidDuplicate,
   onDuplicateDraft,
@@ -120,9 +121,8 @@ export default function InvoiceDetailDrawer({
   onRotateShare,
   isRotateSharePending = false,
 }) {
-  const [partialPaymentOpen, setPartialPaymentOpen] = useState(false);
-  const [partialAmount, setPartialAmount] = useState("");
-  const [partialNote, setPartialNote] = useState("");
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentModalMode, setPaymentModalMode] = useState("pay");
   const [voidConfirmOpen, setVoidConfirmOpen] = useState(false);
   const [revokeShareConfirmOpen, setRevokeShareConfirmOpen] = useState(false);
   const [duplicateToVoid, setDuplicateToVoid] = useState(null);
@@ -159,6 +159,21 @@ export default function InvoiceDetailDrawer({
   const displayStates = getInvoiceDisplayStates(invoice);
   const isDraft = invoice?.status === "draft";
   const canTakePayment = invoice && !["draft", "paid", "void"].includes(invoice.status);
+  // Ledger-derived (P1A) payment truth for this invoice, passed from the
+  // page. opps_invoices.amount_paid/balance_due are only a trigger cache.
+  const ledgerBalance = Number(
+    ledgerSummary?.balance_due ?? (Number(invoice?.total || 0) - Number(invoice?.amount_paid || 0))
+  );
+  const ledgerPaid = Number(ledgerSummary?.amount_paid ?? invoice?.amount_paid ?? 0);
+  // A legacy invoice flipped to paid by the old direct write, but with
+  // nothing in the canonical ledger: the customer view still shows it
+  // unpaid. This is a reconciliation, not a second payment. (A
+  // partially_paid legacy invoice still takes the normal Record payment
+  // path since canTakePayment stays true for it.)
+  const needsReconcile = Boolean(invoice)
+    && invoice.status === "paid"
+    && ledgerPaid < 0.01
+    && Number(invoice.total || 0) > 0;
   // Eligible to issue a public link at all: matches issue_invoice()'s own
   // guard (void refused) plus a client-side rule the RPC doesn't enforce —
   // a draft invoice technically CAN be issued (the RPC auto-approves it as
@@ -166,10 +181,10 @@ export default function InvoiceDetailDrawer({
   // (Approve) rather than something a share click does silently.
   const shareEligible = Boolean(invoice) && !isDraft && invoice.status !== "void";
   const shareActive = hasActiveShare(invoice);
-  const partialAmountNumber = Number(partialAmount);
-  const partialAmountInvalid = !Number.isFinite(partialAmountNumber)
-    || partialAmountNumber < 0
-    || partialAmountNumber > Number(invoice?.total || 0);
+  const openPayment = (mode) => {
+    setPaymentModalMode(mode);
+    setPaymentModalOpen(true);
+  };
 
   const exportSingle = async () => {
     if (!invoice) return;
@@ -178,18 +193,6 @@ export default function InvoiceDetailDrawer({
     if (invoice.status === "approved") {
       await onMarkExported?.(invoice, result);
     }
-  };
-
-  const openPartialPayment = () => {
-    setPartialAmount(invoice?.amount_paid ? String(invoice.amount_paid) : "");
-    setPartialNote("");
-    setPartialPaymentOpen(true);
-  };
-
-  const submitPartialPayment = () => {
-    if (!invoice || partialAmountInvalid) return;
-    onMarkPartiallyPaid?.(invoice, partialAmountNumber, partialNote);
-    setPartialPaymentOpen(false);
   };
 
   // Standalone invoices remain valid - this never forces every invoice to
@@ -414,8 +417,13 @@ export default function InvoiceDetailDrawer({
                     <MoreHorizontal className="h-3.5 w-3.5" /> More
                   </Button>
                   {canTakePayment && (
-                    <Button size="sm" onClick={() => onMarkPaid?.(invoice)} className="col-span-3 h-9 rounded-xl text-xs sm:col-span-1 sm:text-sm">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Mark paid
+                    <Button size="sm" onClick={() => openPayment("pay")} className="col-span-3 h-9 rounded-xl text-xs sm:col-span-1 sm:text-sm">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Record payment
+                    </Button>
+                  )}
+                  {needsReconcile && (
+                    <Button variant="outline" size="sm" onClick={() => openPayment("reconcile")} className="col-span-3 h-9 rounded-xl text-xs text-amber-700 hover:text-amber-700 sm:col-span-1 sm:text-sm">
+                      <AlertTriangle className="h-3.5 w-3.5" /> Reconcile payment
                     </Button>
                   )}
                 </div>
@@ -479,8 +487,8 @@ export default function InvoiceDetailDrawer({
                       </Button>
                     )}
                     {canTakePayment && (
-                      <Button variant="outline" size="sm" onClick={openPartialPayment} className="h-8 rounded-xl text-xs">
-                        <CreditCard className="h-3.5 w-3.5" /> Partial
+                      <Button variant="outline" size="sm" onClick={() => openPayment("partial")} className="h-8 rounded-xl text-xs">
+                        <CreditCard className="h-3.5 w-3.5" /> Partial payment
                       </Button>
                     )}
                     {canReopen && !['draft', 'paid', 'void'].includes(invoice.status) && (
@@ -506,42 +514,16 @@ export default function InvoiceDetailDrawer({
         </div>
       </DrawerContent>
     </Drawer>
-    <Dialog open={partialPaymentOpen} onOpenChange={setPartialPaymentOpen}>
-      <DialogContent className="rounded-2xl">
-        <DialogHeader>
-          <DialogTitle>Mark partially paid</DialogTitle>
-          <DialogDescription>Record the total amount paid so far. This updates OPPS only.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <Input
-            value={partialAmount}
-            onChange={(event) => setPartialAmount(event.target.value)}
-            type="number"
-            min="0"
-            max={invoice?.total || 0}
-            step="0.01"
-            placeholder="Amount paid"
-            className="h-11 rounded-xl"
-          />
-          {partialAmountNumber > Number(invoice?.total || 0) && (
-            <p className="text-sm text-destructive">Amount paid cannot be greater than the invoice total.</p>
-          )}
-          <Textarea
-            value={partialNote}
-            onChange={(event) => setPartialNote(event.target.value)}
-            placeholder="Optional note"
-            className="min-h-20 rounded-xl"
-          />
-          <div className="rounded-xl bg-secondary/50 p-3 text-sm text-muted-foreground">
-            Balance after payment: {money(Math.max(Number(invoice?.total || 0) - (Number.isFinite(partialAmountNumber) ? partialAmountNumber : 0), 0))}
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setPartialPaymentOpen(false)} className="rounded-xl">Cancel</Button>
-          <Button onClick={submitPartialPayment} disabled={partialAmountInvalid} className="rounded-xl">Save payment status</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <InvoicePaymentModal
+      open={paymentModalOpen}
+      onOpenChange={setPaymentModalOpen}
+      invoice={invoice}
+      mode={paymentModalMode}
+      outstandingBalance={ledgerBalance}
+      recordedPaid={ledgerPaid}
+      isPending={isRecordPaymentPending}
+      onSubmit={(payload) => onRecordPayment?.(invoice, payload)}
+    />
     <Dialog open={unlinkedApproveWarningOpen} onOpenChange={setUnlinkedApproveWarningOpen}>
       <DialogContent className="rounded-2xl">
         <DialogHeader>
