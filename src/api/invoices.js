@@ -708,11 +708,18 @@ export async function reopenInvoice(invoiceId, reason) {
   return data;
 }
 
-// Production public-invoice host — X LAB's customer-facing app, never a
-// preview/staging URL. The share token itself is the only variable part;
-// this constant is deliberately not env-driven so a preview deploy can
-// never accidentally mint a link pointing at itself.
-const PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";
+// Production public-invoice host — X LAB's customer-facing app. Production
+// and every real deploy leave VITE_PUBLIC_INVOICE_BASE_URL UNSET, so this
+// falls back to the hardcoded production base and a preview deploy can
+// never mint a link pointing at itself. The override exists ONLY for a
+// local dev build wired to a non-production database (e.g. the staging
+// project): set it in an uncommitted .env.local to a local X LAB
+// dev-server base (its dev origin + "/i"). It must never be set in a
+// production or preview deployment environment.
+const PRODUCTION_PUBLIC_INVOICE_BASE_URL = "https://xlab.jointx.co.za/i";
+const PUBLIC_INVOICE_BASE_URL =
+  String(import.meta.env.VITE_PUBLIC_INVOICE_BASE_URL || "").trim().replace(/\/+$/, "") ||
+  PRODUCTION_PUBLIC_INVOICE_BASE_URL;
 
 export function buildPublicInvoiceUrl(shareToken) {
   return `${PUBLIC_INVOICE_BASE_URL}/${shareToken}`;
