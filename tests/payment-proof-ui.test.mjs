@@ -11,6 +11,7 @@ const SECTION = "src/features/invoices/InvoicePaymentsSection.jsx";
 const DRAWER = "src/features/invoices/InvoiceDetailDrawer.jsx";
 const PAGE = "src/pages/Invoices.jsx";
 const API = "src/api/invoices.js";
+const RULES = "src/features/invoices/paymentProofRules.js";
 const HARDEN = "supabase/migrations/20260907140000_payment_proof_storage_hardening.sql";
 
 // ── modal ────────────────────────────────────────────────────────────
@@ -33,14 +34,30 @@ test("2 · reference and proof are optional; confirm gates only on amount / acti
   assert.doesNotMatch(jsx, /referenceValid/);
 });
 
-test("3 · multi-file JPG/PNG/PDF picker + drag-drop; 15 MB / type rejected client-side", async () => {
+test("3 · multi-file JPG/PNG/PDF picker + drag-drop; 15 MB / type rejected client-side via the leaf rules module", async () => {
   const jsx = await src(MODAL);
   assert.match(jsx, /accept=\{ACCEPT_ATTR\}/);
   assert.match(jsx, /const ACCEPT_ATTR = "\.jpg,\.jpeg,\.png,\.pdf,image\/jpeg,image\/png,application\/pdf"/);
   assert.match(jsx, /<input\s+ref=\{fileInputRef\}\s+type="file"\s+accept=\{ACCEPT_ATTR\}\s+multiple/);
   assert.match(jsx, /onDrop=\{\(e\) => \{ e\.preventDefault\(\); setDragActive\(false\); addFiles\(e\.dataTransfer\?\.files\); \}\}/);
-  assert.match(jsx, /if \(!PAYMENT_PROOF_ACCEPT\.includes\(type\)\) return "Only JPG, PNG or PDF/);
-  assert.match(jsx, /Number\(file\?\.size \|\| 0\) > PAYMENT_PROOF_MAX_BYTES\) return "File is larger than 15 MB/);
+  // client-side validation is the shared leaf helper, imported (not pulled through the api module)
+  assert.match(jsx, /import \{ paymentProofFileProblem \} from "@\/features\/invoices\/paymentProofRules"/);
+  assert.match(jsx, /const fileProblem = paymentProofFileProblem;/);
+  assert.match(jsx, /const problem = fileProblem\(file\);/);
+});
+
+test("3b · shared proof rules live in a leaf module; api re-exports the constants", async () => {
+  const rules = await src(RULES);
+  assert.match(rules, /export const PAYMENT_PROOF_ACCEPT = \["image\/jpeg", "image\/jpg", "image\/png", "application\/pdf"\]/);
+  assert.match(rules, /export const PAYMENT_PROOF_MAX_BYTES = 15 \* 1024 \* 1024/);
+  assert.match(rules, /export function paymentProofFileProblem\(file\)/);
+  assert.match(rules, /if \(!PAYMENT_PROOF_ACCEPT\.includes\(type\)\) return "Only JPG, PNG or PDF/);
+  assert.match(rules, /Number\(file\?\.size \|\| 0\) > PAYMENT_PROOF_MAX_BYTES\) return "Proof-of-payment files must be 15 MB or smaller/);
+  // leaf: no imports at all
+  assert.doesNotMatch(rules, /^import /m);
+  const js = await src(API);
+  assert.match(js, /import \{ PAYMENT_PROOF_ACCEPT, PAYMENT_PROOF_MAX_BYTES \} from "@\/features\/invoices\/paymentProofRules"/);
+  assert.match(js, /export \{ PAYMENT_PROOF_ACCEPT, PAYMENT_PROOF_MAX_BYTES \};/);
 });
 
 test("4 · staging goes through the RPC helper, not a direct table write; per-file states", async () => {

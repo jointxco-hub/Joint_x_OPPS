@@ -14,6 +14,7 @@ import {
 } from "@/features/invoices/zohoInvoiceExportConfig";
 import { buildOrderInvoiceSyncPlan, buildInvoiceOrderSyncPlan, buildShippingDiff, annotateProductionDataConflicts } from "@/features/invoices/orderToInvoiceItems";
 import { normalisePaymentProjection } from "@/features/invoices/paymentProjection";
+import { PAYMENT_PROOF_ACCEPT, PAYMENT_PROOF_MAX_BYTES } from "@/features/invoices/paymentProofRules";
 import { toPrivateUploadRef, getSignedFileUrl } from "@/lib/privateFiles";
 import {
   INVOICE_SETTING_KEYS,
@@ -1134,10 +1135,9 @@ const MANUAL_PAYMENT_ERROR_MESSAGES = {
   INVOICE_PAYMENT_NOT_FOUND: "That payment record no longer exists.",
 };
 
-// Proof-of-payment file rules (must match the payment_attachments CHECK
-// constraints in 20260907130000). Kept here so the modal can reject early.
-export const PAYMENT_PROOF_ACCEPT = ["image/jpeg", "image/jpg", "image/png", "application/pdf"];
-export const PAYMENT_PROOF_MAX_BYTES = 15 * 1024 * 1024;
+// Re-exported for callers that already import proof rules from the api
+// module. The definitions live in the leaf module paymentProofRules.js.
+export { PAYMENT_PROOF_ACCEPT, PAYMENT_PROOF_MAX_BYTES };
 
 function assertPaymentProofFile(file) {
   const type = String(file?.type || "").toLowerCase();

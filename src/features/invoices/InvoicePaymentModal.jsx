@@ -13,9 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { paymentProofFileProblem } from "@/features/invoices/paymentProofRules";
 import {
-  PAYMENT_PROOF_ACCEPT,
-  PAYMENT_PROOF_MAX_BYTES,
   cleanupAbandonedPaymentProof,
   getPaymentProofSignedUrl,
   newPaymentOperationKey,
@@ -45,12 +44,7 @@ function prettySize(bytes) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
-function fileProblem(file) {
-  const type = String(file?.type || "").toLowerCase();
-  if (!PAYMENT_PROOF_ACCEPT.includes(type)) return "Only JPG, PNG or PDF files can be attached.";
-  if (Number(file?.size || 0) > PAYMENT_PROOF_MAX_BYTES) return "File is larger than 15 MB.";
-  return null;
-}
+const fileProblem = paymentProofFileProblem;
 
 // One compact modal for every ledger payment entry. `mode`:
 //   pay        - settle the outstanding balance (amount defaults to it)
