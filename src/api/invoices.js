@@ -1245,6 +1245,45 @@ export async function cleanupAbandonedPaymentProof(operationKey, olderThanMinute
   return { ok: true, removed: removed.length };
 }
 
+// One stable key per intentional payment attempt. Reused across retries so
+// the canonical RPC replays instead of double-charging.
+export function newPaymentOperationKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+// Ledger entries for an invoice + their proof attachments, for the drawer's
+// Payments history. Finance-only (RLS enforced). Superseded proof is
+// included so retired evidence stays visible with its reason.
+export async function listInvoicePaymentsWithProof(invoiceId) {
+  ensureSupabase();
+  if (!invoiceId) return [];
+  const { data: payments, error } = await supabase
+    .from("invoice_payments")
+    .select("id, amount, paid_at, method, reference, source, client_operation_key, created_at, created_by, metadata")
+    .eq("invoice_id", invoiceId)
+    .order("paid_at", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) throw rpcSafetyError(error, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load payments.");
+  const rows = payments || [];
+  if (!rows.length) return [];
+
+  const { data: attachments, error: attErr } = await supabase
+    .from("payment_attachments")
+    .select("*")
+    .eq("invoice_id", invoiceId)
+    .order("created_at", { ascending: true });
+  if (attErr) throw rpcSafetyError(attErr, MANUAL_PAYMENT_ERROR_MESSAGES, "Could not load proof of payment.");
+
+  const byPayment = new Map();
+  for (const a of attachments || []) {
+    if (!a.payment_id) continue;
+    if (!byPayment.has(a.payment_id)) byPayment.set(a.payment_id, []);
+    byPayment.get(a.payment_id).push(a);
+  }
+  return rows.map((p) => ({ ...p, attachments: byPayment.get(p.id) || [] }));
+}
+
 // Proof rows for a recorded payment (excludes superseded unless asked).
 export async function listPaymentAttachments({ paymentId, includeSuperseded = false }) {
   ensureSupabase();

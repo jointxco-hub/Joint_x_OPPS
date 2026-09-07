@@ -21,6 +21,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ConfirmDialog from "@/components/common/ConfirmDialog";
 import InvoicePaymentModal from "./InvoicePaymentModal";
+import InvoicePaymentsSection from "./InvoicePaymentsSection";
 import InvoiceStatusBadge from "./InvoiceStatusBadge";
 import OrderLinkPanel from "./OrderLinkPanel";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
@@ -101,6 +102,11 @@ export default function InvoiceDetailDrawer({
   onRecordPayment,
   isRecordPaymentPending = false,
   ledgerSummary,
+  payments = [],
+  canRetireProof = false,
+  isProofBusy = false,
+  onAddPaymentProof,
+  onRetirePaymentProof,
   onMarkVoid,
   onVoidDuplicate,
   onDuplicateDraft,
@@ -392,6 +398,14 @@ export default function InvoiceDetailDrawer({
                   ))}
                 </div>
               </div>
+
+              <InvoicePaymentsSection
+                payments={payments}
+                canRetireProof={canRetireProof}
+                isProofBusy={isProofBusy}
+                onAddProof={onAddPaymentProof}
+                onRetireProof={onRetirePaymentProof}
+              />
 
               <ActivitySection activity={activity} isLoading={isActivityLoading} />
               <div className="sticky bottom-0 -mx-3 border-t border-border bg-background/95 px-3 py-2.5 backdrop-blur sm:static sm:mx-0 sm:bg-transparent sm:px-0 sm:pt-4">

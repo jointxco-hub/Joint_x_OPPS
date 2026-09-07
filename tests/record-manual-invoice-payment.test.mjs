@@ -284,18 +284,20 @@ test("19 · modal defaults amount to the outstanding balance except in partial m
   assert.match(jsx, /mode === "partial" \? "" : balance > 0 \? String\(balance\.toFixed\(2\)\) : ""/);
 });
 
-test("20 · modal blocks submit while pending, on empty reference, and on overpayment", async () => {
+test("20 · modal blocks submit while pending, on overpayment, or an unfinished upload (reference + proof optional)", async () => {
   const jsx = await src(MODAL);
-  assert.match(jsx, /const referenceValid = reference\.trim\(\)\.length > 0/);
   assert.match(jsx, /amountNumber > balance \+ OVERPAY_TOLERANCE/);
-  assert.match(jsx, /const canSubmit = amountValid && !overBalance && referenceValid && !isPending/);
+  assert.match(jsx, /const canSubmit = amountValid && !overBalance && !isPending && !uploading && !failed;/);
   assert.match(jsx, /disabled=\{!canSubmit\}/);
+  // reference is no longer required
+  assert.doesNotMatch(jsx, /referenceValid/);
+  assert.match(jsx, /reference: reference\.trim\(\) \|\| null,/);
 });
 
 test("21 · modal never reports success optimistically - closes only after onSubmit resolves", async () => {
   const jsx = await src(MODAL);
-  assert.match(jsx, /await onSubmit\?\.\(\{[\s\S]*?\}\);\s*\n\s*onOpenChange\?\.\(false\)/);
-  assert.match(jsx, /catch \(error\) \{\s*\n\s*setSubmitError/);
+  assert.match(jsx, /await onSubmit\?\.\([\s\S]*?\);\s*\n\s*succeededRef\.current = true;\s*\n\s*onOpenChange\?\.\(false\)/);
+  assert.match(jsx, /catch \(error\) \{[\s\S]*setSubmitError/);
   // no toast / success text fired inside the modal itself
   assert.doesNotMatch(jsx, /toast\./);
 });
