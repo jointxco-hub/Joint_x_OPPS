@@ -39,7 +39,10 @@ create or replace function public.can_access_tenant(p uuid) returns boolean lang
 
 create table public.tenants (id uuid primary key);
 create table public.orders (id uuid primary key, order_number text, tenant_id uuid, total_amount numeric);
-create table public.xlab_orders (id uuid primary key, opps_order_id uuid, opps_order_number text, tenant_id uuid, order_number text, created_at timestamptz default now());
+-- opps_order_id is TEXT in production/staging xlab_orders (it stores the OPPS
+-- order id as a string); opps_invoices.source_order_id is UUID. The RPC must
+-- cast across this boundary — see 20260907160000_fix_manual_payment_opps_order_id_text_cast.sql.
+create table public.xlab_orders (id uuid primary key, opps_order_id text, opps_order_number text, tenant_id uuid, order_number text, created_at timestamptz default now());
 create table public.xlab_payments (id uuid primary key default gen_random_uuid(), order_id uuid, status text, amount numeric,
   method text, payfast_pf_payment_id text, payfast_payment_id text, payment_environment text,
   last_itn_at timestamptz, updated_at timestamptz default now(), created_at timestamptz default now());
@@ -126,11 +129,20 @@ insert into public.opps_invoices (id, tenant_id, invoice_number, status, total) 
   ('aaaaaaaa-0000-0000-0000-00000000000a','11111111-1111-1111-1111-111111111111','INV-X','exported',500.00);
 insert into public.orders values
   ('00000000-0000-0000-0000-0000000000aa','ORD-LINK','11111111-1111-1111-1111-111111111111',2000.00),
-  ('00000000-0000-0000-0000-0000000000cc','ORD-BRIDGE','11111111-1111-1111-1111-111111111111',300.00);
+  ('00000000-0000-0000-0000-0000000000cc','ORD-BRIDGE','11111111-1111-1111-1111-111111111111',300.00),
+  ('00000000-0000-0000-0000-0000000000dd','ORD-LEGACY','11111111-1111-1111-1111-111111111111',1715.00);
 insert into public.opps_invoices (id, tenant_id, invoice_number, status, total, source_order_id) values
   ('aaaaaaaa-0000-0000-0000-000000000006','11111111-1111-1111-1111-111111111111','INV-LINKED','approved',2000.00,'00000000-0000-0000-0000-0000000000aa'),
   ('aaaaaaaa-0000-0000-0000-00000000000b','11111111-1111-1111-1111-111111111111','INV-BR','approved',300.00,'00000000-0000-0000-0000-0000000000cc');
-insert into public.xlab_orders values ('00000000-0000-0000-0000-0000000000bb','00000000-0000-0000-0000-0000000000aa',null,'11111111-1111-1111-1111-111111111111','X-1',now());
+-- INV-LEGACYPAID mirrors production OPPS-INV-2026-0085: order-linked, flipped
+-- to 'paid' by a legacy direct write, canonical ledger still empty (cache
+-- amount_paid=total from the old path).
+insert into public.opps_invoices (id, tenant_id, invoice_number, status, total, amount_paid, balance_due, source_order_id) values
+  ('aaaaaaaa-0000-0000-0000-00000000000c','11111111-1111-1111-1111-111111111111','INV-LEGACYPAID','paid',1715.00,1715.00,0.00,'00000000-0000-0000-0000-0000000000dd');
+-- opps_order_id holds the OPPS order UUID AS TEXT (production shape).
+insert into public.xlab_orders values
+  ('00000000-0000-0000-0000-0000000000bb','00000000-0000-0000-0000-0000000000aa',null,'11111111-1111-1111-1111-111111111111','X-1',now()),
+  ('00000000-0000-0000-0000-0000000000ee','00000000-0000-0000-0000-0000000000dd',null,'11111111-1111-1111-1111-111111111111','X-LEG',now());
 insert into public.xlab_payments (order_id, status, amount, payfast_pf_payment_id) values
   ('00000000-0000-0000-0000-0000000000bb','completed',2000.00,'PF-XYZ');
 SQL
@@ -155,6 +167,7 @@ declare
   Z  constant uuid := 'aaaaaaaa-0000-0000-0000-000000000009'; -- INV-Z  imported_to_zoho R500
   X  constant uuid := 'aaaaaaaa-0000-0000-0000-00000000000a'; -- INV-X  exported R500
   BR constant uuid := 'aaaaaaaa-0000-0000-0000-00000000000b'; -- INV-BR order-linked, bridge-missing test
+  LP constant uuid := 'aaaaaaaa-0000-0000-0000-00000000000c'; -- INV-LEGACYPAID order-linked, already 'paid', empty ledger
   r jsonb; n int; msg text; s text; cache text; act int; meta jsonb; st text; fs text; ts text;
   procedure_ok boolean;
 begin
@@ -349,6 +362,28 @@ begin
   then raise notice 'PASS 12b exported invoice partial payment -> payment_status partial, commercial status still exported';
   else raise notice 'FAIL 12b status=% pay=%', st, public.invoice_payment_status(X); end if;
 
+  -- 14 · P0 REGRESSION — legacy-paid reconciliation (production OPPS-INV-2026-0085).
+  --      Order-linked invoice already status='paid' from a legacy direct write,
+  --      canonical ledger empty, and NO completed platform payment on the linked
+  --      order. The cross-source guard must evaluate
+  --        xo.opps_order_id (text) = v_invoice.source_order_id::text
+  --      — before the fix this raised `operator does not exist: text = uuid`.
+  --      After: the guard passes, the ledger row records, and the commercial
+  --      'paid' status is preserved (compat mirror only advances from
+  --      approved/partially_paid/overdue).
+  r := public.record_manual_invoice_payment(LP, 1715.00, 'EFT-LEGACY-0085', now(), 'eft', 'reconcile legacy paid status');
+  select status into st from public.opps_invoices where id = LP;
+  select count(*) into n from public.invoice_payments where invoice_id = LP;
+  select count(*) into act from public.opps_invoice_activity
+    where invoice_id = LP and activity_type = 'invoice_payment_recorded';
+  select from_status, to_status into fs, ts from public.opps_invoice_activity
+    where invoice_id = LP and activity_type = 'invoice_payment_recorded' order by created_at desc limit 1;
+  if (r->>'replayed')::boolean = false and n = 1 and act = 1
+     and public.invoice_payment_status(LP) = 'paid'
+     and st = 'paid' and fs = 'paid' and ts = 'paid'
+  then raise notice 'PASS 14 legacy-paid order-linked reconciliation: ledger recorded, commercial paid preserved, no text=uuid error';
+  else raise notice 'FAIL 14 r=% st=% n=% act=% from=% to=%', r, st, n, act, fs, ts; end if;
+
   -- 13 · FAIL CLOSED: with the order/payment bridge gone, a manual payment
   --      on an order-linked invoice must REJECT (typed), writing nothing
   drop table public.xlab_payments cascade;
@@ -367,4 +402,4 @@ begin
 end $$;
 SQL
 echo "-----------------------------------------"
-echo "RESULT: PASS (migration applies + idempotent; 23 acceptance assertions green, incl. atomic audit event, audit-failure rollback, commercial-status preservation, fail-closed bridge)"
+echo "RESULT: PASS (migration applies + idempotent; 24 acceptance assertions green, incl. atomic audit event, audit-failure rollback, commercial-status preservation, fail-closed bridge, legacy-paid text/uuid reconciliation)"
