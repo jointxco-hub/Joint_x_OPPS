@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import QuoteLineItemsEditor, { newQuoteLine } from "./QuoteLineItemsEditor";
 import { calculateQuoteTotals } from "./quoteCalculations";
+import { resolveNeedsPriceReviewOnLoad } from "./quoteProductMapping";
 
 // Lightweight client link — associates the quote with a public.clients row
 // so the product picker can surface that client's approved products +
@@ -70,31 +71,32 @@ function money(value) {
 
 function toEditorState(initial = {}) {
   const items = Array.isArray(initial.items) && initial.items.length
-    ? initial.items.map((item, index) => ({
-        line_key: item.line_key || item.id || `line-${index}`,
-        role: item.role || "product",
-        item_name: item.item_name || "",
-        item_description: item.item_description || "",
-        quantity: item.quantity ?? 1,
-        unit: item.unit || "",
-        rate: item.rate ?? 0,
-        discount: item.discount ?? 0,
-        tax_name: item.tax_name || "",
-        tax_percentage: item.tax_percentage ?? 0,
-        image_url: item.image_url || "",
-        // canonical-product linkage (Q1 columns) — kept through a revision
-        // so a re-opened quote still knows which line came from the catalogue.
-        source_client_product_id: item.source_client_product_id || null,
-        source_metadata:
-          item.source_metadata && typeof item.source_metadata === "object" ? item.source_metadata : {},
-        // Re-flag a catalogue line that was saved without a resolved price
-        // (or one that requires_quote) so a reviser still sees the warning.
-        _needs_price_review:
-          Boolean(item._needs_price_review) ||
-          Boolean(item?.source_metadata?.requires_quote) ||
-          ((Boolean(item.source_client_product_id) || item?.source_metadata?.source === "catalog") &&
-            Number(item.rate || 0) <= 0),
-      }))
+    ? initial.items.map((item, index) => {
+        const normalised = {
+          line_key: item.line_key || item.id || `line-${index}`,
+          role: item.role || "product",
+          item_name: item.item_name || "",
+          item_description: item.item_description || "",
+          quantity: item.quantity ?? 1,
+          unit: item.unit || "",
+          rate: item.rate ?? 0,
+          discount: item.discount ?? 0,
+          tax_name: item.tax_name || "",
+          tax_percentage: item.tax_percentage ?? 0,
+          image_url: item.image_url || "",
+          // canonical-product linkage (Q1 columns) — kept through a revision
+          // so a re-opened quote still knows which line came from the catalogue.
+          source_client_product_id: item.source_client_product_id || null,
+          source_metadata:
+            item.source_metadata && typeof item.source_metadata === "object" ? item.source_metadata : {},
+        };
+        // Review state on re-open: a staff-resolved rate
+        // (source_metadata.price_reviewed + positive rate) stays resolved;
+        // a requires_quote / missing-price line that was never resolved,
+        // or one whose rate has been reset to 0, needs review again.
+        normalised._needs_price_review = resolveNeedsPriceReviewOnLoad(normalised);
+        return normalised;
+      })
     : [newQuoteLine()];
 
   return {

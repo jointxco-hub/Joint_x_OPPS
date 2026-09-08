@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { calculateInvoiceLine } from "@/features/invoices/invoiceCalculations";
 import { QUOTE_LINE_ROLES } from "./quoteCalculations";
+import { lineIsReviewEligible } from "./quoteProductMapping";
 import QuoteProductPicker from "./QuoteProductPicker";
 
 const ROLE_LABELS = {
@@ -147,8 +148,11 @@ export default function QuoteLineItemsEditor({ items = [], onChange, clientId = 
                   value={item.rate ?? ""}
                   onChange={(e) => {
                     const patch = { rate: e.target.value };
-                    // A staff-entered positive rate clears the review flag.
-                    if (item._needs_price_review && Number(e.target.value) > 0) patch._needs_price_review = false;
+                    // On a catalogue / client-product line: a positive rate
+                    // resolves the review; resetting it to 0 re-requires review.
+                    if (lineIsReviewEligible(item)) {
+                      patch._needs_price_review = !(Number(e.target.value) > 0);
+                    }
                     updateItem(index, patch);
                   }}
                   type="number"

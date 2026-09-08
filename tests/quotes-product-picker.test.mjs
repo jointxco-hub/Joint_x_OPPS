@@ -184,9 +184,95 @@ test("QuoteEditor keeps the source linkage through a re-opened quote and passes 
   assert.match(editor, /<QuoteLineItemsEditor[\s\S]*?clientId=\{state\.customer_id \|\| null\}/);
 });
 
-test("the line editor surfaces a visible 'price needs staff review' state and a positive rate clears it", async () => {
+test("the line editor surfaces a visible 'price needs staff review' state; a positive rate resolves it, zero re-requires it", async () => {
   const lie = await src("src/features/quotes/QuoteLineItemsEditor.jsx");
   assert.match(lie, /Price needs staff review/);
-  assert.match(lie, /if \(item\._needs_price_review && Number\(e\.target\.value\) > 0\) patch\._needs_price_review = false/);
   assert.match(lie, /Add from catalogue/);
+  assert.match(lie, /if \(lineIsReviewEligible\(item\)\) \{\s*\n\s*patch\._needs_price_review = !\(Number\(e\.target\.value\) > 0\);/);
+});
+
+// ── price-review resolution: persisted, restored, internal ────────────
+test("resolveNeedsPriceReviewOnLoad: a staff-resolved requires_quote line stays resolved on reopen", async () => {
+  const { resolveNeedsPriceReviewOnLoad } = await loadMapping();
+  assert.equal(
+    resolveNeedsPriceReviewOnLoad({
+      rate: 500,
+      source_client_product_id: "cp-1",
+      source_metadata: { source: "client_product", requires_quote: true, price_reviewed: true },
+    }),
+    false,
+    "the defect case: R500 + price_reviewed does NOT re-flag on reopen",
+  );
+  assert.equal(
+    resolveNeedsPriceReviewOnLoad({
+      rate: 500,
+      source_client_product_id: "cp-1",
+      source_metadata: { source: "client_product", requires_quote: true },
+    }),
+    true,
+    "requires_quote with a rate but no price_reviewed still needs review",
+  );
+});
+
+test("resolveNeedsPriceReviewOnLoad: rate reset to 0 always re-requires review; manual lines never flagged", async () => {
+  const { resolveNeedsPriceReviewOnLoad } = await loadMapping();
+  assert.equal(
+    resolveNeedsPriceReviewOnLoad({ rate: 0, source_client_product_id: "cp-1", source_metadata: { source: "client_product", requires_quote: true, price_reviewed: true } }),
+    true,
+  );
+  assert.equal(
+    resolveNeedsPriceReviewOnLoad({ rate: 0, source_metadata: { source: "catalog", price_reviewed: true } }),
+    true,
+  );
+  assert.equal(resolveNeedsPriceReviewOnLoad({ rate: 0, item_name: "Custom", source_metadata: {} }), false);
+  assert.equal(resolveNeedsPriceReviewOnLoad({ rate: 0, item_name: "Custom" }), false);
+});
+
+test("resolveNeedsPriceReviewOnLoad: a plain catalogue price with a positive rate is fine; a missing price still needs review", async () => {
+  const { resolveNeedsPriceReviewOnLoad } = await loadMapping();
+  assert.equal(
+    resolveNeedsPriceReviewOnLoad({ rate: 249, source_client_product_id: "cp", source_metadata: { source: "client_product", requires_quote: false } }),
+    false,
+  );
+  assert.equal(
+    resolveNeedsPriceReviewOnLoad({ rate: 0, source_client_product_id: "cp", source_metadata: { source: "client_product" } }),
+    true,
+  );
+});
+
+test("stampReviewResolution: stamps price_reviewed once resolved, drops it while unresolved, ignores manual lines", async () => {
+  const { stampReviewResolution } = await loadMapping();
+  assert.deepEqual(
+    stampReviewResolution(
+      { rate: 500, _needs_price_review: false, source_client_product_id: "cp", source_metadata: { source: "client_product", requires_quote: true } },
+      { source: "client_product", requires_quote: true },
+    ),
+    { source: "client_product", requires_quote: true, price_reviewed: true },
+  );
+  assert.deepEqual(
+    stampReviewResolution(
+      { rate: 0, _needs_price_review: true, source_client_product_id: "cp", source_metadata: {} },
+      { source: "client_product", requires_quote: true, price_reviewed: true },
+    ),
+    { source: "client_product", requires_quote: true },
+  );
+  assert.deepEqual(stampReviewResolution({ rate: 100, item_name: "Custom" }, { price_reviewed: true }), {});
+});
+
+test("price_reviewed is an allowlisted, internal-only key — no cost / margin can ride alongside", async () => {
+  const { sanitizeQuoteLineSourceMetadata } = await loadMapping();
+  const out = sanitizeQuoteLineSourceMetadata({ source: "client_product", price_reviewed: true, supplier_cost: 9, margin: 0.4 });
+  assert.deepEqual(Object.keys(out).sort(), ["price_reviewed", "source"]);
+});
+
+test("wiring: save stamps via stampReviewResolution; toEditorState uses resolveNeedsPriceReviewOnLoad; snapshot allowlist unchanged", async () => {
+  const api = await src("src/api/quotes.js");
+  assert.match(api, /import \{ sanitizeQuoteLineSourceMetadata, stampReviewResolution \}/);
+  assert.match(api, /const sourceMetadata = stampReviewResolution\(item, sanitizeQuoteLineSourceMetadata\(item\.source_metadata\)\)/);
+  const editor = await src("src/features/quotes/QuoteEditor.jsx");
+  assert.match(editor, /import \{ resolveNeedsPriceReviewOnLoad \} from "\.\/quoteProductMapping"/);
+  assert.match(editor, /normalised\._needs_price_review = resolveNeedsPriceReviewOnLoad\(normalised\)/);
+  const mig = await src("supabase/migrations/20260906090000_quotes_q1_canonical_schema.sql");
+  const snap = mig.slice(mig.indexOf("build the customer-safe snapshot"), mig.indexOf("into v_snapshot;"));
+  assert.doesNotMatch(snap, /price_reviewed|'source_metadata'|'source_client_product_id'/);
 });

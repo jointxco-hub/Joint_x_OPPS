@@ -29,6 +29,44 @@ export function isClientProductArchived(clientProduct = {}) {
   return String(clientProduct.status || "") === "archived";
 }
 
+// ── price-review resolution (persisted, internal) ──────────────────────
+// A line is "review eligible" when it came from the picker (has a
+// client-product link, or a catalogue/client-product source). A purely
+// manual line is never auto-flagged for review.
+export const REVIEW_ELIGIBLE_SOURCE_PREFIXES = ["catalog", "client_product"];
+
+export function lineIsReviewEligible(item = {}) {
+  if (item && item.source_client_product_id) return true;
+  const s = String(item?.source_metadata?.source || "");
+  return REVIEW_ELIGIBLE_SOURCE_PREFIXES.some((p) => s.startsWith(p));
+}
+
+// The review state to show when a SAVED quote is re-opened. A positive
+// rate alone is not "approved" — a requires_quote / missing-price line
+// stays flagged until a staff member has explicitly resolved it, which is
+// recorded as source_metadata.price_reviewed. Resetting the rate to 0
+// always requires review again.
+export function resolveNeedsPriceReviewOnLoad(item = {}) {
+  if (!lineIsReviewEligible(item)) return false;
+  if (numberOrZero(item.rate) <= 0) return true;
+  if (item?.source_metadata?.price_reviewed === true) return false;
+  if (item?.source_metadata?.requires_quote) return true;
+  return false;
+}
+
+// Given an editor line about to be saved (plus its already-sanitised
+// source_metadata), return the source_metadata to persist. Stamps
+// price_reviewed:true once staff have resolved a positive rate on an
+// eligible line; drops it whenever the line is (still / again) unresolved
+// so a later re-open re-requires review. price_reviewed is internal only
+// and, like the rest of source_metadata, never enters a quote snapshot.
+export function stampReviewResolution(item = {}, sanitizedMetadata = {}) {
+  const { price_reviewed: _drop, ...rest } = sanitizedMetadata || {};
+  if (!lineIsReviewEligible(item)) return rest;
+  const resolved = numberOrZero(item.rate) > 0 && !item._needs_price_review;
+  return resolved ? { ...rest, price_reviewed: true } : rest;
+}
+
 function positiveNumberOrNull(value) {
   const n = numberOrZero(value);
   return n > 0 ? n : null;
@@ -181,6 +219,8 @@ const SAFE_METADATA_KEYS = new Set([
   "source", "catalog_item_id", "client_product_id", "client_product_status",
   "client_product_approved", "base_product_id", "currency", "requires_quote",
   "addon_key", "price_breakdown", "category",
+  // internal, boolean: staff have resolved this line's price review.
+  "price_reviewed",
 ]);
 
 export function sanitizeQuoteLineSourceMetadata(metadata) {

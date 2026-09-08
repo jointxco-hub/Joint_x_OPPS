@@ -11,7 +11,7 @@
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentTenantId } from "@/lib/tenantContext";
 import { calculateQuoteTotals } from "@/features/quotes/quoteCalculations";
-import { sanitizeQuoteLineSourceMetadata } from "@/features/quotes/quoteProductMapping";
+import { sanitizeQuoteLineSourceMetadata, stampReviewResolution } from "@/features/quotes/quoteProductMapping";
 
 function ensureSupabase() {
   if (!supabase) throw new Error("Supabase is not configured.");
@@ -360,7 +360,9 @@ export async function saveQuoteWithItems(input = {}) {
     // the customer-safe snapshot from an allowlist, so source_metadata only
     // ever contributes a derived price_breakdown — never cost / margin /
     // internal data. sanitizeQuoteLineSourceMetadata is belt-and-braces.
-    const sourceMetadata = sanitizeQuoteLineSourceMetadata(item.source_metadata);
+    // stampReviewResolution records (or drops) the internal price_reviewed
+    // flag so a re-opened quote keeps a staff-resolved rate resolved.
+    const sourceMetadata = stampReviewResolution(item, sanitizeQuoteLineSourceMetadata(item.source_metadata));
     return {
       line_number: Number(item.line_number ?? index + 1),
       role: item.role || "product",
