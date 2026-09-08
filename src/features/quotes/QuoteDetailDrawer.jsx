@@ -249,17 +249,47 @@ export default function QuoteDetailDrawer({
                 {events.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No activity yet.</p>
                 ) : (
-                  <ul className="space-y-1.5">
-                    {events.map((ev) => (
-                      <li key={ev.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                        <span className="text-foreground">
-                          {EVENT_LABELS[ev.event_type] || ev.event_type}
-                          {ev.event_type === "sent" && ev?.metadata?.resend ? " (resend)" : ""}
-                          {ev.actor_label ? ` — ${ev.actor_label}` : ""}
-                        </span>
-                        <span className="text-xs text-muted-foreground">{when(ev.created_at)}</span>
-                      </li>
-                    ))}
+                  <ul className="space-y-2.5">
+                    {events.map((ev) => {
+                      // A customer's change-request message / decline reason is
+                      // stored on the event's `note` by the public-link RPCs. It
+                      // is the only note staff must be able to read in full.
+                      const isCustomerResponse =
+                        ev.actor_kind === "public_link" &&
+                        (ev.event_type === "changes_requested" || ev.event_type === "declined");
+                      const noteLabel =
+                        ev.event_type === "declined" && isCustomerResponse
+                          ? "Decline reason from customer"
+                          : isCustomerResponse
+                            ? "Message from customer"
+                            : "Note";
+                      return (
+                        <li key={ev.id} className="text-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-foreground">
+                              {EVENT_LABELS[ev.event_type] || ev.event_type}
+                              {ev.event_type === "sent" && ev?.metadata?.resend ? " (resend)" : ""}
+                              {ev.actor_label ? ` — ${ev.actor_label}` : ""}
+                            </span>
+                            <span className="text-xs text-muted-foreground">{when(ev.created_at)}</span>
+                          </div>
+                          {ev.note ? (
+                            <div
+                              className={`mt-1 rounded-lg border px-3 py-2 text-sm ${
+                                isCustomerResponse
+                                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                                  : "border-border bg-secondary/30 text-muted-foreground"
+                              }`}
+                            >
+                              <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                                {noteLabel}
+                              </p>
+                              <p className="whitespace-pre-wrap break-words">{ev.note}</p>
+                            </div>
+                          ) : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </Section>

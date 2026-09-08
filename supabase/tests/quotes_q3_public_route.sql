@@ -281,6 +281,47 @@ begin
   raise notice 'PASS 7: request-changes -> changes_requested; published + current + total untouched; message captured';
 end $t$;
 
+-- ══ 7b. change-request / decline message: multi-line kept verbatim,
+--        capped at 4000, whitespace-only -> NULL ═══════════════════════
+do $t$
+declare
+  c record; v_qid uuid; v_tok text; ev record;
+  v_multi text := E'Line one\nLine two\n\n  - bullet with leading spaces\nLine four';
+  v_long  text := repeat('x', 4100);
+begin
+  select * into c from _q3;
+
+  -- multi-line change-request message survives byte-for-byte
+  v_qid := pg_temp._q3_make('2026-10-06','RC7B','Net 7',600, c.staff);
+  v_tok := pg_temp._q3_issue(v_qid, c.staff)->>'share_token';
+  set local role anon; perform set_config('test.uid','',true);
+  perform public.request_quote_changes(v_tok, 2, v_multi, 'Jordan', 'UA');
+  reset role;
+  select * into ev from public.opps_quote_events where quote_id=v_qid and event_type='changes_requested';
+  if ev.note is distinct from v_multi then raise exception '7b: multi-line message not preserved verbatim: %', ev.note; end if;
+  if position(E'\n' in ev.note) = 0 then raise exception '7b: newlines lost'; end if;
+
+  -- over-long reason is truncated to 4000 (never rejected, never unbounded)
+  v_qid := pg_temp._q3_make('2026-10-06','DEC7B','Net 7',300, c.staff);
+  v_tok := pg_temp._q3_issue(v_qid, c.staff)->>'share_token';
+  set local role anon; perform set_config('test.uid','',true);
+  perform public.decline_public_quote(v_tok, 2, v_long, 'Jordan', 'UA');
+  reset role;
+  select * into ev from public.opps_quote_events where quote_id=v_qid and event_type='declined';
+  if length(ev.note) <> 4000 then raise exception '7b: reason not capped at 4000: got %', length(ev.note); end if;
+
+  -- a blank (spaces-only) message is stored as NULL, not an empty string
+  v_qid := pg_temp._q3_make('2026-10-06','RCWS','Net 7',600, c.staff);
+  v_tok := pg_temp._q3_issue(v_qid, c.staff)->>'share_token';
+  set local role anon; perform set_config('test.uid','',true);
+  perform public.request_quote_changes(v_tok, 2, '     ', 'Jordan', 'UA');
+  reset role;
+  select * into ev from public.opps_quote_events where quote_id=v_qid and event_type='changes_requested';
+  if ev.note is not null then raise exception '7b: spaces-only message should be NULL, got %', quote_literal(ev.note); end if;
+
+  raise notice 'PASS 7b: message persistence — multi-line verbatim, 4000 cap, spaces-only -> NULL';
+end $t$;
+
 -- ══ 8. decline — revisions + published + share preserved ═══════════
 do $t$
 declare c record; v_qid uuid; v_tok text; v_pub uuid; v_revs int; ev record;

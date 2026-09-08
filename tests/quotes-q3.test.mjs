@@ -133,3 +133,72 @@ test("no invoice payment / status / balance concepts leak into quote actions", a
   assert.ok(!/invoice_payments|apply_invoice|balance_due|amount_paid|payment_status|mark.*paid|issue_invoice|get_public_invoice/i.test(s),
     "Q3 reuses no invoice payment/lifecycle object");
 });
+
+// ── customer change-request message / decline reason: persist → project → render ──
+
+test("persistence: request_quote_changes & decline_public_quote store the customer text on opps_quote_events.note", async () => {
+  const s = await src(MIG);
+  for (const [name, arg] of [["request_quote_changes", "p_message"], ["decline_public_quote", "p_reason"]]) {
+    const fn = s.match(new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\$\\$;`))[0];
+    // the free-text arg is written to the event's note column, trimmed + capped, empty -> NULL
+    assert.ok(
+      fn.includes("insert into public.opps_quote_events") && /\bnote\b/.test(fn),
+      `${name} inserts a quote event with a note`,
+    );
+    assert.ok(
+      fn.includes(`nullif(left(btrim(coalesce(${arg}, '')), 4000), '')`),
+      `${name} stores ${arg} verbatim (trimmed, 4000-capped, '' -> NULL) — no fabrication, no drop`,
+    );
+    // the event is attributed to the public link + the published revision the customer saw
+    assert.ok(/'(changes_requested|declined)', 'public_link'/.test(fn), `${name} event is actor_kind public_link`);
+    assert.ok(/revision_id[\s\S]*published_revision_id|published_revision_id, '(changes_requested|declined)'/.test(fn),
+      `${name} pins the event to published_revision_id`);
+  }
+  // the multi-line / cap / spaces-only behaviour is proven end-to-end in
+  // supabase/tests/quotes_q3_public_route.sql scenario 7b.
+  const sqlSuite = await src("supabase/tests/quotes_q3_public_route.sql");
+  assert.ok(sqlSuite.includes("PASS 7b: message persistence"), "SQL suite covers multi-line verbatim + 4000 cap");
+});
+
+test("staff projection: listQuoteEvents returns note + actor + timestamp for the drawer", async () => {
+  const api = await src("src/api/quotes.js");
+  const fn = api.match(/export async function listQuoteEvents[\s\S]*?\n}/)[0];
+  for (const col of ["note", "actor_kind", "actor_label", "event_type", "revision_id", "metadata", "created_at"]) {
+    assert.ok(new RegExp(`\\b${col}\\b`).test(fn), `listQuoteEvents selects ${col}`);
+  }
+  assert.ok(fn.includes('.eq("tenant_id", tenantId)'), "still tenant-scoped");
+});
+
+test("rendering: QuoteDetailDrawer Activity shows the full note (line breaks kept), customer vs internal distinguished", async () => {
+  const d = await src("src/features/quotes/QuoteDetailDrawer.jsx");
+  const activity = d.slice(d.indexOf('<Section title="Activity">'), d.indexOf("</Section>", d.indexOf('<Section title="Activity">')));
+  // the note is actually rendered, with line breaks preserved
+  assert.ok(/\{ev\.note\}/.test(activity), "the event note text is rendered");
+  assert.ok(/whitespace-pre-wrap/.test(activity), "line breaks in the customer message are preserved");
+  // a customer change-request / decline reason is visually distinguished from a plain note
+  assert.ok(/actor_kind === "public_link"/.test(activity), "customer responses are detected by actor_kind");
+  assert.ok(/"changes_requested"|"declined"/.test(activity), "the two customer-response event types are handled");
+  assert.ok(/Message from customer|Decline reason from customer/.test(activity), "customer-facing note label");
+  // actor + timestamp still shown on the header line
+  assert.ok(/ev\.actor_label/.test(activity) && /when\(ev\.created_at\)/.test(activity), "actor + timestamp retained");
+});
+
+test("public quote pages never expose event notes / internal notes", async () => {
+  // OPPS: the anon public projection is snapshot-only — it must not read opps_quote_events at all
+  const proj = (await src(MIG)).match(/create or replace function public\._public_quote_projection[\s\S]*?\$\$;/)[0];
+  assert.ok(!/opps_quote_events/.test(proj), "_public_quote_projection never touches the events table");
+  assert.ok(!/'note'|v_quote\.notes|\bnote\b\s*,/.test(proj), "_public_quote_projection emits no note field");
+  // X LAB: the public page's `note` is only the customer's own compose-box state, never a rendered server value
+  const xlabDir = "../../xlab-q3-release";
+  let page;
+  try {
+    page = (await readFile(new URL(`${xlabDir}/src/pages/PublicQuote.jsx`, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
+  } catch {
+    page = null; // X LAB worktree not present in this checkout — OPPS assertions above still hold
+  }
+  if (page) {
+    assert.ok(/const \[note, setNote\] = useState\(''\)/.test(page), "`note` is local compose state");
+    assert.ok(/message: note|reason: note/.test(page), "`note` flows OUT to the RPC only");
+    assert.ok(!/quote\.note\b|quote\?\.note\b|events?\.map|event_type/.test(page), "no server-side event/note is ever rendered");
+  }
+});
