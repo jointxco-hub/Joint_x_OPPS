@@ -6,7 +6,7 @@ import {
   Menu, X, ChevronRight, Boxes, Building2, Calculator,
   CreditCard, Archive, Settings, MoreHorizontal, Target,
   Search, Bell, User, ChevronDown, ShoppingCart, UserCircle,
-  LogOut, Sparkles, DollarSign, FolderOpen, Flag, Inbox, Rocket, LayoutTemplate
+  LogOut, Sparkles, DollarSign, FolderOpen, Flag, Inbox, Rocket, LayoutTemplate, FileText
 } from "lucide-react";
 import { dataClient } from "@/api/dataClient";
 import { useAuth } from "@/lib/AuthContext";
@@ -29,6 +29,7 @@ const mobileBottomNavPages = new Set(["Dashboard", "UserDashboard", "Orders", "T
 const moreNav = [
   { name: "Finance", page: "Executive", icon: BarChart2, adminOnly: true },
   { name: "Invoices", page: "Invoices", icon: DollarSign, financeOnly: true },
+  { name: "Quotes", page: "Quotes", icon: FileText, financeOnly: true },
   { name: "Offers", page: "OffersDashboard", icon: Sparkles, adminOnly: true },
   { name: "Money Model", page: "MoneyModel", icon: DollarSign, adminOnly: true },
   { name: "Clients", page: "Clients", icon: Building2 },

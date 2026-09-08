@@ -1,0 +1,479 @@
+/* ONE print/screen/PDF contract for the commercial document.
+   CANONICAL SOURCE: Joint_x_OPPS/src/features/commercial-doc/.
+   Synced to X LAB by scripts/sync-commercial-doc.mjs — do not edit the X LAB copy.
+
+   Responsive rules (mobile-first): no fixed width below 768px, no transform
+   scaling, line items stack to cards, sticky action bar respects the safe
+   area and never covers the totals card (body gets bottom padding instead). */
+
+.commercial-doc { display: flex; flex-direction: column; min-width: 0; }
+.commercial-doc__sheet { background: #fff; color: #0f172a; margin: 0 auto; box-sizing: border-box; }
+.commercial-doc * { box-sizing: border-box; min-width: 0; }
+/* Self-contained on purpose: every spacing rule in this file is explicit
+   (gap/margin-top/padding on a wrapper), never a relied-on default
+   element margin — but browsers give <p>/<h1>/<h2>/<ol>/<li> their own
+   block margins unless something resets them. Both apps' Tailwind
+   preflight already does that globally, so this has no visible effect
+   today; it exists so this stylesheet renders correctly on its own — a
+   future server-side PDF render (a headless browser given only this CSS
+   + the component, no app shell, no Tailwind) must produce the exact
+   same layout, not one inflated by ~100px of unaccounted default
+   paragraph margins the way an unstyled host would. */
+.commercial-doc p, .commercial-doc h1, .commercial-doc h2,
+.commercial-doc ol, .commercial-doc li { margin: 0; }
+
+/* responsive (default): fluid width, no horizontal overflow at any size */
+.commercial-doc--responsive .commercial-doc__sheet {
+  width: 100%; max-width: 210mm; padding: 16px; box-shadow: none;
+}
+@media (min-width: 640px) { .commercial-doc--responsive .commercial-doc__sheet { padding: 24px; } }
+@media (min-width: 1024px) { .commercial-doc--responsive .commercial-doc__sheet { padding: 36px; } }
+
+/* document mode: the SAME visual document as the desktop screen view,
+   pinned to A4 — the one canonical source for browser Print, PDF export
+   (offscreen html2canvas capture), and any future server PDF. 794px /
+   1123px = 210mm / 297mm at 96dpi, matching the PDF builders' own mm
+   math (PAGE_WIDTH_MM=190 = 210mm minus 10mm margins each side).
+
+   Product rule: a client who has just read the polished screen invoice
+   must recognize the SAME document on Print/PDF — same cards, same
+   colors, same balance chip, same thumbnails, same type scale, same
+   information in the same places. This block therefore does two
+   different things, and only two:
+     1. Gives every @media (min-width:...) desktop rule elsewhere in this
+        file an UNCONDITIONAL .commercial-doc--document twin, using the
+        EXACT SAME values — never a real print surface's guess at
+        viewport width (see @media print below for why that's the actual
+        page-count bug), never html2canvas's old windowWidth simulation
+        (removed). This is a correctness fix, not a restyle: document
+        mode ends up pixel-identical to what >=768px screen already
+        shows for every one of these rules.
+     2. A small, genuinely minimal set of print-only trims (this
+        section's own rules below) — tighter leading, modest padding,
+        and dropping the one purely decorative line (the marketing
+        tagline under the title). Nothing here changes a color, a radius,
+        a card, a font-size, or where any dollar figure lives. */
+.commercial-doc--document .commercial-doc__header {
+  flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 24px;
+}
+.commercial-doc--document .commercial-doc__metacard { width: 260px; }
+.commercial-doc--document .commercial-doc__cols2 { grid-template-columns: 1.1fr 0.9fr; }
+.commercial-doc--document .commercial-doc__kv,
+.commercial-doc--document .commercial-doc__meta { grid-template-columns: auto 1fr; gap: 16px; }
+.commercial-doc--document .commercial-doc__kv-value,
+.commercial-doc--document .commercial-doc__meta-value { text-align: right; }
+.commercial-doc--document .commercial-doc__deliverygrid { grid-template-columns: 1fr 1fr; }
+.commercial-doc--document .commercial-doc__itemshead { flex-direction: row; align-items: center; justify-content: space-between; }
+.commercial-doc--document .commercial-doc__tablehead,
+.commercial-doc--document .commercial-doc__row { grid-template-columns: 56px 1fr 56px 80px 96px; }
+.commercial-doc--document .commercial-doc__tablehead { display: grid; }
+.commercial-doc--document .commercial-doc__row { display: grid; align-items: start; }
+.commercial-doc--document .commercial-doc__thumb { display: flex; }
+.commercial-doc--document .commercial-doc__rowamount { display: block; background: transparent; padding: 0; text-align: right; }
+.commercial-doc--document .commercial-doc__rowamount-label { display: none; }
+/* A line with a real product photo keeps its 48px thumbnail column,
+   exactly as the screen shows it — unchanged. A line with NO photo
+   renders an empty placeholder box (just the word "Item" in gray) that
+   presents nothing, yet its fixed 48px height was setting the ENTIRE
+   row's height even for a single line of text — the single biggest
+   avoidable cost in the item table. Collapsing an empty placeholder
+   is not "removing item presentation"; there was no presentation in it. */
+.commercial-doc--document .commercial-doc__row:has(.commercial-doc__thumbfallback) { grid-template-columns: 1fr 56px 80px 96px; }
+.commercial-doc--document .commercial-doc__row:has(.commercial-doc__thumbfallback) .commercial-doc__thumb { display: none; }
+.commercial-doc--document .commercial-doc__summary { grid-template-columns: 1fr 300px; }
+
+/* P4E/P4F/P4G — PDF-capture-only, proven root cause (re-verified with
+   real html2canvas pixel sampling at every step, not assumed). The item
+   row's CSS Grid layout is NOT the problem — flexbox for the whole row
+   made no measurable difference. The trigger is any padded pill badge
+   (.commercial-doc__tag — keyed on the class, never its text, so any
+   future badge reusing it is covered) sharing a text line with the item
+   name: html2canvas's text layout does not correctly compute that
+   line's baseline when a padded, differently-sized inline element sits
+   beside plain text, which measurably shifts Qty/Unit/Total below the
+   description for any row with a badge.
+   P4E's first attempt (display:block, badge on its own line below the
+   title) fixed the misalignment but looked broken — title and badge
+   must stay on ONE visual row. Turning .commercial-doc__rowname into a
+   flex row (title span + badge as two real flex items) puts them back
+   on one line, but pixel sampling showed the misalignment RETURNED at
+   that point — the trigger is not strictly "inline text flow", it is
+   how close the title line's rendered height sits to the amounts
+   cells' height (~17px): a flex row with two short items is naturally
+   that same ~17px, back in the same danger zone. Confirmed by directly
+   sweeping min-height on the flex row: at the natural height the gap
+   was 5-6px; by ~26-28px it measures 0-1px (noise-floor) and holds
+   there. min-height is scoped to :has(.commercial-doc__tag) so a normal
+   row without a badge — already correct — is never touched by it.
+   P4G — real manual acceptance testing of the actual downloaded PDF
+   caught what the prior pixel check missed: `align-items: center` on
+   that flex row centers the (now min-height:27px-tall) box's content,
+   which sits the title/badge text ~5.5px BELOW the Qty/Unit/Total
+   values (those sit flush at the row's own top, since the parent grid
+   uses align-items:start). Re-measured per-element (title span top vs
+   the Qty value's own top, not a shared row band, which is what let the
+   earlier check read a false 0px) against the real component + real
+   CSS: `center` measures a 5.5px gap; `flex-start` measures 0px, while
+   still keeping the min-height that avoids the original html2canvas
+   danger-zone bug (min-height only adds empty space below top-aligned
+   content, it does not reposition it). */
+.commercial-doc--pdf-capture .commercial-doc__rowname {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.commercial-doc--pdf-capture .commercial-doc__rowname:has(.commercial-doc__tag) { min-height: 27px; }
+.commercial-doc--pdf-capture .commercial-doc__tag { margin-left: 0; }
+
+/* ---- the actual print-only trims (spacing/leading/type-scale) ---- */
+.commercial-doc--document {
+  /* Print convention, not a redesign: tighter leading than a screen
+     reading line-height, same as any professionally typeset document.
+     Nothing shrinks, nothing moves — lines just sit closer together.
+     Several elements below set their OWN explicit line-height in the
+     base rules (a direct declaration always wins over an inherited one,
+     regardless of specificity) — those need the same trim spelled out
+     individually or they silently stay at the screen's 1.4-1.5. */
+  line-height: 1.3;
+}
+/* A ~10% print type scale, same relative hierarchy (title still the
+   biggest thing on the page, labels still the smallest) — the same way
+   any typeset document runs a point size smaller than an on-screen
+   reading size. This is the difference between "print sizing" and the
+   earlier mistake: nothing here removes an element, hides a column, or
+   changes what card something lives in — it is purely a scale, applied
+   uniformly, and stacked with the spacing trims below only because
+   spacing alone still left the JET fixture short of one page. */
+.commercial-doc--document .commercial-doc__title { font-size: 21px; }
+.commercial-doc--document .commercial-doc__brandname,
+.commercial-doc--document .commercial-doc__clientname { font-size: 15px; }
+.commercial-doc--document .commercial-doc__contacts { font-size: 10.5px; }
+.commercial-doc--document .commercial-doc__metacard { font-size: 12px; }
+.commercial-doc--document .commercial-doc__clientlines,
+.commercial-doc--document .commercial-doc__kvlist,
+.commercial-doc--document .commercial-doc__guidancecol { font-size: 12px; }
+.commercial-doc--document .commercial-doc__stat-value { font-size: 13px; }
+.commercial-doc--document .commercial-doc__rowname { font-size: 12.5px; }
+.commercial-doc--document .commercial-doc__rowdesc { font-size: 11.5px; }
+.commercial-doc--document .commercial-doc__totalrow { font-size: 12.5px; }
+.commercial-doc--document .commercial-doc__balancechip-value { font-size: 15px; }
+.commercial-doc--document .commercial-doc__balancebox-value { font-size: 14px; }
+.commercial-doc--document .commercial-doc__eyebrow,
+.commercial-doc--document .commercial-doc__eyebrow-sm { font-size: 10px; }
+.commercial-doc--document .commercial-doc__contacts,
+.commercial-doc--document .commercial-doc__clientlines,
+.commercial-doc--document .commercial-doc__guidancecol,
+.commercial-doc--document .commercial-doc__rowdesc,
+.commercial-doc--document .commercial-doc__termslist,
+.commercial-doc--document .commercial-doc__termsnote,
+.commercial-doc--document .commercial-doc__lede { line-height: 1.3; }
+.commercial-doc--document .commercial-doc__sheet {
+  width: 794px; min-height: 1123px; padding: 16px; box-shadow: none;
+}
+/* Pure marketing copy under the title ("Order, payment, and delivery
+   details in one clean record.") — no commercial/financial content, the
+   one element this phase still omits from the printed page. */
+.commercial-doc--document .commercial-doc__lede { display: none; }
+
+/* Modest, uniform section-padding trim — "slightly tighter" per the
+   product rule, not a re-hierarchy. Every card/panel/badge inside keeps
+   its own padding, radius, color and border UNTOUCHED — only the
+   breathing room BETWEEN sections and inside the densest cards (the meta
+   sidebar's own rows/chip/status boxes) is reduced. */
+.commercial-doc--document .commercial-doc__header { padding-bottom: 12px; }
+.commercial-doc--document .commercial-doc__summarystrip { padding: 8px 0; }
+.commercial-doc--document .commercial-doc__cols2 { padding: 12px 0; }
+.commercial-doc--document .commercial-doc__delivery { padding: 10px 0; }
+.commercial-doc--document .commercial-doc__items { padding: 10px 0; }
+.commercial-doc--document .commercial-doc__summary { padding: 12px 0; }
+.commercial-doc--document .commercial-doc__history { padding: 10px 0; }
+.commercial-doc--document .commercial-doc__terms { padding-top: 12px; }
+.commercial-doc--document .commercial-doc__footer { margin-top: 12px; padding-top: 10px; }
+
+/* The meta sidebar (invoice #/dates/terms + balance chip + status) packs
+   the most information per pixel in the whole document — its OWN card
+   padding and its three sub-elements' padding get the same treatment,
+   never their border/radius/background/font-size. */
+.commercial-doc--document .commercial-doc__metacard { padding: 8px; }
+.commercial-doc--document .commercial-doc__meta { padding: 3px 0; }
+.commercial-doc--document .commercial-doc__balancechip { padding: 5px 10px; margin-top: 5px; }
+/* Same two status boxes, same labels, same colors, same content — placed
+   side by side instead of stacked. Nothing removed, nothing recolored,
+   nothing relocated to a different card; only their own internal
+   arrangement is tighter, same as everything else in this block. */
+.commercial-doc--document .commercial-doc__statusrow { grid-template-columns: 1fr 1fr; margin-top: 6px; gap: 6px; }
+.commercial-doc--document .commercial-doc__status { padding: 4px 8px; }
+.commercial-doc--document .commercial-doc__brandline { margin-bottom: 12px; }
+
+.commercial-doc--document .commercial-doc__row { padding: 8px 14px; }
+.commercial-doc--document .commercial-doc__tablehead { padding: 6px 14px; }
+.commercial-doc--document .commercial-doc__breakdown { padding: 5px 8px; margin-top: 5px; }
+.commercial-doc--document .commercial-doc__breakdown-row { font-size: 11px; }
+.commercial-doc--document .commercial-doc__breakdown-title { margin-bottom: 0; }
+.commercial-doc--document .commercial-doc__breakdown-list { margin-top: 3px; }
+
+.commercial-doc--document .commercial-doc__panel-body { margin-top: 8px; }
+.commercial-doc--document .commercial-doc__kv { padding-bottom: 5px; }
+.commercial-doc--document .commercial-doc__kvlist { gap: 5px; }
+.commercial-doc--document .commercial-doc__itemshead { margin-bottom: 8px; }
+.commercial-doc--document .commercial-doc__contacts { margin-top: 6px; }
+
+.commercial-doc--document .commercial-doc__guidance,
+.commercial-doc--document .commercial-doc__banking { padding: 8px 10px; }
+.commercial-doc--document .commercial-doc__guidancecol { gap: 8px; }
+.commercial-doc--document .commercial-doc__guidance-body,
+.commercial-doc--document .commercial-doc__banking-body { margin-top: 6px; }
+.commercial-doc--document .commercial-doc__totals { padding: 10px; }
+.commercial-doc--document .commercial-doc__totalrow { padding: 2px 0; }
+.commercial-doc--document .commercial-doc__totalsrule { margin: 6px 0; }
+.commercial-doc--document .commercial-doc__balancebox { margin-top: 6px; padding: 7px 12px; }
+
+.commercial-doc--document .commercial-doc__termslist { gap: 6px; margin-top: 8px; font-size: 11px; }
+.commercial-doc--document .commercial-doc__termsnote { margin-top: 8px; }
+.commercial-doc--document .commercial-doc__footer { font-size: 11px; }
+
+.commercial-doc__wrap { overflow-wrap: anywhere; word-break: break-word; }
+.commercial-doc__muted { color: #64748b; }
+.commercial-doc__muted-sm { color: #64748b; font-size: 13px; margin-top: 2px; }
+.commercial-doc__strong { font-weight: 600; color: #020617; }
+.commercial-doc__eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: #007f6b; }
+.commercial-doc__eyebrow-sm { font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: #64748b; }
+
+/* ── header ── */
+.commercial-doc__header { border-bottom: 1px solid #e2e8f0; padding-bottom: 20px; display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 640px) { .commercial-doc__header { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 32px; } }
+.commercial-doc__brandcol { min-width: 0; flex: 1 1 auto; }
+.commercial-doc__brandline { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
+.commercial-doc__logo { height: 48px; width: 48px; flex: none; border-radius: 10px; border: 1px solid #e2e8f0; object-fit: contain; }
+.commercial-doc__brandname { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.commercial-doc__contacts { margin-top: 8px; display: grid; gap: 4px; font-size: 12px; line-height: 1.4; color: #64748b; }
+.commercial-doc__contact { display: flex; gap: 8px; align-items: flex-start; }
+.commercial-doc__title { margin-top: 8px; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.commercial-doc__lede { margin-top: 8px; max-width: 34rem; font-size: 14px; line-height: 1.5; color: #64748b; }
+
+.commercial-doc__metacard { width: 100%; flex: none; border-radius: 12px; border: 1px solid #e2e8f0; background: #f8fafc; padding: 16px; font-size: 14px; }
+@media (min-width: 640px) { .commercial-doc__metacard { width: 260px; } }
+.commercial-doc__balancechip { margin-top: 12px; border-radius: 10px; background: #020617; padding: 10px 14px; color: #fff; }
+.commercial-doc__balancechip-label { font-size: 11px; color: #cbd5e1; display: block; }
+.commercial-doc__balancechip-value { margin-top: 2px; font-size: 18px; font-weight: 600; display: block; overflow-wrap: anywhere; }
+
+.commercial-doc__statusrow { margin-top: 12px; display: grid; gap: 8px; }
+.commercial-doc__status { border-radius: 10px; border: 1px solid #e2e8f0; padding: 8px 12px; }
+.commercial-doc__status-label { display: block; font-size: 11px; color: #64748b; }
+.commercial-doc__status-value { margin-top: 2px; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.commercial-doc__status-dot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; display: inline-block; }
+.commercial-doc__status--unpaid { color: #b45309; }
+.commercial-doc__status--partial { color: #1d4ed8; }
+.commercial-doc__status--paid { color: #047857; }
+.commercial-doc__status--void { color: #64748b; }
+.commercial-doc__overdue { color: #b91c1c; font-weight: 600; }
+
+/* ── summary strip ── */
+.commercial-doc__summarystrip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 16px 0; }
+.commercial-doc__stat { border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; padding: 10px 12px; min-width: 0; }
+.commercial-doc__stat--accent { background: #020617; border-color: #020617; color: #fff; }
+.commercial-doc__stat-label { display: block; font-size: 11px; color: #64748b; }
+.commercial-doc__stat--accent .commercial-doc__stat-label { color: #cbd5e1; }
+.commercial-doc__stat-value { margin-top: 2px; display: block; font-weight: 600; font-size: 15px; }
+
+/* ── two-column panels ── */
+.commercial-doc__cols2 { display: grid; gap: 20px; border-bottom: 1px solid #e2e8f0; padding: 20px 0; }
+@media (min-width: 768px) { .commercial-doc__cols2 { grid-template-columns: 1.1fr 0.9fr; } }
+.commercial-doc__panel-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: #64748b; }
+.commercial-doc__panel-body { margin-top: 12px; }
+.commercial-doc__clientname { font-size: 18px; font-weight: 600; }
+.commercial-doc__clientlines { margin-top: 10px; display: grid; gap: 4px; font-size: 14px; line-height: 1.5; color: #475569; }
+.commercial-doc__addr { white-space: pre-line; }
+.commercial-doc__kvlist { display: grid; gap: 8px; font-size: 14px; color: #475569; }
+.commercial-doc__kv { display: grid; gap: 4px; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px; }
+.commercial-doc__kv:last-child { border-bottom: 0; padding-bottom: 0; }
+@media (min-width: 640px) { .commercial-doc__kv { grid-template-columns: auto 1fr; gap: 16px; } .commercial-doc__kv-value { text-align: right; } }
+.commercial-doc__kv-label { color: #94a3b8; }
+.commercial-doc__kv-value { font-weight: 500; color: #1e293b; }
+.commercial-doc__meta { display: grid; gap: 4px; border-bottom: 1px solid #e2e8f0; padding: 8px 0; }
+.commercial-doc__meta:last-of-type { border-bottom: 0; }
+@media (min-width: 640px) { .commercial-doc__meta { grid-template-columns: auto 1fr; gap: 16px; } .commercial-doc__meta-value { text-align: right; } }
+.commercial-doc__meta-label { color: #64748b; }
+.commercial-doc__meta-value { font-weight: 500; }
+
+/* ── delivery ── */
+.commercial-doc__delivery { border-bottom: 1px solid #e2e8f0; padding: 16px 0; }
+.commercial-doc__deliverygrid { margin-top: 12px; display: grid; gap: 10px; }
+@media (min-width: 768px) { .commercial-doc__deliverygrid { grid-template-columns: 1fr 1fr; } }
+.commercial-doc__deliverycard { border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; padding: 10px 12px; }
+.commercial-doc__deliverylabel { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #64748b; }
+.commercial-doc__deliveryvalue { margin-top: 6px; font-size: 14px; font-weight: 500; color: #1e293b; overflow-wrap: anywhere; }
+
+/* ── line items: table on desktop, stacked cards on mobile ── */
+.commercial-doc__items { padding: 16px 0; }
+.commercial-doc__itemshead { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+@media (min-width: 640px) { .commercial-doc__itemshead { flex-direction: row; align-items: center; justify-content: space-between; } }
+.commercial-doc__itemstotal { width: fit-content; border-radius: 8px; background: #ede9fe; padding: 6px 12px; font-size: 12px; font-weight: 600; color: #334155; }
+.commercial-doc__table { border-radius: 10px; border: 1px solid #e2e8f0; overflow: hidden; }
+.commercial-doc__tablehead { display: none; gap: 12px; background: #f8fafc; padding: 10px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #64748b; }
+@media (min-width: 768px) { .commercial-doc__tablehead { display: grid; grid-template-columns: 56px 1fr 56px 80px 96px; } }
+.commercial-doc__tablebody { display: flex; flex-direction: column; }
+.commercial-doc__row { display: grid; gap: 10px; padding: 14px 16px; border-top: 1px solid #f1f5f9; }
+.commercial-doc__row:first-child { border-top: 0; }
+@media (min-width: 768px) { .commercial-doc__row { grid-template-columns: 56px 1fr 56px 80px 96px; align-items: start; } }
+.commercial-doc__emptyrow { padding: 16px; font-size: 14px; color: #64748b; }
+.commercial-doc__thumb { height: 48px; width: 48px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; display: none; align-items: center; justify-content: center; overflow: hidden; }
+@media (min-width: 768px) { .commercial-doc__thumb { display: flex; } }
+.commercial-doc__thumbimg { height: 100%; width: 100%; object-fit: cover; }
+.commercial-doc__thumbfallback { font-size: 9px; font-weight: 600; text-transform: uppercase; color: #94a3b8; }
+.commercial-doc__rowmain { min-width: 0; }
+.commercial-doc__rowname { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.commercial-doc__tag { margin-left: 8px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #7c3aed; background: #ede9fe; border-radius: 999px; padding: 2px 8px; }
+.commercial-doc__rowdesc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: #64748b; white-space: pre-line; overflow-wrap: anywhere; }
+.commercial-doc__rowtax { margin-top: 4px; font-size: 11px; color: #94a3b8; }
+.commercial-doc__rowamount { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 8px; background: #f8fafc; padding: 8px 10px; font-size: 13px; }
+@media (min-width: 768px) { .commercial-doc__rowamount { display: block; background: transparent; padding: 0; text-align: right; } }
+.commercial-doc__rowamount-label { font-size: 11px; font-weight: 600; text-transform: uppercase; color: #94a3b8; }
+@media (min-width: 768px) { .commercial-doc__rowamount-label { display: none; } }
+
+/* ── price breakdown ── */
+.commercial-doc__breakdown { margin-top: 8px; border-radius: 8px; background: #f8fafc; padding: 8px 10px; }
+.commercial-doc__breakdown-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #94a3b8; }
+.commercial-doc__breakdown-list { margin-top: 4px; display: grid; gap: 2px; }
+.commercial-doc__breakdown-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: #64748b; }
+.commercial-doc__breakdown-note { margin-top: 4px; font-size: 11px; color: #64748b; }
+
+/* ── guidance + totals ── */
+.commercial-doc__summary { display: grid; gap: 20px; border-top: 1px solid #e2e8f0; padding: 20px 0; }
+@media (min-width: 768px) { .commercial-doc__summary { grid-template-columns: 1fr 300px; } }
+.commercial-doc__guidancecol { display: grid; gap: 12px; font-size: 14px; line-height: 1.5; color: #475569; }
+.commercial-doc__guidance, .commercial-doc__banking { border-radius: 10px; padding: 12px 14px; }
+.commercial-doc__guidance { border: 1px solid #c9e4dd; background: #f2f8f5; }
+.commercial-doc__banking { border: 1px solid #e2e8f0; }
+.commercial-doc__guidance-title, .commercial-doc__banking-title { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #006f5d; }
+.commercial-doc__banking-title { color: #64748b; }
+.commercial-doc__guidance-body, .commercial-doc__banking-body { margin-top: 8px; white-space: pre-line; overflow-wrap: anywhere; }
+
+.commercial-doc__totals { border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; padding: 16px; }
+.commercial-doc__totalrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 14px; }
+.commercial-doc__totalrow--memo { color: #64748b; font-size: 13px; }
+.commercial-doc__totalsrule { margin: 8px 0; border-top: 1px solid #e2e8f0; }
+.commercial-doc__balancebox { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-radius: 10px; background: #020617; padding: 10px 14px; color: #fff; }
+.commercial-doc__balancebox-value { font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
+
+/* ── payment history ── */
+.commercial-doc__history { border-top: 1px solid #e2e8f0; padding: 16px 0; }
+.commercial-doc__historylist { margin-top: 8px; display: grid; gap: 6px; font-size: 13px; }
+.commercial-doc__historyrow { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+
+/* ── terms / footer ── */
+.commercial-doc__terms { border-top: 1px solid #e2e8f0; padding-top: 20px; }
+.commercial-doc__termslist { margin-top: 10px; display: grid; gap: 8px; font-size: 12px; line-height: 1.5; color: #475569; }
+.commercial-doc__termsitem { display: grid; grid-template-columns: 18px 1fr; gap: 8px; }
+.commercial-doc__termsnum { font-weight: 600; color: #d62d00; }
+.commercial-doc__termsnote { margin-top: 12px; font-size: 12px; line-height: 1.5; color: #64748b; }
+.commercial-doc__footer { margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 14px; text-align: center; font-size: 12px; color: #64748b; }
+
+.commercial-doc__num { text-align: right; }
+.commercial-doc__ic { height: 14px; width: 14px; flex: none; }
+.commercial-doc__ic-sm { height: 12px; width: 12px; flex: none; margin-top: 2px; color: #94a3b8; }
+
+/* ── actions shell ── */
+.commercial-doc__actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; }
+.commercial-doc__action {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px;
+  border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; font-size: 14px; font-weight: 600;
+  color: #1e293b; cursor: pointer;
+}
+.commercial-doc__action:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.commercial-doc__action--primary { background: #020617; border-color: #020617; color: #fff; }
+
+/* Mobile: sticky action bar, safe-area aware, never covers content — the
+   sheet gets bottom padding to clear it instead of the bar overlapping text.
+   P5A — `margin: 0 -16px -16px` here was cancelling a padding inset that
+   does not exist on this element's real parent: .commercial-doc__actions is
+   a FLEX SIBLING of .commercial-doc__sheet inside `.commercial-doc`
+   (display:flex; flex-direction:column, no padding of its own), not a
+   child nested inside the sheet's own 16px padding box. The negative
+   margin therefore pushed the bar 16px past the sheet's edge on both
+   sides — confirmed with real device-metrics rendering (Chrome, 320/375/
+   390/430px): a reproducible ~16px horizontal overflow on every mobile
+   width, at every width tested, not content-dependent. The flex column's
+   default align-items:stretch already sizes this bar to the exact same
+   width as the sheet with no margin trick needed. */
+@media (max-width: 767px) {
+  .commercial-doc--responsive .commercial-doc__actions {
+    position: sticky; bottom: 0; z-index: 5; margin: 0;
+    background: rgba(255,255,255,0.96); backdrop-filter: blur(6px);
+    border-top: 1px solid #e2e8f0; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    justify-content: stretch;
+  }
+  .commercial-doc--responsive .commercial-doc__actions .commercial-doc__action { flex: 1 1 auto; justify-content: center; }
+  .commercial-doc--responsive .commercial-doc__sheet { padding-bottom: 84px; }
+}
+
+/* ── print: the ONE @page + break-avoidance contract, canonical for both
+   apps. A print surface must render mode="document" (the actions shell
+   is already never rendered there, see CommercialDocument.jsx) — nothing
+   here depends on viewport width, only on .commercial-doc--document and
+   the data-doc-block/data-keep-together/data-line-item markers already
+   on every atomic block. ── */
+@media print {
+  /* Zero browser page margin, on purpose: the sheet's own 28px padding
+     (~7.4mm) IS the visible margin, and 794px = 210mm = exactly 100% of
+     an A4 page at zero margin. This keeps the printed page width
+     byte-for-byte identical to the html2canvas capture's 794px box, so
+     text wraps exactly the same in both — a page margin here instead
+     (e.g. 12mm) would narrow the real printable area to ~186mm/703px
+     while every column width in this file is still budgeted against
+     794px, forcing extra line-wraps and taller content than the
+     html2canvas version ever sees. That mismatch, not the content
+     itself, was the actual first cause of the JET fixture printing 2
+     pages after just dropping min-height (verified with a headless
+     Chrome print-to-pdf probe — narrowing the width alone reproduced the
+     2-page overflow even with min-height already removed).
+     `size: A4` still needs to be redeclared here (not just above) so a
+     browser that does not merge @page rules across a non-print/print
+     boundary still gets it under the media query that is actually live
+     during print. */
+  @page { size: A4; margin: 0; }
+  .commercial-doc__actions { display: none !important; }
+  .commercial-doc__sheet { box-shadow: none !important; }
+  /* P4C — Chrome's "Background graphics" print option is OFF by default,
+     which strips every background-color/background-image/box-shadow
+     (never `color` or `border` — those always print). Without this, the
+     dark Balance Due box/chip/accent stat print with invisible white
+     text on a blank page, and the green Payment Guidance tint disappears
+     entirely. print-color-adjust:exact is the standard, well-supported
+     (Chrome/Edge/Safari, Firefox 97+) way to tell the browser "print this
+     element's colors exactly as shown" REGARDLESS of that checkbox — the
+     one thing this phase needed to add, applied broadly so the user is
+     never required to find and enable that setting themselves. */
+  .commercial-doc--document,
+  .commercial-doc--document * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  /* The 1123px min-height on .commercial-doc--document exists only for
+     the html2canvas capture, which needs a literal full-page box to
+     convert to mm before jsPDF applies its OWN margin on placement.
+     Native print already has the full 297mm page height available (see
+     above), so forcing that same min-height on top of it guaranteed a
+     near-empty second page every time regardless of content — this was
+     the real, verified cause of the JET fixture printing as 2 pages.
+     Native print sizes from content instead. Width stays 794px, fixed —
+     see the comment above. */
+  .commercial-doc--document .commercial-doc__sheet { min-height: 0; }
+  [data-doc-block], [data-keep-together], [data-line-item] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Belt-and-braces beyond print-color-adjust: an OUTLINE (not border —
+     outline draws outside the box without adding to its layout size, so
+     it can never re-tip the JET fixture back to a 2nd page the way a
+     border's extra 2px would) does not depend on the "Background
+     graphics" setting at all (only background-color/background-image/
+     box-shadow are ever suppressed, never outline or text color) — so
+     even on the near-zero-probability browser that ignores
+     print-color-adjust:exact, the balance figures still read as a
+     distinct, bounded, important box rather than plain inline text.
+     Blends into the matching dark fill when that fill IS printing. */
+  .commercial-doc__balancechip,
+  .commercial-doc__balancebox { outline: 1px solid #020617; outline-offset: -1px; }
+}
