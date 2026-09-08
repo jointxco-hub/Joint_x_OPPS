@@ -289,13 +289,32 @@ create index if not exists idx_opps_quote_revisions_quote on public.opps_quote_r
 -- ===================================================================
 -- 5. RESOLVE THE CIRCULAR FK  (header -> revisions)
 -- ===================================================================
-alter table public.opps_quotes
-  add constraint opps_quotes_current_revision_fk
-    foreign key (current_revision_id) references public.opps_quote_revisions(id) on delete set null;
+-- Postgres has no ADD CONSTRAINT IF NOT EXISTS. Guard each so this
+-- historical migration re-runs cleanly on an environment that already
+-- carries the Q1 schema (same name, same definition, same behaviour).
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.opps_quotes'::regclass
+      and conname  = 'opps_quotes_current_revision_fk'
+  ) then
+    alter table public.opps_quotes
+      add constraint opps_quotes_current_revision_fk
+        foreign key (current_revision_id) references public.opps_quote_revisions(id) on delete set null;
+  end if;
 
-alter table public.opps_quotes
-  add constraint opps_quotes_accepted_revision_fk
-    foreign key (accepted_revision_id) references public.opps_quote_revisions(id) on delete set null;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.opps_quotes'::regclass
+      and conname  = 'opps_quotes_accepted_revision_fk'
+  ) then
+    alter table public.opps_quotes
+      add constraint opps_quotes_accepted_revision_fk
+        foreign key (accepted_revision_id) references public.opps_quote_revisions(id) on delete set null;
+  end if;
+end
+$$;
 
 -- ===================================================================
 -- 6. QUOTE EVENTS  (APPEND-ONLY acceptance / activity audit)
