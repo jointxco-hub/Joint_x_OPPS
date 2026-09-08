@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, Save } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, Save, Link2, X } from "lucide-react";
+import { dataClient } from "@/api/dataClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,6 +9,60 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import QuoteLineItemsEditor, { newQuoteLine } from "./QuoteLineItemsEditor";
 import { calculateQuoteTotals } from "./quoteCalculations";
+
+// Lightweight client link — associates the quote with a public.clients row
+// so the product picker can surface that client's approved products +
+// configured pricing. Tenant-scoped via dataClient (entities.Client).
+function ClientLinkField({ value, name, onSelect, onClear }) {
+  const [term, setTerm] = useState("");
+  const { data: clients = [] } = useQuery({
+    queryKey: ["quoteEditorClients", term],
+    enabled: !value && term.trim().length >= 2,
+    queryFn: () => dataClient.entities.Client.filter({}, "client_name", 400),
+  });
+  const q = term.trim().toLowerCase();
+  const matches = q
+    ? clients.filter((c) => `${c.client_name || ""} ${c.client_email || ""} ${c.brand_name || ""}`.toLowerCase().includes(q)).slice(0, 8)
+    : [];
+
+  if (value) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm">
+        <span className="flex items-center gap-1.5 font-medium text-emerald-900">
+          <Link2 className="h-3.5 w-3.5" /> Linked to {name || "client"}
+        </span>
+        <button type="button" onClick={onClear} className="rounded p-1 text-emerald-700 hover:bg-emerald-100" aria-label="Unlink client">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="relative">
+      <Input
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+        placeholder="Search to link a client (unlocks their approved products)"
+        className="h-10 rounded-xl"
+      />
+      {matches.length ? (
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-xl border border-border bg-card shadow-lg">
+          {matches.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => { onSelect(c); setTerm(""); }}
+              className="block w-full px-3 py-2 text-left text-sm hover:bg-secondary"
+            >
+              <span className="font-medium text-foreground">{c.client_name || c.client_email}</span>
+              {c.client_email ? <span className="ml-2 text-xs text-muted-foreground">{c.client_email}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -26,6 +82,18 @@ function toEditorState(initial = {}) {
         tax_name: item.tax_name || "",
         tax_percentage: item.tax_percentage ?? 0,
         image_url: item.image_url || "",
+        // canonical-product linkage (Q1 columns) — kept through a revision
+        // so a re-opened quote still knows which line came from the catalogue.
+        source_client_product_id: item.source_client_product_id || null,
+        source_metadata:
+          item.source_metadata && typeof item.source_metadata === "object" ? item.source_metadata : {},
+        // Re-flag a catalogue line that was saved without a resolved price
+        // (or one that requires_quote) so a reviser still sees the warning.
+        _needs_price_review:
+          Boolean(item._needs_price_review) ||
+          Boolean(item?.source_metadata?.requires_quote) ||
+          ((Boolean(item.source_client_product_id) || item?.source_metadata?.source === "catalog") &&
+            Number(item.rate || 0) <= 0),
       }))
     : [newQuoteLine()];
 
@@ -111,6 +179,21 @@ export default function QuoteEditor({ initialQuote = {}, sourceRequest = null, o
 
         <Card className="mb-4 rounded-2xl border-border shadow-apple-sm">
           <CardContent className="grid gap-3 p-4 md:grid-cols-2">
+            <Field label="Client" className="md:col-span-2">
+              <ClientLinkField
+                value={state.customer_id}
+                name={state.customer_name}
+                onSelect={(c) =>
+                  set({
+                    customer_id: c.id,
+                    customer_name: state.customer_name || c.client_name || c.client_email || "",
+                    customer_email: state.customer_email || c.client_email || "",
+                    customer_phone: state.customer_phone || c.client_phone || "",
+                  })
+                }
+                onClear={() => set({ customer_id: "" })}
+              />
+            </Field>
             <Field label="Customer name" required>
               <Input value={state.customer_name} onChange={(e) => set({ customer_name: e.target.value })} className="h-10 rounded-xl" />
             </Field>
@@ -153,7 +236,7 @@ export default function QuoteEditor({ initialQuote = {}, sourceRequest = null, o
         <Card className="mb-4 rounded-2xl border-border shadow-apple-sm">
           <CardContent className="p-4">
             <p className="mb-3 text-sm font-semibold text-foreground">Line items</p>
-            <QuoteLineItemsEditor items={state.items} onChange={(items) => set({ items })} />
+            <QuoteLineItemsEditor items={state.items} onChange={(items) => set({ items })} clientId={state.customer_id || null} />
           </CardContent>
         </Card>
 

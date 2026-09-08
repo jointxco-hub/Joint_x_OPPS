@@ -11,6 +11,7 @@
 import { supabase } from "@/lib/supabaseClient";
 import { getCurrentTenantId } from "@/lib/tenantContext";
 import { calculateQuoteTotals } from "@/features/quotes/quoteCalculations";
+import { sanitizeQuoteLineSourceMetadata } from "@/features/quotes/quoteProductMapping";
 
 function ensureSupabase() {
   if (!supabase) throw new Error("Supabase is not configured.");
@@ -353,19 +354,29 @@ export async function saveQuoteWithItems(input = {}) {
   const tenantId = await getTenantId();
 
   const totals = calculateQuoteTotals(input, input.items || []);
-  const items = (totals.items || []).map((item, index) => ({
-    line_number: Number(item.line_number ?? index + 1),
-    role: item.role || "product",
-    item_name: String(item.item_name || "").trim(),
-    item_description: item.item_description || null,
-    quantity: Number(item.quantity ?? 0),
-    unit: item.unit || null,
-    rate: Number(item.rate ?? 0),
-    discount: Number(item.discount ?? 0),
-    tax_name: item.tax_name || null,
-    tax_percentage: Number(item.tax_percentage ?? 0),
-    image_url: item.image_url || null,
-  }));
+  const items = (totals.items || []).map((item, index) => {
+    // Carry the canonical-product linkage through to
+    // save_opps_quote_with_items (Q1 contract accepts both). The RPC builds
+    // the customer-safe snapshot from an allowlist, so source_metadata only
+    // ever contributes a derived price_breakdown — never cost / margin /
+    // internal data. sanitizeQuoteLineSourceMetadata is belt-and-braces.
+    const sourceMetadata = sanitizeQuoteLineSourceMetadata(item.source_metadata);
+    return {
+      line_number: Number(item.line_number ?? index + 1),
+      role: item.role || "product",
+      item_name: String(item.item_name || "").trim(),
+      item_description: item.item_description || null,
+      quantity: Number(item.quantity ?? 0),
+      unit: item.unit || null,
+      rate: Number(item.rate ?? 0),
+      discount: Number(item.discount ?? 0),
+      tax_name: item.tax_name || null,
+      tax_percentage: Number(item.tax_percentage ?? 0),
+      image_url: item.image_url || null,
+      source_client_product_id: item.source_client_product_id || null,
+      source_metadata: Object.keys(sourceMetadata).length ? sourceMetadata : undefined,
+    };
+  });
 
   const quotePayload = {
     customer_id: input.customer_id || null,

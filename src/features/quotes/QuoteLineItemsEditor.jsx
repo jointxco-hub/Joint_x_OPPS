@@ -1,9 +1,11 @@
-import { Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Plus, Trash2, PackageSearch, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { calculateInvoiceLine } from "@/features/invoices/invoiceCalculations";
 import { QUOTE_LINE_ROLES } from "./quoteCalculations";
+import QuoteProductPicker from "./QuoteProductPicker";
 
 const ROLE_LABELS = {
   product: "Product",
@@ -29,14 +31,28 @@ export function newQuoteLine() {
     tax_name: "",
     tax_percentage: 0,
     image_url: "",
+    source_client_product_id: null,
+    source_metadata: {},
+    _needs_price_review: false,
   };
+}
+
+function isBlankLine(item = {}) {
+  return (
+    !String(item.item_name || "").trim() &&
+    !String(item.item_description || "").trim() &&
+    Number(item.rate || 0) === 0 &&
+    !item.source_client_product_id
+  );
 }
 
 // Same card/grid language as InvoiceLineItemsEditor, minus the template
 // picker / DTF / media editor (out of scope for Q2). Adds the Q1 `role`
-// selector (product / addon / setup_fee / shipping / discount).
-export default function QuoteLineItemsEditor({ items = [], onChange }) {
+// selector (product / addon / setup_fee / shipping / discount) and the
+// catalogue product picker (client-approved products + internal catalogue).
+export default function QuoteLineItemsEditor({ items = [], onChange, clientId = null }) {
   const safeItems = items.length ? items : [newQuoteLine()];
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const updateItem = (index, patch) => {
     onChange(safeItems.map((item, i) => (i === index ? { ...item, ...patch } : item)));
@@ -47,14 +63,54 @@ export default function QuoteLineItemsEditor({ items = [], onChange }) {
     onChange(next.length ? next : [newQuoteLine()]);
   };
 
+  // A picked product replaces the first still-blank line, otherwise appends.
+  const addFromPicker = (primaryLine, extraLines = []) => {
+    const additions = [primaryLine, ...extraLines].filter(Boolean);
+    const firstBlank = safeItems.findIndex(isBlankLine);
+    let next;
+    if (firstBlank >= 0) {
+      next = [...safeItems.slice(0, firstBlank), ...additions, ...safeItems.slice(firstBlank + 1)];
+    } else {
+      next = [...safeItems, ...additions];
+    }
+    onChange(next);
+  };
+
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="secondary" onClick={() => setPickerOpen(true)} className="h-10 rounded-xl">
+          <PackageSearch className="h-4 w-4" /> Add from catalogue
+        </Button>
+        <span className="text-xs text-muted-foreground">or add manual lines below.</span>
+      </div>
+
+      <QuoteProductPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        clientId={clientId}
+        onPick={addFromPicker}
+      />
+
       {safeItems.map((item, index) => {
         const calculated = calculateInvoiceLine(item);
+        const fromCatalogue = Boolean(item.source_client_product_id) || item?.source_metadata?.source === "catalog";
         return (
           <div key={item.line_key || index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Line {index + 1}</p>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Line {index + 1}</p>
+                {fromCatalogue ? (
+                  <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {item.source_client_product_id ? "Client product" : "Catalogue"}
+                  </span>
+                ) : null}
+                {item._needs_price_review ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                    <TriangleAlert className="h-3 w-3" /> Price needs staff review — set the rate below
+                  </span>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={() => removeItem(index)}
@@ -87,7 +143,20 @@ export default function QuoteLineItemsEditor({ items = [], onChange }) {
                 <Input value={item.quantity ?? ""} onChange={(e) => updateItem(index, { quantity: e.target.value })} type="number" min="0" step="0.01" placeholder="1" className="h-8 rounded-lg text-sm" />
               </LabeledNumber>
               <LabeledNumber label="Rate" className="md:col-span-2">
-                <Input value={item.rate ?? ""} onChange={(e) => updateItem(index, { rate: e.target.value })} type="number" min="0" step="0.01" placeholder="0.00" className="h-8 rounded-lg text-sm" />
+                <Input
+                  value={item.rate ?? ""}
+                  onChange={(e) => {
+                    const patch = { rate: e.target.value };
+                    // A staff-entered positive rate clears the review flag.
+                    if (item._needs_price_review && Number(e.target.value) > 0) patch._needs_price_review = false;
+                    updateItem(index, patch);
+                  }}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  className={`h-8 rounded-lg text-sm ${item._needs_price_review ? "border-amber-400 bg-amber-50" : ""}`}
+                />
               </LabeledNumber>
               <LabeledNumber label="Discount" className="md:col-span-2">
                 <Input value={item.discount ?? ""} onChange={(e) => updateItem(index, { discount: e.target.value })} type="number" min="0" step="0.01" placeholder="0.00" className="h-8 rounded-lg text-sm" />
