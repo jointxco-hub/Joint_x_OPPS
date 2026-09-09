@@ -73,11 +73,13 @@ export function clientProductToPickerItem(cp = {}) {
     category: cp.category || "",
     image_url: cp.primary_mockup_url || cp.thumbnail_url || "",
     status: cp.status || "",
-    // Status-lifecycle approval only. Genuine revision-scoped customer
-    // approval lives in the client_approvals table (see the audit) and is
-    // deliberately NOT fetched here in Phase 0 - the picker never claims a
-    // customer-approval signal it has not actually read.
-    approved: isClientProductApproved(cp),
+    // INTERNAL ONLY - "the lifecycle stage is one of the approved-ish
+    // set". Used solely to decide whether to show a draft-prep hint; it
+    // is NEVER rendered as an approval claim. Verified customer approval
+    // is a separate revision-scoped read (admin_get_client_product_approvals,
+    // src/api/clientProductApprovals.js). A revision bump since the last
+    // approval must invalidate it - lifecycle status cannot see that.
+    lifecycleApprovedish: isClientProductApproved(cp),
     revision: clientProductRevision(cp),
     // Option arrays are intentionally empty: size / colour / print
     // options for a client product come from its own variants and
@@ -112,9 +114,24 @@ export function applyClientProductPickToNewRow(row = {}, item = {}) {
   };
 }
 
-// One-line, hum-readable status label for the picker row + preview card.
+// Neutral lifecycle-STAGE label for the picker row + selection panel.
+// This is the client product's workflow stage only - it is NOT a
+// statement about verified customer authorization. The Orders picker
+// shows this SEPARATELY from the revision-scoped approval check
+// (admin_get_client_product_approvals via src/api/clientProductApprovals.js):
+// "active" / "ready_to_order" / "client_approved" here NEVER imply an
+// approved client_approvals row for the current revision.
+const LIFECYCLE_STAGE_LABELS = {
+  draft: "Draft",
+  ready_for_client_review: "Awaiting client review",
+  client_changes_requested: "Changes requested",
+  client_approved: "Client-approved (stage)",
+  ready_to_order: "Ready to order",
+  active: "Active",
+  archived: "Archived",
+};
+
 export function clientProductStatusLabel(item = {}) {
-  if (item.approved) return "Client-approved";
   const raw = String(item.status || "").trim();
-  return raw ? raw.replace(/_/g, " ") : "unconfigured";
+  return LIFECYCLE_STAGE_LABELS[raw] || (raw ? raw.replace(/_/g, " ") : "Unconfigured");
 }

@@ -113,13 +113,18 @@ test("clientProductToPickerItem projects name / image / category / status and th
   assert.equal(item.name, "Acme Staff Hoodie");
   assert.equal(item.image_url, "private-upload://mockups/acme-hoodie.png");
   assert.equal(item.status, "active");
-  assert.equal(item.approved, true);
   assert.equal(item.revision, 3);
 });
 
-test("clientProductToPickerItem does NOT synthesise a customer-approval flag - client_products has no such column and Phase 0 does not read client_approvals", () => {
+test("clientProductToPickerItem does NOT synthesise a customer-approval flag - client_products has no such column; verified approval is a separate revision-scoped read", () => {
   const item = clientProductToPickerItem(cp({ client_approved: true, client_approved_at: "2026-09-01" }));
-  assert.equal("client_approved" in item, false, "no client_approved key - status is the only approval signal Phase 0 carries");
+  assert.equal("client_approved" in item, false, "no client_approved key");
+  assert.equal("approved" in item, false, "no bare `approved` key that could be mistaken for verified approval");
+});
+
+test("clientProductToPickerItem exposes lifecycleApprovedish (internal draft-prep hint only), never rendered as an approval claim", () => {
+  assert.equal(clientProductToPickerItem(cp({ status: "active" })).lifecycleApprovedish, true);
+  assert.equal(clientProductToPickerItem(cp({ status: "draft" })).lifecycleApprovedish, false);
 });
 
 test("clientProductToPickerItem falls back to internal_name, then a generic label", () => {
@@ -259,10 +264,15 @@ test("applyClientProductPickToNewRow keeps unrelated line fields (quantity, note
   assert.equal(row.notes, "rush");
 });
 
-test("clientProductStatusLabel: approved -> 'Client-approved', otherwise the humanised status", () => {
-  assert.equal(clientProductStatusLabel({ approved: true, status: "active" }), "Client-approved");
-  assert.equal(clientProductStatusLabel({ approved: false, status: "client_changes_requested" }), "client changes requested");
-  assert.equal(clientProductStatusLabel({ approved: false, status: "" }), "unconfigured");
+test("clientProductStatusLabel: neutral lifecycle STAGE only - never an approval claim", () => {
+  assert.equal(clientProductStatusLabel({ status: "active" }), "Active");
+  assert.equal(clientProductStatusLabel({ status: "ready_to_order" }), "Ready to order");
+  assert.equal(clientProductStatusLabel({ status: "client_approved" }), "Client-approved (stage)");
+  assert.equal(clientProductStatusLabel({ status: "client_changes_requested" }), "Changes requested");
+  assert.equal(clientProductStatusLabel({ status: "draft" }), "Draft");
+  assert.equal(clientProductStatusLabel({ status: "" }), "Unconfigured");
+  // an "approved" hint on the item is ignored - the label is status-derived only
+  assert.equal(clientProductStatusLabel({ lifecycleApprovedish: true, status: "active" }), "Active");
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -354,11 +364,13 @@ test("the catalog/stock pick branch explicitly clears client_product_id (mutuall
   assert.ok(branchArea.includes('client_product_id: "",'), "picking a catalog/stock item clears any prior client_product_id");
 });
 
-test("readiness / approval state is surfaced at selection time from the already-fetched row", async () => {
+test("readiness / approval state is surfaced at selection time - lifecycle stage AND verified revision-scoped approval, kept separate", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
-  assert.ok(source.includes("clientProductStatusLabel(cpItem)"), "status label shown for the selected client product");
-  assert.ok(source.includes('selectedPickerItem?.source === "client_product" && (() => {'), "the readiness panel is gated on a selected client-product picker item");
-  assert.ok(source.includes("Not client-approved yet"), "a non-approved product is clearly flagged, not blocked");
-  assert.ok(source.includes("not customer-approved or production-ready"), "selection must not imply production readiness");
+  assert.ok(source.includes("clientProductStatusLabel(cpItem)"), "lifecycle STAGE label shown for the selected client product");
+  assert.ok(source.includes('selectedPickerItem?.source === "client_product" && (() => {'), "the panel is gated on a selected client-product picker item");
+  // the authoritative signal is the verified revision-scoped approval, not lifecycle status
+  assert.ok(source.includes("hasCurrentRevisionApproval(approvalRows, cpItem.revision)"));
+  assert.ok(source.includes("Not customer-approved at the current revision"), "unverified is clearly flagged, not blocked");
+  assert.ok(source.includes("draft preparation only"), "selection must not imply production readiness");
   assert.ok(source.includes("existing readiness and approval checks still apply"), "the panel points back to the existing gates");
 });

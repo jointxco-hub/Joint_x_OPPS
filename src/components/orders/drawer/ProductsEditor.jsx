@@ -14,13 +14,14 @@ import { isImageReference } from "@/lib/imageReference";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
-import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
+import { buildArtworkByPlacement, lookupArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 import { findOrCreateClientProductArtworkFromAsset, reviseOrderLineComponentSnapshotArtwork } from "@/api/artworkLinking";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 import { selectableClientProductsForOrder, clientProductToPickerItem, applyClientProductPickToNewRow, clientProductStatusLabel } from "@/features/orders/clientProductPicker";
+import { getClientProductApprovals, hasCurrentRevisionApproval, currentRevisionApprovalRecord } from "@/api/clientProductApprovals";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -150,6 +151,27 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     || clientProductByInventoryItemId.get(line?.inventory_item_id)
     || null
   );
+
+  // Verified, revision-scoped customer approval for the client product
+  // currently selected in the "Add product" picker. Reads the EXISTING
+  // shared RPC admin_get_client_product_approvals (never the customer-only
+  // approve_client_product_concept; never writes). Lifecycle status is
+  // shown separately and is never treated as authorization.
+  const selectedComposedClientProductId = newRow.client_product_id || "";
+  const {
+    data: selectedClientProductApprovals = [],
+    isLoading: selectedClientProductApprovalsLoading,
+    isError: selectedClientProductApprovalsError,
+  } = useQuery({
+    queryKey: ["clientProductApprovals", selectedComposedClientProductId],
+    queryFn: async () => {
+      const { data, error } = await getClientProductApprovals(selectedComposedClientProductId);
+      if (error) throw new Error(error);
+      return data;
+    },
+    enabled: Boolean(selectedComposedClientProductId),
+    staleTime: 30_000,
+  });
   const clientProductIdsForOrder = Array.from(new Set(
     (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => cp.id)
   ));
@@ -336,12 +358,16 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         // the client-product default but editable per line, per attach.
         // Changing it here only ever affects the snapshot about to be
         // created; it never writes back to product_components.
+        const artworkMatch = component.placement
+          ? lookupArtworkByPlacement(artworkByPlacement, component.placement)
+          : { artwork: null, ambiguous: false };
         resolutions.push({
           component,
           ...resolution,
           staffPickedVariantId: "",
           staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
-          artwork: component.placement ? artworkByPlacement.get(component.placement) || null : null,
+          artwork: artworkMatch.artwork,
+          artworkAmbiguous: artworkMatch.ambiguous,
         });
       }
       setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
@@ -367,8 +393,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   };
 
   const needsStaffPick = (r) => (r.status === "unresolved_zero" || r.status === "unresolved_multiple") && !r.staffPickedVariantId;
+  // Block confirm when a "must choose" variant has no explicit staff pick,
+  // OR when a component's placement resolves to multiple distinct current
+  // artwork revisions - never freeze a guessed artwork revision id.
   const attachIsBlocked = pendingResolution
-    ? pendingResolution.resolutions.some((r) => r.status === "unresolved_multiple" && !r.staffPickedVariantId)
+    ? pendingResolution.resolutions.some(
+        (r) => (r.status === "unresolved_multiple" && !r.staffPickedVariantId) || r.artworkAmbiguous,
+      )
     : true;
 
   // Writes the immutable snapshot rows only once every "must choose"
@@ -525,6 +556,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         ? await dataClient.entities.ClientProductArtwork.filter({ client_product_id: clientProduct.id, is_current: true }, undefined, 50)
         : [];
       const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
+      const artworkMatch = component.placement
+        ? lookupArtworkByPlacement(artworkByPlacement, component.placement)
+        : { artwork: null, ambiguous: false };
+      if (artworkMatch.ambiguous) {
+        throw new Error(
+          `Multiple current artwork revisions match placement "${component.placement}" - resolve them in Catalog Management before adding this print option.`,
+        );
+      }
 
       const created = [];
       created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
@@ -544,7 +583,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         quantity_per_unit: component.quantity_per_unit,
         sort_order: component.sort_order,
         inventory_product_id: component.inventory_product_id,
-        artwork_revision_ids: resolveArtworkRevisionIds(component.placement ? artworkByPlacement.get(component.placement) : null),
+        artwork_revision_ids: resolveArtworkRevisionIds(artworkMatch.artwork),
       }));
 
       if (setupComponent) {
@@ -1524,7 +1563,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {item.source === "client_product" && (
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${item.approved ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                        <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                           {clientProductStatusLabel(item)}
                         </span>
                       )}
@@ -1578,18 +1617,35 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           )}
           {newRow.client_product_id && selectedPickerItem?.source === "client_product" && (() => {
             const cpItem = /** @type {any} */ (selectedPickerItem);
+            const approvalRows = Array.isArray(selectedClientProductApprovals) ? selectedClientProductApprovals : [];
+            const verifiedApproval = hasCurrentRevisionApproval(approvalRows, cpItem.revision);
+            const approvalRecord = currentRevisionApprovalRecord(approvalRows, cpItem.revision);
             return (
             <div className="space-y-1.5 rounded-2xl border border-border bg-background p-3 text-[11px]">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${cpItem.approved ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                {/* Lifecycle STAGE — workflow position only, never an approval claim */}
+                <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold uppercase tracking-wide text-muted-foreground">
                   {clientProductStatusLabel(cpItem)}
                 </span>
                 {cpItem.revision != null && (
                   <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold text-muted-foreground">revision {cpItem.revision}</span>
                 )}
               </div>
-              {!cpItem.approved && (
-                <p className="text-amber-700">Not client-approved yet — safe to add for draft preparation, but this line is not customer-approved or production-ready.</p>
+              {/* Verified, revision-scoped customer approval — the authoritative signal */}
+              {selectedClientProductApprovalsLoading ? (
+                <p className="text-muted-foreground">Checking customer approval…</p>
+              ) : selectedClientProductApprovalsError ? (
+                <p className="text-amber-700">Couldn&apos;t verify customer approval — reopen the picker to retry.</p>
+              ) : verifiedApproval ? (
+                <p className="font-semibold text-emerald-700">
+                  Customer-approved at revision {cpItem.revision}
+                  {approvalRecord?.approved_by_email ? ` · ${approvalRecord.approved_by_email}` : ""}
+                  {approvalRecord?.approved_at ? ` · ${String(approvalRecord.approved_at).slice(0, 10)}` : ""}
+                </p>
+              ) : (
+                <p className="font-semibold text-amber-700">
+                  Not customer-approved at the current revision — safe to add for draft preparation only; this line is not customer-approved or production-ready.
+                </p>
               )}
               {cpItem.needsPriceReview && (
                 <p className="text-amber-700">No configured client price{cpItem.requires_quote ? " (quote required)" : ""} — set the rate below before this line is treated as priced.</p>
@@ -2087,15 +2143,21 @@ function LineProduction({
             Resolving exact inventory variant per component. Line size &quot;{pendingResolution.orderLine.size || "(none)"}&quot; · colour &quot;{pendingResolution.orderLine.color || "(none)"}&quot;.
           </p>
           {pendingResolution.resolutions.map((r) => (
-            <div key={r.component.id} className={`rounded-lg border bg-background/60 p-1.5 ${needsStaffPick(r) && r.status === "unresolved_multiple" ? "border-red-300" : "border-primary/10"}`}>
+            <div key={r.component.id} className={`rounded-lg border bg-background/60 p-1.5 ${(needsStaffPick(r) && r.status === "unresolved_multiple") || r.artworkAmbiguous ? "border-red-300" : "border-primary/10"}`}>
               <p className="mb-1 text-[10px] font-semibold text-slate-700">
                 {r.component.label || r.component.component_type}
                 {r.component.placement && <span className="text-slate-400"> · {r.component.placement}</span>}
               </p>
               {r.component.placement && (
-                <p className="mb-1 text-[10px] text-slate-500">
-                  Artwork: {r.artwork ? (r.artwork.file_name || "linked file") : "none linked yet - set in Catalog Management"}
-                </p>
+                r.artworkAmbiguous ? (
+                  <p className="mb-1 text-[10px] font-semibold text-red-700">
+                    Artwork: multiple current revisions match placement &quot;{r.component.placement}&quot; — resolve in Catalog Management before attaching
+                  </p>
+                ) : (
+                  <p className="mb-1 text-[10px] text-slate-500">
+                    Artwork: {r.artwork ? (r.artwork.file_name || "linked file") : "none linked yet - set in Catalog Management"}
+                  </p>
+                )
               )}
               {r.status === "resolved" && (
                 <p className="text-[10px] text-emerald-700">✓ resolved automatically: {variantLabel(r.options.find((o) => o.id === r.resolvedVariantId) || {})}</p>
