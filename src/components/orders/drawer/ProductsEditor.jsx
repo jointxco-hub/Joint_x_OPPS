@@ -14,12 +14,14 @@ import { isImageReference } from "@/lib/imageReference";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
 import { computeStockDryRun } from "@/lib/stockDryRun";
-import { buildArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
+import { buildArtworkByPlacement, lookupArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 import { findOrCreateClientProductArtworkFromAsset, reviseOrderLineComponentSnapshotArtwork } from "@/api/artworkLinking";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
+import { selectableClientProductsForOrder, clientProductToPickerItem, applyClientProductPickToNewRow, clientProductStatusLabel } from "@/features/orders/clientProductPicker";
+import { getClientProductApprovals, hasCurrentRevisionApproval, currentRevisionApprovalRecord } from "@/api/clientProductApprovals";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -34,7 +36,7 @@ function newLineId() {
 
 export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "" }) {
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
-  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
+  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
   const [newRow, setNewRow] = useState(emptyRow);
@@ -149,6 +151,27 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     || clientProductByInventoryItemId.get(line?.inventory_item_id)
     || null
   );
+
+  // Verified, revision-scoped customer approval for the client product
+  // currently selected in the "Add product" picker. Reads the EXISTING
+  // shared RPC admin_get_client_product_approvals (never the customer-only
+  // approve_client_product_concept; never writes). Lifecycle status is
+  // shown separately and is never treated as authorization.
+  const selectedComposedClientProductId = newRow.client_product_id || "";
+  const {
+    data: selectedClientProductApprovals = [],
+    isLoading: selectedClientProductApprovalsLoading,
+    isError: selectedClientProductApprovalsError,
+  } = useQuery({
+    queryKey: ["clientProductApprovals", selectedComposedClientProductId],
+    queryFn: async () => {
+      const { data, error } = await getClientProductApprovals(selectedComposedClientProductId);
+      if (error) throw new Error(error);
+      return data;
+    },
+    enabled: Boolean(selectedComposedClientProductId),
+    staleTime: 30_000,
+  });
   const clientProductIdsForOrder = Array.from(new Set(
     (Array.isArray(clientProductsForOrder) ? clientProductsForOrder : []).map((cp) => cp.id)
   ));
@@ -335,12 +358,16 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         // the client-product default but editable per line, per attach.
         // Changing it here only ever affects the snapshot about to be
         // created; it never writes back to product_components.
+        const artworkMatch = component.placement
+          ? lookupArtworkByPlacement(artworkByPlacement, component.placement)
+          : { artwork: null, ambiguous: false };
         resolutions.push({
           component,
           ...resolution,
           staffPickedVariantId: "",
           staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
-          artwork: component.placement ? artworkByPlacement.get(component.placement) || null : null,
+          artwork: artworkMatch.artwork,
+          artworkAmbiguous: artworkMatch.ambiguous,
         });
       }
       setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
@@ -366,8 +393,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   };
 
   const needsStaffPick = (r) => (r.status === "unresolved_zero" || r.status === "unresolved_multiple") && !r.staffPickedVariantId;
+  // Block confirm when a "must choose" variant has no explicit staff pick,
+  // OR when a component's placement resolves to multiple distinct current
+  // artwork revisions - never freeze a guessed artwork revision id.
   const attachIsBlocked = pendingResolution
-    ? pendingResolution.resolutions.some((r) => r.status === "unresolved_multiple" && !r.staffPickedVariantId)
+    ? pendingResolution.resolutions.some(
+        (r) => (r.status === "unresolved_multiple" && !r.staffPickedVariantId) || r.artworkAmbiguous,
+      )
     : true;
 
   // Writes the immutable snapshot rows only once every "must choose"
@@ -524,6 +556,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         ? await dataClient.entities.ClientProductArtwork.filter({ client_product_id: clientProduct.id, is_current: true }, undefined, 50)
         : [];
       const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
+      const artworkMatch = component.placement
+        ? lookupArtworkByPlacement(artworkByPlacement, component.placement)
+        : { artwork: null, ambiguous: false };
+      if (artworkMatch.ambiguous) {
+        throw new Error(
+          `Multiple current artwork revisions match placement "${component.placement}" - resolve them in Catalog Management before adding this print option.`,
+        );
+      }
 
       const created = [];
       created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
@@ -543,7 +583,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         quantity_per_unit: component.quantity_per_unit,
         sort_order: component.sort_order,
         inventory_product_id: component.inventory_product_id,
-        artwork_revision_ids: resolveArtworkRevisionIds(component.placement ? artworkByPlacement.get(component.placement) : null),
+        artwork_revision_ids: resolveArtworkRevisionIds(artworkMatch.artwork),
       }));
 
       if (setupComponent) {
@@ -933,7 +973,21 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     duplicateLineMutation.mutate({ sourceLineId: p.line_id, targetLineId });
   };
 
+  // Phase 0 - Orders client-product reuse: the order's client's already
+  // configured products, offered as a direct picker source alongside
+  // catalog + stock. Reuses the same client_id-scoped query the
+  // production lookup maps are built from (clientProductsForOrder) - no
+  // new fetch, no widening of scope. Archived products are hidden;
+  // non-approved ones stay selectable but flagged. Picking one sets
+  // client_product_id on the line so the EXISTING "Attach composition"
+  // flow becomes available - it never creates or mutates a client_product.
+  const selectableClientProducts = order.client_id
+    ? selectableClientProductsForOrder(clientProductsForOrder)
+    : [];
+  const clientProductPickerItems = selectableClientProducts.map(clientProductToPickerItem);
+
   const allPickerItems = [
+    ...clientProductPickerItems,
     ...(/** @type {any[]} */ (safeCatalogItems))
       .filter((/** @type {any} */ c) => c.is_archived !== true)
       .filter((/** @type {any} */ c) => c.store_visible !== false)
@@ -967,6 +1021,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       })),
   ];
 
+  // Catalog + stock only - the Configure Product "Match existing / link"
+  // pickers and the catalog-thumbnail lookup must not see client-product
+  // rows (those carry no catalog_item_id/inventory_item_id to match on,
+  // and Phase 0 only wires client-product selection into the Add product
+  // picker above, not Configure Product).
+  const catalogAndStockPickerItems = allPickerItems.filter((item) => item.source !== "client_product");
+
   const pickerCategories = [...new Set(allPickerItems.map((item) => item.category).filter(Boolean))].slice(0, 14);
   const sourceFiltered = allPickerItems.filter((item) => {
     const sourceMatch = pickerSource === "all" || item.source === pickerSource;
@@ -976,8 +1037,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const filtered = pickerSearch
     ? sourceFiltered.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
     : sourceFiltered.slice(0, 10);
-  const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
-  const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.catalog_item_id || editRow.inventory_item_id));
+  const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.client_product_id || newRow.catalog_item_id || newRow.inventory_item_id));
+  const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.client_product_id || editRow.catalog_item_id || editRow.inventory_item_id));
   const productLineTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
     return sum + (Number(product.price || 0) * Number(product.quantity || 1));
@@ -1240,7 +1301,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               {(() => {
                 const resolvedThumb = resolveLineThumbnail(p, {
                   clientProduct: clientProductForLine(p),
-                  catalogItem: allPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
+                  catalogItem: catalogAndStockPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
                 });
                 const isRealImage = Boolean(resolvedThumb) && isImageReference(resolvedThumb);
                 return (
@@ -1411,6 +1472,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <div className="flex flex-wrap gap-1.5">
             {[
               ["all", "All"],
+              ...(clientProductPickerItems.length > 0 ? [["client_product", "Client products"]] : []),
               ["catalog", "Catalog"],
               ["stock", "Stock"],
             ].map(([value, label]) => (
@@ -1428,7 +1490,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             <button
               type="button"
               onClick={() => {
-                setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "custom" }));
+                setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "custom" }));
                 setPickerSearch("");
                 setShowPicker(false);
               }}
@@ -1452,7 +1514,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <div className="relative">
             <Input
               value={newRow.name}
-              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value, source: "custom", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "" })); setPickerSearch(e.target.value); setShowPicker(true); }}
+              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value, source: "custom", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "" })); setPickerSearch(e.target.value); setShowPicker(true); }}
               onFocus={() => setShowPicker(true)}
               onBlur={() => setTimeout(() => setShowPicker(false), 150)}
               placeholder="Search inventory or type name..."
@@ -1464,20 +1526,25 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 {filtered.map((item, idx) => (
                   <button key={idx} type="button"
                     onMouseDown={() => {
-                      setNewRow(r => ({
-                        ...r,
-                        name: item.name,
-                        price: item.price ? String(item.price) : r.price,
-                        catalog_item_id: item.source === "catalog" ? item.id : "",
-                        inventory_item_id: item.source === "stock" ? item.id : "",
-                        image_url: item.image_url || "",
-                        category: item.category || "",
-                        source: item.source,
-                        size: "",
-                        color: "",
-                        selected_print_options: [],
-                        selected_addons: [],
-                      }));
+                      setNewRow(r => (
+                        item.source === "client_product"
+                          ? applyClientProductPickToNewRow(r, item)
+                          : {
+                              ...r,
+                              name: item.name,
+                              price: item.price ? String(item.price) : r.price,
+                              catalog_item_id: item.source === "catalog" ? item.id : "",
+                              inventory_item_id: item.source === "stock" ? item.id : "",
+                              client_product_id: "",
+                              image_url: item.image_url || "",
+                              category: item.category || "",
+                              source: item.source,
+                              size: "",
+                              color: "",
+                              selected_print_options: [],
+                              selected_addons: [],
+                            }
+                      ));
                       setSizeRun({});
                       setPickerSearch("");
                       setShowPicker(false);
@@ -1488,10 +1555,21 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-foreground">{item.name}</p>
-                      <p className="truncate text-[10px] text-muted-foreground">{[item.category, item.source].filter(Boolean).join(" / ")}</p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        {item.source === "client_product"
+                          ? ["Client product", item.category].filter(Boolean).join(" / ")
+                          : [item.category, item.source].filter(Boolean).join(" / ")}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {item.price ? <span className="text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
+                      {item.source === "client_product" && (
+                        <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          {clientProductStatusLabel(item)}
+                        </span>
+                      )}
+                      {item.source === "client_product" && item.needsPriceReview
+                        ? <span className="text-[10px] font-semibold text-amber-700">set price</span>
+                        : item.price ? <span className="text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
                     </div>
                   </button>
                 ))}
@@ -1500,7 +1578,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   <button
                     type="button"
                     onMouseDown={() => {
-                      setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "custom" }));
+                      setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "custom" }));
                       setPickerSearch("");
                       setShowPicker(false);
                     }}
@@ -1525,7 +1603,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-foreground">{newRow.name || "Custom product"}</p>
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">{[newRow.category, newRow.source || "custom"].filter(Boolean).join(" / ")}</p>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">{[newRow.category, newRow.source === "client_product" ? "client product" : (newRow.source || "custom")].filter(Boolean).join(" / ")}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="rounded-full bg-background px-2 py-1">Qty {Number(newRow.quantity) || 1}</span>
                   {newRow.size && <span className="rounded-full bg-background px-2 py-1">{newRow.size}</span>}
@@ -1537,6 +1615,47 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               </div>
             </div>
           )}
+          {newRow.client_product_id && selectedPickerItem?.source === "client_product" && (() => {
+            const cpItem = /** @type {any} */ (selectedPickerItem);
+            const approvalRows = Array.isArray(selectedClientProductApprovals) ? selectedClientProductApprovals : [];
+            const verifiedApproval = hasCurrentRevisionApproval(approvalRows, cpItem.revision);
+            const approvalRecord = currentRevisionApprovalRecord(approvalRows, cpItem.revision);
+            return (
+            <div className="space-y-1.5 rounded-2xl border border-border bg-background p-3 text-[11px]">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Lifecycle STAGE — workflow position only, never an approval claim */}
+                <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold uppercase tracking-wide text-muted-foreground">
+                  {clientProductStatusLabel(cpItem)}
+                </span>
+                {cpItem.revision != null && (
+                  <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold text-muted-foreground">revision {cpItem.revision}</span>
+                )}
+              </div>
+              {/* Verified, revision-scoped customer approval — the authoritative signal */}
+              {selectedClientProductApprovalsLoading ? (
+                <p className="text-muted-foreground">Checking customer approval…</p>
+              ) : selectedClientProductApprovalsError ? (
+                <p className="text-amber-700">Couldn&apos;t verify customer approval — reopen the picker to retry.</p>
+              ) : verifiedApproval ? (
+                <p className="font-semibold text-emerald-700">
+                  Customer-approved at revision {cpItem.revision}
+                  {approvalRecord?.approved_by_email ? ` · ${approvalRecord.approved_by_email}` : ""}
+                  {approvalRecord?.approved_at ? ` · ${String(approvalRecord.approved_at).slice(0, 10)}` : ""}
+                </p>
+              ) : (
+                <p className="font-semibold text-amber-700">
+                  Not customer-approved at the current revision — safe to add for draft preparation only; this line is not customer-approved or production-ready.
+                </p>
+              )}
+              {cpItem.needsPriceReview && (
+                <p className="text-amber-700">No configured client price{cpItem.requires_quote ? " (quote required)" : ""} — set the rate below before this line is treated as priced.</p>
+              )}
+              <p className="text-muted-foreground">
+                Adds the client product to this line without creating a duplicate. Its garment, print method, placement, artwork, exact variant and per-component pricing are frozen in the next step via <span className="font-semibold">Attach composition</span> in the production panel — existing readiness and approval checks still apply.
+              </p>
+            </div>
+            );
+          })()}
           <div className="flex gap-2">
             <Input value={newRow.quantity} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, quantity: e.target.value }))}
               type="number" placeholder="Qty" className="h-8 text-sm rounded-xl w-16" />
@@ -1698,7 +1817,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             {configureStep === "match" && (
               <div className="space-y-3">
                 {!configurePickedItem ? (
-                  <CatalogPicker items={allPickerItems} onPick={setConfigurePickedItem} />
+                  <CatalogPicker items={catalogAndStockPickerItems} onPick={setConfigurePickedItem} />
                 ) : (
                   <div className="space-y-3">
                     <PickedItemPreview item={configurePickedItem} onClear={() => setConfigurePickedItem(null)} />
@@ -1728,7 +1847,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   {configureCreatePickedItem ? (
                     <PickedItemPreview item={configureCreatePickedItem} onClear={() => setConfigureCreatePickedItem(null)} />
                   ) : (
-                    <CatalogPicker items={allPickerItems} onPick={setConfigureCreatePickedItem} placeholder="Search catalog/stock to link (optional)..." />
+                    <CatalogPicker items={catalogAndStockPickerItems} onPick={setConfigureCreatePickedItem} placeholder="Search catalog/stock to link (optional)..." />
                   )}
                 </div>
                 <div className="flex gap-2">
@@ -2024,15 +2143,21 @@ function LineProduction({
             Resolving exact inventory variant per component. Line size &quot;{pendingResolution.orderLine.size || "(none)"}&quot; · colour &quot;{pendingResolution.orderLine.color || "(none)"}&quot;.
           </p>
           {pendingResolution.resolutions.map((r) => (
-            <div key={r.component.id} className={`rounded-lg border bg-background/60 p-1.5 ${needsStaffPick(r) && r.status === "unresolved_multiple" ? "border-red-300" : "border-primary/10"}`}>
+            <div key={r.component.id} className={`rounded-lg border bg-background/60 p-1.5 ${(needsStaffPick(r) && r.status === "unresolved_multiple") || r.artworkAmbiguous ? "border-red-300" : "border-primary/10"}`}>
               <p className="mb-1 text-[10px] font-semibold text-slate-700">
                 {r.component.label || r.component.component_type}
                 {r.component.placement && <span className="text-slate-400"> · {r.component.placement}</span>}
               </p>
               {r.component.placement && (
-                <p className="mb-1 text-[10px] text-slate-500">
-                  Artwork: {r.artwork ? (r.artwork.file_name || "linked file") : "none linked yet - set in Catalog Management"}
-                </p>
+                r.artworkAmbiguous ? (
+                  <p className="mb-1 text-[10px] font-semibold text-red-700">
+                    Artwork: multiple current revisions match placement &quot;{r.component.placement}&quot; — resolve in Catalog Management before attaching
+                  </p>
+                ) : (
+                  <p className="mb-1 text-[10px] text-slate-500">
+                    Artwork: {r.artwork ? (r.artwork.file_name || "linked file") : "none linked yet - set in Catalog Management"}
+                  </p>
+                )
               )}
               {r.status === "resolved" && (
                 <p className="text-[10px] text-emerald-700">✓ resolved automatically: {variantLabel(r.options.find((o) => o.id === r.resolvedVariantId) || {})}</p>
