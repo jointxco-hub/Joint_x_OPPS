@@ -73,8 +73,11 @@ export function clientProductToPickerItem(cp = {}) {
     category: cp.category || "",
     image_url: cp.primary_mockup_url || cp.thumbnail_url || "",
     status: cp.status || "",
+    // Status-lifecycle approval only. Genuine revision-scoped customer
+    // approval lives in the client_approvals table (see the audit) and is
+    // deliberately NOT fetched here in Phase 0 - the picker never claims a
+    // customer-approval signal it has not actually read.
     approved: isClientProductApproved(cp),
-    client_approved: cp.client_approved === true,
     revision: clientProductRevision(cp),
     // Option arrays are intentionally empty: size / colour / print
     // options for a client product come from its own variants and

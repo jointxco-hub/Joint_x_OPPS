@@ -1587,9 +1587,6 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 {cpItem.revision != null && (
                   <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold text-muted-foreground">revision {cpItem.revision}</span>
                 )}
-                {cpItem.client_approved && (
-                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">customer approval recorded</span>
-                )}
               </div>
               {!cpItem.approved && (
                 <p className="text-amber-700">Not client-approved yet — safe to add for draft preparation, but this line is not customer-approved or production-ready.</p>

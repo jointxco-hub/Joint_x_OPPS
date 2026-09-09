@@ -45,7 +45,6 @@ const cp = (overrides = {}) => ({
   internal_name: "acme-hoodie-2026",
   status: "active",
   revision: 3,
-  client_approved: true,
   client_price: 450,
   requires_quote: false,
   primary_mockup_url: "private-upload://mockups/acme-hoodie.png",
@@ -115,8 +114,12 @@ test("clientProductToPickerItem projects name / image / category / status and th
   assert.equal(item.image_url, "private-upload://mockups/acme-hoodie.png");
   assert.equal(item.status, "active");
   assert.equal(item.approved, true);
-  assert.equal(item.client_approved, true);
   assert.equal(item.revision, 3);
+});
+
+test("clientProductToPickerItem does NOT synthesise a customer-approval flag - client_products has no such column and Phase 0 does not read client_approvals", () => {
+  const item = clientProductToPickerItem(cp({ client_approved: true, client_approved_at: "2026-09-01" }));
+  assert.equal("client_approved" in item, false, "no client_approved key - status is the only approval signal Phase 0 carries");
 });
 
 test("clientProductToPickerItem falls back to internal_name, then a generic label", () => {
