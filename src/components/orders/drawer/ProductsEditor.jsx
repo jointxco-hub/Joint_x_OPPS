@@ -20,6 +20,7 @@ import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
+import { selectableClientProductsForOrder, clientProductToPickerItem, applyClientProductPickToNewRow, clientProductStatusLabel } from "@/features/orders/clientProductPicker";
 
 function toMoneyDisplay(value) {
   const n = toMoney(value);
@@ -34,7 +35,7 @@ function newLineId() {
 
 export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "" }) {
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
-  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
+  const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
   const [newRow, setNewRow] = useState(emptyRow);
@@ -933,7 +934,21 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     duplicateLineMutation.mutate({ sourceLineId: p.line_id, targetLineId });
   };
 
+  // Phase 0 - Orders client-product reuse: the order's client's already
+  // configured products, offered as a direct picker source alongside
+  // catalog + stock. Reuses the same client_id-scoped query the
+  // production lookup maps are built from (clientProductsForOrder) - no
+  // new fetch, no widening of scope. Archived products are hidden;
+  // non-approved ones stay selectable but flagged. Picking one sets
+  // client_product_id on the line so the EXISTING "Attach composition"
+  // flow becomes available - it never creates or mutates a client_product.
+  const selectableClientProducts = order.client_id
+    ? selectableClientProductsForOrder(clientProductsForOrder)
+    : [];
+  const clientProductPickerItems = selectableClientProducts.map(clientProductToPickerItem);
+
   const allPickerItems = [
+    ...clientProductPickerItems,
     ...(/** @type {any[]} */ (safeCatalogItems))
       .filter((/** @type {any} */ c) => c.is_archived !== true)
       .filter((/** @type {any} */ c) => c.store_visible !== false)
@@ -967,6 +982,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       })),
   ];
 
+  // Catalog + stock only - the Configure Product "Match existing / link"
+  // pickers and the catalog-thumbnail lookup must not see client-product
+  // rows (those carry no catalog_item_id/inventory_item_id to match on,
+  // and Phase 0 only wires client-product selection into the Add product
+  // picker above, not Configure Product).
+  const catalogAndStockPickerItems = allPickerItems.filter((item) => item.source !== "client_product");
+
   const pickerCategories = [...new Set(allPickerItems.map((item) => item.category).filter(Boolean))].slice(0, 14);
   const sourceFiltered = allPickerItems.filter((item) => {
     const sourceMatch = pickerSource === "all" || item.source === pickerSource;
@@ -976,8 +998,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const filtered = pickerSearch
     ? sourceFiltered.filter(p => p.name?.toLowerCase().includes(pickerSearch.toLowerCase()))
     : sourceFiltered.slice(0, 10);
-  const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.catalog_item_id || newRow.inventory_item_id));
-  const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.catalog_item_id || editRow.inventory_item_id));
+  const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.client_product_id || newRow.catalog_item_id || newRow.inventory_item_id));
+  const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.client_product_id || editRow.catalog_item_id || editRow.inventory_item_id));
   const productLineTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
     return sum + (Number(product.price || 0) * Number(product.quantity || 1));
@@ -1240,7 +1262,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               {(() => {
                 const resolvedThumb = resolveLineThumbnail(p, {
                   clientProduct: clientProductForLine(p),
-                  catalogItem: allPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
+                  catalogItem: catalogAndStockPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
                 });
                 const isRealImage = Boolean(resolvedThumb) && isImageReference(resolvedThumb);
                 return (
@@ -1411,6 +1433,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <div className="flex flex-wrap gap-1.5">
             {[
               ["all", "All"],
+              ...(clientProductPickerItems.length > 0 ? [["client_product", "Client products"]] : []),
               ["catalog", "Catalog"],
               ["stock", "Stock"],
             ].map(([value, label]) => (
@@ -1428,7 +1451,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             <button
               type="button"
               onClick={() => {
-                setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "custom" }));
+                setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "custom" }));
                 setPickerSearch("");
                 setShowPicker(false);
               }}
@@ -1452,7 +1475,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <div className="relative">
             <Input
               value={newRow.name}
-              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value, source: "custom", catalog_item_id: "", inventory_item_id: "", image_url: "", category: "" })); setPickerSearch(e.target.value); setShowPicker(true); }}
+              onChange={(/** @type {any} */ e) => { setNewRow(r => ({ ...r, name: e.target.value, source: "custom", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "" })); setPickerSearch(e.target.value); setShowPicker(true); }}
               onFocus={() => setShowPicker(true)}
               onBlur={() => setTimeout(() => setShowPicker(false), 150)}
               placeholder="Search inventory or type name..."
@@ -1464,20 +1487,25 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 {filtered.map((item, idx) => (
                   <button key={idx} type="button"
                     onMouseDown={() => {
-                      setNewRow(r => ({
-                        ...r,
-                        name: item.name,
-                        price: item.price ? String(item.price) : r.price,
-                        catalog_item_id: item.source === "catalog" ? item.id : "",
-                        inventory_item_id: item.source === "stock" ? item.id : "",
-                        image_url: item.image_url || "",
-                        category: item.category || "",
-                        source: item.source,
-                        size: "",
-                        color: "",
-                        selected_print_options: [],
-                        selected_addons: [],
-                      }));
+                      setNewRow(r => (
+                        item.source === "client_product"
+                          ? applyClientProductPickToNewRow(r, item)
+                          : {
+                              ...r,
+                              name: item.name,
+                              price: item.price ? String(item.price) : r.price,
+                              catalog_item_id: item.source === "catalog" ? item.id : "",
+                              inventory_item_id: item.source === "stock" ? item.id : "",
+                              client_product_id: "",
+                              image_url: item.image_url || "",
+                              category: item.category || "",
+                              source: item.source,
+                              size: "",
+                              color: "",
+                              selected_print_options: [],
+                              selected_addons: [],
+                            }
+                      ));
                       setSizeRun({});
                       setPickerSearch("");
                       setShowPicker(false);
@@ -1488,10 +1516,21 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-foreground">{item.name}</p>
-                      <p className="truncate text-[10px] text-muted-foreground">{[item.category, item.source].filter(Boolean).join(" / ")}</p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        {item.source === "client_product"
+                          ? ["Client product", item.category].filter(Boolean).join(" / ")
+                          : [item.category, item.source].filter(Boolean).join(" / ")}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {item.price ? <span className="text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
+                      {item.source === "client_product" && (
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${item.approved ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                          {clientProductStatusLabel(item)}
+                        </span>
+                      )}
+                      {item.source === "client_product" && item.needsPriceReview
+                        ? <span className="text-[10px] font-semibold text-amber-700">set price</span>
+                        : item.price ? <span className="text-xs font-semibold text-primary">R{Number(item.price).toLocaleString()}</span> : null}
                     </div>
                   </button>
                 ))}
@@ -1500,7 +1539,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   <button
                     type="button"
                     onMouseDown={() => {
-                      setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", image_url: "", category: "", source: "custom" }));
+                      setNewRow((r) => ({ ...r, catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "custom" }));
                       setPickerSearch("");
                       setShowPicker(false);
                     }}
@@ -1525,7 +1564,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-foreground">{newRow.name || "Custom product"}</p>
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">{[newRow.category, newRow.source || "custom"].filter(Boolean).join(" / ")}</p>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">{[newRow.category, newRow.source === "client_product" ? "client product" : (newRow.source || "custom")].filter(Boolean).join(" / ")}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="rounded-full bg-background px-2 py-1">Qty {Number(newRow.quantity) || 1}</span>
                   {newRow.size && <span className="rounded-full bg-background px-2 py-1">{newRow.size}</span>}
@@ -1537,6 +1576,33 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               </div>
             </div>
           )}
+          {newRow.client_product_id && selectedPickerItem?.source === "client_product" && (() => {
+            const cpItem = /** @type {any} */ (selectedPickerItem);
+            return (
+            <div className="space-y-1.5 rounded-2xl border border-border bg-background p-3 text-[11px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-2 py-0.5 font-semibold uppercase tracking-wide ${cpItem.approved ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                  {clientProductStatusLabel(cpItem)}
+                </span>
+                {cpItem.revision != null && (
+                  <span className="rounded-full bg-secondary px-2 py-0.5 font-semibold text-muted-foreground">revision {cpItem.revision}</span>
+                )}
+                {cpItem.client_approved && (
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">customer approval recorded</span>
+                )}
+              </div>
+              {!cpItem.approved && (
+                <p className="text-amber-700">Not client-approved yet — safe to add for draft preparation, but this line is not customer-approved or production-ready.</p>
+              )}
+              {cpItem.needsPriceReview && (
+                <p className="text-amber-700">No configured client price{cpItem.requires_quote ? " (quote required)" : ""} — set the rate below before this line is treated as priced.</p>
+              )}
+              <p className="text-muted-foreground">
+                Adds the client product to this line without creating a duplicate. Its garment, print method, placement, artwork, exact variant and per-component pricing are frozen in the next step via <span className="font-semibold">Attach composition</span> in the production panel — existing readiness and approval checks still apply.
+              </p>
+            </div>
+            );
+          })()}
           <div className="flex gap-2">
             <Input value={newRow.quantity} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, quantity: e.target.value }))}
               type="number" placeholder="Qty" className="h-8 text-sm rounded-xl w-16" />
@@ -1698,7 +1764,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             {configureStep === "match" && (
               <div className="space-y-3">
                 {!configurePickedItem ? (
-                  <CatalogPicker items={allPickerItems} onPick={setConfigurePickedItem} />
+                  <CatalogPicker items={catalogAndStockPickerItems} onPick={setConfigurePickedItem} />
                 ) : (
                   <div className="space-y-3">
                     <PickedItemPreview item={configurePickedItem} onClear={() => setConfigurePickedItem(null)} />
@@ -1728,7 +1794,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   {configureCreatePickedItem ? (
                     <PickedItemPreview item={configureCreatePickedItem} onClear={() => setConfigureCreatePickedItem(null)} />
                   ) : (
-                    <CatalogPicker items={allPickerItems} onPick={setConfigureCreatePickedItem} placeholder="Search catalog/stock to link (optional)..." />
+                    <CatalogPicker items={catalogAndStockPickerItems} onPick={setConfigureCreatePickedItem} placeholder="Search catalog/stock to link (optional)..." />
                   )}
                 </div>
                 <div className="flex gap-2">
