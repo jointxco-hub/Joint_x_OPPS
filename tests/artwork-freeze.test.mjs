@@ -116,3 +116,34 @@ test('later revisions for the same placement do not retroactively change what wa
   assert.deepEqual(laterCall, ['revision-2']);
   assert.notEqual(frozen, laterCall, 'each call returns its own array, no shared mutable reference');
 });
+
+// ── ProductsEditor wiring: an ambiguous placement blocks the attach ──
+
+test('beginAttach records artworkAmbiguous from lookupArtworkByPlacement, and attachIsBlocked acts on it', async () => {
+  const src = (await readFile(new URL('../src/components/orders/drawer/ProductsEditor.jsx', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  // beginAttach uses the canonical lookup and stores the ambiguity flag on the resolution
+  assert.ok(src.includes('lookupArtworkByPlacement(artworkByPlacement, component.placement)'), 'beginAttach resolves artwork via canonical lookup');
+  assert.ok(src.includes('artworkAmbiguous: artworkMatch.ambiguous'), 'the ambiguity flag is carried on the resolution');
+  // confirm is blocked when any resolution is ambiguous
+  assert.ok(/attachIsBlocked[\s\S]{0,220}\|\|\s*r\.artworkAmbiguous/.test(src), 'attachIsBlocked is true when a resolution has artworkAmbiguous');
+  // addPrintOptionMutation refuses rather than freezing a guess
+  assert.ok(src.includes('if (artworkMatch.ambiguous) {'), 'addPrintOptionMutation guards on ambiguity');
+  assert.ok(src.includes('resolve them in Catalog Management before adding this print option'), 'and explains why');
+  // the review row shows the ambiguity, never a chosen file
+  assert.ok(src.includes('multiple current revisions match placement'), 'the review row surfaces the ambiguity');
+});
+
+test('reproduction: the attachIsBlocked predicate blocks an otherwise-resolved line when artwork is ambiguous', () => {
+  const ambiguousMap = buildArtworkByPlacement([
+    { id: 'rev-lower', placement: 'front', is_current: true },
+    { id: 'rev-title', placement: 'Front', is_current: true },
+  ]);
+  const match = lookupArtworkByPlacement(ambiguousMap, 'FRONT');
+  const resolution = { status: 'resolved', staffPickedVariantId: '', artwork: match.artwork, artworkAmbiguous: match.ambiguous };
+  // mirror ProductsEditor.jsx attachIsBlocked, exactly
+  const attachIsBlocked = [resolution].some(
+    (r) => (r.status === 'unresolved_multiple' && !r.staffPickedVariantId) || r.artworkAmbiguous,
+  );
+  assert.equal(attachIsBlocked, true, 'a resolved variant does not unblock an ambiguous-artwork line');
+  assert.deepEqual(resolveArtworkRevisionIds(resolution.artwork), [], 'and nothing is frozen');
+});
