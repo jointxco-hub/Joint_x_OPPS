@@ -117,7 +117,11 @@ test("artwork linking (ComponentFieldsForm) explicitly supplies uploadCategory=\
   const end = source.indexOf("/>", start);
   const body = source.slice(start, end);
   assert.ok(body.includes('uploadCategory="Artwork"'));
-  assert.ok(body.includes('defaultCategory="Artwork"'));
+  // defaultCategory was removed app-wide: it pre-restricted the picker to a
+  // category the client often had no files in, so the list opened empty
+  // under a control still reading "All categories". The picker now always
+  // opens unrestricted. See client-asset-picker-category-filter.test.mjs.
+  assert.ok(!body.includes('defaultCategory'));
 });
 
 test("family/treatment artwork scope protection is untouched by this change - allowArtworkLinking still gates the ENTIRE ClientAssetPickerModal block (upload included), not just the existing-file selection", async () => {
@@ -135,7 +139,7 @@ test("line thumbnail (ProductsEditor) explicitly supplies uploadCategory=\"Mocku
   const end = source.indexOf("/>", start);
   const body = source.slice(start, end);
   assert.ok(body.includes('uploadCategory="Mockups"'));
-  assert.ok(body.includes('defaultCategory="Mockups"'));
+  assert.ok(!body.includes('defaultCategory'));
 });
 
 test("both real consumers pass a DIFFERENT explicit uploadCategory - proves the category is genuinely consumer-supplied, not a shared hardcoded default inside the picker itself", async () => {
