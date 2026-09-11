@@ -9,7 +9,9 @@ export default function PortalTab({ order, onUpdate, balance = 0 }) {
   const portalMessage = order.portal_message || "";
   const showBalance = !!order.portal_show_balance;
   const showFiles = !!order.portal_show_files;
+  const showItems = !!order.portal_show_items;
   const attentionItems = Array.isArray(order.portal_attention_items) ? order.portal_attention_items : [];
+  const productCount = Array.isArray(order.products) ? order.products.length : 0;
 
   const toggle = (field) => onUpdate(order.id, { [field]: !order[field] });
 
@@ -73,6 +75,22 @@ export default function PortalTab({ order, onUpdate, balance = 0 }) {
               className={`w-10 h-6 rounded-full transition-colors flex items-center px-0.5 ${showFiles ? "bg-primary" : "bg-border"}`}
             >
               <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${showFiles ? "translate-x-4" : "translate-x-0"}`} />
+            </div>
+          </label>
+          <label className="flex items-center justify-between p-3 bg-secondary/30 rounded-xl cursor-pointer hover:bg-secondary/50 transition-all">
+            <div>
+              <p className="text-sm font-medium text-foreground">Order Items</p>
+              <p className="text-xs text-muted-foreground">
+                {productCount > 0
+                  ? `Shows product, quantity, size/colour, print and line total for ${productCount} item${productCount === 1 ? "" : "s"} — no internal notes, suppliers, or costs`
+                  : "Shows product, quantity, size/colour, print and line total — no internal notes, suppliers, or costs"}
+              </p>
+            </div>
+            <div
+              onClick={() => toggle("portal_show_items")}
+              className={`w-10 h-6 rounded-full transition-colors flex items-center px-0.5 flex-shrink-0 ${showItems ? "bg-primary" : "bg-border"}`}
+            >
+              <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${showItems ? "translate-x-4" : "translate-x-0"}`} />
             </div>
           </label>
         </div>

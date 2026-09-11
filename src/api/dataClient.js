@@ -261,6 +261,7 @@ const ENTITY_CONFIG = {
         portal_message: payload.portal_message,
         portal_show_balance: payload.portal_show_balance,
         portal_show_files: payload.portal_show_files,
+        portal_show_items: payload.portal_show_items,
         portal_attention_items: payload.portal_attention_items,
         is_archived: payload.is_archived,
         archived_at: payload.archived_at,
