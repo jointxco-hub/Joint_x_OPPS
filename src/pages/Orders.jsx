@@ -357,7 +357,22 @@ export default function Orders() {
     setSelectedOrder(order);
   }, []);
 
-  const handleDrawerUpdate = useCallback((id, data) => {
+  // options.skipServerWrite: ORDERS CLIENT-PRODUCT REUSE PHASE 1 — the
+  // composed-add RPC (xos_add_composed_client_product_to_order) writes
+  // orders.products server-side directly, then hands the drawer the
+  // freshly-refetched row it just read. That data is not stale — it is
+  // MORE current than this drawer's own expectedUpdatedAt snapshot, so
+  // routing it through the checked-update mutation would always trip a
+  // false "this order was updated elsewhere" (the RPC itself is what
+  // moved updated_at). Any other caller that already knows the server
+  // has this exact state (a fresh read, not a local edit awaiting
+  // persistence) should use this same flag rather than double-writing.
+  const handleDrawerUpdate = useCallback((id, data, options) => {
+    if (options?.skipServerWrite) {
+      setSelectedOrder(prev => (prev && prev.id === id ? { ...prev, ...data } : prev));
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      return;
+    }
     const current = selectedOrder && selectedOrder.id === id ? selectedOrder : null;
     updateMutation.mutate({
       id,

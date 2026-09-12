@@ -54,7 +54,10 @@ test("addPrintOptionMutation still exists and resolves via the shared helper (ca
   assert.ok(source.includes("const addPrintOptionMutation = useMutation("), "addPrintOptionMutation must still be the same function");
 
   const mutationStart = source.indexOf("const addPrintOptionMutation = useMutation(");
-  const mutationBody = source.slice(mutationStart, mutationStart + 400);
+  // Widened from 400: ORDERS CLIENT-PRODUCT REUSE PHASE 1 added a guard
+  // clause (rejecting a canonical composed line) ahead of this call
+  // within the same mutationFn.
+  const mutationBody = source.slice(mutationStart, mutationStart + 1000);
   assert.ok(
     mutationBody.includes("resolveOrCreateClientProductForLine(orderLine)"),
     "must resolve via the shared helper, not reimplement the lookup inline"

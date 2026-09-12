@@ -19,7 +19,16 @@
 // matched to a stock item via Configure Product kept showing "Production
 // setup required" forever, since the original needsConfiguration never
 // checked inventory_item_id).
+// ORDERS CLIENT-PRODUCT REUSE - PHASE 1: a setup_fee (or reserved
+// breakdown) line carries client_product_id purely as commercial
+// provenance (which client product produced this fee) - it is never
+// itself a thing staff compose production against. Without this guard a
+// setup_fee line would show the full Production panel (Attach
+// composition / print options / artwork) on what is really just a
+// commercial fee row. Only an actual 'product' line (or a legacy line
+// with no line_role at all) can be production-capable.
 function hasProductionIdentity(product) {
+  if (product?.line_role && product.line_role !== "product") return false;
   return Boolean(product?.catalog_item_id || product?.inventory_item_id || product?.client_product_id);
 }
 

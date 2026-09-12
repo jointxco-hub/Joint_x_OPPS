@@ -37,7 +37,10 @@ test("a client_products row is created on demand when none exists yet, without r
 
   const mutationStart = source.indexOf("const addPrintOptionMutation = useMutation({");
   assert.notEqual(mutationStart, -1);
-  const mutationBody = source.slice(mutationStart, mutationStart + 500);
+  // Widened from 500: ORDERS CLIENT-PRODUCT REUSE PHASE 1 added a guard
+  // clause (rejecting a canonical composed line) ahead of the
+  // resolveOrCreateClientProductForLine call within this same mutationFn.
+  const mutationBody = source.slice(mutationStart, mutationStart + 1000);
   assert.ok(mutationBody.includes("resolveOrCreateClientProductForLine(orderLine)"), "addPrintOptionMutation must reuse the shared helper, not a second copy");
 });
 
