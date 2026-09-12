@@ -43,7 +43,9 @@ test("the composed-add mutation generates the idempotency key ONCE per attempt a
 test("the idempotency key is cleared on success and on explicit Cancel - never left stale for the next unrelated add", async () => {
   const src = await readSource(EDITOR);
   const mutationStart = src.indexOf("const addComposedClientProductMutation = useMutation({");
-  const onSuccessStart = src.indexOf("onSuccess: ({ replayed, setupLineCount, snapshotOutcome })", mutationStart);
+  // Widened match: refresh-safe idempotency (a later phase) added a
+  // `resumed` field to this same destructure.
+  const onSuccessStart = src.indexOf("onSuccess: ({ replayed, setupLineCount, snapshotOutcome, resumed })", mutationStart);
   const onSuccessBody = src.slice(onSuccessStart, onSuccessStart + 200);
   assert.ok(onSuccessBody.includes('composedAddIdempotencyKeyRef.current = "";'), "cleared on success");
   assert.ok(src.includes('composedAddIdempotencyKeyRef.current = ""; setAddMode(false);'), "cleared on the Cancel button's click handler");

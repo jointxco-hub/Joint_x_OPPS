@@ -516,22 +516,69 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // retry) replays the SAME key. The RPC treats that id as the parent
   // line's own line_id and returns the existing result on a matching
   // replay rather than creating a second parent + setup-fee set.
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1 refresh-safe idempotency.
+  // A React ref (the original design) cannot survive a hard refresh - if
+  // the RPC had already succeeded server-side but the tab reloaded
+  // before the follow-up resolve/attach step ran, a retry would mint a
+  // fresh key and create a genuinely duplicate parent + setup-fee pair.
+  //
+  // Fix: the "pending operation identity" is not a client value at all -
+  // it is the order's OWN products array (already durable, already
+  // fetched) plus order_line_component_snapshots (already fetched as
+  // lineSnapshots). Before minting a new key, check whether a 'product'
+  // line for this exact client_product_id already exists on the order
+  // with no current snapshot yet - that IS an incomplete prior attempt,
+  // server-confirmed, independent of any browser state. If found, its
+  // own line_id is reused directly as the resume target and the RPC
+  // call is skipped entirely (the commercial lines already exist) -
+  // straight to resolveComposition/writeAttachSnapshots for that line,
+  // the exact same path a completed fresh add takes. No new column, no
+  // new table, no localStorage.
+  //
+  // Once a line has any current snapshot, it no longer matches this
+  // check, so a later intentional second add of the same client product
+  // mints a genuinely new key/line, exactly as before.
+  const findIncompleteLineFor = (clientProductId) => {
+    const snapshottedLineIds = new Set((Array.isArray(lineSnapshots) ? lineSnapshots : []).map((s) => s.line_id));
+    return products
+      .map((raw) => cleanProduct(raw))
+      .find((p) => p.line_role === "product" && p.client_product_id === clientProductId && !snapshottedLineIds.has(p.line_id));
+  };
+
   const composedAddIdempotencyKeyRef = useRef("");
   const addComposedClientProductMutation = useMutation({
     mutationFn: async ({ clientProductId, quantity, unitPrice, size, color }) => {
-      if (!composedAddIdempotencyKeyRef.current) composedAddIdempotencyKeyRef.current = newLineId();
-      const idempotencyKey = composedAddIdempotencyKeyRef.current;
+      const resumable = findIncompleteLineFor(clientProductId);
+      let parentLineId;
+      let replayed = false;
+      let setupLineCount = 0;
 
-      const { data, error } = await xosAddComposedClientProductToOrder({
-        orderId: order.id,
-        clientProductId,
-        quantity,
-        unitPrice,
-        idempotencyKey,
-      });
-      if (error) throw new Error(error);
-      const parentLineId = data?.parent_line_id;
-      if (!parentLineId) throw new Error("The order was not updated - no parent line id was returned");
+      if (resumable) {
+        // Resuming a server-confirmed incomplete attempt - never call the
+        // add RPC again for it (the commercial lines already exist).
+        parentLineId = resumable.line_id;
+        setupLineCount = products.filter((raw) => {
+          const p = cleanProduct(raw);
+          return p.line_role === "setup_fee" && p.parent_line_id === parentLineId;
+        }).length;
+        composedAddIdempotencyKeyRef.current = "";
+      } else {
+        if (!composedAddIdempotencyKeyRef.current) composedAddIdempotencyKeyRef.current = newLineId();
+        const idempotencyKey = composedAddIdempotencyKeyRef.current;
+
+        const { data, error } = await xosAddComposedClientProductToOrder({
+          orderId: order.id,
+          clientProductId,
+          quantity,
+          unitPrice,
+          idempotencyKey,
+        });
+        if (error) throw new Error(error);
+        parentLineId = data?.parent_line_id;
+        if (!parentLineId) throw new Error("The order was not updated - no parent line id was returned");
+        replayed = Boolean(data?.replayed);
+        setupLineCount = data?.setup_line_count || 0;
+      }
 
       // Refresh the order from what the RPC actually persisted - never a
       // client-side rebuild of order.products. skipServerWrite: true -
@@ -562,9 +609,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         toast.error(err?.message || "Composed lines were added, but production composition could not be resolved - use Attach composition on the new line.");
         snapshotOutcome = "failed";
       }
-      return { replayed: Boolean(data?.replayed), setupLineCount: data?.setup_line_count || 0, snapshotOutcome };
+      return { replayed, setupLineCount, snapshotOutcome, resumed: Boolean(resumable) };
     },
-    onSuccess: ({ replayed, setupLineCount, snapshotOutcome }) => {
+    onSuccess: ({ replayed, setupLineCount, snapshotOutcome, resumed }) => {
       composedAddIdempotencyKeyRef.current = "";
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
       setNewRow(emptyRow);
@@ -576,6 +623,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       setShowPicker(false);
       if (replayed) {
         toast.success("Already added - showing the existing line");
+      } else if (resumed && snapshotOutcome === "resolved") {
+        toast.success("Resumed an incomplete add from before - production composition attached, no duplicate created");
       } else if (snapshotOutcome === "needs_review") {
         toast.success(`Added - parent line + ${setupLineCount} setup fee(s). Review production below.`);
       } else if (snapshotOutcome === "resolved") {
@@ -964,9 +1013,29 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     setEditingIdx(null);
   };
 
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1 bugfix: removing a composed
+  // parent line ('product' role) must remove its own setup_fee
+  // companion(s) in the SAME edit, by exact parent_line_id match - never
+  // by name/label (two different parents can share a label like "Screen
+  // setup") and never a whole-order sweep (a companion belonging to a
+  // DIFFERENT parent must survive). Removing a setup_fee line by itself
+  // still removes only that one line - it has no companions of its own.
+  // A generic/legacy line with no line_role, or a 'product' line with no
+  // setup_fee children, hits the same filter and is a no-op beyond the
+  // removal itself - identical to the pre-existing behavior for those
+  // lines.
   const removeRow = (/** @type {number} */ idx) => {
     if (locked) return;
-    const updated = products.filter((_, i) => i !== idx);
+    const target = cleanProduct(products[idx]);
+    const targetLineId = target.line_id;
+    const updated = products.filter((raw, i) => {
+      if (i === idx) return false;
+      if (target.line_role === "product" && targetLineId) {
+        const candidate = cleanProduct(raw);
+        if (candidate.line_role === "setup_fee" && candidate.parent_line_id === targetLineId) return false;
+      }
+      return true;
+    });
     onUpdate(order.id, { products: updated });
   };
 
