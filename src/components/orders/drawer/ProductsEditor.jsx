@@ -17,6 +17,7 @@ import { computeStockDryRun } from "@/lib/stockDryRun";
 import { buildArtworkByPlacement, lookupArtworkByPlacement, resolveArtworkRevisionIds } from "@/lib/artworkFreeze";
 import { findOrCreateClientProductArtworkFromAsset, reviseOrderLineComponentSnapshotArtwork } from "@/api/artworkLinking";
 import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice } from "@/lib/productComposition";
+import { xosAddComposedClientProductToOrder, mapXosComposedAddError } from "@/api/xosClientProduct";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
@@ -325,6 +326,61 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [pendingResolution, setPendingResolution] = useState(null);
   const [resolvingLineId, setResolvingLineId] = useState("");
 
+  // Core resolution logic, extracted so it can be driven two ways: (a)
+  // beginAttach below, which sets pendingResolution for the existing
+  // manual "Attach composition" review UI, and (b) the composed-add flow
+  // (addComposedClientProduct, further down), which needs the resolved
+  // result value directly - reading it back off pendingResolution state
+  // right after setPendingResolution would race React's batched/async
+  // state updates (a stale-closure read of last render's value), so both
+  // callers get the SAME resolution computed once, returned, never
+  // re-derived from state.
+  const resolveComposition = async (lineId, clientProductId, orderLine) => {
+    const components = await dataClient.entities.ProductComponent.filter({ client_product_id: clientProductId, is_active: true }, "sort_order", 100);
+    const active = (Array.isArray(components) ? components : []).filter((c) => c.is_active !== false);
+    if (active.length === 0) {
+      throw new Error("This client product has no active components yet");
+    }
+    // Current artwork revisions for this client product, keyed by
+    // placement - frozen into each snapshot's artwork_revision_ids at
+    // confirm time below. Fetched once per attach, not per component.
+    const currentArtwork = await dataClient.entities.ClientProductArtwork.filter(
+      { client_product_id: clientProductId, is_current: true }, undefined, 50
+    );
+    const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
+
+    const resolutions = [];
+    for (const component of active) {
+      const resolution = await resolveBlankComponentVariant(component, orderLine);
+      // staffPrice is the order-specific override tier - prefilled from
+      // the client-product default but editable per line, per attach.
+      // Changing it here only ever affects the snapshot about to be
+      // created; it never writes back to product_components.
+      const artworkMatch = component.placement
+        ? lookupArtworkByPlacement(artworkByPlacement, component.placement)
+        : { artwork: null, ambiguous: false };
+      resolutions.push({
+        component,
+        ...resolution,
+        staffPickedVariantId: "",
+        staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
+        artwork: artworkMatch.artwork,
+        artworkAmbiguous: artworkMatch.ambiguous,
+      });
+    }
+    return { lineId, clientProductId, orderLine, resolutions };
+  };
+
+  // True when a resolution result needs explicit staff attention before
+  // it can be written - a "must choose" (multiple-match) component with
+  // no pick yet, or ambiguous placement artwork. Mirrors attachIsBlocked
+  // below exactly (that one reads pendingResolution state; this one
+  // takes the result value directly, for callers that just computed it
+  // and haven't necessarily put it in state).
+  const resolutionIsBlocked = (result) => !result ? true : result.resolutions.some(
+    (r) => (r.status === "unresolved_multiple" && !r.staffPickedVariantId) || r.artworkAmbiguous,
+  );
+
   const beginAttach = async (lineId, clientProductId, orderLine) => {
     // Structural guard, not just render-conditional: the "Attach
     // composition" button that calls this is only ever rendered when
@@ -337,40 +393,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     }
     setResolvingLineId(lineId);
     try {
-      const components = await dataClient.entities.ProductComponent.filter({ client_product_id: clientProductId, is_active: true }, "sort_order", 100);
-      const active = (Array.isArray(components) ? components : []).filter((c) => c.is_active !== false);
-      if (active.length === 0) {
-        toast.error("This client product has no active components yet");
-        return;
-      }
-      // Current artwork revisions for this client product, keyed by
-      // placement - frozen into each snapshot's artwork_revision_ids at
-      // confirm time below. Fetched once per attach, not per component.
-      const currentArtwork = await dataClient.entities.ClientProductArtwork.filter(
-        { client_product_id: clientProductId, is_current: true }, undefined, 50
-      );
-      const artworkByPlacement = buildArtworkByPlacement(currentArtwork);
-
-      const resolutions = [];
-      for (const component of active) {
-        const resolution = await resolveBlankComponentVariant(component, orderLine);
-        // staffPrice is the order-specific override tier - prefilled from
-        // the client-product default but editable per line, per attach.
-        // Changing it here only ever affects the snapshot about to be
-        // created; it never writes back to product_components.
-        const artworkMatch = component.placement
-          ? lookupArtworkByPlacement(artworkByPlacement, component.placement)
-          : { artwork: null, ambiguous: false };
-        resolutions.push({
-          component,
-          ...resolution,
-          staffPickedVariantId: "",
-          staffPrice: component.default_sell_price != null ? String(component.default_sell_price) : "",
-          artwork: artworkMatch.artwork,
-          artworkAmbiguous: artworkMatch.ambiguous,
-        });
-      }
-      setPendingResolution({ lineId, clientProductId, orderLine, resolutions });
+      const result = await resolveComposition(lineId, clientProductId, orderLine);
+      setPendingResolution(result);
     } catch (err) {
       toast.error(err?.message || "Could not resolve composition for this line");
     } finally {
@@ -402,59 +426,212 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       )
     : true;
 
+  // Core snapshot-writing logic, extracted for the same reason as
+  // resolveComposition above: confirmAttach (the manual "Confirm" button,
+  // reading pendingResolution from state) and the composed-add flow
+  // (which has its own local result value, never necessarily put in
+  // state when it auto-confirms) both write snapshots the exact same
+  // way - one write path, never two.
+  const writeAttachSnapshots = async ({ lineId, clientProductId, resolutions }) => {
+    const created = [];
+    for (const r of resolutions) {
+      const c = r.component;
+      const finalVariantId = r.status === "resolved" || r.status === "fixed"
+        ? r.resolvedVariantId
+        : (r.staffPickedVariantId || null);
+      // Order-specific override tier: staffPrice was prefilled from
+      // c.default_sell_price and is editable per attach - it is the
+      // ONLY value ever written to the snapshot's sell_price, and it
+      // is written only here, never back onto product_components.
+      const overridePrice = r.staffPrice === "" || r.staffPrice == null ? null : Number(r.staffPrice);
+      const finalPrice = Number.isFinite(overridePrice) ? overridePrice : c.default_sell_price;
+      created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
+        order_id: order.id,
+        line_id: lineId,
+        client_product_id: clientProductId,
+        source_product_component_id: c.id,
+        component_type: c.component_type,
+        label: c.label,
+        production_method: c.production_method,
+        placement: c.placement,
+        production_colour: c.production_colour,
+        specification: c.specification,
+        production_instructions: c.production_instructions,
+        sell_price: finalPrice,
+        billing_mode: c.billing_mode || "per_unit",
+        quantity_per_unit: c.quantity_per_unit,
+        sort_order: c.sort_order,
+        inventory_product_id: c.inventory_product_id,
+        resolved_inventory_variant_id: finalVariantId,
+        // Frozen at attach time from whatever client_product_artwork
+        // revision was current for this component's placement when
+        // beginAttach/resolveComposition ran - later revisions (new
+        // uploads, approvals) never retroactively change an
+        // already-created snapshot.
+        artwork_revision_ids: resolveArtworkRevisionIds(r.artwork),
+      }));
+    }
+    return created;
+  };
+
   // Writes the immutable snapshot rows only once every "must choose"
   // (multiple-match) component has an explicit staff pick. A component
   // left at "zero matches, no pick" still attaches - with
   // resolved_inventory_variant_id left null and visibly flagged, never
   // silently treated as known - per the production gate below.
   const confirmAttach = useMutation({
-    mutationFn: async () => {
-      const { lineId, clientProductId, resolutions } = pendingResolution;
-      const created = [];
-      for (const r of resolutions) {
-        const c = r.component;
-        const finalVariantId = r.status === "resolved" || r.status === "fixed"
-          ? r.resolvedVariantId
-          : (r.staffPickedVariantId || null);
-        // Order-specific override tier: staffPrice was prefilled from
-        // c.default_sell_price and is editable per attach - it is the
-        // ONLY value ever written to the snapshot's sell_price, and it
-        // is written only here, never back onto product_components.
-        const overridePrice = r.staffPrice === "" || r.staffPrice == null ? null : Number(r.staffPrice);
-        const finalPrice = Number.isFinite(overridePrice) ? overridePrice : c.default_sell_price;
-        created.push(await dataClient.entities.OrderLineComponentSnapshot.create({
-          order_id: order.id,
-          line_id: lineId,
-          client_product_id: clientProductId,
-          source_product_component_id: c.id,
-          component_type: c.component_type,
-          label: c.label,
-          production_method: c.production_method,
-          placement: c.placement,
-          production_colour: c.production_colour,
-          specification: c.specification,
-          production_instructions: c.production_instructions,
-          sell_price: finalPrice,
-          billing_mode: c.billing_mode || "per_unit",
-          quantity_per_unit: c.quantity_per_unit,
-          sort_order: c.sort_order,
-          inventory_product_id: c.inventory_product_id,
-          resolved_inventory_variant_id: finalVariantId,
-          // Frozen at attach time from whatever client_product_artwork
-          // revision was current for this component's placement when
-          // beginAttach ran - later revisions (new uploads, approvals)
-          // never retroactively change an already-created snapshot.
-          artwork_revision_ids: resolveArtworkRevisionIds(r.artwork),
-        }));
-      }
-      return created;
-    },
+    mutationFn: async () => writeAttachSnapshots(pendingResolution),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
       setPendingResolution(null);
       toast.success("Composition attached to this line");
     },
     onError: (err) => toast.error(err?.message || "Could not attach composition"),
+  });
+
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1. The single, canonical "add a
+  // configured client product to this order" action - replaces the two
+  // previously-competing paths (a plain commercial line via the generic
+  // add-row path with no setup fee, vs. a separate composed-add control
+  // with no production freezing) with one flow:
+  //
+  //   1. xos_add_composed_client_product_to_order creates the parent
+  //      product line + one setup_fee companion per once-off fee
+  //      (commercial lines only - no snapshot; see the migration header).
+  //   2. resolveComposition (the EXACT same resolver "Attach composition"
+  //      already uses) resolves exact variant + canonical placement
+  //      artwork for the new parent line, using the order's own
+  //      staff-entered size/colour.
+  //   3. If nothing needs staff attention, writeAttachSnapshots (again
+  //      the exact same writer) runs immediately - one click, fully
+  //      resolved. If a component needs a variant pick or artwork is
+  //      ambiguous, the existing pendingResolution review UI opens
+  //      against the already-created parent line, same as a manual
+  //      attach - the commercial lines exist either way; only the
+  //      snapshot step waits for staff input.
+  //
+  // Idempotency: idempotencyKeyRef holds ONE crypto.randomUUID() per
+  // add-attempt, generated lazily on first use and cleared only on
+  // success or explicit cancel - so a retry (double-click, a network
+  // retry) replays the SAME key. The RPC treats that id as the parent
+  // line's own line_id and returns the existing result on a matching
+  // replay rather than creating a second parent + setup-fee set.
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1 refresh-safe idempotency.
+  // A React ref (the original design) cannot survive a hard refresh - if
+  // the RPC had already succeeded server-side but the tab reloaded
+  // before the follow-up resolve/attach step ran, a retry would mint a
+  // fresh key and create a genuinely duplicate parent + setup-fee pair.
+  //
+  // Fix: the "pending operation identity" is not a client value at all -
+  // it is the order's OWN products array (already durable, already
+  // fetched) plus order_line_component_snapshots (already fetched as
+  // lineSnapshots). Before minting a new key, check whether a 'product'
+  // line for this exact client_product_id already exists on the order
+  // with no current snapshot yet - that IS an incomplete prior attempt,
+  // server-confirmed, independent of any browser state. If found, its
+  // own line_id is reused directly as the resume target and the RPC
+  // call is skipped entirely (the commercial lines already exist) -
+  // straight to resolveComposition/writeAttachSnapshots for that line,
+  // the exact same path a completed fresh add takes. No new column, no
+  // new table, no localStorage.
+  //
+  // Once a line has any current snapshot, it no longer matches this
+  // check, so a later intentional second add of the same client product
+  // mints a genuinely new key/line, exactly as before.
+  const findIncompleteLineFor = (clientProductId) => {
+    const snapshottedLineIds = new Set((Array.isArray(lineSnapshots) ? lineSnapshots : []).map((s) => s.line_id));
+    return products
+      .map((raw) => cleanProduct(raw))
+      .find((p) => p.line_role === "product" && p.client_product_id === clientProductId && !snapshottedLineIds.has(p.line_id));
+  };
+
+  const composedAddIdempotencyKeyRef = useRef("");
+  const addComposedClientProductMutation = useMutation({
+    mutationFn: async ({ clientProductId, quantity, unitPrice, size, color }) => {
+      const resumable = findIncompleteLineFor(clientProductId);
+      let parentLineId;
+      let replayed = false;
+      let setupLineCount = 0;
+
+      if (resumable) {
+        // Resuming a server-confirmed incomplete attempt - never call the
+        // add RPC again for it (the commercial lines already exist).
+        parentLineId = resumable.line_id;
+        setupLineCount = products.filter((raw) => {
+          const p = cleanProduct(raw);
+          return p.line_role === "setup_fee" && p.parent_line_id === parentLineId;
+        }).length;
+        composedAddIdempotencyKeyRef.current = "";
+      } else {
+        if (!composedAddIdempotencyKeyRef.current) composedAddIdempotencyKeyRef.current = newLineId();
+        const idempotencyKey = composedAddIdempotencyKeyRef.current;
+
+        const { data, error } = await xosAddComposedClientProductToOrder({
+          orderId: order.id,
+          clientProductId,
+          quantity,
+          unitPrice,
+          idempotencyKey,
+        });
+        if (error) throw new Error(error);
+        parentLineId = data?.parent_line_id;
+        if (!parentLineId) throw new Error("The order was not updated - no parent line id was returned");
+        replayed = Boolean(data?.replayed);
+        setupLineCount = data?.setup_line_count || 0;
+      }
+
+      // Refresh the order from what the RPC actually persisted - never a
+      // client-side rebuild of order.products. skipServerWrite: true -
+      // the RPC already wrote this server-side (and already bumped
+      // updated_at); routing it back through the normal checked-update
+      // mutation would compare against this drawer's now-stale
+      // expectedUpdatedAt snapshot and falsely report "updated elsewhere".
+      // This is a pure local view sync of data we just read, not a write.
+      const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+      const freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+      if (Array.isArray(freshOrder?.products)) onUpdate(order.id, { products: freshOrder.products, updated_at: freshOrder.updated_at }, { skipServerWrite: true });
+
+      let snapshotOutcome = "resolved";
+      try {
+        const result = await resolveComposition(parentLineId, clientProductId, { size, color });
+        if (resolutionIsBlocked(result)) {
+          setPendingResolution(result);
+          snapshotOutcome = "needs_review";
+        } else {
+          await writeAttachSnapshots(result);
+          queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+        }
+      } catch (err) {
+        // The commercial lines are already created and safe (idempotent
+        // replay will find them next time) - a resolution/snapshot
+        // failure here is surfaced, never rolled back client-side, and
+        // never silently retried as a fresh add.
+        toast.error(err?.message || "Composed lines were added, but production composition could not be resolved - use Attach composition on the new line.");
+        snapshotOutcome = "failed";
+      }
+      return { replayed, setupLineCount, snapshotOutcome, resumed: Boolean(resumable) };
+    },
+    onSuccess: ({ replayed, setupLineCount, snapshotOutcome, resumed }) => {
+      composedAddIdempotencyKeyRef.current = "";
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
+      setNewRow(emptyRow);
+      setSizeRun({});
+      setAddMode(false);
+      setPickerSearch("");
+      setPickerSource("all");
+      setPickerCategory("all");
+      setShowPicker(false);
+      if (replayed) {
+        toast.success("Already added - showing the existing line");
+      } else if (resumed && snapshotOutcome === "resolved") {
+        toast.success("Resumed an incomplete add from before - production composition attached, no duplicate created");
+      } else if (snapshotOutcome === "needs_review") {
+        toast.success(`Added - parent line + ${setupLineCount} setup fee(s). Review production below.`);
+      } else if (snapshotOutcome === "resolved") {
+        toast.success(`Added - parent line + ${setupLineCount} setup fee(s) + full production snapshot`);
+      }
+    },
+    onError: (err) => toast.error(mapXosComposedAddError(err?.message)),
   });
 
   const [addingPrintOptionLineId, setAddingPrintOptionLineId] = useState("");
@@ -531,6 +708,15 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // the snapshot, never default_sell_price.
   const addPrintOptionMutation = useMutation({
     mutationFn: async ({ lineId, orderLine, form }) => {
+      // ORDERS CLIENT-PRODUCT REUSE - PHASE 1 defence in depth - never let
+      // this legacy writer run on a canonical composed line (a bridge/
+      // native parent whose pricing is the Client Product composition, or
+      // a setup_fee companion) - that would create a second setup-fee
+      // mechanism on the same line. Mirrors the onStartAddPrintOption
+      // guard below.
+      if (orderLine?.line_role === "setup_fee" || (orderLine?.line_role === "product" && orderLine?.price_breakdown?.mode === "composed")) {
+        throw new Error("This line's pricing is managed by the Client Product composition - edit it in the Pricing tab, not here.");
+      }
       const { clientProduct, clientProductCreated } = await resolveOrCreateClientProductForLine(orderLine);
       if (!clientProduct) {
         throw new Error("This line has no catalog or inventory product to compose against");
@@ -827,9 +1013,29 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     setEditingIdx(null);
   };
 
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1 bugfix: removing a composed
+  // parent line ('product' role) must remove its own setup_fee
+  // companion(s) in the SAME edit, by exact parent_line_id match - never
+  // by name/label (two different parents can share a label like "Screen
+  // setup") and never a whole-order sweep (a companion belonging to a
+  // DIFFERENT parent must survive). Removing a setup_fee line by itself
+  // still removes only that one line - it has no companions of its own.
+  // A generic/legacy line with no line_role, or a 'product' line with no
+  // setup_fee children, hits the same filter and is a no-op beyond the
+  // removal itself - identical to the pre-existing behavior for those
+  // lines.
   const removeRow = (/** @type {number} */ idx) => {
     if (locked) return;
-    const updated = products.filter((_, i) => i !== idx);
+    const target = cleanProduct(products[idx]);
+    const targetLineId = target.line_id;
+    const updated = products.filter((raw, i) => {
+      if (i === idx) return false;
+      if (target.line_role === "product" && targetLineId) {
+        const candidate = cleanProduct(raw);
+        if (candidate.line_role === "setup_fee" && candidate.parent_line_id === targetLineId) return false;
+      }
+      return true;
+    });
     onUpdate(order.id, { products: updated });
   };
 
@@ -844,6 +1050,26 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     setPickerSource("all");
     setPickerCategory("all");
     setShowPicker(false);
+  };
+
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1. The single "Add" button's
+  // entry point: a client_product pick routes through the canonical
+  // composed-add action (commercial lines + production snapshot, one
+  // flow); every other source (catalog/stock/custom) keeps using the
+  // plain addRow path unchanged.
+  const handleAddRowClick = () => {
+    if (locked) return;
+    if (newRow.source === "client_product" && newRow.client_product_id) {
+      addComposedClientProductMutation.mutate({
+        clientProductId: newRow.client_product_id,
+        quantity: Number(newRow.quantity) || 1,
+        unitPrice: newRow.price === "" ? null : newRow.price,
+        size: newRow.size,
+        color: newRow.color,
+      });
+      return;
+    }
+    addRow();
   };
 
   const addSizeRun = () => {
@@ -1039,12 +1265,19 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     : sourceFiltered.slice(0, 10);
   const selectedPickerItem = allPickerItems.find((item) => item.id && item.id === (newRow.client_product_id || newRow.catalog_item_id || newRow.inventory_item_id));
   const selectedEditItem = allPickerItems.find((item) => item.id && item.id === (editRow.client_product_id || editRow.catalog_item_id || editRow.inventory_item_id));
+  // ORDERS CLIENT-PRODUCT REUSE - PHASE 1: a setup_fee companion line is
+  // billable (price x 1) so it stays in the commercial subtotal below,
+  // but it is NOT a unit - excluded from the unit count so "N units"
+  // stays honest. A reserved "breakdown" line (schema-legal, not emitted
+  // by anything yet) is informational only and is never billed.
   const productLineTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
+    if (product.line_role === "breakdown") return sum;
     return sum + (Number(product.price || 0) * Number(product.quantity || 1));
   }, 0);
   const productQuantityTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
+    if (product.line_role && product.line_role !== "product") return sum;
     return sum + Number(product.quantity || 0);
   }, 0);
   const orderTotal = Number(order.total_amount || 0);
@@ -1395,7 +1628,20 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                       ? artworkByClientProductId.get(clientProductForLine(p).id) || []
                       : []
                   }
-                  onStartAddPrintOption={() => { setAddingPrintOptionLineId(p.line_id); setPrintOptionForm(emptyPrintOptionForm()); }}
+                  onStartAddPrintOption={() => {
+                    // ORDERS CLIENT-PRODUCT REUSE - PHASE 1: "+ Add print
+                    // option" stays LEGACY. It must not run on a canonical
+                    // composed line (a bridge/native parent whose pricing
+                    // is the Client Product composition, or a setup_fee
+                    // companion) - that would create a second setup-fee
+                    // mechanism on the same line.
+                    if (p.line_role === "setup_fee" || (p.line_role === "product" && p?.price_breakdown?.mode === "composed")) {
+                      toast.error("This line's pricing is managed by the Client Product composition. Edit prices in the Pricing tab, not here.");
+                      return;
+                    }
+                    setAddingPrintOptionLineId(p.line_id);
+                    setPrintOptionForm(emptyPrintOptionForm());
+                  }}
                   onCancelAddPrintOption={() => setAddingPrintOptionLineId("")}
                   onConfirmAddPrintOption={() => addPrintOptionMutation.mutate({ lineId: p.line_id, orderLine: p, form: printOptionForm })}
                   addingPrintOption={addPrintOptionMutation.isPending}
@@ -1765,8 +2011,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <Input value={newRow.notes} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, notes: e.target.value }))}
             placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={addRow} disabled={!newRow.name.trim()}>Add</Button>
-            <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
+            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || addComposedClientProductMutation.isPending}>
+              {addComposedClientProductMutation.isPending ? "Adding…" : "Add"}
+            </Button>
+            <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { composedAddIdempotencyKeyRef.current = ""; setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
           </div>
         </div>
       )}

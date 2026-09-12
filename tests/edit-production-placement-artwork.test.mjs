@@ -387,11 +387,19 @@ test("the guard is client-side only - no change to the migration or the revise R
   assert.doesNotMatch(migration, /create or replace function public\.revise_order_line_component_snapshot\b(?!_artwork)/);
 });
 
-test("no XOS / PayFast surface is touched by this phase", async () => {
+// PayFast/x_lab_orders stay excluded permanently (this repo's protected
+// paths - see CLAUDE.md). "xos_" was dropped from this check when
+// ORDERS CLIENT-PRODUCT REUSE PHASE 1 made XOS integration a deliberate,
+// ongoing part of ProductsEditor.jsx (the composed-add RPC call) - this
+// test's original intent was narrower: THIS phase (1E, artwork relink)
+// specifically added none, which the artwork-relink-only assertions
+// above (revise_order_line_component_snapshot_artwork call shape, the
+// migration containing only that one function) already establish.
+test("no PayFast / x_lab_orders surface is touched by this phase", async () => {
   const editor = await readSource(PRODUCTS_EDITOR_PATH);
   const api = await readSource(ARTWORK_API_PATH);
   const migration = await readSource(MIGRATION_PATH);
   for (const src of [editor, api, migration]) {
-    assert.doesNotMatch(src, /payfast|pay_fast|xos_|x_lab_orders/i);
+    assert.doesNotMatch(src, /payfast|pay_fast|x_lab_orders/i);
   }
 });
