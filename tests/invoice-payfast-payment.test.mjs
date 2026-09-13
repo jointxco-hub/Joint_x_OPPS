@@ -6,7 +6,7 @@ async function src(rel) {
   return (await readFile(new URL(`../${rel}`, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 }
 
-const MIGRATION = "supabase/migrations/20260914110000_invoice_payfast_payment.sql";
+const MIGRATION = "supabase/migrations/20260913110000_invoice_payfast_payment.sql";
 
 // begin_invoice_payment / apply_invoice_payfast_payment — the two RPCs
 // behind the public invoice Pay CTA. Mirrors the static-SQL-source test
