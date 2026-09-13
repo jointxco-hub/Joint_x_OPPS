@@ -92,14 +92,27 @@ export function useOrderDrawerData(order, activeTab = "details") {
 
   // Shares the SAME ["orders"] cache entry Orders.jsx's own list query uses
   // (and already invalidates on every order-edit / classification-toggle
-  // mutation) — the drawer just reads its one row out of it. This is how
-  // the drawer observes an external change (another tab, a bulk action)
-  // without polling: React Query refetches this key on invalidation /
-  // reconnect while the drawer is mounted, same as any other query here.
+  // mutation) — the drawer just reads its one row out of it. This resyncs
+  // correctly within ONE tab (invalidation there refetches this shared
+  // cache entry while the drawer is mounted). It does NOT reach a SEPARATE
+  // browser tab: each tab runs its own independent QueryClient in its own
+  // JS runtime, so a same-tab invalidateQueries call can never touch
+  // another tab's cache — only a fresh network refetch, initiated by that
+  // OTHER tab itself, can pick up a change persisted elsewhere. The app's
+  // global QueryClient (src/lib/query-client.js) disables
+  // refetchOnWindowFocus by default, so returning focus to a tab did
+  // nothing. Overridden to `true` on just this one query (nowhere else in
+  // the app changes) so an open drawer's tab refetches the shared ["orders"]
+  // cache — which every mutation already keeps correctly invalidated within
+  // its own tab — the moment the operator returns to it; no polling, no
+  // BroadcastChannel/Realtime (neither exists anywhere in this app today;
+  // introducing either here would be a second, broader sync system for a
+  // gap only this one query has).
   const liveOrderQuery = useQuery({
     queryKey: ["orders"],
     queryFn: () => dataClient.entities.Order.list("-created_date", 200),
     enabled: Boolean(orderId),
+    refetchOnWindowFocus: true,
     select: (list) => (Array.isArray(list) ? list.find((row) => row.id === orderId) : undefined),
   });
 

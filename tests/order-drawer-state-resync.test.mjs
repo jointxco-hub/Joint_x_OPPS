@@ -8,6 +8,7 @@ async function src(rel) {
 
 const HOOK = "src/hooks/useOrderDrawerData.js";
 const DRAWER = "src/components/orders/OrderDrawer.jsx";
+const QUERY_CLIENT = "src/lib/query-client.js";
 
 // Bug: OrderDrawer seeds localPipelineStage / localIsTest /
 // localExcludedFromReports from the `order` prop via useState(order.x),
@@ -16,13 +17,24 @@ const DRAWER = "src/components/orders/OrderDrawer.jsx";
 // three mirrors never resync — only a manual close/reopen (which remounts
 // the component) picks up the new value.
 //
-// Fix: useOrderDrawerData exposes `liveOrder`, read from the SAME ["orders"]
-// cache entry Orders.jsx's own list query already uses (and already
-// invalidates on every order-edit / classification mutation). OrderDrawer
-// resyncs the three mirrors whenever liveOrder's relevant fields change.
-// No new query key, no new invalidation call site anywhere else, no
-// polling, no Orders.jsx edit (PR #74 also touches Orders.jsx — this stays
-// out of it entirely).
+// Fix (v1): useOrderDrawerData exposes `liveOrder`, read from the SAME
+// ["orders"] cache entry Orders.jsx's own list query already uses (and
+// already invalidates on every order-edit / classification mutation).
+// OrderDrawer resyncs the three mirrors whenever liveOrder's relevant
+// fields change. No new query key, no new invalidation call site anywhere
+// else, no polling, no Orders.jsx edit (PR #74 also touches Orders.jsx —
+// this stays out of it entirely).
+//
+// Browser QA found v1 insufficient for the SAME order open in a SEPARATE
+// tab: each tab runs its own independent QueryClient, so tab B's
+// invalidateQueries call never reaches tab A's cache no matter what tab A
+// resyncs from — only a fresh network refetch, initiated by tab A itself,
+// can pick up a change already persisted by tab B. The global QueryClient
+// (src/lib/query-client.js) disables refetchOnWindowFocus app-wide, so
+// returning focus to tab A triggered nothing. Fix (v2): refetchOnWindowFocus
+// is overridden to true on ONLY the liveOrder query — no global config
+// change, no polling, no Realtime/BroadcastChannel (neither exists
+// anywhere in this app; confirmed by search before choosing this fix).
 
 test("useOrderDrawerData reads liveOrder from the SAME ['orders'] key Orders.jsx's list query uses", async () => {
   const s = await src(HOOK);
@@ -35,6 +47,33 @@ test("useOrderDrawerData reads liveOrder from the SAME ['orders'] key Orders.jsx
 test("useOrderDrawerData does not introduce polling (no refetchInterval anywhere)", async () => {
   const s = await src(HOOK);
   assert.doesNotMatch(s, /refetchInterval/, "resync relies on invalidation + normal refetch triggers, never a timer");
+});
+
+test("liveOrderQuery narrowly re-enables refetchOnWindowFocus for cross-tab freshness — this query only", async () => {
+  const s = await src(HOOK);
+  const start = s.indexOf("const liveOrderQuery = useQuery({");
+  const end = s.indexOf("});", start);
+  assert.notEqual(start, -1, "liveOrderQuery exists");
+  const queryConfig = s.slice(start, end);
+  assert.match(queryConfig, /refetchOnWindowFocus:\s*true/, "explicitly overrides the app's disabled default for this one query");
+  // exactly one override in the whole file — not applied to any other query
+  // in this hook (payments/tasks/readiness/etc all keep the app default)
+  const overrideCount = (s.match(/refetchOnWindowFocus:\s*true/g) || []).length;
+  assert.equal(overrideCount, 1, "the override is scoped to a single query, not copy-pasted onto others");
+});
+
+test("the app-wide QueryClient default is untouched — refetchOnWindowFocus stays disabled globally", async () => {
+  const s = await src(QUERY_CLIENT);
+  assert.match(s, /refetchOnWindowFocus:\s*false/, "global default unchanged — the fix is a per-query override, not a global behavior change");
+});
+
+test("no Realtime/BroadcastChannel/storage-event sync was introduced for this fix", async () => {
+  const hook = await src(HOOK);
+  const drawer = await src(DRAWER);
+  for (const s of [hook, drawer]) {
+    assert.doesNotMatch(s, /supabase\.channel\(|new BroadcastChannel\(|addEventListener\(\s*["']storage["']/,
+      "cross-tab sync relies on refetchOnWindowFocus, not a new pub/sub mechanism (comments may still name these as rejected alternatives)");
+  }
 });
 
 test("useOrderDrawerData returns liveOrder alongside the other drawer data", async () => {
