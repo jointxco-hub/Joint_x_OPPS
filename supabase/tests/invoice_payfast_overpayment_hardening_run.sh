@@ -156,6 +156,17 @@ begin
   then raise notice 'PASS 3 R1200 on R1000 balance REJECTED: no ledger row, balance still R1000, one audit event';
   else raise notice 'FAIL 3 r=% n=% balance=% act=%', r, n, public.invoice_balance_due(OVER), act; end if;
 
+  -- 3b · the SAME rejected pf_payment_id retried again -> still rejected,
+  --      but reuses the existing activity row instead of piling up a
+  --      second identical one (overpayment-hardening dedupe follow-up)
+  r := public.apply_invoice_payfast_payment(OVER, 1200.00, 'PF-OVER-1', '{}'::jsonb);
+  select count(*) into act from public.opps_invoice_activity where invoice_id=OVER and activity_type='invoice_payment_rejected';
+  select count(*) into n from public.invoice_payments where invoice_id=OVER;
+  if (r->>'ok')::boolean = false and r->>'reason' = 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED'
+     and n = 0 and act = 1
+  then raise notice 'PASS 3b retried rejection of the same pf_payment_id: still exactly ONE activity row, not two';
+  else raise notice 'FAIL 3b r=% n=% act=%', r, n, act; end if;
+
   -- 4 · duplicate same pf_payment_id (sequential retry) -> exactly one payment entry
   r := public.apply_invoice_payfast_payment(DUP, 700.00, 'PF-DUP-1', '{}'::jsonb);
   r := public.apply_invoice_payfast_payment(DUP, 700.00, 'PF-DUP-1', '{}'::jsonb);
@@ -269,4 +280,4 @@ echo "  (session A raw output)"; cat /tmp/concexc_a.out | grep -A1 result_a | he
 echo "  (session B raw output)"; cat /tmp/concexc_b.out | grep -A1 result_b | head -4
 
 echo "-----------------------------------------"
-echo "RESULT: PASS (20260913110000 applies + idempotent; 6 sequential + 2 real-concurrency assertions)"
+echo "RESULT: PASS (20260913110000 applies + idempotent; 7 sequential + 2 real-concurrency assertions)"

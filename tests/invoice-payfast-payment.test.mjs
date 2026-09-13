@@ -92,7 +92,11 @@ test("9 · apply_invoice_payfast_payment REJECTS an amount exceeding the current
   // partial payment, amount <= balance, must still be accepted).
   assert.match(body, /if v_amount > v_balance \+ 0\.02 then/);
   const overpayBranchStart = body.indexOf("if v_amount > v_balance + 0.02 then");
-  const overpayBranchEnd = body.indexOf("end if;", overpayBranchStart);
+  // the branch now nests an `if not exists (...) then ... end if;` dedupe
+  // guard around the insert (see test 9d) — skip past ITS "end if;" to find
+  // the outer branch's own closing "end if;".
+  const innerEndIf = body.indexOf("end if;", overpayBranchStart);
+  const overpayBranchEnd = body.indexOf("end if;", innerEndIf + 1);
   const overpayBranch = body.slice(overpayBranchStart, overpayBranchEnd);
   assert.doesNotMatch(overpayBranch, /insert into public\.invoice_payments/, "the overpayment branch must never insert a ledger row");
   assert.match(overpayBranch, /insert into public\.opps_invoice_activity/, "the rejection must still be durably logged for reconciliation");
@@ -101,6 +105,39 @@ test("9 · apply_invoice_payfast_payment REJECTS an amount exceeding the current
   // never silently clamp: the rejection response echoes what PayFast
   // actually reports, not a reduced/rounded-down number
   assert.match(body, /'received', v_amount/);
+});
+
+test("9d · a repeat rejection of the same (invoice, pf_payment_id) reuses the existing activity row instead of piling up duplicates", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  const overpayBranchStart = body.indexOf("if v_amount > v_balance + 0.02 then");
+  const innerEndIf = body.indexOf("end if;", overpayBranchStart);
+  const dedupeGuard = body.slice(overpayBranchStart, innerEndIf);
+  assert.match(dedupeGuard, /if not exists \(/, "the insert is guarded by an existence check");
+  assert.match(dedupeGuard, /activity_type = 'invoice_payment_rejected'/);
+  assert.match(dedupeGuard, /metadata->>'reference' = v_ref/, "keyed on the same PayFast reference that identifies the ITN");
+  assert.match(dedupeGuard, /metadata->>'reason' = 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED'/, "scoped to this specific rejection reason, not just any activity on the invoice");
+  // concurrency safety: no new unique index was added for this — it relies
+  // on the invoice FOR UPDATE lock the function already takes, so two
+  // concurrent identical retries still serialize through one connection at
+  // a time rather than both passing the existence check.
+  assert.doesNotMatch(sql, /create unique index[\s\S]{0,80}opps_invoice_activity/i, "no second ledger/unique-index model was introduced for this");
+});
+
+test("9e · the rejection activity never stores the raw ITN / signature — only what reconciliation needs", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  const overpayBranchStart = body.indexOf("if v_amount > v_balance + 0.02 then");
+  const innerEndIf = body.indexOf("end if;", overpayBranchStart);
+  const rejectionInsert = body.slice(overpayBranchStart, innerEndIf);
+  assert.doesNotMatch(rejectionInsert, /'raw_itn'/, "no raw ITN payload (which carries PayFast's signature) is stored as a jsonb key on rejection");
+  assert.match(rejectionInsert, /'amount_received', v_amount/);
+  assert.match(rejectionInsert, /'balance_due',\s*v_balance/);
+  assert.match(rejectionInsert, /'reference',\s*v_ref/);
 });
 
 test("9b · a valid partial payment (amount <= balance) is accepted and recorded at the actual amount — the overpayment fix must not break intentional partial payments", async () => {

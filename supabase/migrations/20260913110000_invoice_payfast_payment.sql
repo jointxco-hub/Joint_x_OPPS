@@ -55,8 +55,14 @@
 --       REJECTED, not recorded and not clamped: OPPS has no client-credit
 --       ledger to place the excess in, so the safest, most auditable
 --       response is to leave the ledger untouched and log the rejection
---       to opps_invoice_activity for manual reconciliation. An invoice
---       with nothing left owing ignores a further completed ITN
+--       to opps_invoice_activity (attempted amount, balance at decision
+--       time, PayFast reference — never the raw ITN/signature) for manual
+--       reconciliation. A repeat rejection of the same (invoice,
+--       pf_payment_id) reuses the existing activity row rather than
+--       piling up identical rows on retry — concurrency-safe under the
+--       same FOR UPDATE lock the rest of the function already holds, no
+--       new unique index or second ledger needed. An invoice with
+--       nothing left owing ignores a further completed ITN
 --       (INVOICE_ALREADY_PAID) rather than treating it as an
 --       overpayment. Only structurally invalid input (no amount, no
 --       pf_payment_id, invoice not found, invoice void) is rejected
@@ -284,24 +290,44 @@ begin
   --    clamp. See the header comment above this function for the full
   --    reasoning. ───────────────────────────────────────────────────
   if v_amount > v_balance + 0.02 then
-    insert into public.opps_invoice_activity (
-      invoice_id, tenant_id, activity_type, activity_label, activity_note,
-      from_status, to_status, metadata, created_by
-    ) values (
-      p_invoice_id, v_invoice.tenant_id,
-      'invoice_payment_rejected', 'PayFast payment rejected — exceeds balance',
-      format('payfast %s exceeds outstanding balance %s · pf_payment_id %s',
-             to_char(v_amount, 'FM999999999990.00'), to_char(v_balance, 'FM999999999990.00'), v_ref),
-      v_invoice.status, v_invoice.status,
-      jsonb_strip_nulls(jsonb_build_object(
-        'reason',         'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',
-        'amount_received', v_amount,
-        'balance_due',      v_balance,
-        'reference',        v_ref,
-        'raw_itn',          p_raw_itn
-      )),
-      null
-    );
+    -- Narrow, safe dedupe: PayFast (or a manual replay) resubmitting the
+    -- SAME rejected pf_payment_id must not pile up a fresh identical
+    -- activity row on every retry. Concurrency safety comes from the
+    -- invoice FOR UPDATE lock already held above (this whole function
+    -- runs under it) — no new unique index or second ledger table is
+    -- needed for that. Deliberately does NOT touch accepted-payment
+    -- idempotency, which is a separate, already-indexed path
+    -- (invoice_payments_payfast_ref_once).
+    if not exists (
+      select 1 from public.opps_invoice_activity
+      where invoice_id = p_invoice_id
+        and activity_type = 'invoice_payment_rejected'
+        and metadata->>'reference' = v_ref
+        and metadata->>'reason' = 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED'
+    ) then
+      -- No raw_itn / signature stored here — attempted amount, the balance
+      -- at decision time, and the PayFast reference are all reconciliation
+      -- needs; the ITN's own signature has already served its one purpose
+      -- (validated at the edge-function layer before this RPC is ever
+      -- called) and has no further use once durably logged.
+      insert into public.opps_invoice_activity (
+        invoice_id, tenant_id, activity_type, activity_label, activity_note,
+        from_status, to_status, metadata, created_by
+      ) values (
+        p_invoice_id, v_invoice.tenant_id,
+        'invoice_payment_rejected', 'PayFast payment rejected — exceeds balance',
+        format('payfast %s exceeds outstanding balance %s · pf_payment_id %s',
+               to_char(v_amount, 'FM999999999990.00'), to_char(v_balance, 'FM999999999990.00'), v_ref),
+        v_invoice.status, v_invoice.status,
+        jsonb_strip_nulls(jsonb_build_object(
+          'reason',          'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',
+          'amount_received', v_amount,
+          'balance_due',     v_balance,
+          'reference',       v_ref
+        )),
+        null
+      );
+    end if;
     return jsonb_build_object(
       'ok', false, 'reason', 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',
       'expected_max', v_balance, 'received', v_amount
@@ -396,6 +422,6 @@ $$;
 revoke all on function public.apply_invoice_payfast_payment(uuid, numeric, text, jsonb) from public, anon, authenticated;
 
 comment on function public.apply_invoice_payfast_payment(uuid, numeric, text, jsonb) is
-  'Records ONE completed PayFast invoice payment (source=payfast) in a single transaction: invoice locked FOR UPDATE -> balance validated against the CURRENT ledger-derived balance_due -> ledger row -> P1A cache trigger -> safe payment-cycle status mirror -> one opps_invoice_activity row (created_by NULL — customer-initiated, not a staff action). Service-role callers only (the payfast-notify edge function, after its own ITN signature validation) — never callable from a browser. Idempotent on (invoice_id, pf_payment_id): a replayed ITN returns the original result and writes neither a second payment nor a second activity row. OVERPAYMENT POLICY: an amount up to the current balance_due (±R0.02) is recorded at the actual amount (covers exact payment and any future genuine partial payment); an amount exceeding it is REJECTED — never recorded, never clamped — because OPPS has no client-credit ledger to place the excess in; the rejection is logged to opps_invoice_activity for reconciliation and the ledger/cache are left unchanged. An invoice with no balance left owing ignores a further completed ITN (INVOICE_ALREADY_PAID) rather than treating it as an overpayment. Only structurally invalid input (missing pf_payment_id/amount, invoice not found, invoice void) is rejected outright.';
+  'Records ONE completed PayFast invoice payment (source=payfast) in a single transaction: invoice locked FOR UPDATE -> balance validated against the CURRENT ledger-derived balance_due -> ledger row -> P1A cache trigger -> safe payment-cycle status mirror -> one opps_invoice_activity row (created_by NULL — customer-initiated, not a staff action). Service-role callers only (the payfast-notify edge function, after its own ITN signature validation) — never callable from a browser. Idempotent on (invoice_id, pf_payment_id): a replayed ITN returns the original result and writes neither a second payment nor a second activity row. OVERPAYMENT POLICY: an amount up to the current balance_due (±R0.02) is recorded at the actual amount (covers exact payment and any future genuine partial payment); an amount exceeding it is REJECTED — never recorded, never clamped — because OPPS has no client-credit ledger to place the excess in; the rejection is logged to opps_invoice_activity (attempted amount, balance at decision time, and the PayFast reference — never the raw ITN/signature) for reconciliation and the ledger/cache are left unchanged. A REPEAT rejection of the same (invoice, pf_payment_id) reuses the existing activity row rather than piling up duplicates on retry. An invoice with no balance left owing ignores a further completed ITN (INVOICE_ALREADY_PAID) rather than treating it as an overpayment. Only structurally invalid input (missing pf_payment_id/amount, invoice not found, invoice void) is rejected outright.';
 
 commit;
