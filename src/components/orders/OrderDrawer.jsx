@@ -856,17 +856,53 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               </div>
             )}
 
+            {/* Order-level production readiness aggregate (Phase 2 §7) */}
+            {drawerData.lineProductionReadiness?.order_readiness && drawerData.lineProductionReadiness.lines?.length > 0 && (
+              <div className="px-5 pt-3">
+                <span
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                    drawerData.lineProductionReadiness.order_readiness === 'blocked'
+                      ? 'bg-red-100 text-red-700'
+                      : drawerData.lineProductionReadiness.order_readiness === 'ready_with_warnings'
+                      ? 'bg-amber-100 text-amber-700'
+                      : 'bg-emerald-100 text-emerald-700'
+                  }`}
+                >
+                  Production:{' '}
+                  {drawerData.lineProductionReadiness.order_readiness === 'blocked'
+                    ? 'Blocked'
+                    : drawerData.lineProductionReadiness.order_readiness === 'ready_with_warnings'
+                    ? 'Ready (with warnings)'
+                    : 'Ready'}
+                </span>
+              </div>
+            )}
+
             {/* Quick Actions */}
             <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
-              {ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled').map(s => (
-                <button
-                  key={s}
-                  onClick={() => onUpdate(order.id, { status: s })}
-                  className="flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full bg-secondary hover:bg-border transition-all capitalize"
-                >
-                  Next: {statusConfig[s]?.label || s}
-                </button>
-              ))}
+              {ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled').map(s => {
+                // ORDERS CLIENT-PRODUCT REUSE PHASE 2 - client-side UX only;
+                // the authoritative gate is the orders_production_readiness_gate
+                // trigger, which rejects this same update server-side
+                // regardless of whether this button is disabled.
+                const isProductionTransition = s === 'in_production';
+                const blockedByReadiness = isProductionTransition && drawerData.lineProductionReadiness?.order_readiness === 'blocked';
+                return (
+                  <button
+                    key={s}
+                    onClick={() => onUpdate(order.id, { status: s })}
+                    disabled={blockedByReadiness}
+                    title={blockedByReadiness ? 'One or more production lines are not ready yet - see the Products section for details.' : undefined}
+                    className={`flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full transition-all capitalize ${
+                      blockedByReadiness
+                        ? 'bg-secondary/50 text-muted-foreground cursor-not-allowed'
+                        : 'bg-secondary hover:bg-border'
+                    }`}
+                  >
+                    Next: {statusConfig[s]?.label || s}
+                  </button>
+                );
+              })}
               <button
                 onClick={() => {
                   setEditingPaymentId(null);
@@ -1169,7 +1205,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               )}
               <DrawerSectionBoundary label="Products" resetKey={`${order.id}-products`}>
                 <React.Suspense fallback={<TabSectionFallback label="Products" />}>
-                  <ProductsEditor order={order} onUpdate={onUpdate} locked={isProductsLocked} lockReason={productsLockReason} />
+                  <ProductsEditor order={order} onUpdate={onUpdate} locked={isProductsLocked} lockReason={productsLockReason} lineProductionReadiness={drawerData.lineProductionReadiness} />
                 </React.Suspense>
               </DrawerSectionBoundary>
 

@@ -35,7 +35,7 @@ function newLineId() {
     : `line-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "" }) {
+export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "", lineProductionReadiness = null }) {
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
@@ -211,6 +211,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   }
   const trackingBySnapshotId = new Map(
     (Array.isArray(productionTracking) ? productionTracking : []).map((t) => [t.order_line_component_snapshot_id, t])
+  );
+  // ORDERS CLIENT-PRODUCT REUSE PHASE 2 - server-computed, per-line
+  // production readiness (get_order_line_production_readiness). Keyed by
+  // line_id so LineProduction can show the authoritative Ready/Blocked/
+  // Needs review status instead of the old ad hoc badges.
+  const readinessByLineId = new Map(
+    (Array.isArray(lineProductionReadiness?.lines) ? lineProductionReadiness.lines : []).map((l) => [l.line_id, l])
   );
 
   // Inventory Phase 2A, Stage A - read-only dry-run only. This never
@@ -1598,6 +1605,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               {isProductionCapableLine(p) && (
                 <LineProduction
                   clientProduct={clientProductForLine(p)}
+                  readiness={readinessByLineId.get(p.line_id) || null}
                   snapshots={snapshotsByLineId.get(p.line_id) || []}
                   trackingBySnapshotId={trackingBySnapshotId}
                   lineQuantity={Number(p.quantity) || 0}
@@ -2289,7 +2297,7 @@ function PickedItemPreview({ item, onClear }) {
 // production_method/production_detail_stage columns, so orders/lines
 // without composition data keep behaving exactly as before.
 function LineProduction({
-  clientProduct, snapshots, trackingBySnapshotId, expanded, onToggle, onChange,
+  clientProduct, readiness, snapshots, trackingBySnapshotId, expanded, onToggle, onChange,
   onBeginAttach, resolving, pendingResolution, onPickVariant, onSetComponentPrice, onConfirmAttach, onCancelAttach,
   attachIsBlocked, needsStaffPick, variantLabel, confirming, saving,
   lineQuantity, availabilityByVariantId, thisOrderReservedBySnapshotId,
@@ -2300,6 +2308,14 @@ function LineProduction({
   artworkById, onEditProduction, onChangeArtwork, relinkingArtworkSnapshotId, onPreview,
 }) {
   const hasSnapshots = snapshots.length > 0;
+  // ORDERS CLIENT-PRODUCT REUSE PHASE 2 - the server RPC is authoritative;
+  // these two ad hoc checks are kept ONLY as a fallback for when readiness
+  // hasn't loaded yet (still fetching, migration not applied, or RPC
+  // error) so this line never regresses to showing nothing.
+  const readinessLoaded = Boolean(readiness);
+  const readinessStatus = readiness?.status || null;
+  const blockingReasons = Array.isArray(readiness?.blocking_reasons) ? readiness.blocking_reasons : [];
+  const warnings = Array.isArray(readiness?.warnings) ? readiness.warnings : [];
   return (
     <div className="mt-1.5 rounded-lg border border-primary/20 bg-primary/5 px-2 py-1.5">
       <button
@@ -2310,22 +2326,58 @@ function LineProduction({
         {expanded ? <ChevronDown className="h-3 w-3 flex-shrink-0" /> : <ChevronRight className="h-3 w-3 flex-shrink-0" />}
         <Factory className="h-3 w-3 flex-shrink-0" />
         Production
-        {!hasSnapshots && (
-          <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-            composition not attached
-          </span>
-        )}
         {hasSnapshots && (
           <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
             {snapshots.length} component{snapshots.length === 1 ? "" : "s"}
           </span>
         )}
-        {hasSnapshots && snapshots.some((s) => s.inventory_product_id && !s.resolved_inventory_variant_id) && (
-          <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
-            unresolved variant
+        {readinessLoaded ? (
+          <span
+            className={
+              "rounded-full px-1.5 py-0.5 text-[10px] font-medium " +
+              (readinessStatus === "blocked"
+                ? "bg-red-100 text-red-700"
+                : readinessStatus === "needs_review"
+                ? "bg-amber-100 text-amber-700"
+                : "bg-emerald-100 text-emerald-700")
+            }
+          >
+            {readinessStatus === "blocked"
+              ? `Blocked${blockingReasons.length ? ` (${blockingReasons.length})` : ""}`
+              : readinessStatus === "needs_review"
+              ? `Needs review${warnings.length ? ` (${warnings.length})` : ""}`
+              : "Ready"}
           </span>
+        ) : (
+          <>
+            {!hasSnapshots && (
+              <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                composition not attached
+              </span>
+            )}
+            {hasSnapshots && snapshots.some((s) => s.inventory_product_id && !s.resolved_inventory_variant_id) && (
+              <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">
+                unresolved variant
+              </span>
+            )}
+          </>
         )}
       </button>
+
+      {expanded && readinessLoaded && (blockingReasons.length > 0 || warnings.length > 0) && (
+        <div className="mt-1.5 space-y-1">
+          {blockingReasons.map((reason, i) => (
+            <p key={`block-${i}`} className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-800">
+              {reason.message}
+            </p>
+          ))}
+          {warnings.map((warning, i) => (
+            <p key={`warn-${i}`} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+              {warning.message}
+            </p>
+          ))}
+        </div>
+      )}
 
       {expanded && !pendingResolution && !isAddingPrintOption && (
         <div className="mt-1.5 space-y-1">

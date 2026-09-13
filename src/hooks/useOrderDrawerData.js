@@ -5,6 +5,7 @@ import {
   getOrderProductionReadiness,
   isValidReadinessOrderId,
 } from "@/api/productionReadiness";
+import { getOrderLineProductionReadiness } from "@/api/orderLineProductionReadiness";
 
 const PAYMENTS_STALE_TIME = 60_000;
 const PAYMENTS_GC_TIME = 10 * 60_000;
@@ -15,6 +16,17 @@ const DIRECTORY_STALE_TIME = 300_000;
 const PURCHASE_ORDERS_STALE_TIME = 60_000;
 const READINESS_GC_TIME = 10 * 60_000;
 const readinessAuthBlockedOrderIds = new Set();
+
+// ORDERS CLIENT-PRODUCT REUSE PHASE 2 — per-order-line production
+// readiness (distinct axis from readinessQuery above, which is the
+// order-level commercial/compliance checklist). Fetched once per order,
+// whenever the 'details' tab (where ProductsEditor/LineProduction live)
+// is open — never per-line, per Phase 2 section 6's anti-N+1 guidance.
+async function fetchOrderLineProductionReadiness(orderId) {
+  const result = await getOrderLineProductionReadiness(orderId);
+  if (result.error) throw new Error(result.error);
+  return result.data;
+}
 
 function isReadinessAuthError(message = "") {
   const lower = String(message || "").toLowerCase();
@@ -127,6 +139,21 @@ export function useOrderDrawerData(order, activeTab = "details") {
     queryKey: ["productionReadiness", orderId],
     queryFn: () => fetchOrderProductionReadiness(orderId),
     enabled: activeTab === "readiness" && canLoadReadiness && !readinessAuthBlocked,
+    staleTime: READINESS_STALE_TIME,
+    gcTime: READINESS_GC_TIME,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+  });
+
+  const lineProductionReadinessQuery = useQuery({
+    queryKey: ["orderLineProductionReadiness", orderId],
+    queryFn: () => fetchOrderLineProductionReadiness(orderId),
+    // Not gated to the 'details' tab: the order-level aggregate also
+    // drives the always-visible Quick Actions "Next: In Production"
+    // guard in OrderDrawer.jsx, so it must be available on every tab.
+    enabled: canLoadReadiness,
     staleTime: READINESS_STALE_TIME,
     gcTime: READINESS_GC_TIME,
     retry: false,
@@ -285,6 +312,11 @@ export function useOrderDrawerData(order, activeTab = "details") {
       isAuthorizationBlocked: readinessAuthBlocked,
       canLoad: canLoadReadiness,
       queryKey: ["productionReadiness", orderId],
+    },
+    lineProductionReadiness: lineProductionReadinessQuery.data,
+    lineProductionReadinessQuery: {
+      ...lineProductionReadinessQuery,
+      queryKey: ["orderLineProductionReadiness", orderId],
     },
     displayClientEmail,
     displayWhatsappName,
