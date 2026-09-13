@@ -90,6 +90,19 @@ export function useOrderDrawerData(order, activeTab = "details") {
   const canLoadReadiness = isValidReadinessOrderId(orderId);
   const readinessAuthBlocked = readinessAuthBlockedOrderIds.has(orderId);
 
+  // Shares the SAME ["orders"] cache entry Orders.jsx's own list query uses
+  // (and already invalidates on every order-edit / classification-toggle
+  // mutation) — the drawer just reads its one row out of it. This is how
+  // the drawer observes an external change (another tab, a bulk action)
+  // without polling: React Query refetches this key on invalidation /
+  // reconnect while the drawer is mounted, same as any other query here.
+  const liveOrderQuery = useQuery({
+    queryKey: ["orders"],
+    queryFn: () => dataClient.entities.Order.list("-created_date", 200),
+    enabled: Boolean(orderId),
+    select: (list) => (Array.isArray(list) ? list.find((row) => row.id === orderId) : undefined),
+  });
+
   const paymentsQuery = useQuery({
     queryKey: ["payments", orderId],
     queryFn: () => dataClient.entities.Payment.filter({ order_id: orderId }),
@@ -289,6 +302,7 @@ export function useOrderDrawerData(order, activeTab = "details") {
   }, [criticalReady, orderId]);
 
   return {
+    liveOrder: liveOrderQuery.data || null,
     payments,
     paymentsQuery,
     legacyTasks,
