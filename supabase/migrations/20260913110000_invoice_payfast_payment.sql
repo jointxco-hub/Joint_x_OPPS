@@ -47,11 +47,21 @@
 --       the two have materially different trust models (authenticated
 --       finance staff vs. an unauthenticated PayFast webhook that has
 --       already been signature-validated at the edge-function layer).
---       A mismatched/overpaying amount is still RECORDED (the money was
---       actually charged — silently dropping it would be worse than an
---       accurate ledger) and flagged via metadata.overpaid rather than
---       rejected; only structurally invalid input (no amount, no
---       pf_payment_id, invoice not found, invoice void) is rejected.
+--       OVERPAYMENT HARDENING (invoice-payfast-overpayment-hardening):
+--       an amount up to the invoice's current balance_due (±R0.02) is
+--       recorded at the actual amount received — this also covers a
+--       genuine partial payment, should a future checkout ever
+--       intentionally initiate one. An amount ABOVE the balance is
+--       REJECTED, not recorded and not clamped: OPPS has no client-credit
+--       ledger to place the excess in, so the safest, most auditable
+--       response is to leave the ledger untouched and log the rejection
+--       to opps_invoice_activity for manual reconciliation. An invoice
+--       with nothing left owing ignores a further completed ITN
+--       (INVOICE_ALREADY_PAID) rather than treating it as an
+--       overpayment. Only structurally invalid input (no amount, no
+--       pf_payment_id, invoice not found, invoice void) is rejected
+--       outright. See the function's own header comment for the full
+--       reasoning and the atomicity/locking guarantee.
 --
 -- Does NOT touch: get_public_invoice, record_manual_invoice_payment,
 -- payment_attachments, PayFast for storefront ORDERS (xlab_orders /
@@ -158,6 +168,42 @@ comment on function public.begin_invoice_payment(text) is
   'Resolves a public invoice by share_token for PayFast initiation ONLY (service-role callers, i.e. the init-payfast edge function — never callable from a browser). Same eligibility gate as get_public_invoice (public_visible, not revoked, not expired, not draft/void) plus balance_due > 0. Returns the server''s own canonical balance_due as the amount to charge — the client never supplies one. A single generic UNAVAILABLE reason covers every ineligible state except ALREADY_PAID, so nothing is leaked to an anonymous caller.';
 
 -- ── 3. apply_invoice_payfast_payment ────────────────────────────────
+--
+-- OVERPAYMENT POLICY (hardened — see the invoice-payfast-overpayment
+-- task): OPPS has no client-credit/overpayment ledger. An amount up to
+-- the invoice's CURRENT outstanding balance (±R0.02 rounding tolerance,
+-- the same tolerance record_manual_invoice_payment already uses) is
+-- accepted and recorded at the actual amount received — this also
+-- covers a genuine partial payment, should a future invoice checkout
+-- ever intentionally initiate one; begin_invoice_payment today always
+-- requests the full balance, so in practice this is the exact-match
+-- case. An amount ABOVE the balance is REJECTED — not recorded with the
+-- excess silently dropped, and not clamped to the balance: PayFast has
+-- already irreversibly captured that exact amount, so silently
+-- recording a smaller number than what was actually charged would
+-- misrepresent settled reality to reconciliation, and there is nowhere
+-- safe to put the difference without inventing a credit ledger this
+-- codebase does not have. The rejection is logged to
+-- opps_invoice_activity (durable, queryable, visible on the invoice
+-- itself, not just an edge-function console log) so the captured money
+-- is never silently lost track of — finance sees exactly what PayFast
+-- settled versus what the invoice could actually absorb, and reconciles
+-- the excess manually (refund via PayFast, apply to another invoice,
+-- etc). The ledger and opps_invoices cache are left completely
+-- unchanged on rejection.
+--
+-- ATOMICITY: `select ... for update` locks the invoice row before ANY
+-- balance read. Two concurrent ITNs for the SAME invoice serialise on
+-- that lock — the second waits for the first to commit, then re-reads
+-- the POST-commit balance (a fresh statement under READ COMMITTED sees
+-- the first transaction's now-committed invoice_payments row), so it
+-- correctly evaluates against the balance the first payment already
+-- consumed. This is what prevents two concurrent distinct payments from
+-- both observing the pre-payment balance and jointly over-crediting the
+-- invoice. Two concurrent identical pf_payment_id retries are further
+-- guarded by the invoice_payments_payfast_ref_once unique index — the
+-- loser's insert hits `on conflict do nothing` and is treated as a
+-- replay, never a second row.
 create or replace function public.apply_invoice_payfast_payment(
   p_invoice_id     uuid,
   p_amount         numeric,
@@ -174,15 +220,18 @@ declare
   v_invoice          public.opps_invoices%rowtype;
   v_amount           numeric(14,2);
   v_ref              text := nullif(btrim(p_pf_payment_id), '');
-  v_existing         public.invoice_payments%rowtype;
+  v_existing_id      uuid;
   v_row_id           uuid;
+  v_balance          numeric(14,2);
+  v_status_before    text;
   v_status_after     text;
   v_new_status       text;
   v_effective_status text;
-  v_paid             numeric(14,2);
-  v_total            numeric(14,2);
 begin
   if v_ref is null then
+    -- A COMPLETE ITN with no pf_payment_id cannot be deduplicated safely —
+    -- refuse rather than risk folding it twice or never telling a
+    -- legitimate retry apart from a fresh payment.
     return jsonb_build_object('ok', false, 'reason', 'PF_PAYMENT_ID_REQUIRED');
   end if;
   if p_amount is null or p_amount <= 0 then
@@ -190,6 +239,7 @@ begin
   end if;
   v_amount := round(p_amount, 2);
 
+  -- ── lock: see ATOMICITY note above. ─────────────────────────────────
   select * into v_invoice from public.opps_invoices where id = p_invoice_id for update;
   if not found then
     return jsonb_build_object('ok', false, 'reason', 'INVOICE_NOT_FOUND');
@@ -201,18 +251,68 @@ begin
   -- ── idempotent replay: same (invoice, pf_payment_id) -> original result,
   --    no second payment, no second activity row. PayFast's own ITN can
   --    and does retry.
-  select * into v_existing
+  select id into v_existing_id
   from public.invoice_payments
   where invoice_id = p_invoice_id and source = 'payfast' and reference = v_ref
   limit 1;
-  if found then
-    return jsonb_build_object('ok', true, 'replayed', true, 'payment_id', v_existing.id);
+  if v_existing_id is not null then
+    return jsonb_build_object(
+      'ok', true, 'replayed', true, 'payment_id', v_existing_id,
+      'amount_paid', public.invoice_amount_paid(p_invoice_id),
+      'balance_due', public.invoice_balance_due(p_invoice_id),
+      'payment_status', public.invoice_payment_status(p_invoice_id)
+    );
   end if;
 
+  -- ── already fully settled: never fold in a second, genuinely-distinct
+  --    completed PayFast session against an invoice with nothing left
+  --    owing (two tabs, a very late notification, a manual payment
+  --    recorded meanwhile, ...). Diagnosed separately from the
+  --    overpayment case below because it is a calmer, more specific
+  --    situation for reconciliation to read. ──────────────────────────
+  v_balance       := public.invoice_balance_due(p_invoice_id);
+  v_status_before := public.invoice_payment_status(p_invoice_id);
+  if v_status_before = 'paid' or v_balance <= 0 then
+    return jsonb_build_object(
+      'ok', true, 'ignored', true, 'reason', 'INVOICE_ALREADY_PAID',
+      'amount_paid', public.invoice_amount_paid(p_invoice_id),
+      'balance_due', v_balance, 'payment_status', v_status_before
+    );
+  end if;
+
+  -- ── OVERPAYMENT POLICY: reject/quarantine, do not record, do not
+  --    clamp. See the header comment above this function for the full
+  --    reasoning. ───────────────────────────────────────────────────
+  if v_amount > v_balance + 0.02 then
+    insert into public.opps_invoice_activity (
+      invoice_id, tenant_id, activity_type, activity_label, activity_note,
+      from_status, to_status, metadata, created_by
+    ) values (
+      p_invoice_id, v_invoice.tenant_id,
+      'invoice_payment_rejected', 'PayFast payment rejected — exceeds balance',
+      format('payfast %s exceeds outstanding balance %s · pf_payment_id %s',
+             to_char(v_amount, 'FM999999999990.00'), to_char(v_balance, 'FM999999999990.00'), v_ref),
+      v_invoice.status, v_invoice.status,
+      jsonb_strip_nulls(jsonb_build_object(
+        'reason',         'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',
+        'amount_received', v_amount,
+        'balance_due',      v_balance,
+        'reference',        v_ref,
+        'raw_itn',          p_raw_itn
+      )),
+      null
+    );
+    return jsonb_build_object(
+      'ok', false, 'reason', 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',
+      'expected_max', v_balance, 'received', v_amount
+    );
+  end if;
+
+  -- ── valid amount (exact, or a genuine partial ≤ balance): record it ──
   insert into public.invoice_payments (
-    invoice_id, amount, paid_at, method, reference, source, order_id, created_by, metadata
+    tenant_id, invoice_id, amount, paid_at, method, reference, source, order_id, created_by, metadata
   ) values (
-    p_invoice_id, v_amount, now(), 'payfast', v_ref, 'payfast',
+    v_invoice.tenant_id, p_invoice_id, v_amount, now(), 'payfast', v_ref, 'payfast',
     v_invoice.source_order_id, null,
     jsonb_strip_nulls(jsonb_build_object(
       'recorded_via', 'apply_invoice_payfast_payment',
@@ -223,13 +323,19 @@ begin
     do nothing
   returning id into v_row_id;
 
-  -- lost a race to a concurrent identical ITN retry -> treat as replay
+  -- lost a race to a concurrent identical ITN retry -> treat as replay,
+  -- not a second payment / second activity row.
   if v_row_id is null then
     select id into v_row_id
     from public.invoice_payments
     where invoice_id = p_invoice_id and source = 'payfast' and reference = v_ref
     limit 1;
-    return jsonb_build_object('ok', true, 'replayed', true, 'payment_id', v_row_id);
+    return jsonb_build_object(
+      'ok', true, 'replayed', true, 'payment_id', v_row_id,
+      'amount_paid', public.invoice_amount_paid(p_invoice_id),
+      'balance_due', public.invoice_balance_due(p_invoice_id),
+      'payment_status', public.invoice_payment_status(p_invoice_id)
+    );
   end if;
 
   -- trg_invoice_payments_refresh_cache has now recomputed
@@ -254,13 +360,9 @@ begin
     v_effective_status := v_new_status;
   end if;
 
-  v_paid  := public.invoice_amount_paid(p_invoice_id);
-  v_total := round(coalesce(v_invoice.total, 0), 2);
-
   -- ── canonical payment audit event (same transaction) ────────────
   -- created_by is NULL: this is a customer-initiated, webhook-reconciled
-  -- payment, not a staff action. An overpayment is recorded (the money
-  -- was actually taken) and flagged rather than rejected.
+  -- payment, not a staff action.
   insert into public.opps_invoice_activity (
     invoice_id, tenant_id, activity_type, activity_label, activity_note,
     from_status, to_status, metadata, created_by
@@ -276,20 +378,24 @@ begin
       'method',         'payfast',
       'reference',      v_ref,
       'payment_status', v_status_after,
-      'amount_paid',    v_paid,
-      'balance_due',    public.invoice_balance_due(p_invoice_id),
-      'overpaid',       (v_paid > v_total + 0.02)
+      'amount_paid',    public.invoice_amount_paid(p_invoice_id),
+      'balance_due',    public.invoice_balance_due(p_invoice_id)
     )),
     null
   );
 
-  return jsonb_build_object('ok', true, 'replayed', false, 'payment_id', v_row_id);
+  return jsonb_build_object(
+    'ok', true, 'replayed', false, 'payment_id', v_row_id,
+    'amount_paid', public.invoice_amount_paid(p_invoice_id),
+    'balance_due', public.invoice_balance_due(p_invoice_id),
+    'payment_status', v_status_after
+  );
 end;
 $$;
 
 revoke all on function public.apply_invoice_payfast_payment(uuid, numeric, text, jsonb) from public, anon, authenticated;
 
 comment on function public.apply_invoice_payfast_payment(uuid, numeric, text, jsonb) is
-  'Records ONE completed PayFast invoice payment (source=payfast) in a single transaction: ledger row -> P1A cache trigger -> safe payment-cycle status mirror -> one opps_invoice_activity row (created_by NULL — customer-initiated, not a staff action). Service-role callers only (the payfast-notify edge function, after its own ITN signature validation) — never callable from a browser. Idempotent on (invoice_id, pf_payment_id): a replayed ITN returns the original result and writes neither a second payment nor a second activity row. An amount that does not match the invoice''s current balance is still recorded (real money was charged) and flagged via metadata.overpaid rather than rejected; only structurally invalid input (missing pf_payment_id/amount, invoice not found, invoice void) is rejected.';
+  'Records ONE completed PayFast invoice payment (source=payfast) in a single transaction: invoice locked FOR UPDATE -> balance validated against the CURRENT ledger-derived balance_due -> ledger row -> P1A cache trigger -> safe payment-cycle status mirror -> one opps_invoice_activity row (created_by NULL — customer-initiated, not a staff action). Service-role callers only (the payfast-notify edge function, after its own ITN signature validation) — never callable from a browser. Idempotent on (invoice_id, pf_payment_id): a replayed ITN returns the original result and writes neither a second payment nor a second activity row. OVERPAYMENT POLICY: an amount up to the current balance_due (±R0.02) is recorded at the actual amount (covers exact payment and any future genuine partial payment); an amount exceeding it is REJECTED — never recorded, never clamped — because OPPS has no client-credit ledger to place the excess in; the rejection is logged to opps_invoice_activity for reconciliation and the ledger/cache are left unchanged. An invoice with no balance left owing ignores a further completed ITN (INVOICE_ALREADY_PAID) rather than treating it as an overpayment. Only structurally invalid input (missing pf_payment_id/amount, invoice not found, invoice void) is rejected outright.';
 
 commit;

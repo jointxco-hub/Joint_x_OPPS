@@ -81,22 +81,66 @@ test("8 · apply_invoice_payfast_payment is idempotent on (invoice_id, pf_paymen
   assert.doesNotMatch(sql, /invoice_payments_payfast_ref_once[\s\S]{0,120}source = 'manual'/);
 });
 
-test("9 · apply_invoice_payfast_payment records the actual charged amount even on mismatch — flags, never silently drops it", async () => {
+test("9 · apply_invoice_payfast_payment REJECTS an amount exceeding the current balance — never records it, never clamps it", async () => {
   const sql = await src(MIGRATION);
   const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
-  const body = sql.slice(start);
-  assert.doesNotMatch(body, /raise exception[\s\S]{0,80}OVERPAY/i, "an amount mismatch is never rejected — the charge already happened");
-  assert.match(body, /'overpaid',\s*\(v_paid > v_total \+ 0\.02\)/);
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  // the accept/reject boundary is the LIVE balance, with the same ±R0.02
+  // tolerance record_manual_invoice_payment already uses — not the
+  // invoice total, and not an exact-match-only comparison (a valid
+  // partial payment, amount <= balance, must still be accepted).
+  assert.match(body, /if v_amount > v_balance \+ 0\.02 then/);
+  const overpayBranchStart = body.indexOf("if v_amount > v_balance + 0.02 then");
+  const overpayBranchEnd = body.indexOf("end if;", overpayBranchStart);
+  const overpayBranch = body.slice(overpayBranchStart, overpayBranchEnd);
+  assert.doesNotMatch(overpayBranch, /insert into public\.invoice_payments/, "the overpayment branch must never insert a ledger row");
+  assert.match(overpayBranch, /insert into public\.opps_invoice_activity/, "the rejection must still be durably logged for reconciliation");
+  assert.match(overpayBranch, /'INVOICE_PAYMENT_OVERPAYMENT_REJECTED'/);
+  assert.match(overpayBranch, /'ok', false/, "the RPC returns ok:false — the edge function's existing `!(data as any)?.ok` check already treats this as a clean rejection, no X LAB change needed");
+  // never silently clamp: the rejection response echoes what PayFast
+  // actually reports, not a reduced/rounded-down number
+  assert.match(body, /'received', v_amount/);
 });
 
-test("10 · apply_invoice_payfast_payment writes exactly one activity row per new payment, created_by NULL (not a staff action)", async () => {
+test("9b · a valid partial payment (amount <= balance) is accepted and recorded at the actual amount — the overpayment fix must not break intentional partial payments", async () => {
   const sql = await src(MIGRATION);
   const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
-  const body = sql.slice(start);
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  const insertStart = body.indexOf("-- ── valid amount");
+  assert.notEqual(insertStart, -1);
+  const insertSection = body.slice(insertStart, insertStart + 400);
+  assert.match(insertSection, /insert into public\.invoice_payments/);
+  assert.match(insertSection, /v_amount, now\(\), 'payfast', v_ref, 'payfast'/, "records the ACTUAL amount received, not the full balance");
+});
+
+test("9c · an invoice with nothing left owing ignores a further ITN as INVOICE_ALREADY_PAID, distinct from an overpayment rejection", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  assert.match(body, /v_status_before = 'paid' or v_balance <= 0/);
+  assert.match(body, /'ignored', true, 'reason', 'INVOICE_ALREADY_PAID'/);
+  // this check must run BEFORE the overpayment rejection, so a fully-paid
+  // invoice is diagnosed as "already paid", not "overpayment"
+  const alreadyPaidAt = body.indexOf("'INVOICE_ALREADY_PAID'");
+  const overpaidAt = body.indexOf("INVOICE_PAYMENT_OVERPAYMENT_REJECTED");
+  assert.ok(alreadyPaidAt > -1 && overpaidAt > -1 && alreadyPaidAt < overpaidAt);
+});
+
+test("10 · apply_invoice_payfast_payment writes exactly two activity-insert SITES (rejection + success), each firing on a disjoint path, never both for one call", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
   const activityInserts = (body.match(/insert into public\.opps_invoice_activity/g) || []).length;
-  assert.equal(activityInserts, 1, "exactly one activity insert site — both replay paths return before reaching it");
+  assert.equal(activityInserts, 2, "one for the overpayment-rejection path, one for the successfully-recorded-payment path — both replay/ignored paths return before either");
   assert.match(body, /'invoice_payment_recorded'/);
-  assert.match(body, /\),\s*\n\s*null\s*\n\s*\);/, "created_by is NULL — this is a webhook-reconciled payment, not a staff action");
+  assert.match(body, /'invoice_payment_rejected'/);
+  // both inserts are created_by NULL - neither is a staff action
+  const nullCreatedBy = (body.match(/\),\s*\n\s*null\s*\n\s*\);/g) || []).length;
+  assert.equal(nullCreatedBy, 2, "created_by is NULL on both activity inserts — this is a webhook-reconciled payment, not a staff action, whether accepted or rejected");
 });
 
 test("11 · apply_invoice_payfast_payment never touches xlab_orders / xlab_payments / the order-linked bridge", async () => {
