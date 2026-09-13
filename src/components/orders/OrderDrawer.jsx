@@ -391,7 +391,26 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     tasksLoading,
     paymentsError,
     tasksError,
+    liveOrder,
   } = drawerData;
+
+  // Resync the three fields mirrored into local state below (pipeline
+  // stage, is_test, excluded_from_reports) when the shared ["orders"]
+  // query observes a value that actually differs from what's currently
+  // shown — e.g. another tab changed the pipeline stage while this
+  // drawer stayed open, or a bulk action changed test/reporting
+  // classification. Effect deps are the individual fetched values, not
+  // the liveOrder object, so this only fires on a genuine change, never
+  // on every render; a staff action taken FROM this drawer already sets
+  // local state directly (see setLocalIsTest/setLocalExcludedFromReports
+  // below), so this only ever restates the same value in that case, not
+  // stomping an in-progress edit — no free-typed draft is mirrored here.
+  useEffect(() => {
+    if (!liveOrder) return;
+    setLocalPipelineStage(liveOrder.pipeline_stage);
+    setLocalIsTest(liveOrder.is_test);
+    setLocalExcludedFromReports(liveOrder.excluded_from_reports);
+  }, [liveOrder?.pipeline_stage, liveOrder?.is_test, liveOrder?.excluded_from_reports]);
 
   const addPaymentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.Payment.create(data),
