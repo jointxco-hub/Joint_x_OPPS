@@ -331,6 +331,10 @@ export default function Orders() {
       if (updatedOrder?.id) {
         setSelectedOrder((/** @type {any} */ prev) =>
           prev && prev.id === updatedOrder.id ? { ...prev, ...updatedOrder } : prev);
+        // An order total/detail edit can change what a linked invoice should
+        // show (e.g. before the invoice is re-synced from the order) — the
+        // order drawer's own Invoices tab reads this key directly.
+        queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", updatedOrder.id] });
       }
     },
     onError: (/** @type {any} */ err) => {

@@ -456,12 +456,43 @@ const ACTIVITY_LABELS = {
   invoice_contact_refreshed: "Contact/shipping details refreshed",
 };
 
+// A status transition (e.g. approve) has no dedicated RPC — it's a plain
+// PostgREST update, so nothing locks the invoice row between two rapid
+// calls reading the same "before" status. Each call then independently
+// concludes a transition happened and inserts its own activity row,
+// producing two identical entries for one real state change. There is no
+// DB unique constraint to lean on (activity types like
+// invoice_payment_recorded legitimately repeat), so this checks for an
+// activity row with the exact same shape inserted moments ago and reuses
+// it instead of writing a second one. This narrows the race window rather
+// than closing it outright — the real fix is the UI-level pending guard on
+// the Approve button (InvoiceDetailDrawer's isApprovePending), which stops
+// the double-click that causes this in practice; this is defence in depth.
+const RECENT_DUPLICATE_ACTIVITY_WINDOW_MS = 5000;
+
 async function createInvoiceActivity(invoiceId, input = {}) {
   if (!invoiceId) return null;
   ensureSupabase();
   const userId = await getAuthUserId();
   const tenantId = await getTenantId();
   const type = input.activity_type || "invoice_updated";
+  const fromStatus = input.from_status || null;
+  const toStatus = input.to_status || null;
+
+  const sinceIso = new Date(Date.now() - RECENT_DUPLICATE_ACTIVITY_WINDOW_MS).toISOString();
+  let recentQuery = supabase
+    .from("opps_invoice_activity")
+    .select("*")
+    .eq("invoice_id", invoiceId)
+    .eq("activity_type", type)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  recentQuery = fromStatus === null ? recentQuery.is("from_status", null) : recentQuery.eq("from_status", fromStatus);
+  recentQuery = toStatus === null ? recentQuery.is("to_status", null) : recentQuery.eq("to_status", toStatus);
+  const { data: recent } = await recentQuery;
+  if (recent && recent[0]) return recent[0];
+
   const { data, error } = await supabase
     .from("opps_invoice_activity")
     .insert({
@@ -469,8 +500,8 @@ async function createInvoiceActivity(invoiceId, input = {}) {
       activity_type: type,
       activity_label: input.activity_label || ACTIVITY_LABELS[type] || "Invoice updated",
       activity_note: input.activity_note || null,
-      from_status: input.from_status || null,
-      to_status: input.to_status || null,
+      from_status: fromStatus,
+      to_status: toStatus,
       metadata: input.metadata || {},
       tenant_id: tenantId,
       created_by: userId,

@@ -39,9 +39,18 @@ function uuidOrEmpty(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text) ? text : "";
 }
 
-function addDaysIso(dateIso, days = 0) {
-  const date = dateIso ? new Date(String(dateIso) + "T00:00:00") : new Date();
-  date.setDate(date.getDate() + Number(days || 0));
+// Date-only arithmetic on a "YYYY-MM-DD" string must never touch local
+// timezone: `new Date(iso + "T00:00:00")` parses in the BROWSER's local
+// time, and `.toISOString()` converts back to UTC — in South Africa
+// (UTC+2) that silently shifts the result back a day, even at days=0
+// (invoice_date 2026-09-13 -> due_date 2026-09-12 for "Due on receipt").
+// Building the Date from its UTC components and reading it back the same
+// way keeps the calendar day fixed regardless of the viewer's timezone.
+export function addDaysIso(dateIso, days = 0) {
+  const iso = dateIso || new Date().toISOString().slice(0, 10);
+  const [y, m, d] = String(iso).split("-").map(Number);
+  const date = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
   return date.toISOString().slice(0, 10);
 }
 
