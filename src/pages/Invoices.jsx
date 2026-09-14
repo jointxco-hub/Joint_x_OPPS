@@ -146,6 +146,11 @@ export default function Invoices() {
         queryClient.invalidateQueries({ queryKey: ["invoices"] }),
         queryClient.invalidateQueries({ queryKey: ["invoice", saved.id] }),
         queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] }),
+        // A total correction changes the canonical balance the P1A ledger
+        // summary is derived from — without this, InvoicePaymentModal (fed
+        // straight from this cached query) keeps showing the pre-correction
+        // outstanding amount until something else happens to invalidate it.
+        queryClient.invalidateQueries({ queryKey: ["invoicePaymentSummary", saved.id] }),
         saved.source_order_id
           ? queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", saved.source_order_id] })
           : Promise.resolve(),
@@ -190,6 +195,10 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceExportCandidates"] });
+      queryClient.invalidateQueries({ queryKey: ["invoicePaymentSummary", selectedInvoice?.id] });
+      if (selectedInvoice?.source_order_id) {
+        queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", selectedInvoice.source_order_id] });
+      }
     },
     onError: (error) => toast.error(error?.message || "Could not approve invoice"),
   });
@@ -201,6 +210,10 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoices"] });
       queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
+      queryClient.invalidateQueries({ queryKey: ["invoicePaymentSummary", selectedInvoice?.id] });
+      if (selectedInvoice?.source_order_id) {
+        queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", selectedInvoice.source_order_id] });
+      }
     },
     onError: (error) => toast.error(error?.message || "Could not reopen invoice"),
   });
@@ -288,6 +301,14 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoicePaymentSummary", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoicePayments", selectedInvoice?.id] });
+      // A payment recorded here also moves the linked order's own payments
+      // tab / balance and its Invoices-tab card — without this, an
+      // already-open order drawer keeps showing pre-payment figures until
+      // it's closed and reopened.
+      if (selectedInvoice?.source_order_id) {
+        queryClient.invalidateQueries({ queryKey: ["payments", selectedInvoice.source_order_id] });
+        queryClient.invalidateQueries({ queryKey: ["orderOppsInvoices", selectedInvoice.source_order_id] });
+      }
     },
     onError: (error) => toast.error(error?.message || "Could not record the payment"),
   });
@@ -501,6 +522,7 @@ export default function Invoices() {
           }
         }}
         onApprove={(invoice) => approveMutation.mutate(invoice)}
+        isApprovePending={approveMutation.isPending}
         canReopen={canReopen}
         onReopen={(invoice, reason) => reopenMutation.mutate({ invoice, reason })}
         isReopenPending={reopenMutation.isPending}

@@ -140,8 +140,11 @@ export default function ClientInvoiceView({ invoice, order, template: rawTemplat
               <p className="text-xs text-slate-300">Balance due</p>
               <p className="mt-1 break-words text-lg font-semibold sm:text-xl">{money(invoice.balance_due)}</p>
             </div>
+            {/* states.payment is derived from invoice.status (workflow/
+                lifecycle state), not a ledger payment_status — "Invoice
+                status" avoids reading "Approved" here as "paid". */}
             <div className="mt-3 rounded-lg border border-[#00866f]/20 bg-[#00866f]/10 px-4 py-3">
-              <p className="text-xs text-slate-500">Payment status</p>
+              <p className="text-xs text-slate-500">Invoice status</p>
               <p className="mt-1 font-semibold text-[#006f5d]">{states.payment.label}</p>
             </div>
           </div>

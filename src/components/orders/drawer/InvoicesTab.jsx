@@ -709,7 +709,11 @@ function OppsInvoiceCard({
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-1.5">
-        <StatusPill label={`Payment: ${states.payment.label}`} />
+        {/* states.payment is derived from invoice.status (workflow/lifecycle
+            state — draft/approved/paid/etc), not a ledger payment_status.
+            Labelled "Invoice:" so an approved-but-unpaid invoice doesn't
+            read as "Payment: Approved" while paid=R0. */}
+        <StatusPill label={`Invoice: ${states.payment.label}`} />
         <StatusPill label={`Zoho: ${states.zoho.label}`} />
       </div>
 

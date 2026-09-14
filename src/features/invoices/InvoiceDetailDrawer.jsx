@@ -96,6 +96,7 @@ export default function InvoiceDetailDrawer({
   onOpenChange,
   onRetry,
   onApprove,
+  isApprovePending = false,
   onEditDraft,
   onMarkExported,
   onMarkImported,
@@ -207,6 +208,7 @@ export default function InvoiceDetailDrawer({
   // who intend to link should know before they lock themselves out of the
   // easy path. "Approve anyway" always remains one click away.
   const handleApproveClick = () => {
+    if (isApprovePending) return;
     if (invoice && !invoice.source_order_id) {
       setUnlinkedApproveWarningOpen(true);
       return;
@@ -415,8 +417,8 @@ export default function InvoiceDetailDrawer({
                       <Button variant="outline" size="sm" onClick={() => onEditDraft?.(invoice)} className="h-9 rounded-xl text-xs sm:text-sm">
                         <Pencil className="h-3.5 w-3.5" /> Edit
                       </Button>
-                      <Button size="sm" onClick={handleApproveClick} className="h-9 rounded-xl text-xs sm:text-sm">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Approve
+                      <Button size="sm" onClick={handleApproveClick} disabled={isApprovePending} className="h-9 rounded-xl text-xs sm:text-sm">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> {isApprovePending ? "Approving…" : "Approve"}
                       </Button>
                     </>
                   ) : (
@@ -557,7 +559,9 @@ export default function InvoiceDetailDrawer({
           </Button>
           <Button
             className="rounded-xl"
+            disabled={isApprovePending}
             onClick={() => {
+              if (isApprovePending) return;
               setUnlinkedApproveWarningOpen(false);
               onApprove?.(invoice);
             }}
