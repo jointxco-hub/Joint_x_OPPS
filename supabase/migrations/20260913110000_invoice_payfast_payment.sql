@@ -334,6 +334,16 @@ begin
     );
   end if;
 
+  -- Metadata is a small allowlist, never the raw ITN. `signature` (and
+  -- everything else PayFast sends) is dropped here regardless of what the
+  -- caller passes as p_raw_itn — the same "no raw_itn / signature stored"
+  -- guarantee the rejected-overpayment path above already gives, now
+  -- applied to the accepted path too. Only fields with standalone
+  -- reconciliation value and no existing canonical column are kept:
+  -- amount/pf_payment_id/invoice_id already have their own columns above,
+  -- so payment_status, item_name and m_payment_id are redundant with them
+  -- and are deliberately left out; amount_fee/amount_net are PayFast's own
+  -- fee breakdown and are not captured anywhere else in this schema.
   -- ── valid amount (exact, or a genuine partial ≤ balance): record it ──
   insert into public.invoice_payments (
     tenant_id, invoice_id, amount, paid_at, method, reference, source, order_id, created_by, metadata
@@ -342,7 +352,8 @@ begin
     v_invoice.source_order_id, null,
     jsonb_strip_nulls(jsonb_build_object(
       'recorded_via', 'apply_invoice_payfast_payment',
-      'raw_itn', p_raw_itn
+      'payfast_amount_fee', nullif(p_raw_itn->>'amount_fee', '')::numeric,
+      'payfast_amount_net', nullif(p_raw_itn->>'amount_net', '')::numeric
     ))
   )
   on conflict (invoice_id, reference) where source = 'payfast' and reference is not null

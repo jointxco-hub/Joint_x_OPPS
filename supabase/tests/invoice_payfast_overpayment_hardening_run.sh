@@ -131,13 +131,37 @@ declare
   PAID        constant uuid := 'a0000000-0000-0000-0000-000000000008';
   r jsonb; n int; act int;
 begin
-  -- 1 · exact payment: R1000 balance + R1000 ITN -> one ledger row, balance 0
-  r := public.apply_invoice_payfast_payment(EXACT, 1000.00, 'PF-EXACT-1', '{}'::jsonb);
+  -- 1 · exact payment: R1000 balance + R1000 ITN -> one ledger row, balance 0.
+  --     p_raw_itn carries a realistic ITN shape (signature, merchant_id,
+  --     custom_str1/2, email_address, item_name, m_payment_id INCLUDED) to
+  --     prove the stored metadata sanitizes it live against a real running
+  --     Postgres, not just via a static-source-text pattern match.
+  r := public.apply_invoice_payfast_payment(EXACT, 1000.00, 'PF-EXACT-1', jsonb_build_object(
+    'payment_status', 'COMPLETE', 'amount_gross', '1000.00', 'amount_fee', '31.10', 'amount_net', '968.90',
+    'pf_payment_id', 'PF-EXACT-1', 'm_payment_id', 'INV-EXACT', 'item_name', 'Invoice INV-EXACT',
+    'email_address', 'a@x.invalid', 'merchant_id', '10000100',
+    'custom_str1', EXACT::text, 'custom_str2', 'invoice',
+    'signature', 'deadbeef0000000000000000000000aa'
+  ));
   select count(*) into n from public.invoice_payments where invoice_id=EXACT and source='payfast';
   if (r->>'ok')::boolean = true and (r->>'replayed')::boolean = false and n = 1
      and public.invoice_balance_due(EXACT) = 0.00
   then raise notice 'PASS 1 exact R1000 payment recorded, one ledger row, balance R0';
   else raise notice 'FAIL 1 r=% n=% balance=%', r, n, public.invoice_balance_due(EXACT); end if;
+
+  -- 1b · the stored metadata for that same payment: no signature, no raw
+  --      ITN blob, no merchant_id/custom_str echoes — only the fee
+  --      breakdown, which has no canonical column anywhere else.
+  declare v_meta jsonb;
+  begin
+    select metadata into v_meta from public.invoice_payments where invoice_id=EXACT and reference='PF-EXACT-1';
+    if not (v_meta ? 'signature') and not (v_meta ? 'raw_itn') and not (v_meta ? 'merchant_id')
+       and not (v_meta ? 'custom_str1') and not (v_meta ? 'email_address')
+       and (v_meta->>'payfast_amount_fee')::numeric = 31.10
+       and (v_meta->>'payfast_amount_net')::numeric = 968.90
+    then raise notice 'PASS 1b stored metadata has no signature/raw_itn/merchant_id/custom_str1/email_address, keeps the fee breakdown: %', v_meta;
+    else raise notice 'FAIL 1b metadata=%', v_meta; end if;
+  end;
 
   -- 2 · valid partial payment: R1000 balance + R400 -> recorded, balance R600
   r := public.apply_invoice_payfast_payment(PARTIAL, 400.00, 'PF-PARTIAL-1', '{}'::jsonb);

@@ -140,6 +140,45 @@ test("9e · the rejection activity never stores the raw ITN / signature — only
   assert.match(rejectionInsert, /'reference',\s*v_ref/);
 });
 
+test("9f · a successful payment's own metadata never stores the raw ITN / signature — same guarantee as the rejection path, extended to acceptance", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  const insertStart = body.indexOf("-- ── valid amount");
+  const insertEnd = body.indexOf("on conflict (invoice_id, reference)", insertStart);
+  const successInsert = body.slice(insertStart, insertEnd);
+  assert.doesNotMatch(successInsert, /'raw_itn'/, "the full ITN body (which carries PayFast's signature) is never stored as a jsonb key on a successful payment either");
+  assert.doesNotMatch(successInsert, /p_raw_itn(?!->)/, "p_raw_itn is only ever read field-by-field (p_raw_itn->>'x'), never assigned wholesale into metadata");
+});
+
+test("9g · the retained success metadata is a small explicit allowlist — only fields with no existing canonical column", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  const insertStart = body.indexOf("-- ── valid amount");
+  const insertEnd = body.indexOf("on conflict (invoice_id, reference)", insertStart);
+  const successInsert = body.slice(insertStart, insertEnd);
+  assert.match(successInsert, /'payfast_amount_fee',\s*nullif\(p_raw_itn->>'amount_fee', ''\)::numeric/, "PayFast's fee breakdown has no canonical column elsewhere and is the kind of field worth keeping");
+  assert.match(successInsert, /'payfast_amount_net',\s*nullif\(p_raw_itn->>'amount_net', ''\)::numeric/);
+  // fields that duplicate an already-canonical column (amount/pf_payment_id/
+  // invoice_id/invoice_number) are deliberately NOT retained a second time
+  assert.doesNotMatch(successInsert, /'payment_status'|'item_name'|'m_payment_id'|'merchant_id'|'email_address'|'custom_str/, "no field is retained merely because PayFast sent it — only genuinely non-redundant ones");
+});
+
+test("9h · a replayed successful payment is unaffected by the metadata allowlist change — idempotency stays on (invoice_id, reference), not on metadata shape", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  const conflictIdx = body.indexOf("on conflict (invoice_id, reference)");
+  const replayBranchEnd = body.indexOf("end if;", conflictIdx);
+  const replayBranch = body.slice(conflictIdx, replayBranchEnd);
+  assert.match(replayBranch, /'replayed', true, 'payment_id', v_row_id/, "the on-conflict-do-nothing + re-select replay path (test 8) is untouched by the metadata column change above it");
+  assert.doesNotMatch(replayBranch, /raw_itn|p_raw_itn/, "the replay branch never references the raw ITN either");
+});
+
 test("9b · a valid partial payment (amount <= balance) is accepted and recorded at the actual amount — the overpayment fix must not break intentional partial payments", async () => {
   const sql = await src(MIGRATION);
   const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
