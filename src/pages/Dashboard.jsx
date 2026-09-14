@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { format, isToday, isPast, startOfWeek, endOfWeek } from "date-fns";
 import { getOrderAmountPaid, getOrderHealthFlags, getOrderHealthSummary, getOrderTotal } from "@/lib/orderHealth";
+import { useWorkspace } from "@/lib/WorkspaceContext";
 
 const greetings = ["Good morning", "Good afternoon", "Good evening"];
 const getGreeting = () => {
@@ -25,6 +26,7 @@ const statusColors = {
 };
 
 export default function Dashboard() {
+  const { isJointXWorkspace } = useWorkspace();
   const [user, setUser] = useState(null);
 
   useEffect(() => {
@@ -43,9 +45,12 @@ export default function Dashboard() {
     queryFn: () => ents.Order.filter({ is_archived: false, excluded_from_reports: false }, "-created_date", 100),
   });
 
+  // Legacy goals are not tenant-owned yet. Keep them strictly inside the
+  // Joint X workspace so a Café workspace can never display HQ goals.
   const { data: goals = [] } = useQuery({
-    queryKey: ["goals-dash"],
+    queryKey: ["goals-dash", isJointXWorkspace ? "joint-x" : "hidden"],
     queryFn: () => ents.Goal.filter({ is_archived: false }, "-created_date", 5),
+    enabled: isJointXWorkspace,
   });
 
   const today = new Date();
@@ -77,7 +82,9 @@ export default function Dashboard() {
           <StatCard label="Today" value={todayTasks.length} color="blue" icon={Clock} to="/Tasks" />
           <StatCard label="Overdue" value={overdueTasks.length} color={overdueTasks.length > 0 ? "red" : "slate"} icon={AlertTriangle} to="/Tasks" />
           <StatCard label="Active Orders" value={activeOrders.length} color="orange" icon={Package} to="/Orders" />
-          <StatCard label="Goals" value={goals.length} color="purple" icon={Target} to="/Goals" />
+          {isJointXWorkspace && (
+            <StatCard label="Goals" value={goals.length} color="purple" icon={Target} to="/Goals" />
+          )}
         </div>
 
         {paymentHealth.flagged.length > 0 && (
@@ -137,7 +144,7 @@ export default function Dashboard() {
             </Section>
 
             {/* Goals */}
-            {goals.length > 0 && (
+            {isJointXWorkspace && goals.length > 0 && (
               <Section title="Active Goals" count={goals.length} accent="purple" link="/Goals">
                 {goals.slice(0, 3).map(g => (
                   <div key={g.id} className="py-2.5 border-b border-border last:border-0">
