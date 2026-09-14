@@ -139,9 +139,9 @@ test("duplicateProductComposition wraps the existing RPC unchanged - no client-s
 });
 
 // ── Production tab wiring ────────────────────────────────────────
-test("the workspace gains a Production tab (4-col grid) that receives canConfigure from the inventory_can_review_tenant probe", async () => {
+test("the workspace gains a Production tab that receives canConfigure from the inventory_can_review_tenant probe", async () => {
   const src = await readSource(SECTION_PATH);
-  assert.match(src, /grid-cols-4/);
+  assert.match(src, /grid-cols-5/, "tab grid grows with the tab count - now 5 (Details/Pictures/Artwork/Production/Status)");
   assert.match(src, /<TabsTrigger value="production">Production<\/TabsTrigger>/);
   assert.match(src, /canReviewTenant\(\{ tenantId: product\.tenant_id \}\)/);
   assert.match(src, /canConfigure=\{canConfigureProduction\}/);
