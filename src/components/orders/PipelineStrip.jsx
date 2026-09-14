@@ -3,7 +3,7 @@ import { describeCheckedUpdateError } from '@/lib/checkedUpdate';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
-export default function PipelineStrip({ order, stages: providedStages, onStageChange }) {
+export default function PipelineStrip({ order, stages: providedStages, onStageChange, readOnly = false }) {
   const qc = useQueryClient();
   const hasProvidedStages = Array.isArray(providedStages) && providedStages.length > 0;
 
@@ -55,8 +55,8 @@ export default function PipelineStrip({ order, stages: providedStages, onStageCh
             return (
               <button
                 key={stage.key}
-                onClick={() => !isCurrent && updateMutation.mutate(stage.key)}
-                disabled={updateMutation.isPending}
+                onClick={() => !readOnly && !isCurrent && updateMutation.mutate(stage.key)}
+                disabled={readOnly || updateMutation.isPending}
                 title={stage.display_name}
                 className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-all whitespace-nowrap ${
                   isCurrent
@@ -84,8 +84,8 @@ export default function PipelineStrip({ order, stages: providedStages, onStageCh
             return (
               <button
                 key={stage.key}
-                onClick={() => !isActive && updateMutation.mutate(stage.key)}
-                disabled={updateMutation.isPending}
+                onClick={() => !readOnly && !isActive && updateMutation.mutate(stage.key)}
+                disabled={readOnly || updateMutation.isPending}
                 className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-all ${
                   isActive
                     ? 'bg-red-100 text-red-700 border-red-300'

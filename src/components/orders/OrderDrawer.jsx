@@ -82,6 +82,12 @@ import { fallbackBrowserPrint, printIminReceipt } from "@/lib/pos/iminPrinter";
 import { canAccessInvoices } from "@/lib/financeAccess";
 import { getCourierRequirementGap } from "@/lib/shippingRequirements";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES } from "@/lib/productionStages";
+import { useWorkspace } from "@/lib/WorkspaceContext";
+import {
+  isQuickSolutionOrder,
+  mergeQuickSolutionProfiles,
+  quickSolutionStatusLabel,
+} from "@/lib/quickSolutionOperations";
 import { listInvoices } from "@/api/invoices";
 import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
@@ -93,6 +99,7 @@ const OrderQuickPrintSheet = React.lazy(() => import("@/components/orders/drawer
 const InvoicesTab = React.lazy(() => import("@/components/orders/drawer/InvoicesTab"));
 const PurchaseOrderTab = React.lazy(() => import("@/components/orders/drawer/PurchaseOrderTab"));
 const ProductsEditor = React.lazy(() => import("@/components/orders/drawer/ProductsEditor"));
+const QuickSolutionServiceItems = React.lazy(() => import("@/components/orders/drawer/QuickSolutionServiceItems"));
 
 const statusConfig = {
   confirmed: { label: "Confirmed", color: "bg-primary/10 text-primary" },
@@ -200,6 +207,119 @@ class DrawerSectionBoundary extends React.Component {
 }
 
 export default function OrderDrawer({ order, couriers, stages, tenantsById, onClose, onUpdate, onArchive }) {
+  const { can } = useWorkspace();
+  const quickSolutionOrder = isQuickSolutionOrder(order);
+
+  const quickSolutionIsDelivery =
+    ["delivery", "courier"].includes(
+      String(order.fulfillment_type || "").toLowerCase()
+    );
+
+  // Preserve canonical DB statuses while using Quick Solution language
+  // for collection and delivery lifecycle labels.
+  const orderStatusLabel = (status) =>
+    quickSolutionOrder
+      ? (
+          quickSolutionStatusLabel(order, status) ||
+          statusConfig[status]?.label ||
+          String(status || "").replace(/_/g, " ")
+        )
+      : (
+          statusConfig[status]?.label ||
+          status
+        );
+
+  // Quick Solution workflow is snapshotted onto the order line at checkout.
+  // OPPS reads that immutable snapshot instead of hard-coding service stages.
+  const quickSolutionProfiles = (
+    Array.isArray(order.products) ? order.products : []
+  )
+    .map((line) => line?.quick_solution?.operations_definition)
+    .filter(
+      (profile) =>
+        profile &&
+        typeof profile === "object" &&
+        Object.keys(profile).length > 0
+    );
+
+  const quickSolutionOps =
+    mergeQuickSolutionProfiles(quickSolutionProfiles);
+
+  const productionMethodOptions = quickSolutionOrder
+    ? [
+        { value: "__none", label: "Not set" },
+        ...quickSolutionOps.methods.filter(
+          (item) => item?.value !== "__none"
+        ),
+      ]
+    : PRODUCTION_METHODS;
+
+  const productionDetailOptions = quickSolutionOrder
+    ? [
+        { value: "__none", label: "Not set" },
+        ...quickSolutionOps.detailStages
+          .filter(
+            (item) => item?.value !== "__none"
+          )
+          .map((item) =>
+            item?.pipelineStage === "ready"
+              ? {
+                  ...item,
+                  label: quickSolutionIsDelivery
+                    ? "Ready for dispatch"
+                    : "Ready for collection",
+                }
+              : item
+          ),
+      ]
+    : PRODUCTION_DETAIL_STAGES;
+
+  const quickStageOptions = quickSolutionOrder
+    ? quickSolutionOps.quickStages
+        .map((value) =>
+          quickSolutionOps.detailStages.find(
+            (item) => item.value === value
+          )
+        )
+        .filter(
+          (item) =>
+            item &&
+            item.pipelineStage !== "ready"
+        )
+    : [
+        { value: "artwork_check", label: "Artwork check" },
+        { value: "print_setup", label: "Print setup" },
+        { value: "pressing", label: "Pressing" },
+        { value: "quality_check", label: "QC" },
+        { value: "packing", label: "Packing" },
+        { value: "waiting_design_assets", label: "Waiting assets" },
+        { value: "waiting_stock", label: "Waiting stock" },
+      ];
+
+  // Starting a service should enter the first real operational stage.
+  // Document Printing resolves to file_check -> preflight.
+  const quickSolutionInitialDetailStage = quickSolutionOrder
+    ? (
+        quickSolutionOps.detailStages.find(
+          (item) => item?.pipelineStage === "preflight"
+        )?.value ||
+        quickSolutionOps.detailStages[0]?.value ||
+        null
+      )
+    : null;
+
+  const quickSolutionInitialProductionMethod =
+    quickSolutionOrder &&
+    quickSolutionOps.methods.length === 1
+      ? quickSolutionOps.methods[0]?.value || null
+      : null;
+
+  const updateDetailStage = (value) => {
+    onUpdate(order.id, {
+      production_detail_stage:
+        value === "__none" ? null : value,
+    });
+  };
   const [tab, setTab] = useState("details");
   const [editingField, setEditingField] = useState(null);
   const [fieldValue, setFieldValue] = useState("");
@@ -382,6 +502,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     clientDisplay,
     totalPaid,
     balance,
+    payableTotal,
     paymentCount,
     linkedTaskCount,
     linkedPOCount,
@@ -393,6 +514,39 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     tasksError,
     liveOrder,
   } = drawerData;
+
+  // Keep the OPPS order payment projection aligned with the authoritative
+  // completed transaction rows. This mirrors the existing Quick Solution
+  // PayFast projection: deposit_paid + payment_status.
+  const syncQuickSolutionPaymentProjection = (nextPayments) => {
+    if (!quickSolutionOrder) return;
+
+    const completedTotal = (Array.isArray(nextPayments)
+      ? nextPayments
+      : []
+    )
+      .filter(
+        (payment) =>
+          (payment?.status || payment?.payment_status) ===
+          "completed"
+      )
+      .reduce(
+        (sum, payment) =>
+          sum + Number(payment?.amount || 0),
+        0
+      );
+
+    const outstanding = Math.max(
+      Number(payableTotal || 0) - completedTotal,
+      0
+    );
+
+    onUpdate(order.id, {
+      deposit_paid: completedTotal,
+      payment_status:
+        outstanding <= 0.0049 ? "paid" : "pending",
+    });
+  };
 
   // Resync the three fields mirrored into local state below (pipeline
   // stage, is_test, excluded_from_reports) when the shared ["orders"]
@@ -414,12 +568,25 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
   const addPaymentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.Payment.create(data),
-    onSuccess: (_created, variables) => {
-      const paidAmount = Number((/** @type {any} */ variables)?.amount || 0);
-      const nextTotalPaid = totalPaid + paidAmount;
-      if (paidAmount > 0) {
-        onUpdate(order.id, { deposit_paid: nextTotalPaid });
-      }
+    onSuccess: (created, variables) => {
+      const createdPayment =
+        created || {
+          ...variables,
+          status: variables?.payment_status,
+          method: variables?.payment_method,
+        };
+
+      const nextPayments = created?.id
+        ? [
+            ...safePayments.filter(
+              (payment) => payment.id !== created.id
+            ),
+            createdPayment,
+          ]
+        : [...safePayments, createdPayment];
+
+      syncQuickSolutionPaymentProjection(nextPayments);
+
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -432,8 +599,28 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   });
 
   const updatePaymentMutation = useMutation({
-    mutationFn: ({ id, data }) => dataClient.entities.Payment.update(id, data),
-    onSuccess: () => {
+    mutationFn: ({ id, data }) =>
+      dataClient.entities.Payment.update(id, data),
+    onSuccess: (updated, variables) => {
+      const nextPayments = safePayments.map((payment) => {
+        if (payment.id !== variables.id) return payment;
+
+        if (updated) return updated;
+
+        return {
+          ...payment,
+          ...variables.data,
+          status:
+            variables.data?.payment_status ??
+            payment.status,
+          method:
+            variables.data?.payment_method ??
+            payment.method,
+        };
+      });
+
+      syncQuickSolutionPaymentProjection(nextPayments);
+
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -465,7 +652,13 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
   const deletePaymentMutation = useMutation({
     mutationFn: (id) => dataClient.entities.Payment.delete(id),
-    onSuccess: () => {
+    onSuccess: (_deleted, paymentId) => {
+      const nextPayments = safePayments.filter(
+        (payment) => payment.id !== paymentId
+      );
+
+      syncQuickSolutionPaymentProjection(nextPayments);
+
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -637,6 +830,191 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     });
   };
 
+  // Fulfillment determines the business meaning of canonical `shipped`.
+  // Once handoff has happened, changing it would rewrite Collected vs
+  // On the way semantics retroactively. Corrections must first return
+  // the order to Ready.
+  const quickSolutionFulfillmentLocked =
+    quickSolutionOrder &&
+    ["shipped", "delivered", "cancelled"].includes(
+      String(order.status || "")
+    );
+
+  const quickSolutionLifecycleByStatus = {
+    confirmed: {
+      permission: "orders.lifecycle.start",
+      targetStatus: "in_production",
+      label: "Start preparing",
+    },
+    in_production: {
+      permission: "orders.lifecycle.ready",
+      targetStatus: "ready",
+      label: quickSolutionIsDelivery
+        ? "Mark ready for dispatch"
+        : "Mark ready for collection",
+    },
+    ready: {
+      permission: "orders.lifecycle.handoff",
+      targetStatus: "shipped",
+      label: quickSolutionIsDelivery
+        ? "Mark dispatched"
+        : "Mark collected",
+    },
+    shipped: {
+      permission: "orders.lifecycle.complete",
+      targetStatus: "delivered",
+      label: "Complete order",
+    },
+  };
+
+  const quickSolutionLifecycleAction = quickSolutionOrder
+    ? quickSolutionLifecycleByStatus[order.status] || null
+    : null;
+
+  const canRunQuickSolutionLifecycleAction =
+    !!quickSolutionLifecycleAction &&
+    can(quickSolutionLifecycleAction.permission);
+
+  const canCorrectQuickSolutionLifecycle =
+    quickSolutionOrder &&
+    can("orders.lifecycle.correct");
+
+  const canCancelQuickSolution =
+    quickSolutionOrder &&
+    can("orders.cancel");
+
+  const canUpdateQuickSolutionProduction =
+    !quickSolutionOrder ||
+    can("production.update") ||
+    canCorrectQuickSolutionLifecycle;
+
+  const canManageQuickSolutionPayments =
+    !quickSolutionOrder ||
+    can("payments.manage");
+
+  const quickSolutionGeneralDetailsReadOnly =
+    quickSolutionOrder &&
+    !can("orders.write");
+
+  const canWriteQuickSolutionFiles =
+    !quickSolutionOrder ||
+    can("files.write");
+
+  const canFlagQuickSolutionException =
+    !quickSolutionOrder ||
+    can("production.update") ||
+    can("orders.write");
+
+  // Non-QS Joint X orders preserve the legacy complete drawer.
+  // Quick Solution tabs follow the tenant role permission matrix.
+  const legacyDrawerTabs = [
+    "details",
+    "readiness",
+    "payments",
+    "tasks",
+    "po",
+    "tracking",
+    "files",
+    "invoices",
+    "portal",
+  ];
+
+  const quickSolutionDrawerTabPermissions = {
+    payments: "payments.manage",
+    tasks: "tasks.read",
+    po: "purchase_orders.read",
+    files: "files.read",
+    invoices: "finance.read",
+    portal: "clients.read",
+  };
+
+  const drawerTabs = quickSolutionOrder
+    ? legacyDrawerTabs.filter((tabKey) => {
+        const permission =
+          quickSolutionDrawerTabPermissions[tabKey];
+
+        return permission ? can(permission) : true;
+      })
+    : legacyDrawerTabs;
+
+  // Preserve current-main production-readiness UX for the QS start action.
+  // The database trigger remains authoritative.
+  const quickSolutionPrimaryBlockedByReadiness =
+    quickSolutionLifecycleAction?.targetStatus === "in_production" &&
+    drawerData.lineProductionReadiness?.order_readiness === "blocked";
+
+  const quickSolutionCurrentDetailPipeline =
+    quickSolutionOps.detailStages.find(
+      (item) =>
+        item.value === order.production_detail_stage
+    )?.pipelineStage || null;
+
+  const quickSolutionReadyBlockedByWorkflow =
+    quickSolutionLifecycleAction?.targetStatus === "ready" &&
+    quickSolutionCurrentDetailPipeline !== "qa";
+
+  // For Quick Solution, production may proceed while unpaid, but physical
+  // handoff/completion must never happen silently with money outstanding.
+  // The calculated drawer balance is used instead of payment_status because
+  // payment_status is presentation metadata and can lag payment mutations.
+  const quickSolutionOutstandingBalance =
+    Math.max(Number(balance || 0), 0);
+
+  const quickSolutionPaymentGateApplies =
+    ["shipped", "delivered"].includes(
+      quickSolutionLifecycleAction?.targetStatus
+    );
+
+  const quickSolutionHasOutstandingBalance =
+    quickSolutionPaymentGateApplies &&
+    quickSolutionOutstandingBalance > 0.0049;
+
+  // orders.lifecycle.correct is intentionally the manager/admin override
+  // capability in the seeded Café role model. Normal counter staff cannot
+  // silently bypass an outstanding balance.
+  const quickSolutionPaymentBlocked =
+    quickSolutionHasOutstandingBalance &&
+    !canCorrectQuickSolutionLifecycle;
+
+  const quickSolutionPaymentOverrideRequired =
+    quickSolutionHasOutstandingBalance &&
+    canCorrectQuickSolutionLifecycle;
+
+  // Reuse the shared OPPS courier-completeness rules for the QS handoff.
+  // Collection is unaffected because shippingGapReason is null for
+  // non-courier fulfillment.
+  const quickSolutionCourierDispatchBlocked =
+    quickSolutionLifecycleAction?.targetStatus === "shipped" &&
+    quickSolutionIsDelivery &&
+    Boolean(shippingGapReason);
+
+  const quickSolutionPrimaryBlocked =
+    quickSolutionPrimaryBlockedByReadiness ||
+    quickSolutionReadyBlockedByWorkflow ||
+    quickSolutionCourierDispatchBlocked ||
+    quickSolutionPaymentBlocked;
+  // The workspace pipeline has one canonical `dispatched` stage, but its
+  // Quick Solution meaning depends on physical fulfillment.
+  const quickSolutionPipelineStages =
+    quickSolutionOrder && Array.isArray(stages)
+      ? stages.map((stage) => {
+          const key = stage?.key || stage?.value;
+
+          if (key !== "dispatched") return stage;
+
+          const handoffLabel = quickSolutionIsDelivery
+            ? "Dispatched"
+            : "Collected";
+
+          return {
+            ...stage,
+            label: handoffLabel,
+            display_name: handoffLabel,
+            name: handoffLabel,
+          };
+        })
+      : stages;
+
   const currentStageIndex = progressStages.indexOf(order.status);
   const currentPipelineStageKey = localPipelineStage ?? order.pipeline_stage ?? "received";
   const currentPipelineStageLabel = Array.isArray(stages)
@@ -667,9 +1045,9 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
       },
       totalPaid,
       balance,
-      statusLabel: statusConfig[order.status]?.label || order.status,
-      stageLabel: labelFor(PRODUCTION_DETAIL_STAGES, order.production_detail_stage) || order.pipeline_stage,
-      methodLabel: labelFor(PRODUCTION_METHODS, order.production_method),
+      statusLabel: orderStatusLabel(order.status),
+      stageLabel: labelFor(productionDetailOptions, order.production_detail_stage) || order.pipeline_stage,
+      methodLabel: labelFor(productionMethodOptions, order.production_method),
       trackingUrl,
     }));
 
@@ -708,7 +1086,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               <div className="flex items-center gap-2 mb-0.5">
                 <h2 className="font-bold text-foreground truncate">{order.display_name || clientDisplay.name}</h2>
                 <span className={`flex-shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${statusConfig[order.status]?.color || 'bg-secondary'}`}>
-                  {statusConfig[order.status]?.label || order.status}
+                  {orderStatusLabel(order.status)}
                 </span>
               </div>
               <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -735,7 +1113,25 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                   fulfillment_type: order.fulfillment_type,
                   payment_status: order.payment_status,
                 };
-                const clientStatus = getClientSafeOrderStatus(clientPreviewOrder);
+                const baseClientStatus =
+                  getClientSafeOrderStatus(clientPreviewOrder);
+
+                const quickSolutionClientLifecycleLabel =
+                  quickSolutionOrder &&
+                  ["shipped", "delivered"].includes(order.status)
+                    ? quickSolutionStatusLabel(
+                        order,
+                        order.status
+                      )
+                    : null;
+
+                const clientStatus =
+                  quickSolutionClientLifecycleLabel
+                    ? {
+                        ...baseClientStatus,
+                        label: quickSolutionClientLifecycleLabel,
+                      }
+                    : baseClientStatus;
                 const paymentStatus = getClientPaymentStatus(clientPreviewOrder);
                 return (
                   <p className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -845,7 +1241,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                         )}
                       </div>
                       <span className={`text-xs font-medium capitalize ${i <= currentStageIndex ? 'text-primary' : 'text-muted-foreground'}`}>
-                        {stage.replace('_', ' ')}
+                        {orderStatusLabel(stage)}
                       </span>
                     </div>
                     {i < progressStages.length - 1 && (
@@ -860,8 +1256,9 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
             <DrawerSectionBoundary label="Pipeline" resetKey={`${order.id}-pipeline`}>
               <PipelineStrip
                 order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
-                stages={stages}
+                stages={quickSolutionPipelineStages}
                 onStageChange={setLocalPipelineStage}
+                readOnly={quickSolutionOrder && !canCorrectQuickSolutionLifecycle}
               />
             </DrawerSectionBoundary>
 
@@ -899,7 +1296,170 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
             {/* Quick Actions */}
             <div className="flex gap-2 px-5 py-3 border-b border-border overflow-x-auto">
-              {ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled').map(s => {
+              {quickSolutionOrder &&
+                quickSolutionLifecycleAction &&
+                canRunQuickSolutionLifecycleAction && (
+                  <button
+                    type="button"
+                    data-qs-lifecycle-primary="true"
+                    onClick={() => {
+                      const nextStatus =
+                        quickSolutionLifecycleAction.targetStatus;
+
+                      if (quickSolutionCourierDispatchBlocked) {
+                        toast.error(
+                          `Complete delivery details before dispatch - ${shippingGapReason}.`
+                        );
+                        return;
+                      }
+
+                      if (quickSolutionPaymentOverrideRequired) {
+                        const outstandingLabel =
+                          `R${quickSolutionOutstandingBalance.toLocaleString(
+                            undefined,
+                            {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            }
+                          )}`;
+
+                        const approved = window.confirm(
+                          `${outstandingLabel} is still outstanding. ${quickSolutionLifecycleAction.label} anyway? ` +
+                          "This order will remain awaiting payment."
+                        );
+
+                        if (!approved) return;
+                      }
+
+                      const updatePayload = {
+                        status: nextStatus,
+                      };
+
+                      if (nextStatus === "in_production") {
+                        if (quickSolutionInitialDetailStage) {
+                          updatePayload.production_detail_stage =
+                            quickSolutionInitialDetailStage;
+                        }
+
+                        if (
+                          !order.production_method &&
+                          quickSolutionInitialProductionMethod
+                        ) {
+                          updatePayload.production_method =
+                            quickSolutionInitialProductionMethod;
+                        }
+                      }
+
+                      onUpdate(order.id, updatePayload);
+                    }}
+                    disabled={quickSolutionPrimaryBlocked}
+                    title={
+                      quickSolutionPrimaryBlockedByReadiness
+                        ? "One or more production lines are not ready yet - see Service configuration for details."
+                        : quickSolutionReadyBlockedByWorkflow
+                          ? "Complete Quality check before marking this order ready."
+                          : quickSolutionCourierDispatchBlocked
+                            ? `Complete delivery details before dispatch - ${shippingGapReason}.`
+                            : quickSolutionPaymentBlocked
+                            ? `R${quickSolutionOutstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} outstanding. Record payment or ask a manager to override.`
+                            : quickSolutionPaymentOverrideRequired
+                              ? `R${quickSolutionOutstandingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} outstanding. Manager confirmation required.`
+                              : undefined
+                    }
+                    className={`flex-shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition-all ${
+                      quickSolutionPrimaryBlocked
+                        ? "bg-secondary/50 text-muted-foreground cursor-not-allowed"
+                        : "bg-primary text-primary-foreground hover:bg-primary/90"
+                    }`}
+                  >
+                    {quickSolutionLifecycleAction.label}
+                  </button>
+                )}
+
+              {quickSolutionOrder &&
+                quickSolutionLifecycleAction &&
+                !canRunQuickSolutionLifecycleAction && (
+                  <span className="flex-shrink-0 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                    Your role cannot advance this step
+                  </span>
+                )}
+
+              {quickSolutionOrder &&
+                (canCorrectQuickSolutionLifecycle ||
+                  canCancelQuickSolution) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex-shrink-0 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-foreground transition-all hover:bg-border"
+                      >
+                        More
+                      </button>
+                    </DropdownMenuTrigger>
+
+                    <DropdownMenuContent align="start">
+                      {canCorrectQuickSolutionLifecycle &&
+                        progressStages
+                          .filter(
+                            (status) =>
+                              status !== order.status &&
+                              status !== "cancelled"
+                          )
+                          .map((status) => (
+                            <DropdownMenuItem
+                              key={status}
+                              onClick={() => {
+                                const correctionPayload = {
+                                  status,
+                                };
+
+                                if (
+                                  status === "in_production" &&
+                                  quickSolutionInitialDetailStage
+                                ) {
+                                  correctionPayload.production_detail_stage =
+                                    quickSolutionInitialDetailStage;
+                                }
+
+                                onUpdate(
+                                  order.id,
+                                  correctionPayload
+                                );
+                              }}
+                            >
+                              Correct to{" "}
+                              {quickSolutionStatusLabel(
+                                order,
+                                status
+                              ) ||
+                                statusConfig[status]?.label ||
+                                String(status).replace(/_/g, " ")}
+                            </DropdownMenuItem>
+                          ))}
+
+                      {canCancelQuickSolution &&
+                        order.status !== "cancelled" && (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "Cancel this Quick Solution order?"
+                                )
+                              ) {
+                                onUpdate(order.id, {
+                                  status: "cancelled",
+                                });
+                              }
+                            }}
+                          >
+                            Cancel order
+                          </DropdownMenuItem>
+                        )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              {(!quickSolutionOrder ? ORDER_STATUSES.filter(s => s !== order.status && s !== 'cancelled') : []).map(s => {
                 // ORDERS CLIENT-PRODUCT REUSE PHASE 2 - client-side UX only;
                 // the authoritative gate is the orders_production_readiness_gate
                 // trigger, which rejects this same update server-side
@@ -922,9 +1482,10 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                   </button>
                 );
               })}
-              <button
-                onClick={() => {
-                  setEditingPaymentId(null);
+              {canManageQuickSolutionPayments && (
+                <button
+                  onClick={() => {
+                    setEditingPaymentId(null);
                   if (!showPayment && balance > 0) {
                     setPaymentForm(pf => ({
                       ...pf,
@@ -937,26 +1498,31 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                 }}
                 className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-green-50 text-green-700 hover:bg-green-100 transition-all"
               >
-                <CreditCard className="w-3 h-3" /> Add Payment
-              </button>
-              <label className="flex-shrink-0 cursor-pointer">
-                <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all">
-                  <Paperclip className="w-3 h-3" /> {uploading ? 'Uploading...' : 'Upload File'}
-                </span>
-                <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
-              </label>
-              <button
-                onClick={() => setShowException(true)}
-                className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 transition-all"
-              >
-                <AlertTriangle className="w-3 h-3" /> Flag Exception
-              </button>
+                  <CreditCard className="w-3 h-3" /> Add Payment
+                </button>
+              )}
+              {canWriteQuickSolutionFiles && (
+                <label className="flex-shrink-0 cursor-pointer">
+                  <span className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all">
+                    <Paperclip className="w-3 h-3" /> {uploading ? 'Uploading...' : 'Upload File'}
+                  </span>
+                  <input type="file" className="hidden" multiple onChange={uploadFile} disabled={uploading} />
+                </label>
+              )}
+              {canFlagQuickSolutionException && (
+                <button
+                  onClick={() => setShowException(true)}
+                  className="flex-shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 transition-all"
+                >
+                  <AlertTriangle className="w-3 h-3" /> Flag Exception
+                </button>
+              )}
             </div>
           </>
         )}
 
         {/* Add Payment Form */}
-        {showPayment && (
+        {canManageQuickSolutionPayments && showPayment && (
           <div className="px-5 py-3 bg-green-50/50 border-b border-border">
             <div className="flex items-center gap-2 mb-2">
               <h4 className="text-xs font-semibold text-green-800">{editingPaymentId ? 'Edit Payment' : 'Add Payment'}</h4>
@@ -1012,7 +1578,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
         {/* Tabs - sticky above the single scrollable content region below,
             not a second scroll container */}
         <div className="sticky top-0 z-10 flex min-w-0 gap-1 overflow-x-auto border-b border-border bg-card px-3 md:px-5">
-          {['details', 'readiness', 'payments', 'tasks', 'po', 'tracking', 'files', 'invoices', 'portal'].map(t => (
+          {drawerTabs.map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`shrink-0 px-3 py-3 text-xs font-semibold capitalize border-b-2 transition-all whitespace-nowrap
                 ${tab === t ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
@@ -1071,55 +1637,85 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <EditField label="Client Name" field="client_name" value={order.client_name}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'client_name'} editValue={fieldValue}
                   onEdit={() => startEdit('client_name', order.client_name)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Client Email" field="client_email" value={displayClientEmail}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'client_email'} editValue={fieldValue}
                   onEdit={() => startEdit('client_email', displayClientEmail)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="WhatsApp Name" field="whatsapp_name" value={displayWhatsappName}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'whatsapp_name'} editValue={fieldValue}
                   onEdit={() => startEdit('whatsapp_name', displayWhatsappName)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Saved Contact Name" field="saved_contact_name" value={displaySavedContactName}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'saved_contact_name'} editValue={fieldValue}
                   onEdit={() => startEdit('saved_contact_name', displaySavedContactName)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Order Number" field="order_number" value={order.order_number}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'order_number'} editValue={fieldValue}
                   onEdit={() => startEdit('order_number', order.order_number)}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label={'Display Name'} field={'display_name'} value={order.display_name}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'display_name'} editValue={fieldValue}
                   onEdit={() => startEdit('display_name', order.display_name || '')}
                   onChange={setFieldValue} onSave={saveEdit} />
                 <EditField label="Total Amount" field="total_amount" value={order.total_amount ? `R${order.total_amount.toLocaleString()}` : '-'}
+                  readOnly={quickSolutionGeneralDetailsReadOnly}
                   editing={editingField === 'total_amount'} editValue={fieldValue}
                   onEdit={() => startEdit('total_amount', order.total_amount)}
                   onChange={setFieldValue} onSave={saveEdit} inputType="number" />
                 <div className="bg-secondary/30 rounded-xl p-3">
                   <p className="text-xs text-muted-foreground mb-1">Status</p>
-                  <Select value={statusValue} onValueChange={v => onUpdate(order.id, { status: v })}>
+                  {quickSolutionOrder ? (
+                    <div>
+                      <p className="text-xs font-medium text-foreground">
+                        {quickSolutionStatusLabel(
+                          order,
+                          order.status
+                        ) ||
+                          statusConfig[order.status]?.label ||
+                          String(order.status || "").replace(/_/g, " ")}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                        Quick Solution lifecycle is controlled from the action bar.
+                      </p>
+                    </div>
+                  ) : (<Select value={statusValue} onValueChange={v => onUpdate(order.id, { status: v })}>
                     <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {ORDER_STATUSES.map(s => <SelectItem key={s} value={s}>{statusConfig[s]?.label || s}</SelectItem>)}
                     </SelectContent>
-                  </Select>
+                  </Select>                  )}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-border bg-secondary/20 p-3 space-y-3">
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Production tracker detail</p>
-                  <p className="text-xs text-muted-foreground">Use this to show clients the real merch stage instead of leaving them wondering if production is stuck.</p>
+                  <p className="text-sm font-semibold text-foreground">
+                    {quickSolutionOrder ? "Service workflow" : "Production tracker detail"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {quickSolutionOrder
+                      ? quickSolutionOps.displayName
+                        ? `Stages are matched to ${quickSolutionOps.displayName}.`
+                        : "Stages are matched to the Quick Solution service on this order."
+                      : "Use this to show clients the real merch stage instead of leaving them wondering if production is stuck."}
+                  </p>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="bg-background/70 rounded-xl p-3">
                     <p className="text-xs text-muted-foreground mb-1">Production method</p>
                     <Select
+                      disabled={quickSolutionOrder && !canUpdateQuickSolutionProduction}
                       value={selectValue(order.production_method)}
                       onValueChange={v => onUpdate(order.id, { production_method: v === "__none" ? null : v })}
                     >
@@ -1127,39 +1723,46 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {PRODUCTION_METHODS.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                        {productionMethodOptions.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="bg-background/70 rounded-xl p-3">
                     <p className="text-xs text-muted-foreground mb-1">Detailed stage</p>
                     <Select
+                      disabled={quickSolutionOrder && !canUpdateQuickSolutionProduction}
                       value={selectValue(order.production_detail_stage)}
-                      onValueChange={v => onUpdate(order.id, { production_detail_stage: v === "__none" ? null : v })}
+                      onValueChange={updateDetailStage}
                     >
                       <SelectTrigger className="h-8 border-0 bg-transparent p-0 text-xs font-medium">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {PRODUCTION_DETAIL_STAGES.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                        {productionDetailOptions.map(item => (
+                          <SelectItem
+                            key={item.value}
+                            value={item.value}
+                            disabled={
+                              quickSolutionOrder &&
+                              item.pipelineStage === "ready"
+                            }
+                          >
+                            {item.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {[
-                    ["artwork_check", "Artwork check"],
-                    ["print_setup", "Print setup"],
-                    ["pressing", "Pressing"],
-                    ["quality_check", "QC"],
-                    ["packing", "Packing"],
-                    ["waiting_design_assets", "Waiting assets"],
-                    ["waiting_stock", "Waiting stock"],
-                  ].map(([value, label]) => (
+                  {(quickSolutionOrder && !canUpdateQuickSolutionProduction
+                    ? []
+                    : quickStageOptions
+                  ).map(({ value, label }) => (
                     <button
                       key={value}
                       type="button"
-                      onClick={() => onUpdate(order.id, { production_detail_stage: value })}
+                      onClick={() => updateDetailStage(value)}
                       className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${
                         order.production_detail_stage === value
                           ? "border-primary bg-primary text-primary-foreground"
@@ -1176,7 +1779,9 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                       label="Client-facing production update"
                       value={order.production_client_update || ""}
                       onSave={(value) => onUpdate(order.id, { production_client_update: value })}
-                      placeholder="e.g. Your order is currently queued for embroidery. We are preparing the logo placement before stitching begins."
+                      placeholder={quickSolutionOrder
+                        ? "e.g. Your file has passed checking and is now being printed."
+                        : "e.g. Your order is currently queued for embroidery. We are preparing the logo placement before stitching begins."}
                     />
                   </div>
                   <div>
@@ -1211,7 +1816,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               </div>
 
               {/* Products - fully editable, unless locked */}
-              {canManageProductsLock && !isPastConfirmed && (
+              {!quickSolutionOrder && canManageProductsLock && !isPastConfirmed && (
                 <div className="flex justify-end">
                   <button
                     type="button"
@@ -1222,10 +1827,22 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                   </button>
                 </div>
               )}
-              <DrawerSectionBoundary label="Products" resetKey={`${order.id}-products`}>
-                <React.Suspense fallback={<TabSectionFallback label="Products" />}>
-                  <ProductsEditor order={order} onUpdate={onUpdate} locked={isProductsLocked} lockReason={productsLockReason} lineProductionReadiness={drawerData.lineProductionReadiness} />
-                </React.Suspense>
+              <DrawerSectionBoundary label={quickSolutionOrder ? "Service configuration" : "Products"} resetKey={`${order.id}-products`}>
+                {quickSolutionOrder ? (
+                  <React.Suspense fallback={<TabSectionFallback label="Service configuration" />}>
+                    <QuickSolutionServiceItems order={order} />
+                  </React.Suspense>
+                ) : (
+                  <React.Suspense fallback={<TabSectionFallback label="Products" />}>
+                    <ProductsEditor
+                      order={order}
+                      onUpdate={onUpdate}
+                      locked={isProductsLocked}
+                      lockReason={productsLockReason}
+                      lineProductionReadiness={drawerData.lineProductionReadiness}
+                    />
+                  </React.Suspense>
+                )}
               </DrawerSectionBoundary>
 
               {/* Notes */}
@@ -1306,7 +1923,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
             </React.Suspense>
           )}
 
-          {tab === 'payments' && (
+          {tab === 'payments' && (!quickSolutionOrder || can("payments.manage")) && (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-green-50 rounded-xl p-3 border border-green-100">
@@ -1377,7 +1994,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
             </div>
           )}
 
-          {tab === 'tasks' && (
+          {tab === 'tasks' && (!quickSolutionOrder || can("tasks.read")) && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1491,7 +2108,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
             </div>
           )}
 
-          {tab === 'po' && (
+          {tab === 'po' && (!quickSolutionOrder || can("purchase_orders.read")) && (
             <React.Suspense fallback={<TabSectionFallback label="Purchase order" />}>
               <PurchaseOrderTab
                 order={order}
@@ -1513,10 +2130,59 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
               <div className="rounded-2xl border border-border bg-card p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Fulfillment &amp; shipping</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Fulfillment: <span className="font-medium text-foreground capitalize">{(order.fulfillment_type || 'courier').replace(/_/g, ' ')}</span>
-                  {' '}- courier delivery does not automatically mean the client is billed for shipping.
-                </p>
+                {quickSolutionOrder ? (
+                  <div className="mt-2 space-y-2">
+                    <div className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-3">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        Fulfillment
+                      </span>
+
+                      <Select
+                        value={order.fulfillment_type || "courier"}
+                        onValueChange={(value) =>
+                          onUpdate(order.id, {
+                            fulfillment_type: value,
+                          })
+                        }
+                        disabled={
+                          quickSolutionFulfillmentLocked ||
+                          (
+                            !can("orders.write") &&
+                            !canCorrectQuickSolutionLifecycle
+                          )
+                        }
+                      >
+                        <SelectTrigger className="h-9 rounded-xl bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+
+                        <SelectContent>
+                          <SelectItem value="collection">
+                            Collection
+                          </SelectItem>
+                          <SelectItem value="courier">
+                            Courier
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      Courier delivery does not automatically mean the client is billed for shipping.
+                    </p>
+
+                    {quickSolutionFulfillmentLocked && (
+                      <p className="text-xs font-medium text-muted-foreground">
+                        Fulfillment is locked after handoff. Correct the order back to Ready to change it.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Fulfillment: <span className="font-medium text-foreground capitalize">{(order.fulfillment_type || 'courier').replace(/_/g, ' ')}</span>
+                    {' '}- courier delivery does not automatically mean the client is billed for shipping.
+                  </p>
+                )}
                 <div className="mt-3 flex items-center justify-between">
                   <span className="text-xs font-medium text-muted-foreground">Charge client for shipping</span>
                   <button
@@ -1611,19 +2277,19 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
             </div>
           )}
 
-          {tab === 'files' && (
+          {tab === 'files' && (!quickSolutionOrder || can("files.read")) && (
             <React.Suspense fallback={<TabSectionFallback label="Order files" />}>
               <OrderFilesTab order={order} onUpdate={onUpdate} uploadFile={uploadFile} uploading={uploading} onPrint={setPrintView} />
             </React.Suspense>
           )}
 
-          {tab === 'invoices' && (
+          {tab === 'invoices' && (!quickSolutionOrder || can("finance.read")) && (
             <React.Suspense fallback={<TabSectionFallback label="Invoices" />}>
               <InvoicesTab order={order} onUpdate={onUpdate} totalPaid={totalPaid} onPrint={setPrintView} />
             </React.Suspense>
           )}
 
-          {tab === 'portal' && (
+          {tab === 'portal' && (!quickSolutionOrder || can("clients.read")) && (
             <React.Suspense fallback={<TabSectionFallback label="Client portal" />}>
               <PortalTab order={order} onUpdate={onUpdate} balance={balance} />
             </React.Suspense>
@@ -1652,7 +2318,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
       )}
 
       <ExceptionFlag
-        open={showException}
+        open={canFlagQuickSolutionException && showException}
         onClose={() => setShowException(false)}
         order={{ ...order, pipeline_stage: localPipelineStage ?? order.pipeline_stage }}
         onStageChange={(stage) => {
@@ -1801,14 +2467,14 @@ function formatReceiptMoney(value) {
   const amount = Number(value || 0);
   return Number.isFinite(amount) ? `R${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "-";
 }
-function EditField({ label, value, help, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options }) {
+function EditField({ label, value, help, editing, editValue, onEdit, onChange, onSave, inputType = "text", isSelect, options, readOnly = false }) {
   return (
     <div className="bg-secondary/30 rounded-xl p-3">
       <div className="flex items-center justify-between mb-1">
         <p className="text-xs text-muted-foreground">{label}</p>
-        {!editing && <button onClick={onEdit} className="text-xs text-primary">Edit</button>}
+        {!editing && !readOnly && <button onClick={onEdit} className="text-xs text-primary">Edit</button>}
       </div>
-      {editing ? (
+      {editing && !readOnly ? (
         <div className="flex items-center gap-2">
           {isSelect ? (
             <Select value={editValue} onValueChange={onChange}>

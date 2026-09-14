@@ -14,6 +14,7 @@ import { Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import { WorkspaceProvider } from '@/lib/WorkspaceContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import XOSAdminShell from '@/pages/XOSAdminShell';
 import { isXosAdminHost } from '@/lib/xosHost';
@@ -73,7 +74,8 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
-    <Suspense fallback={<AppLoader />}>
+    <WorkspaceProvider>
+      <Suspense fallback={<AppLoader />}>
       <Routes>
         <Route path="/" element={
           <LayoutWrapper currentPageName={mainPageKey}>
@@ -97,7 +99,8 @@ const AuthenticatedApp = () => {
         ))}
         <Route path="*" element={<PageNotFound />} />
       </Routes>
-    </Suspense>
+      </Suspense>
+    </WorkspaceProvider>
   );
 };
 
