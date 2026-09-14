@@ -34,6 +34,7 @@ import { toStaffMessage } from "@/lib/pgErrorMessages";
 import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
 import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
 import TreatmentsSection from "@/components/composition/TreatmentsSection";
+import { getClientProductPriceComposition } from "@/api/xosClientProduct";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
@@ -781,6 +782,116 @@ function PriceField({ initial, onCommit }) {
 // shared queries once, lays them out compactly, and gates editing on the
 // same inventory_can_review_tenant() rule the tables' RLS already
 // enforces.
+// CLIENT PRODUCT PRICING CONFIGURATION — "why is this unit R250?" for
+// staff. Read-only preview: calls admin_get_client_product_price_
+// composition, which wraps the exact same canonical function
+// (_xos_freeze_client_product_price_breakdown) that
+// xos_add_composed_client_product_to_order uses to build a real order
+// line — this panel never computes pricing itself, only displays what
+// the server already computed, so it can never disagree with what
+// actually happens on add.
+const money = (n) => `R${Number(n || 0).toFixed(2)}`;
+
+function PriceCompositionGroup({ title, items, once = false }) {
+  if (!items?.length) return null;
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">{title}</p>
+      <div className="space-y-0.5">
+        {items.map((c) => (
+          <div key={c.component_id} className="flex items-center justify-between text-xs text-slate-700">
+            <span>{c.label}</span>
+            <span className="tabular-nums text-slate-500">{money(c.amount)}{once ? " once" : " / unit"}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ClientProductPriceComposition({ product }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["clientProductPriceComposition", product.id],
+    queryFn: () => getClientProductPriceComposition({ clientProductId: product.id }),
+    enabled: Boolean(product.id),
+    staleTime: 15_000,
+  });
+
+  if (isLoading) {
+    return <p className="mt-2 text-xs text-slate-400">Loading pricing…</p>;
+  }
+  if (data?.error || !data?.data?.ok) {
+    return <p className="mt-2 text-xs text-red-500">{data?.error || "Could not load pricing composition."}</p>;
+  }
+
+  const result = data.data;
+  if (result.requires_quote) {
+    return (
+      <div className="mt-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">
+        Requires a quote — no fixed sell price is composed until one is set.
+      </div>
+    );
+  }
+
+  const breakdown = result.breakdown;
+  if (!breakdown) {
+    return (
+      <p className="mt-2 text-xs text-slate-500">
+        No priced components yet — set a blank, print, or setup price below to see the composed total here.
+      </p>
+    );
+  }
+
+  const base = breakdown.per_unit.filter((c) => c.role === "base");
+  const print = breakdown.per_unit.filter((c) => c.role === "print");
+  const addons = breakdown.per_unit.filter((c) => c.role === "addon");
+  const setup = breakdown.once_per_order_fees || [];
+  const unresolved = breakdown.unresolved_components || [];
+  const calculatedUnit = breakdown.per_unit.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+  const onceTotal = setup.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+
+  return (
+    <div className="mt-3 space-y-3 rounded-lg border border-slate-100 p-3">
+      <PriceCompositionGroup title="Blank" items={base} />
+      <PriceCompositionGroup title="Branding" items={print} />
+      <PriceCompositionGroup title="Add-ons" items={addons} />
+      <PriceCompositionGroup title="Setup" items={setup} once />
+
+      {unresolved.length > 0 && (
+        <div className="rounded-lg bg-amber-50 p-2 text-xs text-amber-800">
+          <p className="font-medium">Missing price — cannot be added to an order yet</p>
+          {unresolved.map((u) => (
+            <p key={u.component_id}>{u.label} has no sell price set</p>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-1 border-t border-slate-100 pt-2">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-500">Calculated unit sell price</span>
+          <span className="font-semibold text-slate-800">{money(calculatedUnit)}</span>
+        </div>
+        {onceTotal > 0 && (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-500">Once-off charges</span>
+            <span className="font-semibold text-slate-800">{money(onceTotal)}</span>
+          </div>
+        )}
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-500">Example total at qty 1</span>
+          <span className="font-semibold text-slate-800">{money(calculatedUnit + onceTotal)}</span>
+        </div>
+      </div>
+
+      {breakdown.reconciled === false && (
+        <p className="text-[11px] text-amber-600">
+          Saved client price ({money(breakdown.unit_price)}) doesn't match the calculated unit price above — the next order add will use the calculated price shown here.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, subtitle, count, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -927,6 +1038,7 @@ function ProductionTab({ product, readinessState, canConfigure }) {
 
           <Section title="Pricing preview" defaultOpen>
             <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">{PRICING_PREVIEW_BOUNDARY}</p>
+            <ClientProductPriceComposition product={product} />
             <p className="mt-2 text-xs text-slate-500">Per-variant previews (family price / variant override + treatment surcharge) appear inside each garment variant when expanded.</p>
           </Section>
         </>
