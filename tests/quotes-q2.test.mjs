@@ -162,7 +162,8 @@ test("Q2.5: the drawer publishes only through mark_quote_sent, never a direct st
 // ── API: the only writes are canonical RPCs ──────────────────────────
 // Q1/Q2.5: save_opps_quote_with_items + mark_quote_sent.
 // Q3.1: the three public-share RPCs (issue_quote / rotate_quote_share_token
-//       / revoke_quote_share). Still NEVER a direct opps_quote* table write.
+//       / revoke_quote_share). Quote->Order Phase 1: convert_quote_to_order.
+//       Still NEVER a direct opps_quote* table write.
 test("quotes.js writes ONLY through canonical RPCs — never a direct table write", async () => {
   const s = await src("src/api/quotes.js");
   assert.ok(s.includes('supabase.rpc("save_opps_quote_with_items"'), "save routes through the Q1 RPC");
@@ -171,12 +172,13 @@ test("quotes.js writes ONLY through canonical RPCs — never a direct table writ
     "no direct insert/update/delete/upsert on opps_quote* tables");
   const rpcCalls = [...new Set(s.match(/supabase\.rpc\("[a-z_]+"/g) || [])].sort();
   assert.deepEqual(rpcCalls, [
+    'supabase.rpc("convert_quote_to_order"',
     'supabase.rpc("issue_quote"',
     'supabase.rpc("mark_quote_sent"',
     'supabase.rpc("revoke_quote_share"',
     'supabase.rpc("rotate_quote_share_token"',
     'supabase.rpc("save_opps_quote_with_items"',
-  ], "the ONLY rpcs this module calls are the Q1/Q2.5 save+send and the Q3.1 canonical share RPCs");
+  ], "the ONLY rpcs this module calls are the Q1/Q2.5 save+send, the Q3.1 canonical share RPCs, and Phase 1's convert_quote_to_order");
 });
 
 test("saveQuoteWithItems passes the Q1 7-arg contract incl. optimistic lock + item-count guard", async () => {

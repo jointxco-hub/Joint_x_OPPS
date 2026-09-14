@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FileText, Plus, Shield, Inbox } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ import {
   listQuotes, getQuote, listQuoteRevisions, listQuoteEvents, getQuoteDocument,
   saveQuoteWithItems, quoteDraftFromClientRequest, markQuoteSent,
   issueQuoteShare, rotateQuoteShareToken, revokeQuoteShare,
+  convertQuoteToOrder,
 } from "@/api/quotes";
 import { listClientRequests } from "@/api/clientRequests";
 import QuoteList from "@/features/quotes/QuoteList";
@@ -24,6 +26,8 @@ function emptyFilters() {
 
 export default function Quotes() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState("list"); // list | create
   const [filters, setFilters] = useState(emptyFilters);
   const [page, setPage] = useState(1);
@@ -39,6 +43,17 @@ export default function Quotes() {
     staleTime: 300_000,
   });
   const canAccess = canAccessInvoices(userQuery.data);
+  const linkedQuoteId = searchParams.get("open");
+
+  // Deep-link from another record's "View Quote" (e.g. an order's Quote
+  // link). Mirrors Invoices.jsx's `?invoice=<id>` pattern — no need to wait
+  // for a pre-loaded list, the detail query fetches by id directly.
+  useEffect(() => {
+    if (!canAccess || !linkedQuoteId) return;
+    setSelectedQuote((current) => (
+      current?.id === linkedQuoteId ? current : { id: linkedQuoteId }
+    ));
+  }, [canAccess, linkedQuoteId]);
 
   const listOptions = useMemo(() => ({
     page, pageSize,
@@ -144,6 +159,23 @@ export default function Quotes() {
     onError: (error) => toast.error(error?.message || "Could not revoke the public link"),
   });
 
+  const convertToOrderMutation = useMutation({
+    // useMutation infers TVariables as void without an explicit generic
+    // (same gap every sibling mutation above already has) — annotate the
+    // callback params locally rather than adding generics file-wide.
+    mutationFn: (/** @type {{ id: string }} */ quote) => convertQuoteToOrder(quote.id),
+    onSuccess: (result, /** @type {{ id: string }} */ quote) => {
+      toast.success(
+        result?.replayed
+          ? `This quote was already converted — order ${result.order_number}`
+          : `Order ${result.order_number} created from ${result.quote_number}`,
+      );
+      invalidateQuote(quote.id);
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not convert this quote into an order"),
+  });
+
   if (userQuery.isLoading) {
     return <div className="min-h-screen bg-background p-8 text-sm text-muted-foreground">Checking quote access...</div>;
   }
@@ -224,14 +256,25 @@ export default function Quotes() {
         isIssuingShare={issueShareMutation.isPending}
         isRotatingShare={rotateShareMutation.isPending}
         isRevokingShare={revokeShareMutation.isPending}
+        isConvertingToOrder={convertToOrderMutation.isPending}
         loadError={detailQuery.error}
-        onOpenChange={(open) => { if (!open) setSelectedQuote(null); }}
+        onOpenChange={(open) => {
+          if (open) return;
+          setSelectedQuote(null);
+          if (linkedQuoteId) {
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete("open");
+            setSearchParams(nextParams, { replace: true });
+          }
+        }}
         onEdit={(quote) => { setEditingQuote(quote); setSelectedQuote(null); setView("create"); }}
         onRevise={(quote) => { setEditingQuote(quote); setSelectedQuote(null); setView("create"); }}
         onSend={(quote) => sendMutation.mutate(quote)}
         onIssueShare={(quote) => issueShareMutation.mutate(quote)}
         onRotateShare={(quote) => rotateShareMutation.mutate(quote)}
         onRevokeShare={(quote) => revokeShareMutation.mutate(quote)}
+        onConvertToOrder={(quote) => convertToOrderMutation.mutate(quote)}
+        onViewOrder={(orderId) => navigate(`/Orders?open=${orderId}`)}
       />
 
       <Dialog open={requestPickerOpen} onOpenChange={setRequestPickerOpen}>

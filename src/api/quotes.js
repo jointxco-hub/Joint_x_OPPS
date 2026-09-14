@@ -496,6 +496,43 @@ export async function revokeQuoteShare(quoteId) {
   return data;
 }
 
+// ── quote -> order conversion (Phase 1) ──────────────────────────────────
+// Server-side RPC does all the real work: eligibility/tenant/finance-
+// permission checks, snapshot read, order insert, quote-event log. This
+// wrapper only maps error codes to friendly messages and normalizes the
+// result shape. See supabase/migrations/20260916090000_quote_order_invoice_conversion.sql.
+export const QUOTE_ORDER_CONVERSION_ERROR_MESSAGES = {
+  QUOTE_ORDER_FINANCE_PERMISSION_REQUIRED: "You do not have permission to convert quotes into orders.",
+  QUOTE_NOT_FOUND: "This quote could not be found.",
+  QUOTE_TENANT_ACCESS_DENIED: "You do not have access to this quote's workspace.",
+  QUOTE_NOT_CONVERTIBLE: "Only an accepted quote can be converted into an order.",
+  QUOTE_NO_ACCEPTED_SNAPSHOT: "This quote has no accepted snapshot to convert from.",
+  QUOTE_ACCEPTED_SNAPSHOT_MISSING: "The accepted quote snapshot could not be found.",
+  QUOTE_SNAPSHOT_EMPTY_ITEMS: "The accepted quote has no line items to carry into an order.",
+};
+
+function quoteOrderConversionError(error) {
+  const raw = String(error?.message || "");
+  const code = Object.keys(QUOTE_ORDER_CONVERSION_ERROR_MESSAGES).find((candidate) => raw.includes(candidate));
+  return Object.assign(
+    new Error(code ? QUOTE_ORDER_CONVERSION_ERROR_MESSAGES[code] : raw || "Could not convert this quote into an order."),
+    { code: code || error?.code || "QUOTE_ORDER_CONVERSION_FAILED", cause: error },
+  );
+}
+
+// Convert an accepted quote into an operational order. Idempotent — calling
+// this again on an already-converted quote returns the SAME order
+// (data.replayed === true) rather than creating a second one.
+export async function convertQuoteToOrder(quoteId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("convert_quote_to_order", { p_quote_id: quoteId });
+  if (error) throw quoteOrderConversionError(error);
+  if (!data?.ok || !data?.order_id) {
+    throw Object.assign(new Error("Converting this quote returned an incomplete result."), { code: "QUOTE_ORDER_CONVERSION_RESULT_INVALID" });
+  }
+  return data;
+}
+
 // ── create-from-request prefill (pure, no I/O) ──────────────────────────
 // Only builds an unsaved editor draft. The link to
 // client_quote_requests.id is written ONLY when saveQuoteWithItems

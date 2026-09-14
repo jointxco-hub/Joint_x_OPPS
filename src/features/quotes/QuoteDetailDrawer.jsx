@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, MoreHorizontal, Pencil, RefreshCw, Send, TriangleAlert } from "lucide-react";
+import { ArrowRight, Eye, MoreHorizontal, Pencil, RefreshCw, Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
@@ -14,6 +14,14 @@ import QuoteShareControls from "./QuoteShareControls";
 import {
   isQuoteEditable, HAS_QUOTE_SEND_TRANSITION, canSendQuote, hasUnsentChanges, isPublished,
 } from "./quoteStatus";
+
+// Button (src/components/ui/button.jsx) is a plain forwardRef with no prop
+// typing, so tsc only sees RefAttributes<any> on it — every consumer
+// passing className/variant/onClick/etc already errors under checkJs (see
+// every other <Button> in this file). Same narrow local-cast convention
+// already used in OrderLinkPanel.jsx, applied only to the new Quote->Order
+// buttons below rather than touching the shared component.
+const UIButton = /** @type {any} */ (Button);
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -60,6 +68,7 @@ export default function QuoteDetailDrawer({
   isIssuingShare = false,
   isRotatingShare = false,
   isRevokingShare = false,
+  isConvertingToOrder = false,
   loadError = null,
   onOpenChange,
   onEdit,
@@ -68,6 +77,8 @@ export default function QuoteDetailDrawer({
   onIssueShare,
   onRotateShare,
   onRevokeShare,
+  onConvertToOrder,
+  onViewOrder,
 }) {
   const header = quote || summaryQuote || {};
   const status = header.status || "draft";
@@ -99,6 +110,13 @@ export default function QuoteDetailDrawer({
     HAS_QUOTE_SEND_TRANSITION && canSendQuote(quote || header) &&
     (["draft", "changes_requested"].includes(status) || unsent);
   const sendLabel = published ? "Resend updated quote" : "Send quote";
+
+  // Quote -> Order (Phase 1). "Create Order" only on an accepted quote with
+  // no order yet; once converted_order_id is set, always "View Order" —
+  // never a second Create Order, even after a page reload.
+  const convertedOrderId = header.converted_order_id;
+  const canCreateOrder = status === "accepted" && !convertedOrderId;
+  const showOrderAction = canCreateOrder || Boolean(convertedOrderId);
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -146,6 +164,27 @@ export default function QuoteDetailDrawer({
                   <Send className="h-4 w-4" /> {isSending ? "Sending..." : sendLabel}
                 </Button>
               ) : null}
+              {showOrderAction ? (
+                convertedOrderId ? (
+                  <UIButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onViewOrder?.(convertedOrderId)}
+                    className="h-11 rounded-xl sm:h-9"
+                  >
+                    <ArrowRight className="h-4 w-4" /> View Order
+                  </UIButton>
+                ) : (
+                  <UIButton
+                    size="sm"
+                    onClick={() => onConvertToOrder?.(quote)}
+                    disabled={!quote || isConvertingToOrder}
+                    className="h-11 rounded-xl sm:h-9"
+                  >
+                    <ArrowRight className="h-4 w-4" /> {isConvertingToOrder ? "Creating order..." : "Create Order"}
+                  </UIButton>
+                )
+              ) : null}
               <Button variant="ghost" size="sm" className="h-11 w-11 rounded-xl p-0 sm:h-9 sm:w-9" aria-label="More">
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
@@ -185,6 +224,17 @@ export default function QuoteDetailDrawer({
                 <Kv label="Valid until" value={dateText(quote.valid_until)} />
                 <Kv label="Payment terms" value={quote.payment_terms || "—"} />
               </Section>
+
+              {convertedOrderId ? (
+                <Section title="Order">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground">This quote was converted to an order.</span>
+                    <UIButton variant="outline" size="sm" onClick={() => onViewOrder?.(convertedOrderId)} className="h-9 rounded-xl">
+                      <ArrowRight className="h-4 w-4" /> View Order
+                    </UIButton>
+                  </div>
+                </Section>
+              ) : null}
 
               {/* line items (working head) */}
               <Section title={`Line items — working rev #${quote.current_revision_number ?? "?"} (${(quote.items || []).length})`}>

@@ -9,6 +9,12 @@ import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import MediaPreview from "@/components/common/MediaPreview";
 import CreateInvoiceFromOrderButton from "@/features/invoices/CreateInvoiceFromOrderButton";
+
+// Same narrow local-cast convention as OrderLinkPanel.jsx/QuoteDetailDrawer.
+// jsx — Button has no prop typing under checkJs, so this file's many
+// pre-existing <Button> usages already error; scoped here only to the new
+// "View Quote" provenance button rather than touching the shared component.
+const UIButton = /** @type {any} */ (Button);
 import {
   createInvoiceExportRecord,
   getInvoice,
@@ -282,6 +288,23 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
 
   return (
     <div className="space-y-4">
+      {order?.source_quote_id ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-secondary/30 p-3">
+          <p className="text-xs text-muted-foreground">
+            Source: Quote {order?.source_metadata?.quote_number || order.source_quote_id}
+          </p>
+          <UIButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 rounded-xl text-xs"
+            onClick={() => { window.location.href = `/Quotes?open=${encodeURIComponent(order.source_quote_id)}`; }}
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> View Quote
+          </UIButton>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-primary/20 bg-primary/5 p-3">
         <div>
           <p className="text-sm font-semibold text-foreground">OPPS invoice</p>

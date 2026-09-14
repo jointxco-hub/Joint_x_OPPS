@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, Link2, Unlink } from "lucide-react";
+import { ArrowRightLeft, ExternalLink, Link2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -99,6 +99,16 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
           <p className="mt-1 text-sm font-semibold text-foreground">
             {invoice.source_order_id ? (linkedOrderQuery.data?.order_number || invoice.source_order_id) : "Not linked to an order"}
           </p>
+          {linkedOrderQuery.data?.source_quote_id ? (
+            <button
+              type="button"
+              onClick={() => { window.location.href = `/Quotes?open=${encodeURIComponent(linkedOrderQuery.data.source_quote_id)}`; }}
+              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Source: Quote {linkedOrderQuery.data?.source_metadata?.quote_number || linkedOrderQuery.data.source_quote_id}
+            </button>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {!invoice.source_order_id && isDraft && (

@@ -95,9 +95,11 @@ test("quotes.js: markQuoteSent hits mark_quote_sent RPC; getQuoteDocument gains 
   assert.ok(s.includes('supabase.rpc("mark_quote_sent", { p_quote_id: quoteId })'), "markQuoteSent calls the RPC");
   assert.ok(s.includes("QUOTE_SEND_ERROR_MESSAGES") && s.includes("QUOTE_NOT_SENDABLE") && s.includes("QUOTE_NO_REVISION_TO_SEND"));
   // still the ONLY writes are canonical RPCs — no direct opps_quote* mutation.
-  // Q1/Q2.5: save + send. Q3.1: the three public-share RPCs.
+  // Q1/Q2.5: save + send. Q3.1: the three public-share RPCs. Quote->Order
+  // Phase 1: convert_quote_to_order.
   const rpcs = [...new Set((s.match(/supabase\.rpc\("[a-z_]+"/g) || []))].sort();
   assert.deepEqual(rpcs, [
+    'supabase.rpc("convert_quote_to_order"',
     'supabase.rpc("issue_quote"',
     'supabase.rpc("mark_quote_sent"',
     'supabase.rpc("revoke_quote_share"',
