@@ -7,10 +7,39 @@ async function src(rel) {
 }
 
 const MIGRATION = "supabase/migrations/20260913110000_invoice_payfast_payment.sql";
+// Forward-only follow-up: 20260913110000 has already been applied/
+// reconciled on staging, so its historical contents are never edited in
+// place — the successful-payment metadata sanitization instead lives in
+// its own later CREATE OR REPLACE migration.
+const METADATA_MIGRATION = "supabase/migrations/20260915120000_invoice_payfast_metadata_sanitization.sql";
 
 // begin_invoice_payment / apply_invoice_payfast_payment — the two RPCs
 // behind the public invoice Pay CTA. Mirrors the static-SQL-source test
 // convention of record-manual-invoice-payment.test.mjs.
+
+test("0 · 20260913110000 is unmodified from its previously-applied contents — the metadata fix lives only in the forward migration", async () => {
+  const sql = await src(MIGRATION);
+  const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+  const end = sql.indexOf("\n$$;", start);
+  const body = sql.slice(start, end);
+  assert.match(body, /'raw_itn', p_raw_itn/, "20260913110000 still stores the raw ITN exactly as previously applied/reconciled to staging — this file is not where the fix lives");
+  assert.doesNotMatch(body, /payfast_amount_fee|payfast_amount_net/, "the sanitized allowlist does not exist in this migration");
+});
+
+test("0b · the metadata-sanitization migration is dated strictly after every other migration in the repo, and after 20260913110000 in particular", async () => {
+  const fs = await import("node:fs/promises");
+  const dir = new URL("../supabase/migrations/", import.meta.url);
+  const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+  assert.equal(files[files.length - 1], "20260915120000_invoice_payfast_metadata_sanitization.sql", "it is the newest migration by filename/timestamp ordering — no collision, no out-of-order insertion");
+  assert.ok("20260915120000_invoice_payfast_metadata_sanitization.sql" > "20260913110000_invoice_payfast_payment.sql");
+});
+
+test("0c · the forward migration is additive/narrow — CREATE OR REPLACE only, no new table/index/grant, and preflights that the base function already exists", async () => {
+  const sql = await src(METADATA_MIGRATION);
+  assert.match(sql, /create or replace function public\.apply_invoice_payfast_payment\(/);
+  assert.doesNotMatch(sql, /create table|create unique index|grant execute|revoke all/i, "no schema object beyond the function redefinition — the existing index/grants from 20260913110000 are untouched and still apply");
+  assert.match(sql, /to_regprocedure\('public\.apply_invoice_payfast_payment\(uuid, numeric, text, jsonb\)'\) is null/, "fails loudly if applied before the base migration, rather than silently creating a fresh function with no prior history");
+});
 
 test("1 · migration is additive only — no opps_invoices/PayFast/P1A function edits, no record_manual_invoice_payment touch", async () => {
   const sql = await src(MIGRATION);
@@ -141,7 +170,7 @@ test("9e · the rejection activity never stores the raw ITN / signature — only
 });
 
 test("9f · a successful payment's own metadata never stores the raw ITN / signature — same guarantee as the rejection path, extended to acceptance", async () => {
-  const sql = await src(MIGRATION);
+  const sql = await src(METADATA_MIGRATION);
   const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
   const end = sql.indexOf("\n$$;", start);
   const body = sql.slice(start, end);
@@ -153,7 +182,7 @@ test("9f · a successful payment's own metadata never stores the raw ITN / signa
 });
 
 test("9g · the retained success metadata is a small explicit allowlist — only fields with no existing canonical column", async () => {
-  const sql = await src(MIGRATION);
+  const sql = await src(METADATA_MIGRATION);
   const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
   const end = sql.indexOf("\n$$;", start);
   const body = sql.slice(start, end);
@@ -168,7 +197,7 @@ test("9g · the retained success metadata is a small explicit allowlist — only
 });
 
 test("9h · a replayed successful payment is unaffected by the metadata allowlist change — idempotency stays on (invoice_id, reference), not on metadata shape", async () => {
-  const sql = await src(MIGRATION);
+  const sql = await src(METADATA_MIGRATION);
   const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
   const end = sql.indexOf("\n$$;", start);
   const body = sql.slice(start, end);
@@ -177,6 +206,66 @@ test("9h · a replayed successful payment is unaffected by the metadata allowlis
   const replayBranch = body.slice(conflictIdx, replayBranchEnd);
   assert.match(replayBranch, /'replayed', true, 'payment_id', v_row_id/, "the on-conflict-do-nothing + re-select replay path (test 8) is untouched by the metadata column change above it");
   assert.doesNotMatch(replayBranch, /raw_itn|p_raw_itn/, "the replay branch never references the raw ITN either");
+});
+
+test("9i · the forward-migration function differs from the previously-applied one ONLY around the successful-payment metadata construction — every other block is byte-identical, in the same order", async () => {
+  const oldSql = await src(MIGRATION);
+  const newSql = await src(METADATA_MIGRATION);
+  function fnBody(sql) {
+    const start = sql.indexOf("create or replace function public.apply_invoice_payfast_payment");
+    const end = sql.indexOf("\n$$;", start) + 4;
+    return sql.slice(start, end);
+  }
+  const oldBody = fnBody(oldSql);
+  const newBody = fnBody(newSql);
+  // Large literal chunks, copied verbatim from the function, covering
+  // every block EXCEPT the successful-payment metadata object itself:
+  // signature/declare, guards, the FOR UPDATE lock, the replay branch,
+  // the already-paid branch, the ENTIRE overpayment-rejection block
+  // (dedup guard + activity insert + rejection return, ±0.02 tolerance),
+  // the insert's own column list and VALUES up to the metadata object,
+  // the on-conflict/replay-after-race branch, the status-mirror block,
+  // the final activity insert, and the success return. Each must appear
+  // verbatim, in this order, in BOTH the previously-applied function and
+  // the forward-migration one.
+  const invariantChunksInOrder = [
+    `p_invoice_id     uuid,\n  p_amount         numeric,\n  p_pf_payment_id  text,\n  p_raw_itn        jsonb default '{}'::jsonb\n)`,
+    `if v_ref is null then`,
+    `return jsonb_build_object('ok', false, 'reason', 'PF_PAYMENT_ID_REQUIRED');`,
+    `select * into v_invoice from public.opps_invoices where id = p_invoice_id for update;`,
+    `where invoice_id = p_invoice_id and source = 'payfast' and reference = v_ref\n  limit 1;\n  if v_existing_id is not null then\n    return jsonb_build_object(\n      'ok', true, 'replayed', true, 'payment_id', v_existing_id,`,
+    `if v_status_before = 'paid' or v_balance <= 0 then\n    return jsonb_build_object(\n      'ok', true, 'ignored', true, 'reason', 'INVOICE_ALREADY_PAID',`,
+    `if v_amount > v_balance + 0.02 then`,
+    `if not exists (\n      select 1 from public.opps_invoice_activity\n      where invoice_id = p_invoice_id\n        and activity_type = 'invoice_payment_rejected'\n        and metadata->>'reference' = v_ref\n        and metadata->>'reason' = 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED'\n    ) then`,
+    `'invoice_payment_rejected', 'PayFast payment rejected — exceeds balance',`,
+    `'reason',          'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',\n          'amount_received', v_amount,\n          'balance_due',     v_balance,\n          'reference',       v_ref`,
+    `return jsonb_build_object(\n      'ok', false, 'reason', 'INVOICE_PAYMENT_OVERPAYMENT_REJECTED',\n      'expected_max', v_balance, 'received', v_amount\n    );\n  end if;`,
+    `insert into public.invoice_payments (\n    tenant_id, invoice_id, amount, paid_at, method, reference, source, order_id, created_by, metadata\n  ) values (\n    v_invoice.tenant_id, p_invoice_id, v_amount, now(), 'payfast', v_ref, 'payfast',\n    v_invoice.source_order_id, null,\n    jsonb_strip_nulls(jsonb_build_object(\n      'recorded_via', 'apply_invoice_payfast_payment',`,
+    `on conflict (invoice_id, reference) where source = 'payfast' and reference is not null\n    do nothing\n  returning id into v_row_id;`,
+    `if v_row_id is null then\n    select id into v_row_id\n    from public.invoice_payments\n    where invoice_id = p_invoice_id and source = 'payfast' and reference = v_ref\n    limit 1;\n    return jsonb_build_object(\n      'ok', true, 'replayed', true, 'payment_id', v_row_id,`,
+    `if v_invoice.status in ('approved', 'partially_paid') then\n    v_new_status := case v_status_after\n                      when 'paid'    then 'paid'\n                      when 'partial' then 'partially_paid'\n                      else null\n                    end;\n  elsif v_invoice.status = 'overdue' and v_status_after = 'paid' then\n    v_new_status := 'paid';`,
+    `insert into public.opps_invoice_activity (\n    invoice_id, tenant_id, activity_type, activity_label, activity_note,\n    from_status, to_status, metadata, created_by\n  ) values (\n    p_invoice_id, v_invoice.tenant_id,\n    'invoice_payment_recorded', 'Payment recorded',`,
+    `return jsonb_build_object(\n    'ok', true, 'replayed', false, 'payment_id', v_row_id,\n    'amount_paid', public.invoice_amount_paid(p_invoice_id),\n    'balance_due', public.invoice_balance_due(p_invoice_id),\n    'payment_status', v_status_after\n  );\nend;`,
+  ];
+  let cursorOld = 0;
+  let cursorNew = 0;
+  for (const chunk of invariantChunksInOrder) {
+    const idxOld = oldBody.indexOf(chunk, cursorOld);
+    const idxNew = newBody.indexOf(chunk, cursorNew);
+    assert.ok(idxOld >= cursorOld, `chunk missing (or out of order) in the previously-applied function: ${chunk.slice(0, 60)}...`);
+    assert.ok(idxNew >= cursorNew, `chunk missing (or out of order) in the forward-migration function: ${chunk.slice(0, 60)}...`);
+    cursorOld = idxOld + chunk.length;
+    cursorNew = idxNew + chunk.length;
+  }
+  // the only thing between the shared prefix ending "'apply_invoice_payfast_payment'," and
+  // the shared suffix starting "on conflict (invoice_id, reference)" differs, and differs
+  // EXACTLY as expected: raw_itn wholesale vs. the two-field allowlist.
+  const oldGap = oldBody.slice(oldBody.indexOf("'recorded_via', 'apply_invoice_payfast_payment',") + 49, oldBody.indexOf("on conflict (invoice_id, reference)"));
+  const newGap = newBody.slice(newBody.indexOf("'recorded_via', 'apply_invoice_payfast_payment',") + 49, newBody.indexOf("on conflict (invoice_id, reference)"));
+  assert.match(oldGap, /'raw_itn', p_raw_itn/);
+  assert.doesNotMatch(newGap, /'raw_itn'/);
+  assert.match(newGap, /'payfast_amount_fee'/);
+  assert.match(newGap, /'payfast_amount_net'/);
 });
 
 test("9b · a valid partial payment (amount <= balance) is accepted and recorded at the actual amount — the overpayment fix must not break intentional partial payments", async () => {

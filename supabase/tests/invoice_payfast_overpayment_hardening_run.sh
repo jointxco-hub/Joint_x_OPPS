@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Disposable pg16 proof for 20260913110000_invoice_payfast_payment.sql's
-# overpayment-hardening policy: exact/partial payment accepted, an amount
+# Disposable pg16 proof for 20260913110000_invoice_payfast_payment.sql
+# (already applied/reconciled on staging, unmodified here) layered with
+# 20260915120000_invoice_payfast_metadata_sanitization.sql (forward-only,
+# CREATE OR REPLACE only) — the exact lineage staging will receive.
+# Proves the overpayment-hardening policy: exact/partial payment accepted, an amount
 # exceeding the current canonical balance is REJECTED (never recorded, never
 # clamped), an already-fully-paid invoice ignores a further ITN, duplicate
 # pf_payment_id is idempotent, and — the part a static source-text assertion
@@ -17,6 +20,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 MIG="$ROOT/supabase/migrations/20260913110000_invoice_payfast_payment.sql"
+MIG_METADATA="$ROOT/supabase/migrations/20260915120000_invoice_payfast_metadata_sanitization.sql"
 CID="pf-overpay-$$"
 cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -116,6 +120,14 @@ if ! run < "$MIG" >/tmp/pfh.out 2>&1; then echo "MIGRATION FAILED:"; cat /tmp/pf
 echo "20260913110000 applied"
 if ! run < "$MIG" >/tmp/pfh2.out 2>&1; then echo "MIGRATION SECOND APPLY FAILED:"; cat /tmp/pfh2.out; exit 1; fi
 echo "20260913110000 idempotent"
+
+# Layer the forward-only metadata-sanitization migration on top, exactly
+# as staging will receive it: 20260913110000 stays exactly as previously
+# applied/reconciled, this is a separate later CREATE OR REPLACE.
+if ! run < "$MIG_METADATA" >/tmp/pfh3.out 2>&1; then echo "MIGRATION FAILED (20260915120000):"; cat /tmp/pfh3.out; exit 1; fi
+echo "20260915120000 applied on top of 20260913110000"
+if ! run < "$MIG_METADATA" >/tmp/pfh4.out 2>&1; then echo "MIGRATION SECOND APPLY FAILED (20260915120000):"; cat /tmp/pfh4.out; exit 1; fi
+echo "20260915120000 idempotent"
 
 echo "=========================================="
 echo "SEQUENTIAL SCENARIOS"
@@ -304,4 +316,4 @@ echo "  (session A raw output)"; cat /tmp/concexc_a.out | grep -A1 result_a | he
 echo "  (session B raw output)"; cat /tmp/concexc_b.out | grep -A1 result_b | head -4
 
 echo "-----------------------------------------"
-echo "RESULT: PASS (20260913110000 applies + idempotent; 7 sequential + 2 real-concurrency assertions)"
+echo "RESULT: PASS (20260913110000 + 20260915120000 both apply + are idempotent, in lineage order; 8 sequential + 2 real-concurrency assertions)"
