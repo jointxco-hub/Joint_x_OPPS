@@ -13,6 +13,8 @@ import { useAuth } from "@/lib/AuthContext";
 import { isAdmin } from "@/lib/admin";
 import { canAccessInvoices } from "@/lib/financeAccess";
 import NotificationsPanel from "@/components/common/NotificationsPanel";
+import WorkspaceSwitcher from "@/components/workspace/WorkspaceSwitcher";
+import { useWorkspace } from "@/lib/WorkspaceContext";
 
 const primaryNav = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
@@ -53,7 +55,27 @@ const moreNav = [
 
 const STANDALONE_PAGES = ["TrackOrder", "ClientCatalog", "AletheaClientPortal", "SignIn"];
 
+const workspacePermissionByPage = {
+  Dashboard: "dashboard.read",
+  UserDashboard: "opps.access",
+  MyProfile: "opps.access",
+  Orders: "orders.read",
+  Tasks: "tasks.read",
+  Directory: "staff.manage",
+  Executive: "finance.read",
+  Invoices: "finance.read",
+  Quotes: "finance.read",
+  Clients: "clients.read",
+  Projects: "projects.read",
+  TeamExpenses: "finance.read",
+  FileManager: "files.read",
+  Inventory: "inventory.read",
+  PurchaseOrders: "purchase_orders.read",
+  RolesManagement: "staff.manage",
+};
+
 export default function Layout({ children, currentPageName }) {
+  const { currentWorkspace, can, isJointXWorkspace } = useWorkspace();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(true);
   const [user, setUser] = useState(null);
@@ -69,9 +91,25 @@ export default function Layout({ children, currentPageName }) {
     window.location.href = '/SignIn';
   };
 
+  const workspaceAllows = (item) => {
+    if (!currentWorkspace) return false;
+    if (currentWorkspace.slug === "joint-x") return true;
+
+    const permission = workspacePermissionByPage[item.page];
+
+    return permission ? can(permission) : false;
+  };
+
+  const visiblePrimaryNav = primaryNav.filter(workspaceAllows);
+
   const visibleMoreNav = moreNav.filter(item => {
-    if (item.adminOnly && !isAdmin(user)) return false;
-    if (item.financeOnly && !canAccessInvoices(user)) return false;
+    if (!workspaceAllows(item)) return false;
+
+    if (isJointXWorkspace) {
+      if (item.adminOnly && !isAdmin(user)) return false;
+      if (item.financeOnly && !canAccessInvoices(user)) return false;
+    }
+
     return true;
   });
   const initials = (user?.full_name || user?.email || "U").charAt(0).toUpperCase();
@@ -98,9 +136,9 @@ export default function Layout({ children, currentPageName }) {
     return <>{children}</>;
   }
 
-  const allNav = [...primaryNav, ...visibleMoreNav];
+  const allNav = [...visiblePrimaryNav, ...visibleMoreNav];
   const isMoreActive = visibleMoreNav.some(n => n.page === currentPageName);
-  const mobileBottomNav = primaryNav.filter(item => mobileBottomNavPages.has(item.page));
+  const mobileBottomNav = visiblePrimaryNav.filter(item => mobileBottomNavPages.has(item.page));
 
   return (
     <div className="min-h-screen bg-background font-inter">
@@ -123,10 +161,14 @@ export default function Layout({ children, currentPageName }) {
             </div>
           </div>
 
+          <div className="px-3 pt-3">
+            <WorkspaceSwitcher />
+          </div>
+
           {/* Primary Nav */}
           <nav className="min-h-0 flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest px-3 pb-2">Main</p>
-            {primaryNav.map(item => {
+            {visiblePrimaryNav.map(item => {
               const isActive = currentPageName === item.page;
               return (
                 <Link key={item.page} to={createPageUrl(item.page)}
@@ -204,7 +246,7 @@ export default function Layout({ children, currentPageName }) {
                 <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#c0a4e0]" />
               </div>
             </div>
-            <span className="font-bold text-foreground text-sm">Joint X</span>
+            <span className="max-w-[180px] truncate font-bold text-foreground text-sm">{currentWorkspace?.workspaceConfig?.label || "Joint X"}</span>
           </div>
           <div className="flex items-center gap-2">
             <NotificationsPanel />
@@ -220,6 +262,9 @@ export default function Layout({ children, currentPageName }) {
 
         {mobileMenuOpen && (
           <div className="absolute top-full left-0 right-0 bg-card border-b border-border shadow-apple-lg max-h-[80vh] overflow-y-auto animate-slide-in-up">
+            <div className="p-3 pb-0">
+              <WorkspaceSwitcher compact />
+            </div>
             <nav className="p-3 grid grid-cols-2 gap-1">
               {allNav.map(item => {
                 const isActive = currentPageName === item.page;

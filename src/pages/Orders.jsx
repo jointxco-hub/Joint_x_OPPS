@@ -23,6 +23,13 @@ import { normalizeOrderFileFolders, mirrorOrderFileToClientAssetFolder, provisio
 import FileLightbox from "@/components/files/FileLightbox";
 import { buildLightboxItems } from "@/lib/filePresentation";
 import { buildOrderPrimaryImageGallery, groupPrimaryImageContextByOrder, resolveOrderPrimaryImage } from "@/lib/orderPrimaryImage";
+import { useWorkspace } from "@/lib/WorkspaceContext";
+import {
+  QUICK_SOLUTION_PIPELINE_STAGES,
+  getWorkspacePipelineStages,
+  isQuickSolutionOrder,
+  quickSolutionStatusLabel,
+} from "@/lib/quickSolutionOperations";
 
 const loadNewOrderDrawer = () => import("@/components/orders/NewOrderDrawer");
 
@@ -61,7 +68,7 @@ function BasicOrderDrawer({ order, onClose, errorMessage }) {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-base font-bold text-foreground">{order?.client_name || "Order"}</h2>
-              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${sc.color}`}>{sc.label}</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${sc.color}`}>{orderStatusLabelFor(order, sc.label)}</span>
             </div>
             <p className="mt-1 font-mono text-xs text-muted-foreground">#{order?.order_number || order?.id || "draft"}</p>
           </div>
@@ -190,6 +197,15 @@ const statusConfig = {
   cancelled:     { label: "Cancelled",     color: "bg-red-100 text-red-600" },
 };
 
+function orderStatusLabelFor(order, fallbackLabel) {
+  if (!isQuickSolutionOrder(order)) return fallbackLabel;
+
+  return (
+    quickSolutionStatusLabel(order, order?.status) ||
+    fallbackLabel
+  );
+}
+
 const priorityDot = {
   urgent: "bg-red-500",
   high:   "bg-orange-400",
@@ -261,6 +277,21 @@ function orderSearchText(order) {
 }
 
 export default function Orders() {
+  const { currentWorkspace, can } = useWorkspace();
+  const canWriteOrders = can("orders.write");
+  const canUpdateProduction = can("production.update");
+  const canManagePayments = can("payments.manage");
+  const canReadFinance = can("finance.read");
+
+  // Full drawer access is capability-based, not synonymous with order editing.
+  // Its internal controls are permission-guarded independently.
+  const canUseOperationalDrawer =
+    canWriteOrders ||
+    canUpdateProduction ||
+    canManagePayments ||
+    canReadFinance;
+
+  const readOnlyOrders = !canUseOperationalDrawer;
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("active");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -273,9 +304,39 @@ export default function Orders() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: orders = [], isLoading } = useQuery({
-    queryKey: ["orders"],
+    queryKey: ["orders", currentWorkspace?.tenantId],
     queryFn: () => dataClient.entities.Order.list("-created_date", 200),
   });
+
+  // QS-10 keep open drawer synced with canonical server row.
+  // Server triggers may update status/pipeline together, so the drawer must
+  // adopt the refetched row instead of keeping an older selectedOrder snapshot.
+  useEffect(() => {
+    if (!selectedOrder?.id || orders.length === 0) return;
+
+    const fresh = orders.find(order => order.id === selectedOrder.id);
+    if (!fresh) return;
+
+    const freshVersion =
+      fresh.updated_at ?? fresh.updated_date ?? null;
+
+    const selectedVersion =
+      selectedOrder.updated_at ??
+      selectedOrder.updated_date ??
+      null;
+
+    if (
+      freshVersion &&
+      freshVersion !== selectedVersion
+    ) {
+      setSelectedOrder(fresh);
+    }
+  }, [
+    orders,
+    selectedOrder?.id,
+    selectedOrder?.updated_at,
+    selectedOrder?.updated_date,
+  ]);
 
   useEffect(() => {
     const preloadNewOrder = () => loadNewOrderDrawer();
@@ -297,29 +358,41 @@ export default function Orders() {
   // (XOS 2.7A) - fetched once here, not per row. Display only; the
   // authoritative tenant for any order is always order.tenant_id, unchanged.
   const { data: tenants = [] } = useQuery({
-    queryKey: ["tenants", "directory"],
+    queryKey: ["tenants", "directory", currentWorkspace?.tenantId],
     queryFn: () => dataClient.entities.Tenant.list("name", 200),
     staleTime: 300_000,
   });
   const tenantsById = useMemo(() => buildTenantsById(tenants), [tenants]);
 
-  // Auto-open drawer when navigated from Dashboard with ?open=<id>
+  // Auto-open drawer from Dashboard or a tenant-aware Quick Solution deep-link.
   useEffect(() => {
-    const openId = searchParams.get("open");
+    const openId = searchParams.get("open") || searchParams.get("orderId");
+
     if (openId && orders.length > 0) {
       const target = orders.find((/** @type {any} */ o) => o.id === openId);
+
       if (target) {
         setSelectedOrder(target);
-        setSearchParams({}, { replace: true });
+
+        const next = new URLSearchParams(searchParams);
+        next.delete("open");
+        next.delete("orderId");
+
+        setSearchParams(next, { replace: true });
       }
     }
-  }, [searchParams, orders]);
+  }, [searchParams, orders, setSearchParams]);
 
   const { data: stages = [] } = useQuery({
     queryKey: ["orderStages"],
     queryFn: () => dataClient.entities.OrderStage.list("sequence", 50),
     staleTime: 300_000,
   });
+
+  const effectiveStages = getWorkspacePipelineStages(
+    currentWorkspace?.slug,
+    stages
+  );
 
   const updateMutation = useMutation({
     mutationFn: (/** @type {any} */ { id, data, expectedUpdatedAt }) =>
@@ -441,10 +514,10 @@ export default function Orders() {
 
   // Kanban helpers
   const normalStages = useMemo(
-    () => stages.filter(s => !s.is_exception).sort((a, b) => a.sequence - b.sequence),
-    [stages]
+    () => effectiveStages.filter(s => !s.is_exception).sort((a, b) => a.sequence - b.sequence),
+    [effectiveStages]
   );
-  const exceptionStages = useMemo(() => stages.filter(s => s.is_exception), [stages]);
+  const exceptionStages = useMemo(() => effectiveStages.filter(s => s.is_exception), [effectiveStages]);
   const exceptionKeys = useMemo(() => new Set(exceptionStages.map(s => s.key)), [exceptionStages]);
 
   // Kanban/production lanes are operational queues, not just a display -
@@ -505,9 +578,11 @@ export default function Orders() {
                 <LayoutGrid className="w-4 h-4" />
               </button>
             </div>
-            <Button onClick={() => setShowNew(true)} className="gap-2 shadow-apple-sm rounded-xl">
-              <Plus className="w-4 h-4" /> New Order
-            </Button>
+            {canWriteOrders && (
+              <Button onClick={() => setShowNew(true)} className="gap-2 shadow-apple-sm rounded-xl">
+                <Plus className="w-4 h-4" /> New Order
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -636,7 +711,7 @@ export default function Orders() {
                       <div className="min-w-0 flex-1">
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <SourceBadge source={order.source} />
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{sc.label}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${sc.color}`}>{orderStatusLabelFor(order, sc.label)}</span>
                         </div>
                         <p className="truncate text-base font-semibold text-foreground">{order.display_name || order.client_name || "Customer"}</p>
                         {aliasText && (
@@ -698,7 +773,7 @@ export default function Orders() {
                         <p className="text-sm text-muted-foreground font-mono">{order.order_number}</p>
                       </div>
                       <div className="col-span-2">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${sc.color}`}>{sc.label}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${sc.color}`}>{orderStatusLabelFor(order, sc.label)}</span>
                       </div>
                       <div className="col-span-2">
                         <p className="text-sm text-muted-foreground">
@@ -797,23 +872,31 @@ export default function Orders() {
       </div>
 
       {selectedOrder && (
-        <OrderDrawerErrorBoundary resetKey={selectedOrder.id} order={selectedOrder} onClose={closeOrderDrawer}>
-          <Suspense fallback={<DrawerLoadingFallback onClose={closeOrderDrawer} />}>
-            <OrderDrawer
-              key={selectedOrder.id}
-              order={selectedOrder}
-              stages={stages}
-              tenantsById={tenantsById}
-              onClose={closeOrderDrawer}
-              onUpdate={handleDrawerUpdate}
-              onArchive={handleArchiveSelectedOrder}
-              isArchiving={isArchiving}
-            />
-          </Suspense>
-        </OrderDrawerErrorBoundary>
+        readOnlyOrders ? (
+          <BasicOrderDrawer
+            order={selectedOrder}
+            onClose={closeOrderDrawer}
+            errorMessage="Read-only workspace role. Order editing and production controls are hidden."
+          />
+        ) : (
+          <OrderDrawerErrorBoundary resetKey={selectedOrder.id} order={selectedOrder} onClose={closeOrderDrawer}>
+            <Suspense fallback={<DrawerLoadingFallback onClose={closeOrderDrawer} />}>
+              <OrderDrawer
+                key={selectedOrder.id}
+                order={selectedOrder}
+                stages={effectiveStages}
+                tenantsById={tenantsById}
+                onClose={closeOrderDrawer}
+                onUpdate={handleDrawerUpdate}
+                onArchive={handleArchiveSelectedOrder}
+                isArchiving={isArchiving}
+              />
+            </Suspense>
+          </OrderDrawerErrorBoundary>
+        )
       )}
 
-      {showNew && (
+      {showNew && canWriteOrders && (
         <Suspense fallback={<DrawerLoadingFallback onClose={() => setShowNew(false)} label="Loading new order..." />}>
           <NewOrderDrawer
             onClose={() => setShowNew(false)}
@@ -845,7 +928,7 @@ export default function Orders() {
         <OrdersProductionSummary
           type={printSummary}
           orders={orders}
-          stages={stages}
+          stages={effectiveStages}
           onClose={() => setPrintSummary(null)}
         />
       )}
@@ -1420,7 +1503,7 @@ function KanbanCard({ order, onClick, onPointerEnter, onFocus, isDragging, isExc
         <p className="text-[10px] text-muted-foreground font-mono mb-1">{order.order_number}</p>
       )}
       <div className="flex items-center justify-between gap-1">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sc.color}`}>{sc.label}</span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sc.color}`}>{orderStatusLabelFor(order, sc.label)}</span>
         {order.total_amount && (
           <span className="text-[10px] font-semibold text-foreground">R{Number(order.total_amount).toLocaleString()}</span>
         )}
