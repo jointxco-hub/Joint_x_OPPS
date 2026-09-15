@@ -76,7 +76,56 @@ export default function QuickSolutionServiceItems({ order }) {
     );
   }
 
-  const items = query.data || [];
+  const rpcItems = query.data || [];
+
+  const orderSnapshotItems =
+    Array.isArray(order?.products)
+      ? order.products
+          .map((line, index) => {
+            const quickSolution =
+              line?.quick_solution;
+
+            if (!quickSolution?.product_key) {
+              return null;
+            }
+
+            return {
+              id: `order-snapshot-${index}`,
+              productId:
+                quickSolution.commerce_product_id ||
+                null,
+              productKey:
+                quickSolution.product_key,
+              productName:
+                line.name ||
+                quickSolution
+                  .operations_definition
+                  ?.displayName ||
+                "Quick Solution service",
+              quantity:
+                Number(line.quantity || 1),
+              configuration:
+                quickSolution.configuration || {},
+              pricingSnapshot:
+                quickSolution.pricing_snapshot || {},
+              fileRefs:
+                quickSolution.file_refs || [],
+              lineTotal:
+                Number(line.price || 0) *
+                Number(line.quantity || 1),
+              operations:
+                quickSolution
+                  .operations_definition || {},
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+  const items =
+    rpcItems.length > 0
+      ? rpcItems
+      : orderSnapshotItems;
+
   if (!items.length) {
     return (
       <div className="rounded-2xl border border-border bg-secondary/20 p-4 text-sm text-muted-foreground">

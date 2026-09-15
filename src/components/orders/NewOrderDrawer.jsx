@@ -12,6 +12,9 @@ import { isPrivateFileReference } from "@/lib/privateFiles";
 import { toast } from "sonner";
 import { buildClientDefaultsUpdate, hydrateOrderClientDefaults } from "@/features/orders/clientDefaults";
 import { computeOrderTotal } from "@/lib/orderTotal";
+import { useWorkspace } from "@/lib/WorkspaceContext";
+import { listQuickSolutionStaffCatalog } from "@/lib/quickSolutionStaffCatalog";
+import QuickSolutionOrderLine from "@/components/orders/QuickSolutionOrderLine";
 
 /**
  * Fuzzy score between query and target string.
@@ -72,7 +75,58 @@ function productSummary(products = []) {
   return lines.join(", ");
 }
 
+function createQuickSolutionOrderNumber() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const suffix = Math.random()
+    .toString(36)
+    .slice(2, 6)
+    .toUpperCase();
+
+  return `QS-${yy}${mm}${dd}-${suffix}`;
+}
+
+function createEmptyProductLine(quickSolution = false) {
+  const base = {
+    name: "",
+    quantity: 1,
+    price: "",
+    size: "",
+    color: "",
+    notes: "",
+    catalog_item_id: "",
+    inventory_item_id: "",
+    image_url: "",
+    category: "",
+    source: quickSolution
+      ? "quick_solution_service"
+      : "",
+    selected_print_options: [],
+    selected_addons: [],
+  };
+
+  if (!quickSolution) return base;
+
+  return {
+    ...base,
+    quick_solution: {
+      product_key: "",
+      commerce_product_id: "",
+      configuration: {},
+      pricing_version: "",
+      pricing_snapshot: {},
+      operations_definition: {},
+    },
+  };
+}
+
 export default function NewOrderDrawer({ onClose, onCreate }) {
+  const { currentWorkspace } = useWorkspace();
+
+  const quickSolutionWorkspace =
+    currentWorkspace?.slug === "quick-solution";
   const [form, setForm] = useState({
     client_id: '',
     client_name: '',
@@ -84,19 +138,27 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     delivery_note: '',
     courier: '',
     display_name: '',
-    order_number: `ORD-${Date.now().toString(36).toUpperCase()}`,
+    order_number: quickSolutionWorkspace
+      ? createQuickSolutionOrderNumber()
+      : `ORD-${Date.now().toString(36).toUpperCase()}`,
     status: 'confirmed',
     priority: 'normal',
     print_type: 'none',
+    fulfillment_type: quickSolutionWorkspace
+      ? 'collection'
+      : undefined,
+    payment_status: quickSolutionWorkspace
+      ? 'pending'
+      : undefined,
     notes: '',
     total_amount: '',
-    apply_shipping_fee: true,
+    apply_shipping_fee: quickSolutionWorkspace ? false : true,
     shipping_fee: '',
     due_date: '',
     linked_po_id: '',
     file_urls: [],
     portal_visible_file_urls: [],
-    products: [{ name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '', selected_print_options: [], selected_addons: [] }]
+    products: [createEmptyProductLine(quickSolutionWorkspace)]
   });
 
   const [clientSearch, setClientSearch] = useState('');
@@ -105,6 +167,32 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   const [updateClientDefaults, setUpdateClientDefaults] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
   const queryClient = useQueryClient();
+
+  const quickSolutionTenantId =
+    quickSolutionWorkspace
+      ? currentWorkspace?.tenantId
+      : null;
+
+  const {
+    data: quickSolutionCatalog = [],
+    isLoading: quickSolutionCatalogLoading,
+    error: quickSolutionCatalogError,
+  } = useQuery({
+    queryKey: [
+      "quickSolutionStaffCatalog",
+      quickSolutionTenantId,
+    ],
+    queryFn: () =>
+      listQuickSolutionStaffCatalog(
+        quickSolutionTenantId
+      ),
+    enabled: Boolean(
+      quickSolutionWorkspace &&
+      quickSolutionTenantId
+    ),
+    staleTime: 60_000,
+    retry: false,
+  });
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients'],
@@ -170,7 +258,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
   const clientContextFiles = Array.isArray(clientFileLibrary?.files) ? clientFileLibrary.files.slice(0, 6) : [];
 
-  // Scored client suggestions — includes fuzzy matches from Client entity + order history names
+  // Scored client suggestions â€” includes fuzzy matches from Client entity + order history names
   const { clientSuggestions, didYouMean } = useMemo(() => {
     const q = (clientSearch || form.client_name || "").trim();
     if (!q) {
@@ -205,11 +293,39 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
   }, [clients, existingOrders, clientSearch, form.client_name]);
 
   const selectClient = (client) => {
-    setForm(f => ({
-      ...f,
-      ...hydrateOrderClientDefaults(client),
-      total_amount: '',
-    }));
+    setForm((f) => {
+      const hydrated =
+        hydrateOrderClientDefaults(client);
+
+      if (!quickSolutionWorkspace) {
+        return {
+          ...f,
+          ...hydrated,
+          total_amount: '',
+        };
+      }
+
+      const cafeFulfillment =
+        f.fulfillment_type === 'courier'
+          ? 'courier'
+          : 'collection';
+
+      return {
+        ...f,
+        ...hydrated,
+        fulfillment_type: cafeFulfillment,
+        apply_shipping_fee:
+          cafeFulfillment === 'courier'
+            ? Boolean(f.apply_shipping_fee)
+            : false,
+        shipping_fee:
+          cafeFulfillment === 'courier'
+            ? f.shipping_fee
+            : '',
+        total_amount: '',
+      };
+    });
+
     setUpdateClientDefaults(false);
     setClientSearch(client.name);
     setShowClientDropdown(false);
@@ -219,12 +335,22 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
-    queryFn: () => dataClient.entities.CatalogItem.list("name", 500),
+    queryFn: () =>
+      dataClient.entities.CatalogItem.list(
+        "name",
+        500
+      ),
+    enabled: !quickSolutionWorkspace,
     staleTime: 300_000,
   });
   const { data: inventoryItems = [] } = useQuery({
     queryKey: ["inventory"],
-    queryFn: () => dataClient.entities.InventoryItem.list("name", 200),
+    queryFn: () =>
+      dataClient.entities.InventoryItem.list(
+        "name",
+        200
+      ),
+    enabled: !quickSolutionWorkspace,
     staleTime: 300_000,
   });
 
@@ -292,7 +418,16 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       : allPickerItems.slice(0, 8);
   const selectedProductItem = (product) => allPickerItems.find((item) => item.id && item.id === (product.catalog_item_id || product.inventory_item_id));
 
-  const addProduct = () => setForm(f => ({ ...f, products: [...f.products, { name: '', quantity: 1, price: '', size: '', color: '', notes: '', catalog_item_id: '', inventory_item_id: '', image_url: '', category: '', source: '', selected_print_options: [], selected_addons: [] }] }));
+  const addProduct = () =>
+    setForm((f) => ({
+      ...f,
+      products: [
+        ...f.products,
+        createEmptyProductLine(
+          quickSolutionWorkspace
+        ),
+      ],
+    }));
   const removeProduct = (i) => setForm(f => ({ ...f, products: f.products.filter((_, idx) => idx !== i) }));
   const updateProduct = (i, field, val) => setForm(f => ({
     ...f,
@@ -328,10 +463,45 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
       toast.error("Client name is required");
       return;
     }
+
+    if (quickSolutionWorkspace) {
+      const serviceLines = form.products.filter(
+        (product) =>
+          product?.quick_solution?.product_key
+      );
+
+      if (!serviceLines.length) {
+        toast.error(
+          "Choose at least one Quick Solution service."
+        );
+        return;
+      }
+
+      const unpriced = serviceLines.find(
+        (product) =>
+          !product?.quick_solution?.pricing_snapshot ||
+          Object.keys(
+            product.quick_solution.pricing_snapshot
+          ).length === 0 ||
+          !Number.isFinite(Number(product.price))
+      );
+
+      if (unpriced) {
+        toast.error(
+          "Wait for Quick Solution pricing to finish before creating the order."
+        );
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
     try {
-      const total = form.total_amount ? parseFloat(form.total_amount) : calcTotal();
+      const total = quickSolutionWorkspace
+        ? orderTotalSuggestion
+        : form.total_amount
+          ? parseFloat(form.total_amount)
+          : calcTotal();
       let clientId = form.client_id;
       let clientUpdateError = null;
 
@@ -380,11 +550,34 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
         }
       }
 
+      const quickSolutionFulfillment =
+        quickSolutionWorkspace
+          ? form.fulfillment_type === 'courier'
+            ? 'courier'
+            : 'collection'
+          : form.fulfillment_type;
+
       const orderData = {
         ...form,
         client_id: clientId || undefined,
         total_amount: total,
-        source: 'opps',
+        source: quickSolutionWorkspace ? 'quick_solution' : 'opps',
+        fulfillment_type:
+          quickSolutionFulfillment,
+        apply_shipping_fee:
+          quickSolutionWorkspace
+            ? quickSolutionFulfillment === 'courier' &&
+              Boolean(form.apply_shipping_fee)
+            : form.apply_shipping_fee,
+        shipping_fee:
+          quickSolutionWorkspace &&
+          quickSolutionFulfillment !== 'courier'
+            ? null
+            : form.shipping_fee,
+        payment_status:
+          quickSolutionWorkspace
+            ? 'pending'
+            : form.payment_status,
         products: form.products.filter(p => p.name.trim()),
         file_urls: Array.isArray(form.file_urls) ? form.file_urls.filter(Boolean) : [],
         portal_visible_file_urls: Array.isArray(form.portal_visible_file_urls) ? form.portal_visible_file_urls.filter(Boolean) : [],
@@ -430,7 +623,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
           <div className="relative">
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
               Client *
-              {form.client_id && <span className="ml-2 text-primary font-medium">✓ linked</span>}
+              {form.client_id && <span className="ml-2 text-primary font-medium">âœ“ linked</span>}
             </label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
@@ -489,7 +682,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             )}
             {!form.client_id && form.client_name.trim() && (
               <p className="text-xs text-muted-foreground mt-1">
-                New client — will be created automatically on save
+                New client â€” will be created automatically on save
               </p>
             )}
           </div>
@@ -572,7 +765,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                   <div className="rounded-xl border border-border bg-background p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Saved delivery defaults</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {[selectedClient?.preferred_courier, selectedClient?.pep_code, selectedClient?.delivery_note].filter(Boolean).join(" · ")}
+                      {[selectedClient?.preferred_courier, selectedClient?.pep_code, selectedClient?.delivery_note].filter(Boolean).join(" Â· ")}
                     </p>
                   </div>
                 )}
@@ -630,7 +823,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-semibold text-foreground">{order.order_number}</p>
                             <p className="truncate text-[11px] text-muted-foreground">
-                              {Array.isArray(order.products) && order.products.length ? `${order.products.length} item${order.products.length === 1 ? "" : "s"} · ${productSummary(order.products) || order.status || "Order"}` : order.status || "Order"}
+                              {Array.isArray(order.products) && order.products.length ? `${order.products.length} item${order.products.length === 1 ? "" : "s"} Â· ${productSummary(order.products) || order.status || "Order"}` : order.status || "Order"}
                             </p>
                           </div>
                           <span className="text-[11px] font-semibold text-primary">Reuse</span>
@@ -733,6 +926,45 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </div>
           </div>
 
+          {quickSolutionWorkspace ? (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Fulfilment
+              </label>
+
+              <Select
+                value={
+                  form.fulfillment_type ||
+                  "collection"
+                }
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    fulfillment_type: value,
+                    apply_shipping_fee:
+                      value === "courier"
+                        ? form.apply_shipping_fee
+                        : false,
+                  })
+                }
+              >
+                <SelectTrigger className="rounded-xl h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+
+                <SelectContent>
+                  <SelectItem value="collection">
+                    Collection
+                  </SelectItem>
+
+                  <SelectItem value="courier">
+                    Courier
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <>
           {/* Print Type */}
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Print Type</label>
@@ -746,6 +978,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             </Select>
           </div>
 
+            </>
+          )}
+
           {/* Link PO */}
           {activePOs.length > 0 && (
             <div>
@@ -758,13 +993,85 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                 <SelectContent>
                   <SelectItem value="__none">No PO linked</SelectItem>
                   {activePOs.map(po => (
-                    <SelectItem key={po.id} value={po.id}>{po.po_number} — {po.status}</SelectItem>
+                    <SelectItem key={po.id} value={po.id}>{po.po_number} â€” {po.status}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
 
+          {quickSolutionWorkspace ? (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Quick Solution services
+                  </label>
+
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Pricing and production workflow come from the Caf? service catalogue.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addProduct}
+                  className="text-xs text-primary font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add
+                </button>
+              </div>
+
+              {quickSolutionCatalogLoading ? (
+                <div className="rounded-xl border border-border bg-secondary/20 p-3 text-xs text-muted-foreground">
+                  Loading Quick Solution services?
+                </div>
+              ) : quickSolutionCatalogError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                  Could not load the Quick Solution service catalogue.
+                  <span className="mt-1 block">
+                    {quickSolutionCatalogError?.message ||
+                      "Unknown error"}
+                  </span>
+                </div>
+              ) : !quickSolutionCatalog.length ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  No published Quick Solution services are available.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {form.products.map(
+                    (product, index) => (
+                      <QuickSolutionOrderLine
+                        key={index}
+                        tenantId={
+                          quickSolutionTenantId
+                        }
+                        catalog={
+                          quickSolutionCatalog
+                        }
+                        line={product}
+                        allowRemove={
+                          form.products.length > 1
+                        }
+                        onRemove={() =>
+                          removeProduct(index)
+                        }
+                        onPatch={(patch) =>
+                          updateProductFields(
+                            index,
+                            patch
+                          )
+                        }
+                      />
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
           {/* Products */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -797,7 +1104,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                         }}
                         onFocus={() => setPickerOpenIdx(i)}
                         onBlur={() => setTimeout(() => setPickerOpenIdx(null), 150)}
-                        placeholder="Search inventory or type name…"
+                        placeholder="Search inventory or type nameâ€¦"
                         className="rounded-xl h-9 text-sm w-full"
                       />
                       {pickerOpenIdx === i && (
@@ -905,7 +1212,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                               selected ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary/40 text-muted-foreground"
                             }`}
                           >
-                            {optionLabel(option)}{option.price ? ` · R${Number(option.price).toLocaleString()}` : ""}
+                            {optionLabel(option)}{option.price ? ` Â· R${Number(option.price).toLocaleString()}` : ""}
                           </button>
                         );
                       })}
@@ -924,7 +1231,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                               selected ? "border-amber-500 bg-amber-500 text-white" : "border-border bg-secondary/40 text-muted-foreground"
                             }`}
                           >
-                            {optionLabel(option)}{option.price ? ` · R${Number(option.price).toLocaleString()}` : ""}
+                            {optionLabel(option)}{option.price ? ` Â· R${Number(option.price).toLocaleString()}` : ""}
                           </button>
                         );
                       })}
@@ -934,6 +1241,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
               ))}
             </div>
           </div>
+
+            </>
+          )}
 
           {/* Shipping */}
           <div className="rounded-xl border border-border p-3">
@@ -960,8 +1270,23 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
               Total Amount{orderTotalSuggestion > 0 && <span className="text-primary ml-1">(auto: R{orderTotalSuggestion.toLocaleString()})</span>}
             </label>
-            <Input value={form.total_amount} onChange={e => setForm({ ...form, total_amount: e.target.value })}
-              placeholder={`R${orderTotalSuggestion || '0'}`} type="number" className="rounded-xl" />
+            <Input
+              value={
+                quickSolutionWorkspace
+                  ? orderTotalSuggestion || ""
+                  : form.total_amount
+              }
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  total_amount: e.target.value,
+                })
+              }
+              readOnly={quickSolutionWorkspace}
+              placeholder={`R${orderTotalSuggestion || '0'}`}
+              type="number"
+              className="rounded-xl"
+            />
           </div>
 
           {/* Notes */}
