@@ -34,6 +34,21 @@ function positiveMoneyOrNull(value) {
   return parsed > 0 ? parsed : null;
 }
 
+// The order's actual shipping charge. apply_shipping_fee is the toggle,
+// shipping_fee the amount (orders.shipping_charge/delivery_fee/delivery_cost/
+// courier_fee do not exist as columns — checking them always falls through).
+// Mirrors buildShippingDiff's orderAmount formula below exactly, so invoice
+// creation and order<->invoice sync never disagree about what an order
+// "really" charges for shipping. 0/false/null all correctly resolve to 0 —
+// never a fallback default; a manual invoice's own default (invoiceSettings.
+// js DEFAULT_INVOICE_DEFAULTS.shippingCharge) is a distinct, order-less
+// concept and is never consulted here.
+function orderShippingAmount(order = {}) {
+  return Boolean(order.apply_shipping_fee) && Number(order.shipping_fee) > 0
+    ? Number(order.shipping_fee)
+    : 0;
+}
+
 function uuidOrEmpty(value) {
   const text = String(value || "");
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text) ? text : "";
@@ -113,7 +128,7 @@ export function invoiceFromOrder(order = {}, totalPaid = 0, defaults = {}) {
     ? order.products
     : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }];
   const items = products.map(itemFromProduct);
-  const shippingCharge = numberOrZero(order.shipping_charge ?? order.delivery_fee ?? order.delivery_cost ?? order.courier_fee ?? defaults.shippingCharge);
+  const shippingCharge = orderShippingAmount(order);
   const amountPaid = resolveOrderAmountPaid(order, totalPaid);
   const invoiceDate = new Date().toISOString().slice(0, 10);
 
