@@ -13,8 +13,9 @@ import {
   listQuotes, getQuote, listQuoteRevisions, listQuoteEvents, getQuoteDocument,
   saveQuoteWithItems, quoteDraftFromClientRequest, markQuoteSent,
   issueQuoteShare, rotateQuoteShareToken, revokeQuoteShare,
-  convertQuoteToOrder,
+  convertQuoteToOrder, convertQuoteToInvoice,
 } from "@/api/quotes";
+import { getInvoice } from "@/api/invoices";
 import { listClientRequests } from "@/api/clientRequests";
 import QuoteList from "@/features/quotes/QuoteList";
 import QuoteEditor from "@/features/quotes/QuoteEditor";
@@ -102,6 +103,15 @@ export default function Quotes() {
     enabled: canAccess && requestPickerOpen,
   });
 
+  // Only fetched in the one state that needs it: a direct quote invoice
+  // exists and no order yet — drives the "Paid — ready to create order"
+  // banner. Never fetched once an order exists (nothing to show).
+  const linkedInvoiceStatusQuery = useQuery({
+    queryKey: ["quoteLinkedInvoiceStatus", detailQuery.data?.converted_invoice_id],
+    queryFn: () => getInvoice(detailQuery.data.converted_invoice_id),
+    enabled: canAccess && Boolean(detailQuery.data?.converted_invoice_id) && !detailQuery.data?.converted_order_id,
+  });
+
   const saveMutation = useMutation({
     mutationFn: (input) => saveQuoteWithItems(input),
     onSuccess: (saved) => {
@@ -175,6 +185,37 @@ export default function Quotes() {
     },
     onError: (error) => toast.error(error?.message || "Could not convert this quote into an order"),
   });
+
+  const convertToInvoiceMutation = useMutation({
+    mutationFn: (/** @type {{ id: string }} */ quote) => convertQuoteToInvoice(quote.id),
+    onSuccess: (result, /** @type {{ id: string }} */ quote) => {
+      toast.success(
+        result?.replayed
+          ? `This quote already has an invoice — ${result.invoice_number}`
+          : `Invoice ${result.invoice_number} created from ${result.quote_number}`,
+      );
+      invalidateQuote(quote.id);
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    onError: (error) => toast.error(error?.message || "Could not create an invoice from this quote"),
+  });
+
+  // "Create Invoice" on the quote drawer means two different things
+  // depending on whether an order already exists: with no order, it's the
+  // new direct Quote -> Invoice RPC; with an order, that invoice belongs
+  // to the EXISTING, already-working Order -> Invoice flow (which derives
+  // shipping etc. from the order, not the quote) — so this just opens the
+  // order rather than duplicating that logic here. The RPC itself also
+  // refuses (QUOTE_ORDER_ALREADY_EXISTS) if this is ever reached with a
+  // stale order state, as a second, independent guard.
+  const handleCreateInvoiceFromQuote = (quote) => {
+    if (quote?.converted_order_id) {
+      toast.info("This quote already has an order — opening it to create the invoice from there.");
+      navigate(`/Orders?open=${quote.converted_order_id}`);
+      return;
+    }
+    convertToInvoiceMutation.mutate(quote);
+  };
 
   if (userQuery.isLoading) {
     return <div className="min-h-screen bg-background p-8 text-sm text-muted-foreground">Checking quote access...</div>;
@@ -257,6 +298,8 @@ export default function Quotes() {
         isRotatingShare={rotateShareMutation.isPending}
         isRevokingShare={revokeShareMutation.isPending}
         isConvertingToOrder={convertToOrderMutation.isPending}
+        isConvertingToInvoice={convertToInvoiceMutation.isPending}
+        linkedInvoiceStatus={linkedInvoiceStatusQuery.data ? { status: linkedInvoiceStatusQuery.data.status, amount_paid: linkedInvoiceStatusQuery.data.amount_paid } : null}
         loadError={detailQuery.error}
         onOpenChange={(open) => {
           if (open) return;
@@ -275,6 +318,8 @@ export default function Quotes() {
         onRevokeShare={(quote) => revokeShareMutation.mutate(quote)}
         onConvertToOrder={(quote) => convertToOrderMutation.mutate(quote)}
         onViewOrder={(orderId) => navigate(`/Orders?open=${orderId}`)}
+        onConvertToInvoice={handleCreateInvoiceFromQuote}
+        onViewInvoice={(invoiceId) => navigate(`/Invoices?invoice=${invoiceId}`)}
       />
 
       <Dialog open={requestPickerOpen} onOpenChange={setRequestPickerOpen}>

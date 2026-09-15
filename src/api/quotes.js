@@ -41,6 +41,7 @@ const QUOTE_LIST_COLUMNS = [
   "accepted_revision_id",
   "source_request_id",
   "converted_order_id",
+  "converted_invoice_id",
   // Q3 public-share state — QuoteShareControls / canShareQuote /
   // hasActiveQuoteShare read these off the quote row to decide whether to
   // show the "Public link" panel and which controls it carries. Kept in
@@ -529,6 +530,45 @@ export async function convertQuoteToOrder(quoteId) {
   if (error) throw quoteOrderConversionError(error);
   if (!data?.ok || !data?.order_id) {
     throw Object.assign(new Error("Converting this quote returned an incomplete result."), { code: "QUOTE_ORDER_CONVERSION_RESULT_INVALID" });
+  }
+  return data;
+}
+
+// ── quote -> invoice direct conversion (Phase 1, second path) ───────────
+// The second Quote -> Order/Invoice path: send the invoice first, without
+// requiring an order yet. See
+// supabase/migrations/20260917090000_quote_direct_invoice_conversion.sql.
+export const QUOTE_INVOICE_CONVERSION_ERROR_MESSAGES = {
+  QUOTE_INVOICE_FINANCE_PERMISSION_REQUIRED: "You do not have permission to create invoices from quotes.",
+  QUOTE_NOT_FOUND: "This quote could not be found.",
+  QUOTE_TENANT_ACCESS_DENIED: "You do not have access to this quote's workspace.",
+  QUOTE_ORDER_ALREADY_EXISTS: "This quote already has an order — create the invoice from that order instead.",
+  QUOTE_NOT_CONVERTIBLE: "Only an accepted quote can be invoiced directly.",
+  QUOTE_NO_ACCEPTED_SNAPSHOT: "This quote has no accepted snapshot to invoice from.",
+  QUOTE_ACCEPTED_SNAPSHOT_MISSING: "The accepted quote snapshot could not be found.",
+  QUOTE_SNAPSHOT_EMPTY_ITEMS: "The accepted quote has no line items to invoice.",
+};
+
+function quoteInvoiceConversionError(error) {
+  const raw = String(error?.message || "");
+  const code = Object.keys(QUOTE_INVOICE_CONVERSION_ERROR_MESSAGES).find((candidate) => raw.includes(candidate));
+  return Object.assign(
+    new Error(code ? QUOTE_INVOICE_CONVERSION_ERROR_MESSAGES[code] : raw || "Could not create an invoice from this quote."),
+    { code: code || error?.code || "QUOTE_INVOICE_CONVERSION_FAILED", cause: error },
+  );
+}
+
+// Create an invoice directly from an accepted quote (no order required).
+// Idempotent — calling this again on a quote that already has a direct
+// invoice returns the SAME invoice (data.replayed === true). Refuses
+// (QUOTE_ORDER_ALREADY_EXISTS) if the quote already has an order — that
+// invoice belongs to the existing Order -> Invoice path instead.
+export async function convertQuoteToInvoice(quoteId) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("convert_quote_to_invoice", { p_quote_id: quoteId });
+  if (error) throw quoteInvoiceConversionError(error);
+  if (!data?.ok || !data?.invoice_id) {
+    throw Object.assign(new Error("Creating this invoice returned an incomplete result."), { code: "QUOTE_INVOICE_CONVERSION_RESULT_INVALID" });
   }
   return data;
 }
