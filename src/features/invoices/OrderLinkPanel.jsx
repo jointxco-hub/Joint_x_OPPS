@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRightLeft, Link2, Unlink } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, ExternalLink, Link2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { dataClient } from "@/api/dataClient";
+import { getQuote } from "@/api/quotes";
 import { buildOrderInvoiceSyncPlan } from "./orderToInvoiceItems";
 import SyncDiffSummary from "./SyncDiffSummary";
 import InvoiceOrderSyncAction, { canSyncInvoiceToOrder } from "./InvoiceOrderSyncAction";
@@ -28,7 +29,10 @@ const UIDialogTitle = /** @type {any} */ (DialogTitle);
 const UIDialogDescription = /** @type {any} */ (DialogDescription);
 const UIDialogFooter = /** @type {any} */ (DialogFooter);
 
-export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onSync, onSyncFromInvoice, isPending }) {
+export default function OrderLinkPanel({
+  invoice, isDraft, onLink, onUnlink, onSync, onSyncFromInvoice, isPending,
+  onCreateOrderFromQuote, isCreatingOrderFromQuote,
+}) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [confirmAction, setConfirmAction] = useState(null); // { mode: 'link'|'sync', order, diff }
@@ -37,6 +41,16 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
     queryKey: ["invoiceLinkedOrder", invoice?.source_order_id],
     queryFn: () => orderEntity.filter({ id: invoice.source_order_id }, "-created_date", 1).then((rows) => rows?.[0] || null),
     enabled: Boolean(invoice?.source_order_id),
+  });
+
+  // Direct Quote -> Invoice provenance (Phase 1, second path) — only
+  // relevant when this invoice has NO order yet (invoice.source_order_id
+  // null); once an order exists it's surfaced via linkedOrderQuery above
+  // instead, following the order's own source_quote_id.
+  const sourceQuoteQuery = useQuery({
+    queryKey: ["invoiceSourceQuote", invoice?.source_quote_id],
+    queryFn: () => getQuote(invoice.source_quote_id, { includeItems: false }),
+    enabled: Boolean(invoice?.source_quote_id) && !invoice?.source_order_id,
   });
 
   const candidateOrdersQuery = useQuery({
@@ -99,8 +113,39 @@ export default function OrderLinkPanel({ invoice, isDraft, onLink, onUnlink, onS
           <p className="mt-1 text-sm font-semibold text-foreground">
             {invoice.source_order_id ? (linkedOrderQuery.data?.order_number || invoice.source_order_id) : "Not linked to an order"}
           </p>
+          {linkedOrderQuery.data?.source_quote_id ? (
+            <button
+              type="button"
+              onClick={() => { window.location.href = `/Quotes?open=${encodeURIComponent(linkedOrderQuery.data.source_quote_id)}`; }}
+              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Source: Quote {linkedOrderQuery.data?.source_metadata?.quote_number || linkedOrderQuery.data.source_quote_id}
+            </button>
+          ) : null}
+          {!invoice.source_order_id && invoice.source_quote_id ? (
+            <button
+              type="button"
+              onClick={() => { window.location.href = `/Quotes?open=${encodeURIComponent(invoice.source_quote_id)}`; }}
+              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Source: Quote {sourceQuoteQuery.data?.quote_number || invoice.source_quote_id}
+            </button>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
+          {!invoice.source_order_id && invoice.source_quote_id ? (
+            <UIButton
+              type="button"
+              size="sm"
+              onClick={() => onCreateOrderFromQuote?.(invoice.source_quote_id)}
+              disabled={isCreatingOrderFromQuote}
+              className="h-8 rounded-xl text-xs"
+            >
+              <ArrowRight className="h-3.5 w-3.5" /> {isCreatingOrderFromQuote ? "Creating order..." : "Create Order"}
+            </UIButton>
+          ) : null}
           {!invoice.source_order_id && isDraft && (
             <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
               <Link2 className="h-3.5 w-3.5" /> Link to order

@@ -26,12 +26,16 @@ test("0 · 20260913110000 is unmodified from its previously-applied contents —
   assert.doesNotMatch(body, /payfast_amount_fee|payfast_amount_net/, "the sanitized allowlist does not exist in this migration");
 });
 
-test("0b · the metadata-sanitization migration is dated strictly after every other migration in the repo, and after 20260913110000 in particular", async () => {
+test("0b · the metadata-sanitization migration is dated strictly after 20260913110000, with no filename collision anywhere in the repo", async () => {
   const fs = await import("node:fs/promises");
   const dir = new URL("../supabase/migrations/", import.meta.url);
   const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
-  assert.equal(files[files.length - 1], "20260915120000_invoice_payfast_metadata_sanitization.sql", "it is the newest migration by filename/timestamp ordering — no collision, no out-of-order insertion");
+  assert.equal(new Set(files).size, files.length, "no two migrations share a filename/timestamp");
   assert.ok("20260915120000_invoice_payfast_metadata_sanitization.sql" > "20260913110000_invoice_payfast_payment.sql");
+  // it need not be the newest file overall — later, unrelated migrations
+  // (e.g. quote -> order conversion) are free to follow it — only that it
+  // is not out-of-order relative to the base PayFast migration it patches.
+  assert.ok(files.includes("20260915120000_invoice_payfast_metadata_sanitization.sql"));
 });
 
 test("0c · the forward migration is additive/narrow — CREATE OR REPLACE only, no new table/index/grant, and preflights that the base function already exists", async () => {

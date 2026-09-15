@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, MoreHorizontal, Pencil, RefreshCw, Send, TriangleAlert } from "lucide-react";
+import { ArrowRight, Eye, MoreHorizontal, Pencil, RefreshCw, Send, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
@@ -14,6 +14,14 @@ import QuoteShareControls from "./QuoteShareControls";
 import {
   isQuoteEditable, HAS_QUOTE_SEND_TRANSITION, canSendQuote, hasUnsentChanges, isPublished,
 } from "./quoteStatus";
+
+// Button (src/components/ui/button.jsx) is a plain forwardRef with no prop
+// typing, so tsc only sees RefAttributes<any> on it — every consumer
+// passing className/variant/onClick/etc already errors under checkJs (see
+// every other <Button> in this file). Same narrow local-cast convention
+// already used in OrderLinkPanel.jsx, applied only to the new Quote->Order
+// buttons below rather than touching the shared component.
+const UIButton = /** @type {any} */ (Button);
 
 function money(value) {
   return `R${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -41,6 +49,16 @@ const EVENT_LABELS = {
   share_rotated: "Public link rotated",
 };
 
+// 'converted' is now logged by both conversion paths (Quote -> Order and
+// the direct Quote -> Invoice path) — the event_type itself is unchanged
+// (no new value), so the label is disambiguated from metadata.conversion_type.
+function eventLabel(ev) {
+  if (ev.event_type === "converted" && ev?.metadata?.conversion_type === "direct_invoice") {
+    return "Converted to invoice";
+  }
+  return EVENT_LABELS[ev.event_type] || ev.event_type;
+}
+
 // Same interaction language as InvoiceDetailDrawer: bottom Drawer,
 // max-w-4xl, header with number + customer + status badge, scrollable
 // body, a nested Dialog for the document preview. NO invoice-only actions
@@ -60,6 +78,9 @@ export default function QuoteDetailDrawer({
   isIssuingShare = false,
   isRotatingShare = false,
   isRevokingShare = false,
+  isConvertingToOrder = false,
+  isConvertingToInvoice = false,
+  linkedInvoiceStatus = null, // { status, amount_paid } — fetched by the parent only when converted_invoice_id is set and no order exists yet
   loadError = null,
   onOpenChange,
   onEdit,
@@ -68,6 +89,10 @@ export default function QuoteDetailDrawer({
   onIssueShare,
   onRotateShare,
   onRevokeShare,
+  onConvertToOrder,
+  onViewOrder,
+  onConvertToInvoice,
+  onViewInvoice,
 }) {
   const header = quote || summaryQuote || {};
   const status = header.status || "draft";
@@ -99,6 +124,24 @@ export default function QuoteDetailDrawer({
     HAS_QUOTE_SEND_TRANSITION && canSendQuote(quote || header) &&
     (["draft", "changes_requested"].includes(status) || unsent);
   const sendLabel = published ? "Resend updated quote" : "Send quote";
+
+  // Quote -> Order / Quote -> Invoice (Phase 1, both paths independent).
+  // "Create Order" only on an accepted quote with no order yet; once
+  // converted_order_id is set, always "View Order". Same shape for
+  // "Create Invoice" / "View Invoice" against converted_invoice_id — the
+  // two are independent, so all four combinations (nothing / order only /
+  // invoice only / both) are possible. When an order already exists,
+  // clicking "Create Invoice" is dispatched by the parent to the existing
+  // Order -> Invoice mechanism instead of the direct quote RPC (the RPC
+  // itself refuses that case server-side too) — this component only
+  // decides whether the button shows, never which mechanism runs.
+  const convertedOrderId = header.converted_order_id;
+  const convertedInvoiceId = header.converted_invoice_id;
+  const canCreateOrder = status === "accepted" && !convertedOrderId;
+  const canCreateInvoice = status === "accepted" && !convertedInvoiceId;
+  const showOrderAction = canCreateOrder || Boolean(convertedOrderId);
+  const showInvoiceAction = canCreateInvoice || Boolean(convertedInvoiceId);
+  const invoicePaidNoOrder = Boolean(convertedInvoiceId) && !convertedOrderId && linkedInvoiceStatus?.status === "paid";
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -146,6 +189,49 @@ export default function QuoteDetailDrawer({
                   <Send className="h-4 w-4" /> {isSending ? "Sending..." : sendLabel}
                 </Button>
               ) : null}
+              {showOrderAction ? (
+                convertedOrderId ? (
+                  <UIButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onViewOrder?.(convertedOrderId)}
+                    className="h-11 rounded-xl sm:h-9"
+                  >
+                    <ArrowRight className="h-4 w-4" /> View Order
+                  </UIButton>
+                ) : (
+                  <UIButton
+                    size="sm"
+                    variant={invoicePaidNoOrder ? "default" : undefined}
+                    onClick={() => onConvertToOrder?.(quote)}
+                    disabled={!quote || isConvertingToOrder}
+                    className="h-11 rounded-xl sm:h-9"
+                  >
+                    <ArrowRight className="h-4 w-4" /> {isConvertingToOrder ? "Creating order..." : "Create Order"}
+                  </UIButton>
+                )
+              ) : null}
+              {showInvoiceAction ? (
+                convertedInvoiceId ? (
+                  <UIButton
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onViewInvoice?.(convertedInvoiceId)}
+                    className="h-11 rounded-xl sm:h-9"
+                  >
+                    <ArrowRight className="h-4 w-4" /> View Invoice
+                  </UIButton>
+                ) : (
+                  <UIButton
+                    size="sm"
+                    onClick={() => onConvertToInvoice?.(quote)}
+                    disabled={!quote || isConvertingToInvoice}
+                    className="h-11 rounded-xl sm:h-9"
+                  >
+                    <ArrowRight className="h-4 w-4" /> {isConvertingToInvoice ? "Creating invoice..." : "Create Invoice"}
+                  </UIButton>
+                )
+              ) : null}
               <Button variant="ghost" size="sm" className="h-11 w-11 rounded-xl p-0 sm:h-9 sm:w-9" aria-label="More">
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
@@ -185,6 +271,32 @@ export default function QuoteDetailDrawer({
                 <Kv label="Valid until" value={dateText(quote.valid_until)} />
                 <Kv label="Payment terms" value={quote.payment_terms || "—"} />
               </Section>
+
+              {(convertedOrderId || convertedInvoiceId) ? (
+                <Section title="Order & invoice">
+                  {invoicePaidNoOrder ? (
+                    <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                      <span className="font-semibold">Paid — ready to create order</span>
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    {convertedOrderId ? (
+                      <UIButton variant="outline" size="sm" onClick={() => onViewOrder?.(convertedOrderId)} className="h-9 rounded-xl">
+                        <ArrowRight className="h-4 w-4" /> View Order
+                      </UIButton>
+                    ) : (
+                      <span className="text-muted-foreground">No order yet.</span>
+                    )}
+                    {convertedInvoiceId ? (
+                      <UIButton variant="outline" size="sm" onClick={() => onViewInvoice?.(convertedInvoiceId)} className="h-9 rounded-xl">
+                        <ArrowRight className="h-4 w-4" /> View Invoice
+                      </UIButton>
+                    ) : (
+                      <span className="text-muted-foreground">No invoice yet.</span>
+                    )}
+                  </div>
+                </Section>
+              ) : null}
 
               {/* line items (working head) */}
               <Section title={`Line items — working rev #${quote.current_revision_number ?? "?"} (${(quote.items || []).length})`}>
@@ -267,7 +379,7 @@ export default function QuoteDetailDrawer({
                         <li key={ev.id} className="text-sm">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-foreground">
-                              {EVENT_LABELS[ev.event_type] || ev.event_type}
+                              {eventLabel(ev)}
                               {ev.event_type === "sent" && ev?.metadata?.resend ? " (resend)" : ""}
                               {ev.actor_label ? ` — ${ev.actor_label}` : ""}
                             </span>

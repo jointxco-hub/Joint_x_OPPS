@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FileText, Plus, Shield } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -34,6 +34,7 @@ import {
   unlinkInvoiceFromOrder,
   updateInvoice,
 } from "@/api/invoices";
+import { convertQuoteToOrder } from "@/api/quotes";
 import { canAccessInvoices, canReopenInvoices } from "@/lib/financeAccess";
 import InvoiceList from "@/features/invoices/InvoiceList";
 import InvoiceCreateFlow from "@/features/invoices/InvoiceCreateFlow";
@@ -57,6 +58,7 @@ function emptyFilters() {
 
 export default function Invoices() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState("list");
   const [filters, setFilters] = useState(emptyFilters);
@@ -365,6 +367,26 @@ export default function Invoices() {
     }
   };
 
+  // Invoice -> Order (Phase 1, second path): a direct quote invoice with no
+  // order yet exposes "Create Order" on its OrderLinkPanel. Reuses the
+  // SAME convert_quote_to_order() RPC the quote drawer's own "Create
+  // Order" calls — idempotent, so this is safe even if an order was
+  // created from the quote in another tab in the meantime.
+  const createOrderFromQuoteMutation = useMutation({
+    mutationFn: (quoteId) => convertQuoteToOrder(quoteId),
+    onSuccess: (result) => {
+      toast.success(
+        result?.replayed
+          ? `This quote already has an order — ${result.order_number}`
+          : `Order ${result.order_number} created`,
+      );
+      queryClient.invalidateQueries({ queryKey: ["invoices"] });
+      if (selectedInvoice?.id) queryClient.invalidateQueries({ queryKey: ["invoice", selectedInvoice.id] });
+      navigate(`/Orders?open=${result.order_id}`);
+    },
+    onError: (error) => toast.error(error?.message || "Could not create an order from this quote"),
+  });
+
   /**
    * @typedef {{
    *   invoice: any,
@@ -560,6 +582,8 @@ export default function Invoices() {
         onUnlinkOrder={(invoice) => unlinkOrderMutation.mutate(invoice)}
         onSyncFromOrder={(invoice, order) => syncOrderMutation.mutate({ invoice, order })}
         onSyncFromInvoice={(order, invoice, options) => syncOrderFromInvoiceMutation.mutate({ order, invoice, options })}
+        onCreateOrderFromQuote={(quoteId) => createOrderFromQuoteMutation.mutate(quoteId)}
+        isCreatingOrderFromQuote={createOrderFromQuoteMutation.isPending}
         isOrderLinkPending={linkOrderMutation.isPending || unlinkOrderMutation.isPending || syncOrderMutation.isPending || syncOrderFromInvoiceMutation.isPending}
       />
     </div>

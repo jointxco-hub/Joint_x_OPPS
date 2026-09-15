@@ -199,9 +199,14 @@ test("an active share => panel shows 'Live' + Copy / Rotate / Revoke", async () 
 
 test("the fix is quote-only — no invoice file / migration / public projection touched", async () => {
   const s = await src(API);
-  // the change is confined to the quote list projection + a comment
-  assert.ok(!/opps_invoices|invoice_[a-z]/i.test(s.match(/const QUOTE_LIST_COLUMNS[\s\S]*?\]\.join\(","\);/)[0]),
-    "no invoice column crept into the quote projection");
+  // the change is confined to the quote list projection + a comment.
+  // converted_invoice_id (Phase 1, Quote -> Invoice direct path) is a
+  // legitimate FK column ON opps_quotes itself — same class of addition
+  // as converted_order_id — not an invoice-table leak, so it's excluded
+  // from this guard the same way "order_" is never flagged.
+  const projection = s.match(/const QUOTE_LIST_COLUMNS[\s\S]*?\]\.join\(","\);/)[0].replace(/"converted_invoice_id",?/, "");
+  assert.ok(!/opps_invoices|invoice_[a-z]/i.test(projection),
+    "no invoice-table column crept into the quote projection");
   const mig = await src("supabase/migrations/20260906120000_quotes_q3_public_route.sql");
   assert.ok(mig.includes("_public_quote_projection") && !/share_token'|customer_email'/.test(
     mig.match(/create or replace function public\._public_quote_projection[\s\S]*?\$\$;/)[0]),
