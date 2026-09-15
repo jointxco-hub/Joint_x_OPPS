@@ -537,7 +537,7 @@ export async function convertQuoteToOrder(quoteId) {
 // ── quote -> invoice direct conversion (Phase 1, second path) ───────────
 // The second Quote -> Order/Invoice path: send the invoice first, without
 // requiring an order yet. See
-// supabase/migrations/20260917090000_quote_direct_invoice_conversion.sql.
+// supabase/migrations/20260918100000_quote_direct_invoice_conversion.sql.
 export const QUOTE_INVOICE_CONVERSION_ERROR_MESSAGES = {
   QUOTE_INVOICE_FINANCE_PERMISSION_REQUIRED: "You do not have permission to create invoices from quotes.",
   QUOTE_NOT_FOUND: "This quote could not be found.",

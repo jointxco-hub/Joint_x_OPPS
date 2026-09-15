@@ -6,7 +6,7 @@ async function src(rel) {
   return (await readFile(new URL(`../${rel}`, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 }
 
-const MIGRATION = "supabase/migrations/20260917090000_quote_direct_invoice_conversion.sql";
+const MIGRATION = "supabase/migrations/20260918100000_quote_direct_invoice_conversion.sql";
 
 // Quote -> Invoice direct conversion — the second Phase 1 path (product
 // requirement change: support Quote -> Order -> Invoice AND

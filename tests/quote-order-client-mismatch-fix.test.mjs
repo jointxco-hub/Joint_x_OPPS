@@ -6,8 +6,8 @@ async function src(rel) {
   return (await readFile(new URL(`../${rel}`, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 }
 
-const MIGRATION = "supabase/migrations/20260918090000_quote_order_client_mismatch_fix.sql";
-const PRIOR_MIGRATION = "supabase/migrations/20260917090000_quote_direct_invoice_conversion.sql";
+const MIGRATION = "supabase/migrations/20260918110000_quote_order_client_mismatch_fix.sql";
+const PRIOR_MIGRATION = "supabase/migrations/20260918100000_quote_direct_invoice_conversion.sql";
 const CANONICAL_LINKER_MIGRATION = "supabase/migrations/202608180003_invoice_relational_link_and_reopen.sql";
 
 // Staging repro: an accepted quote with no linked client record
@@ -48,7 +48,7 @@ function extractFn(sql, name) {
 
 test("1 · forward-only follow-up to both prior migrations — neither is edited in place", async () => {
   const priorDirect = await src(PRIOR_MIGRATION);
-  assert.doesNotMatch(priorDirect, /skipped_client_mismatch|clientless-same-quote/i, "20260917090000 is untouched — the fix lives only in the new forward file");
+  assert.doesNotMatch(priorDirect, /skipped_client_mismatch|clientless-same-quote/i, "20260918100000 is untouched — the fix lives only in the new forward file");
   const canonical = await src(CANONICAL_LINKER_MIGRATION);
   assert.doesNotMatch(canonical, /source_quote_id/, "202608180003 is untouched — it predates source_quote_id entirely and is never edited in place");
   const sql = await src(MIGRATION);
@@ -95,7 +95,7 @@ test("5 · the linking attempt still runs AFTER the order is created, so any exc
   assert.ok(insertOrderIdx > -1 && performIdx > insertOrderIdx, "order creation precedes the linking attempt");
 });
 
-test("6 · convert_quote_to_order's executable statements are otherwise byte-identical to 20260917090000's version", async () => {
+test("6 · convert_quote_to_order's executable statements are otherwise byte-identical to 20260918100000's version", async () => {
   const prior = extractFn(await src(PRIOR_MIGRATION), "convert_quote_to_order");
   const fixed = extractFn(await src(MIGRATION), "convert_quote_to_order");
   const stripComments = (body) => body.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");

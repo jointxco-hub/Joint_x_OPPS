@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable pg16 proof for 20260917090000_quote_direct_invoice_conversion.sql:
+# Disposable pg16 proof for 20260918100000_quote_direct_invoice_conversion.sql:
 # convert_quote_to_invoice(p_quote_id) — the new Quote -> Invoice direct path
 # — plus convert_quote_to_order()'s new source_invoice_id propagation and
 # the "quote stays accepted after a direct invoice" design decision that
@@ -10,7 +10,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 MIG1="$ROOT/supabase/migrations/20260916090000_quote_order_invoice_conversion.sql"
-MIG2="$ROOT/supabase/migrations/20260917090000_quote_direct_invoice_conversion.sql"
+MIG2="$ROOT/supabase/migrations/20260918100000_quote_direct_invoice_conversion.sql"
 CID="quote-inv-conv-$$"
 cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -263,10 +263,10 @@ echo "prelude ok"
 
 if ! run < "$MIG1" >/tmp/qic1.out 2>&1; then echo "20260916090000 FAILED:"; cat /tmp/qic1.out; exit 1; fi
 echo "20260916090000 applied (base Quote->Order migration, unmodified prerequisite)"
-if ! run < "$MIG2" >/tmp/qic2.out 2>&1; then echo "20260917090000 FAILED:"; cat /tmp/qic2.out; exit 1; fi
-echo "20260917090000 applied"
-if ! run < "$MIG2" >/tmp/qic3.out 2>&1; then echo "20260917090000 SECOND APPLY FAILED:"; cat /tmp/qic3.out; exit 1; fi
-echo "20260917090000 idempotent"
+if ! run < "$MIG2" >/tmp/qic2.out 2>&1; then echo "20260918100000 FAILED:"; cat /tmp/qic2.out; exit 1; fi
+echo "20260918100000 applied"
+if ! run < "$MIG2" >/tmp/qic3.out 2>&1; then echo "20260918100000 SECOND APPLY FAILED:"; cat /tmp/qic3.out; exit 1; fi
+echo "20260918100000 idempotent"
 
 echo "=========================================="
 echo "SEQUENTIAL SCENARIOS"
@@ -488,4 +488,4 @@ end $$;
 SQL
 
 echo "-----------------------------------------"
-echo "RESULT: PASS (20260917090000 applies + idempotent; direct quote->invoice, idempotency, invoice<->order canonical cross-linking via the reused link_invoice_to_order_relational RPC, InvoicesTab-query discoverability, activity parity, the order-already-exists guard, unaccepted-quote rejection, exact shipping preservation both R0 and R20, paid-invoice duplicate protection, replay-does-not-relog, and the safe-conflict/never-reassign guarantee)"
+echo "RESULT: PASS (20260918100000 applies + idempotent; direct quote->invoice, idempotency, invoice<->order canonical cross-linking via the reused link_invoice_to_order_relational RPC, InvoicesTab-query discoverability, activity parity, the order-already-exists guard, unaccepted-quote rejection, exact shipping preservation both R0 and R20, paid-invoice duplicate protection, replay-does-not-relog, and the safe-conflict/never-reassign guarantee)"

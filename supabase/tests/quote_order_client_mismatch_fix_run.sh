@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable pg16 proof for 20260918090000_quote_order_client_mismatch_fix.sql:
+# Disposable pg16 proof for 20260918110000_quote_order_client_mismatch_fix.sql:
 # a quote with NO linked client record (customer_id null — a normal,
 # supported OPPS quoting state, not a fixture anomaly) must still be able
 # to complete Quote -> Invoice -> Order. Before this fix, CLIENT_MISMATCH
@@ -11,8 +11,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 MIG1="$ROOT/supabase/migrations/20260916090000_quote_order_invoice_conversion.sql"
-MIG2="$ROOT/supabase/migrations/20260917090000_quote_direct_invoice_conversion.sql"
-MIG3="$ROOT/supabase/migrations/20260918090000_quote_order_client_mismatch_fix.sql"
+MIG2="$ROOT/supabase/migrations/20260918100000_quote_direct_invoice_conversion.sql"
+MIG3="$ROOT/supabase/migrations/20260918110000_quote_order_client_mismatch_fix.sql"
 CID="quote-cm-fix-$$"
 cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -259,8 +259,8 @@ for m in "$MIG1" "$MIG2" "$MIG3"; do
   if ! run < "$m" >/tmp/cmf.out 2>&1; then echo "$name FAILED:"; cat /tmp/cmf.out; exit 1; fi
   echo "$name applied"
 done
-if ! run < "$MIG3" >/tmp/cmf2.out 2>&1; then echo "20260918090000 SECOND APPLY FAILED:"; cat /tmp/cmf2.out; exit 1; fi
-echo "20260918090000 idempotent"
+if ! run < "$MIG3" >/tmp/cmf2.out 2>&1; then echo "20260918110000 SECOND APPLY FAILED:"; cat /tmp/cmf2.out; exit 1; fi
+echo "20260918110000 idempotent"
 
 echo "=========================================="
 echo "SEQUENTIAL SCENARIOS"
@@ -297,7 +297,7 @@ begin
   then raise notice 'PASS 1 repro precondition confirmed: quote.customer_id and invoice.customer_id are both null (no linked client), exactly the staging fixture state';
   else raise notice 'FAIL 1 quote.customer_id=% invoice.customer_id=%', (select customer_id from public.opps_quotes where id = q), (select customer_id from public.opps_invoices where id = v_invoice_id); end if;
 
-  -- ── THE FIX: before 20260918090000 this raised CLIENT_MISMATCH and
+  -- ── THE FIX: before 20260918110000 this raised CLIENT_MISMATCH and
   --    rolled back the entire order creation. It must now succeed AND
   --    the pre-existing invoice must become a NORMAL linked invoice of
   --    the new order (source_order_id set), not merely skipped. ───────
@@ -504,4 +504,4 @@ end $$;
 SQL
 
 echo "-----------------------------------------"
-echo "RESULT: PASS (20260918090000 applies + idempotent; clientless same-quote quote -> invoice -> order now produces the FULL required invariant — opps_invoices.source_order_id = order.id, discoverable via the real InvoicesTab query, via the ONE canonical link_invoice_to_order_relational RPC — while every genuine mismatch case (different clients, one null, both null with different or no quote provenance, already-linked, void) still correctly rejects, and the original matching-client-id path is fully preserved)"
+echo "RESULT: PASS (20260918110000 applies + idempotent; clientless same-quote quote -> invoice -> order now produces the FULL required invariant — opps_invoices.source_order_id = order.id, discoverable via the real InvoicesTab query, via the ONE canonical link_invoice_to_order_relational RPC — while every genuine mismatch case (different clients, one null, both null with different or no quote provenance, already-linked, void) still correctly rejects, and the original matching-client-id path is fully preserved)"

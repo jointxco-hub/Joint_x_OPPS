@@ -2,7 +2,7 @@
 --  QUOTE -> INVOICE -> ORDER — clientless same-quote linking
 -- ════════════════════════════════════════════════════════════════════
 --
--- Forward-only follow-up to 20260917090000_quote_direct_invoice_conversion.sql
+-- Forward-only follow-up to 20260918100000_quote_direct_invoice_conversion.sql
 -- (already applied/reconciled on staging) AND to
 -- 202608180003_invoice_relational_link_and_reopen.sql (applied long
 -- before this whole engagement). Neither is edited in place.
@@ -84,7 +84,7 @@ begin
     select 1 from information_schema.columns
     where table_schema = 'public' and table_name = 'opps_invoices' and column_name = 'source_quote_id'
   ) then
-    raise exception 'QUOTE_ORDER_CLIENT_MISMATCH_FIX: opps_invoices.source_quote_id is missing — apply 20260917090000 first';
+    raise exception 'QUOTE_ORDER_CLIENT_MISMATCH_FIX: opps_invoices.source_quote_id is missing — apply 20260918100000 first';
   end if;
 end $$;
 
@@ -189,7 +189,7 @@ comment on function public.link_invoice_to_order_relational(uuid, uuid) is
 --    call site cannot actually trigger it (its invoice and order always
 --    share source_quote_id by construction), but a real order must never
 --    be rolled back over a linking-step problem regardless. Everything
---    else is byte-identical to 20260917090000. ─────────────────────────
+--    else is byte-identical to 20260918100000. ─────────────────────────
 create or replace function public.convert_quote_to_order(p_quote_id uuid)
 returns jsonb
 language plpgsql
