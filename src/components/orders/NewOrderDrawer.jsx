@@ -730,11 +730,14 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
           </div>
 
           <div className={'grid gap-3 sm:grid-cols-2'}>
-            <div>
-              <label className={'mb-1.5 block text-xs font-medium text-muted-foreground'}>Order Courier</label>
-              <Input value={form.courier} onChange={(event) => setForm({ ...form, courier: event.target.value })} placeholder={'Courier for this order'} className={'h-9 rounded-xl text-sm'} />
-              <p className={'mt-1 text-[11px] text-muted-foreground'}>Defaults from the client profile; this order can use a different courier.</p>
-            </div>
+            {(!quickSolutionWorkspace ||
+              form.fulfillment_type === 'courier') ? (
+              <div>
+                <label className={'mb-1.5 block text-xs font-medium text-muted-foreground'}>Order Courier</label>
+                <Input value={form.courier} onChange={(event) => setForm({ ...form, courier: event.target.value })} placeholder={'Courier for this order'} className={'h-9 rounded-xl text-sm'} />
+                <p className={'mt-1 text-[11px] text-muted-foreground'}>Defaults from the client profile; this order can use a different courier.</p>
+              </div>
+            ) : null}
             {form.client_id ? (
               <label className={'flex items-start gap-2 rounded-xl border border-border bg-secondary/25 p-3 text-sm'}>
                 <input type={'checkbox'} checked={updateClientDefaults} onChange={(event) => setUpdateClientDefaults(event.target.checked)} className={'mt-0.5'} />
