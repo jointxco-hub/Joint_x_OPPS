@@ -2,7 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
 import { FileText, Package, Settings2 } from "lucide-react";
 
-const OMIT_CONFIG_KEYS = new Set(["clientEstimate"]);
+const OMIT_CONFIG_KEYS = new Set([
+  "clientEstimate",
+  "documentInstructions",
+  "documentPlanValid",
+  "serverCalculatedPages",
+]);
 
 function configLabel(key) {
   const special = {
@@ -43,6 +48,137 @@ function money(value) {
     ? `R${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
     : "—";
 }
+
+function humanizePrintMode(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "Print mode not set";
+  if (["bw", "b&w", "black-white", "black_and_white", "black & white", "black and white"].includes(raw)) {
+    return "Black & white";
+  }
+  if (["colour", "color", "full-colour", "full-color"].includes(raw)) {
+    return "Colour";
+  }
+  return String(value).replace(/[-_]/g, " ");
+}
+
+function humanizeSides(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "Sides not set";
+  if (["single", "single-sided", "simplex", "one-sided"].includes(raw)) {
+    return "Single-sided";
+  }
+  if (["double", "double-sided", "duplex", "two-sided"].includes(raw)) {
+    return "Double-sided";
+  }
+  return String(value).replace(/[-_]/g, " ");
+}
+
+function documentInstructionText(instruction) {
+  if (!instruction || typeof instruction !== "object") return "Print instructions not available";
+
+  const selection = String(instruction.selection || "all").toLowerCase();
+  if (selection === "specific") {
+    const pages = String(instruction.pagesSpec || "").trim();
+    return pages ? `Print pages ${pages}` : "Specific pages selected";
+  }
+
+  const sourcePages = Number(instruction.sourcePages || 0);
+  if (Number.isFinite(sourcePages) && sourcePages > 0) {
+    return `Print all ${sourcePages.toLocaleString()} ${sourcePages === 1 ? "page" : "pages"}`;
+  }
+
+  return "Print entire document";
+}
+
+function DocumentProductionSummary({ item }) {
+  const config = item.configuration || {};
+  const instructions = Array.isArray(config.documentInstructions)
+    ? config.documentInstructions
+    : [];
+  const files = Array.isArray(item.fileRefs) ? item.fileRefs : [];
+  const copies = Math.max(Number(config.copies || 1), 1);
+  const pages = Number(
+    config.serverCalculatedPages ??
+    config.pages ??
+    0
+  );
+
+  const rows = instructions.length > 0
+    ? instructions
+    : files.map((file) => ({
+        name: file?.name || "Attached document",
+        selection: "all",
+        sourcePages: null,
+      }));
+
+  return (
+    <div className="mt-4 rounded-2xl border border-primary/15 bg-background/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Production summary
+          </p>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {copies.toLocaleString()} {copies === 1 ? "copy" : "copies"}
+            {pages > 0 ? ` · ${pages.toLocaleString()} selected ${pages === 1 ? "page" : "pages"}` : ""}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-xs font-medium text-foreground">
+            {humanizePrintMode(config.printMode)}
+          </span>
+          <span className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-xs font-medium text-foreground">
+            {humanizeSides(config.sides)}
+          </span>
+          {config.finish && String(config.finish).toLowerCase() !== "none" && (
+            <span className="rounded-full border border-border bg-secondary/40 px-2.5 py-1 text-xs font-medium text-foreground">
+              {configValue("finish", config.finish)}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {rows.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {rows.map((instruction, index) => {
+            const file = files[index];
+            const fileName =
+              instruction?.name ||
+              file?.name ||
+              `Document ${index + 1}`;
+
+            return (
+              <div
+                key={instruction?.key || file?.id || file?.path || `${fileName}-${index}`}
+                className="rounded-xl border border-border/70 bg-secondary/20 p-3"
+              >
+                <div className="flex items-start gap-2">
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-semibold text-foreground">
+                      {fileName}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {documentInstructionText(instruction)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {instructions.length === 0 && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Legacy document order — showing the saved order-level print settings.
+        </p>
+      )}
+    </div>
+  );
+}
+
 
 export default function QuickSolutionServiceItems({ order }) {
   const query = useQuery({
@@ -144,8 +280,19 @@ export default function QuickSolutionServiceItems({ order }) {
       </div>
 
       {items.map((item) => {
+        const isDocumentPrint = item.productKey === "a4-print";
         const configEntries = Object.entries(item.configuration || {})
-          .filter(([key, value]) => !OMIT_CONFIG_KEYS.has(key) && value !== null && value !== undefined && value !== "");
+          .filter(([key, value]) => {
+            if (OMIT_CONFIG_KEYS.has(key) || value === null || value === undefined || value === "") {
+              return false;
+            }
+
+            if (isDocumentPrint && ["pages", "copies", "printMode", "sides", "finish"].includes(key)) {
+              return false;
+            }
+
+            return true;
+          });
         const files = Array.isArray(item.fileRefs) ? item.fileRefs : [];
         const workflowName = item.operations?.displayName || item.productName || "Quick Solution service";
 
@@ -165,6 +312,10 @@ export default function QuickSolutionServiceItems({ order }) {
                 {money(item.lineTotal)}
               </span>
             </div>
+
+            {isDocumentPrint && (
+              <DocumentProductionSummary item={item} />
+            )}
 
             {configEntries.length > 0 && (
               <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
