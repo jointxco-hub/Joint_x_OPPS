@@ -114,8 +114,11 @@ async function printProductionFile(file) {
   const mime = String(file?.mimeType || "").toLowerCase();
 
   if (mime.startsWith("image/")) {
-    const popup = window.open("", "_blank", "noopener,noreferrer");
+    const popup = window.open("", "_blank");
     if (!popup) return;
+    // Keep a writable handle long enough to render the print document, then
+    // sever the opener reference so the new tab cannot control OPPS.
+    try { popup.opener = null; } catch {}
     popup.document.write(`<!doctype html>
 <html>
 <head>
