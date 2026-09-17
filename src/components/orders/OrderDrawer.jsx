@@ -1830,7 +1830,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               <DrawerSectionBoundary label={quickSolutionOrder ? "Service configuration" : "Products"} resetKey={`${order.id}-products`}>
                 {quickSolutionOrder ? (
                   <React.Suspense fallback={<TabSectionFallback label="Service configuration" />}>
-                    <QuickSolutionServiceItems order={order} />
+                    <QuickSolutionServiceItems order={order} onOpenFiles={() => setTab("files")} />
                   </React.Suspense>
                 ) : (
                   <React.Suspense fallback={<TabSectionFallback label="Products" />}>
