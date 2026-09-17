@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
-import { FileText, Package, Settings2 } from "lucide-react";
+import { ExternalLink, FileText, Package, Printer, Settings2 } from "lucide-react";
+import { getSignedFileUrl, toPrivateUploadRef } from "@/lib/privateFiles";
 
 const OMIT_CONFIG_KEYS = new Set([
   "clientEstimate",
@@ -78,7 +79,11 @@ function documentInstructionText(instruction) {
 
   const selection = String(instruction.selection || "all").toLowerCase();
   if (selection === "specific") {
-    const pages = String(instruction.pagesSpec || "").trim();
+    const pages = String(instruction.pagesSpec || "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(", ");
     return pages ? `Print pages ${pages}` : "Specific pages selected";
   }
 
@@ -90,7 +95,51 @@ function documentInstructionText(instruction) {
   return "Print entire document";
 }
 
-function DocumentProductionSummary({ item }) {
+function fileStorageReference(file) {
+  if (!file?.bucket || !file?.path) return "";
+  return toPrivateUploadRef(file.bucket, file.path);
+}
+
+async function openProductionFile(file) {
+  const ref = fileStorageReference(file);
+  if (!ref) return;
+  const url = await getSignedFileUrl(ref, { expiresIn: 600 });
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+async function printProductionFile(file) {
+  const ref = fileStorageReference(file);
+  if (!ref) return;
+  const url = await getSignedFileUrl(ref, { expiresIn: 600 });
+  const mime = String(file?.mimeType || "").toLowerCase();
+
+  if (mime.startsWith("image/")) {
+    const popup = window.open("", "_blank", "noopener,noreferrer");
+    if (!popup) return;
+    popup.document.write(`<!doctype html>
+<html>
+<head>
+  <title>${String(file?.name || "Print file").replace(/</g, "&lt;")}</title>
+  <style>
+    html,body{margin:0;padding:0;background:#fff}
+    img{display:block;max-width:100%;height:auto;margin:0 auto}
+    @media print{img{max-width:100%;page-break-inside:avoid}}
+  </style>
+</head>
+<body>
+  <img src="${url.replace(/"/g, "&quot;")}" onload="window.focus();window.print();" />
+</body>
+</html>`);
+    popup.document.close();
+    return;
+  }
+
+  // PDFs and other browser-printable documents open in the native viewer.
+  // We intentionally do not build a custom print engine here.
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function DocumentProductionSummary({ item, onOpenFiles }) {
   const config = item.configuration || {};
   const instructions = Array.isArray(config.documentInstructions)
     ? config.documentInstructions
@@ -153,16 +202,47 @@ function DocumentProductionSummary({ item }) {
                 key={instruction?.key || file?.id || file?.path || `${fileName}-${index}`}
                 className="rounded-xl border border-border/70 bg-secondary/20 p-3"
               >
-                <div className="flex items-start gap-2">
-                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <div className="min-w-0">
-                    <p className="break-words text-sm font-semibold text-foreground">
-                      {fileName}
-                    </p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {documentInstructionText(instruction)}
-                    </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-1 items-start gap-2">
+                    <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => onOpenFiles?.(file)}
+                        className="break-words text-left text-sm font-semibold text-foreground hover:text-primary hover:underline"
+                      >
+                        {fileName}
+                      </button>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {documentInstructionText(instruction)}
+                      </p>
+                    </div>
                   </div>
+
+                  {file && (
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openProductionFile(file)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/40"
+                        title="Open this file"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Open
+                      </button>
+                      {["application/pdf", "image/png", "image/jpeg", "image/webp"].includes(String(file?.mimeType || "").toLowerCase()) && (
+                        <button
+                          type="button"
+                          onClick={() => printProductionFile(file)}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/40"
+                          title="Print this file"
+                        >
+                          <Printer className="h-3 w-3" />
+                          Print
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -180,7 +260,7 @@ function DocumentProductionSummary({ item }) {
 }
 
 
-export default function QuickSolutionServiceItems({ order }) {
+export default function QuickSolutionServiceItems({ order, onOpenFiles }) {
   const query = useQuery({
     queryKey: ["quickSolutionOppsItems", order.id, order.updated_at],
     queryFn: async () => {
@@ -314,7 +394,7 @@ export default function QuickSolutionServiceItems({ order }) {
             </div>
 
             {isDocumentPrint && (
-              <DocumentProductionSummary item={item} />
+              <DocumentProductionSummary item={item} onOpenFiles={onOpenFiles} />
             )}
 
             {configEntries.length > 0 && (
