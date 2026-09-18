@@ -431,7 +431,11 @@ export async function saveQuoteWithItems(input = {}) {
 // fixed literal, matching the established OrderDrawer / ClientProducts
 // convention — NEVER window.location — so a link copied from a preview or
 // local build still sends the customer to production.
-export const PUBLIC_QUOTE_ORIGIN = "https://xlab.jointx.co.za";
+const configuredPublicQuoteOrigin = String(
+  import.meta.env.VITE_PUBLIC_QUOTE_ORIGIN || "https://xlab.jointx.co.za"
+).trim();
+
+export const PUBLIC_QUOTE_ORIGIN = configuredPublicQuoteOrigin.replace(/\/$/, "");
 
 export const QUOTE_SHARE_ERROR_MESSAGES = {
   QUOTE_AUTH_REQUIRED: "Your session expired. Sign in again before changing the public link.",

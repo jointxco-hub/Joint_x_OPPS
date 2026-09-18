@@ -64,7 +64,7 @@ test("no active share => 'Share quote'; active share => Copy / Rotate / Revoke",
 
 test("buildPublicQuoteUrl uses the fixed production origin and /q/{token} — never window.location", async () => {
   const s = await src(API);
-  assert.ok(s.includes('PUBLIC_QUOTE_ORIGIN = "https://xlab.jointx.co.za"'), "fixed production origin literal");
+  assert.ok(s.includes('import.meta.env.VITE_PUBLIC_QUOTE_ORIGIN || "https://xlab.jointx.co.za"'), "env override with safe production fallback");
   const fn = s.match(/export function buildPublicQuoteUrl[\s\S]*?\n}/)[0];
   assert.ok(fn.includes("`${PUBLIC_QUOTE_ORIGIN}/q/${encodeURIComponent(token)}`"), "origin + /q/ + encoded token");
   assert.ok(!/window\.location|location\.origin|location\.host/.test(fn), "URL is not derived from the current host");
