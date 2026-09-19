@@ -99,7 +99,12 @@ self.addEventListener("fetch", (event) => {
           return (
             (await caches.match(request)) ||
             (await caches.match("/")) ||
-            (await caches.match("/index.html"))
+            (await caches.match("/index.html")) ||
+            new Response("Offline", {
+              status: 503,
+              statusText: "Service Unavailable",
+              headers: { "Content-Type": "text/plain" },
+            })
           );
         })
     );
@@ -108,11 +113,20 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/assets/")) {
     event.respondWith(
-      fetch(request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        return response;
-      }).catch(() => caches.match(request))
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(async () =>
+          (await caches.match(request)) ||
+          new Response("Offline asset unavailable", {
+            status: 503,
+            statusText: "Service Unavailable",
+            headers: { "Content-Type": "text/plain" },
+          })
+        )
     );
     return;
   }
@@ -125,64 +139,87 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(request).then((cached) =>
       cached ||
-      fetch(request).then((response) => {
+      fetch(request)
+        .then((response) => {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
           return response;
-      }).catch(() => cached)
+        })
+        .catch(() =>
+          cached ||
+          new Response("Offline", {
+            status: 503,
+            statusText: "Service Unavailable",
+            headers: { "Content-Type": "text/plain" },
+          })
+        )
     )
   );
 });
 
 self.addEventListener("push", (event) => {
   if (IS_XOS_SERVICE_WORKER_HOST) return;
-  let payload = {
-    title: "Joint X update",
-    body: "You have a new notification.",
-    icon: "/icons/icon-192.svg",
-    badge: "/icons/icon-192.svg",
-    data: { url: "/" }
-  };
 
-  try {
-    if (event.data) {
-      const data = event.data.json();
-      payload = {
-        title: data.title || payload.title,
-        body: data.body || payload.body,
-        icon: data.icon || payload.icon,
-        badge: data.badge || payload.badge,
-        tag: data.tag || 'joint-x-notification',
-        data: {
-          url: data.url || "/",
-          event_type: data.event_type || 'generic',
-          payload: data.payload || {}
-        },
-        actions: data.actions || [],
-        requireInteraction: data.requireInteraction || false,
-      };
-    }
-  } catch (err) {
-    console.error("Failed to parse push payload:", err);
-    if (event.data?.text) {
-      payload.body = event.data.text();
-    }
-  }
+  const work = (async () => {
+    let data = {};
 
-  event.waitUntil(
-    self.registration.showNotification(payload.title, payload)
-      .then(() => {
-        // Notify all clients about the notification
-        return self.clients.matchAll({ type: 'window' }).then(clients => {
-          clients.forEach(client => {
-            client.postMessage({
-              type: 'NOTIFICATION_RECEIVED',
-              payload: payload.data
-            });
-          });
-        });
-      })
-  );
+    try {
+      if (event.data) data = event.data.json();
+    } catch (error) {
+      console.error("[sw] Failed to parse push payload", error);
+      data = { body: event.data?.text?.() || "You have a new notification." };
+    }
+
+    const title = data.title || "Joint X update";
+    const options = {
+      body: data.body || "You have a new notification.",
+      icon: data.icon || "/icons/icon-192.png",
+      badge: data.badge || "/icons/icon-192.png",
+      tag: data.tag || "joint-x-notification",
+      data: {
+        url: data.url || "/",
+        event_type: data.event_type || "generic",
+        payload: data.payload || {},
+      },
+      requireInteraction: Boolean(data.requireInteraction),
+    };
+
+    if (Array.isArray(data.actions) && data.actions.length > 0) {
+      options.actions = data.actions;
+    }
+
+    console.log("[sw] Showing push notification", {
+      title,
+      tag: options.tag,
+      url: options.data.url,
+      event_type: options.data.event_type,
+    });
+
+    try {
+      await self.registration.showNotification(title, options);
+      console.log("[sw] Push notification shown", options.tag);
+    } catch (error) {
+      console.error("[sw] showNotification failed; retrying minimal notification", error);
+
+      await self.registration.showNotification(title, {
+        body: options.body,
+        tag: options.tag,
+        data: options.data,
+        requireInteraction: options.requireInteraction,
+      });
+      console.log("[sw] Minimal push notification shown", options.tag);
+    }
+
+    const clients = await self.clients.matchAll({ type: "window" });
+    clients.forEach((client) => {
+      client.postMessage({
+        type: "NOTIFICATION_RECEIVED",
+        payload: options.data,
+      });
+    });
+  })();
+
+  event.waitUntil(work);
 });
 
 self.addEventListener("notificationclick", (event) => {
