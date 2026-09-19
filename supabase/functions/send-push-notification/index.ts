@@ -23,12 +23,11 @@ Deno.serve(async (req) => {
     // Durable commercial-alert mode is backend-only. Do not let a normal
     // authenticated browser replay arbitrary tenant alerts by ID.
     if (event?.commercial_alert_id) {
-      const authHeader = req.headers.get('authorization') || '';
-      const bearer = authHeader.replace(/^Bearer\s+/i, '');
-      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      const suppliedDispatchSecret = req.headers.get('x-commercial-dispatch-secret') || '';
+      const expectedDispatchSecret = Deno.env.get('COMMERCIAL_ALERT_DISPATCH_SECRET') || '';
 
-      if (!serviceRoleKey || bearer !== serviceRoleKey) {
-        return json({ error: 'Service role required for commercial alert dispatch' }, 403);
+      if (!expectedDispatchSecret || suppliedDispatchSecret !== expectedDispatchSecret) {
+        return json({ error: 'Commercial dispatch secret required' }, 403);
       }
 
       return await dispatchCommercialAlert(String(event.commercial_alert_id));

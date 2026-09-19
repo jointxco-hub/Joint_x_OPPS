@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { flushOfflineQueue, getOfflineQueueCount, getOfflineQueueItems } from "@/lib/offlineQueue";
 import { toast } from "sonner";
+import { subscribeToPush } from "@/lib/push";
 
 function describeQueuedItem(item) {
   const payload = item?.payload || {};
@@ -90,17 +91,28 @@ export default function PWAInstallPrompt() {
 
   const enableNotifications = async () => {
     if (!("Notification" in window)) return;
+
     const result = await Notification.requestPermission();
     setNotificationPermission(result);
-    if (result === "granted") {
-      toast.success("Mobile notifications enabled");
-      navigator.serviceWorker?.ready?.then((registration) => {
-        registration.showNotification?.("Joint X notifications enabled", {
-          body: "Tags, task assignments and order updates can now alert this device.",
-          icon: "/icons/icon-192.svg",
-        });
-      });
+
+    if (result !== "granted") {
+      toast.error("Notifications were not enabled");
+      return;
     }
+
+    const subscribed = await subscribeToPush();
+    if (!subscribed) {
+      toast.error("Notifications are allowed, but this device could not be subscribed");
+      return;
+    }
+
+    toast.success("Mobile notifications enabled");
+    navigator.serviceWorker?.ready?.then((registration) => {
+      registration.showNotification?.("Joint X notifications enabled", {
+        body: "Tags, task assignments and order updates can now alert this device.",
+        icon: "/icons/icon-192.svg",
+      });
+    });
   };
 
   const canAskNotifications = notificationPermission === "default";
