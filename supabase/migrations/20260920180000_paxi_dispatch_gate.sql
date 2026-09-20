@@ -72,12 +72,20 @@ set search_path to 'pg_catalog', 'public'
 as $$
 begin
   -- Gate the transition INTO a dispatched-or-later state from a
-  -- not-yet-dispatched one. old.status not in (...) (rather than just
-  -- "is distinct from 'shipped'") also covers the QS "Correct to..."
-  -- menu jumping straight to 'delivered', which implies dispatch
-  -- already happened and must not skip the same check.
+  -- not-yet-dispatched one. IS DISTINCT FROM (rather than NOT IN, and
+  -- rather than just "is distinct from 'shipped'" alone) also covers
+  -- the QS "Correct to..." menu jumping straight to 'delivered', which
+  -- implies dispatch already happened and must not skip the same
+  -- check. NOT IN is unsafe here: under NULL three-valued logic,
+  -- `NULL NOT IN ('shipped','delivered')` evaluates to NULL, which a
+  -- plpgsql `if` treats as false — a NULL old.status (e.g. from data
+  -- predating a status column default) would then silently skip this
+  -- gate entirely. IS DISTINCT FROM treats NULL as an ordinary
+  -- comparable value, so a NULL old.status is correctly treated as
+  -- "not already shipped/delivered" and the gate still applies.
   if new.status in ('shipped', 'delivered')
-     and old.status not in ('shipped', 'delivered')
+     and old.status is distinct from 'shipped'
+     and old.status is distinct from 'delivered'
      and coalesce(new.fulfillment_type, 'courier') = 'courier'
      and public._normalize_courier_code(new.courier) = 'pep_paxi'
      and coalesce(trim(new.pep_code), '') = ''
@@ -122,7 +130,8 @@ begin
   v_actor := coalesce(auth.email(), (select u.user_email from public.users u where u.auth_user_id = auth.uid()));
 
   if new.status in ('shipped', 'delivered')
-     and old.status not in ('shipped', 'delivered')
+     and old.status is distinct from 'shipped'
+     and old.status is distinct from 'delivered'
      and v_is_paxi_courier
   then
     insert into public.opps_activity_events (

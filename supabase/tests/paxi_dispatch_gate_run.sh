@@ -43,7 +43,7 @@ create table public.orders (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references public.tenants(id),
   order_number text not null,
-  status text not null default 'confirmed',
+  status text default 'confirmed', -- nullable: real orders.status has no NOT NULL/CHECK constraint either (see migration header)
   fulfillment_type text not null default 'courier',
   courier text,
   pep_code text,
@@ -233,6 +233,61 @@ begin
   if (select status from public.orders where id = o_legacy) = 'delivered'
   then raise notice 'PASS 14 moving an already-shipped legacy order on to delivered is not blocked, even with no PAXI code';
   else raise notice 'FAIL 14 unexpected block on shipped -> delivered'; end if;
+
+end $$;
+
+-- ── 15-16 · NULL old.status null-safety (NOT IN vs IS DISTINCT FROM) ──
+-- `NULL NOT IN ('shipped','delivered')` evaluates to NULL under
+-- three-valued logic, and a plpgsql `if` treats NULL as false — the
+-- original NOT IN form would have silently let a NULL-status PAXI
+-- order skip this gate entirely. IS DISTINCT FROM fixes that. Separate
+-- do-block, separate order.
+do $$
+declare
+  TENANT constant uuid := '11111111-1111-1111-1111-111111111111';
+  o_null_status uuid;
+  v_status text;
+  n int;
+begin
+  set local test.uid = '22222222-2222-2222-2222-222222222222';
+  set local test.email = 'staff@jointx.co.za';
+
+  -- A PAXI order that somehow has a NULL status (e.g. a row that
+  -- predates a status default, or was written by a path that never
+  -- set one) and no PAXI code on file.
+  insert into public.orders (tenant_id, order_number, status, fulfillment_type, courier, pep_code)
+  values (TENANT, 'ORD-0009', null, 'courier', 'pep_paxi', null) returning id into o_null_status;
+
+  if (select status from public.orders where id = o_null_status) is null
+  then raise notice 'PASS 15-setup order created with a genuinely NULL status';
+  else raise notice 'FAIL 15-setup status was not NULL as expected'; end if;
+
+  -- 15 · NULL -> shipped with no code must be blocked, not silently allowed.
+  begin
+    update public.orders set status = 'shipped' where id = o_null_status;
+    raise notice 'FAIL 15 NULL -> shipped with an empty PAXI code should have been blocked';
+  exception when others then
+    if sqlerrm like '%PAXI_CODE_REQUIRED%' then raise notice 'PASS 15 NULL -> shipped with an empty PAXI code is blocked (NULL old.status is not silently treated as already-dispatched)';
+    else raise notice 'FAIL 15 wrong error: %', sqlerrm; end if;
+  end;
+
+  select status into v_status from public.orders where id = o_null_status;
+  if v_status is null then raise notice 'PASS 15b rejected update did not partially apply — status is still NULL';
+  else raise notice 'FAIL 15b status leaked through as %', v_status; end if;
+
+  -- 16 · positive counterpart: NULL -> shipped succeeds once a code is supplied, and persists.
+  update public.orders set pep_code = 'PX999000' where id = o_null_status;
+  update public.orders set status = 'shipped' where id = o_null_status;
+  select status, pep_code into v_status from public.orders where id = o_null_status;
+  if (select status from public.orders where id = o_null_status) = 'shipped'
+     and (select pep_code from public.orders where id = o_null_status) = 'PX999000'
+  then raise notice 'PASS 16 NULL -> shipped succeeds once the PAXI code is entered, and both status and code persist';
+  else raise notice 'FAIL 16 status=% pep_code=%', (select status from public.orders where id = o_null_status), (select pep_code from public.orders where id = o_null_status); end if;
+
+  select count(*) into n from public.opps_activity_events
+    where entity_id = o_null_status and event_type = 'order_paxi_dispatched';
+  if n = 1 then raise notice 'PASS 16b the NULL -> shipped dispatch is logged to opps_activity_events exactly once';
+  else raise notice 'FAIL 16b order_paxi_dispatched count=%', n; end if;
 
 end $$;
 SQL
