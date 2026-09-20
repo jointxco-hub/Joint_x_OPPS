@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, ArrowRightLeft, ExternalLink, Link2, Unlink } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, ExternalLink, Link2, Search, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,6 +16,7 @@ import { getQuote } from "@/api/quotes";
 import { buildOrderInvoiceSyncPlan } from "./orderToInvoiceItems";
 import SyncDiffSummary from "./SyncDiffSummary";
 import InvoiceOrderSyncAction, { canSyncInvoiceToOrder } from "./InvoiceOrderSyncAction";
+import LinkExistingOrderDialog from "./LinkExistingOrderDialog";
 
 // Legacy/untyped boundaries, isolated locally so the rest of this file stays
 // checked. dataClient.entities has no static shape under checkJs, and the
@@ -32,10 +33,13 @@ const UIDialogFooter = /** @type {any} */ (DialogFooter);
 export default function OrderLinkPanel({
   invoice, isDraft, onLink, onUnlink, onSync, onSyncFromInvoice, isPending,
   onCreateOrderFromQuote, isCreatingOrderFromQuote,
+  onCreateOrderFromInvoice, isCreatingOrderFromInvoice,
+  onLinkExistingOrder, isLinkingExistingOrder,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [confirmAction, setConfirmAction] = useState(null); // { mode: 'link'|'sync', order, diff }
+  const [existingOrderDialogOpen, setExistingOrderDialogOpen] = useState(false);
 
   const linkedOrderQuery = useQuery({
     queryKey: ["invoiceLinkedOrder", invoice?.source_order_id],
@@ -135,20 +139,41 @@ export default function OrderLinkPanel({
           ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          {!invoice.source_order_id && invoice.source_quote_id ? (
-            <UIButton
-              type="button"
-              size="sm"
-              onClick={() => onCreateOrderFromQuote?.(invoice.source_quote_id)}
-              disabled={isCreatingOrderFromQuote}
-              className="h-8 rounded-xl text-xs"
-            >
-              <ArrowRight className="h-3.5 w-3.5" /> {isCreatingOrderFromQuote ? "Creating order..." : "Create Order"}
-            </UIButton>
+          {!invoice.source_order_id && invoice.status !== "void" ? (
+            invoice.source_quote_id ? (
+              <UIButton
+                type="button"
+                size="sm"
+                onClick={() => onCreateOrderFromQuote?.(invoice.source_quote_id)}
+                disabled={isCreatingOrderFromQuote}
+                className="h-8 rounded-xl text-xs"
+              >
+                <ArrowRight className="h-3.5 w-3.5" /> {isCreatingOrderFromQuote ? "Creating order..." : "Create Order"}
+              </UIButton>
+            ) : (
+              <UIButton
+                type="button"
+                size="sm"
+                onClick={() => onCreateOrderFromInvoice?.(invoice)}
+                disabled={isCreatingOrderFromInvoice}
+                className="h-8 rounded-xl text-xs"
+              >
+                <ArrowRight className="h-3.5 w-3.5" /> {isCreatingOrderFromInvoice ? "Creating order..." : "Create Order"}
+              </UIButton>
+            )
           ) : null}
+          {/* Relationship-only, any non-void status - sets source_order_id
+              via the canonical RPC, never resyncs items/totals. Kept
+              deliberately distinct from "Link to order" below, which
+              stays draft-only and DOES pull in the order's items. */}
+          {!invoice.source_order_id && invoice.status !== "void" && (
+            <UIButton type="button" variant="outline" size="sm" onClick={() => setExistingOrderDialogOpen(true)} disabled={isLinkingExistingOrder} className="h-8 rounded-xl text-xs">
+              <Search className="h-3.5 w-3.5" /> Link Existing Order
+            </UIButton>
+          )}
           {!invoice.source_order_id && isDraft && (
             <UIButton type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} disabled={isPending} className="h-8 rounded-xl text-xs">
-              <Link2 className="h-3.5 w-3.5" /> Link to order
+              <Link2 className="h-3.5 w-3.5" /> Link to order (and sync items)
             </UIButton>
           )}
           {invoice.source_order_id && isDraft && (
@@ -167,17 +192,21 @@ export default function OrderLinkPanel({
               invoice={invoice}
               onSyncFromInvoice={onSyncFromInvoice}
               isPending={isPending}
+              triggerLabel="Sync invoice items to order"
             />
           )}
         </div>
       </div>
-      {invoice.source_order_id && !isDraft && invoiceToOrderEligible && (
+      {!invoice.source_order_id && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Linking, unlinking, and syncing order → invoice need the invoice to be a draft (use Reopen for corrections).
+          Order relationship (Create Order / Link Existing Order) never changes line items or totals on either side.
+          {isDraft ? " “Link to order (and sync items)” below is the one action that also pulls the order's current items into this draft invoice." : ""}
         </p>
       )}
-      {!invoice.source_order_id && !isDraft && (
-        <p className="mt-2 text-xs text-muted-foreground">Linking is only available while the invoice is a draft.</p>
+      {invoice.source_order_id && !isDraft && invoiceToOrderEligible && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Unlinking and syncing order → invoice need the invoice to be a draft (use Reopen for corrections). Syncing invoice items → order stays available at any non-void, non-paid status.
+        </p>
       )}
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
@@ -240,6 +269,17 @@ export default function OrderLinkPanel({
           </UIDialogFooter>
         </UIDialogContent>
       </Dialog>
+
+      <LinkExistingOrderDialog
+        invoice={invoice}
+        open={existingOrderDialogOpen}
+        onOpenChange={setExistingOrderDialogOpen}
+        isPending={isLinkingExistingOrder}
+        onConfirm={(order, options) => {
+          onLinkExistingOrder?.(invoice, order, options);
+          setExistingOrderDialogOpen(false);
+        }}
+      />
 
     </div>
   );

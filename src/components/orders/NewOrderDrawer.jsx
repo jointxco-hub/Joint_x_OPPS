@@ -122,12 +122,17 @@ function createEmptyProductLine(quickSolution = false) {
   };
 }
 
-export default function NewOrderDrawer({ onClose, onCreate }) {
+export default function NewOrderDrawer({ onClose, onCreate, initialValues }) {
   const { currentWorkspace } = useWorkspace();
 
   const quickSolutionWorkspace =
     currentWorkspace?.slug === "quick-solution";
-  const [form, setForm] = useState({
+  // initialValues (e.g. from the invoice-first "Create Order" flow) is
+  // only ever read on first mount, as a prefill - it merges over these
+  // defaults, never the other way round, so an empty/omitted value here
+  // (like the auto-generated order_number below) still wins when
+  // initialValues doesn't specify it.
+  const [form, setForm] = useState(() => ({
     client_id: '',
     client_name: '',
     client_email: '',
@@ -158,8 +163,9 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
     linked_po_id: '',
     file_urls: [],
     portal_visible_file_urls: [],
-    products: [createEmptyProductLine(quickSolutionWorkspace)]
-  });
+    products: [createEmptyProductLine(quickSolutionWorkspace)],
+    ...initialValues,
+  }));
 
   const [clientSearch, setClientSearch] = useState('');
   const [showClientDropdown, setShowClientDropdown] = useState(false);

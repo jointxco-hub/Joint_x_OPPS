@@ -679,9 +679,13 @@ const RELATIONAL_LINK_ERROR_MESSAGES = {
   ORDER_NOT_FOUND: "This order could not be found.",
   TENANT_ACCESS_DENIED: "This invoice or order is not available in the active tenant.",
   TENANT_MISMATCH: "This invoice and order belong to different tenants.",
-  CLIENT_MISMATCH: "This invoice belongs to a different client than the order.",
+  CLIENT_MISMATCH: "This invoice belongs to a different client than the order. Resolve the client identity first.",
   INVOICE_VOID: "A void invoice cannot be linked to an order.",
   INVOICE_ALREADY_LINKED: "This invoice is already linked to a different order.",
+  ATTACH_CLIENT_NOT_FOUND: "That client could not be found.",
+  ATTACH_CLIENT_TENANT_MISMATCH: "That client is not available in the active tenant.",
+  ATTACH_CLIENT_INVOICE_CONFLICT: "This invoice is already linked to a different client than the one selected.",
+  ATTACH_CLIENT_ORDER_CONFLICT: "This order is already linked to a different client than the one selected.",
 };
 
 const REOPEN_INVOICE_ERROR_MESSAGES = {
@@ -709,11 +713,18 @@ function rpcSafetyError(error, messageMap, fallback) {
 // SEPARATE path from linkInvoiceToOrder() above, which stays exactly as
 // it was for the existing draft-resync workflow. Same-client/tenant
 // safety is enforced inside the RPC itself, not just here.
-export async function linkInvoiceToOrderRelational(invoiceId, order) {
+//
+// options.attachClientId: a client id the STAFF explicitly selected or
+// just created in the UI (never inferred/auto-matched here) to fill a
+// NULL customer_id/client_id on one or both sides before the identity
+// check. The RPC refuses outright if either side already points to a
+// DIFFERENT client - this can only fill an absence, never reassign one.
+export async function linkInvoiceToOrderRelational(invoiceId, order, options = {}) {
   ensureSupabase();
   const { data, error } = await supabase.rpc("link_invoice_to_order_relational", {
     p_invoice_id: invoiceId,
     p_order_id: order.id,
+    p_attach_client_id: options.attachClientId || null,
   });
   if (error) {
     throw rpcSafetyError(error, RELATIONAL_LINK_ERROR_MESSAGES, "Could not link this invoice to the order.");

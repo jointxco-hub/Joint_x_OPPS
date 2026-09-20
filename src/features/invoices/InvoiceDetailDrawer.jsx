@@ -118,6 +118,10 @@ export default function InvoiceDetailDrawer({
   isOrderLinkPending,
   onCreateOrderFromQuote,
   isCreatingOrderFromQuote,
+  onCreateOrderFromInvoice,
+  isCreatingOrderFromInvoice = false,
+  onLinkExistingOrder,
+  isLinkingExistingOrder = false,
   canReopen = false,
   onReopen,
   isReopenPending = false,
@@ -357,6 +361,10 @@ export default function InvoiceDetailDrawer({
                 onSyncFromInvoice={(order, sourceInvoice, options) => onSyncFromInvoice?.(order, sourceInvoice, options)}
                 onCreateOrderFromQuote={onCreateOrderFromQuote}
                 isCreatingOrderFromQuote={isCreatingOrderFromQuote}
+                onCreateOrderFromInvoice={onCreateOrderFromInvoice}
+                isCreatingOrderFromInvoice={isCreatingOrderFromInvoice}
+                onLinkExistingOrder={onLinkExistingOrder}
+                isLinkingExistingOrder={isLinkingExistingOrder}
               />
 
               <div className="overflow-hidden rounded-xl border border-border bg-card">

@@ -14,6 +14,7 @@ import {
   getInvoice,
   issueInvoiceShare,
   linkInvoiceToOrder,
+  linkInvoiceToOrderRelational,
   listInvoiceActivity,
   listSiblingInvoicesForOrder,
   listInvoices,
@@ -36,6 +37,7 @@ import {
 } from "@/api/invoices";
 import { convertQuoteToOrder } from "@/api/quotes";
 import { canAccessInvoices, canReopenInvoices } from "@/lib/financeAccess";
+import NewOrderDrawer from "@/components/orders/NewOrderDrawer";
 import InvoiceList from "@/features/invoices/InvoiceList";
 import InvoiceCreateFlow from "@/features/invoices/InvoiceCreateFlow";
 import InvoiceDetailDrawer from "@/features/invoices/InvoiceDetailDrawer";
@@ -47,12 +49,44 @@ import {
   isCompleteInvoiceDetail,
 } from "@/features/invoices/invoiceReliability";
 
+// Legacy/untyped boundary, same local-cast convention as OrderLinkPanel.jsx -
+// dataClient.entities has no static shape under checkJs.
+const orderEntity = /** @type {any} */ (dataClient.entities).Order;
+
 function emptyFilters() {
   return {
     search: "",
     status: "all",
     dateFrom: "",
     dateTo: "",
+  };
+}
+
+// Prefill for the invoice-first "Create Order" flow: customer/contact
+// details, fulfilment context, and a reference note - deliberately no
+// products/items (NewOrderDrawer's own product picker stays the entry
+// point for that, same as any other new order). client_id is only set
+// when the invoice already has one, so the created order's client_id
+// matches it exactly and the canonical linker resolves identity
+// automatically afterwards - no attach step needed in the common case.
+function orderInitialValuesFromInvoice(invoice) {
+  if (!invoice) return undefined;
+  const reference = `Created from invoice ${invoice.invoice_number || invoice.id}`;
+  return {
+    client_id: invoice.customer_id || "",
+    client_name: invoice.customer_name || "",
+    client_email: invoice.customer_email || "",
+    client_phone: invoice.customer_phone || "",
+    saved_contact_name: invoice.contact_person || "",
+    delivery_note: invoice.shipping_address || invoice.customer_billing_address || "",
+    courier: invoice.shipping_courier || "",
+    pep_code: invoice.shipping_courier_code || "",
+    // Omitted entirely (rather than set to undefined) when the invoice has
+    // no fulfilment type, so NewOrderDrawer's own workspace-specific
+    // default (e.g. 'collection' for Quick Solution) is left alone instead
+    // of being spread over with undefined.
+    ...(invoice.fulfillment_type ? { fulfillment_type: invoice.fulfillment_type } : {}),
+    notes: invoice.notes ? `${reference} — ${invoice.notes}` : reference,
   };
 }
 
@@ -65,6 +99,7 @@ export default function Invoices() {
   const [page, setPage] = useState(1);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [editingInvoice, setEditingInvoice] = useState(null);
+  const [createOrderForInvoice, setCreateOrderForInvoice] = useState(/** @type {any} */ (null));
   const pageSize = 20;
 
   const userQuery = useQuery({
@@ -387,6 +422,45 @@ export default function Invoices() {
     onError: (error) => toast.error(error?.message || "Could not create an order from this quote"),
   });
 
+  // Invoice-first "Create Order": NewOrderDrawer is rendered below,
+  // prefilled from createOrderForInvoice via orderInitialValuesFromInvoice.
+  // Plain async handler (not a useMutation) to match exactly how
+  // Orders.jsx's own onCreate works - NewOrderDrawer awaits this and
+  // shows its own error toast on rejection, so wrapping it in a second
+  // mutation would just double that toast.
+  const handleCreateOrderFromInvoice = async (orderData) => {
+    const invoice = createOrderForInvoice;
+    const createdOrder = await orderEntity.create(orderData);
+    queryClient.invalidateQueries({ queryKey: ["orders"] });
+    setCreateOrderForInvoice(null);
+    try {
+      // No attach here: only reached when this invoice already had a
+      // client (locked into the order form via initialValues.client_id,
+      // so the created order's client_id necessarily matches). If the
+      // invoice had no client, this plain link falls through to
+      // CLIENT_MISMATCH by design - staff finishes that case explicitly
+      // via "Link Existing Order", which is the one place this workflow
+      // ever attaches a client.
+      await linkInvoiceToOrderRelational(invoice.id, createdOrder);
+      toast.success(`Order ${createdOrder.order_number} created and linked to this invoice`);
+    } catch (error) {
+      toast.warning(
+        `Order ${createdOrder.order_number} created, but couldn't be linked automatically (${error?.message || "client mismatch"}). Use "Link Existing Order" on this invoice to finish.`
+      );
+    }
+    invalidateAfterOrderLinkChange(invoice);
+    navigate(`/Orders?open=${createdOrder.id}`);
+  };
+
+  const linkExistingOrderMutation = useMutation({
+    mutationFn: ({ invoice, order, options }) => linkInvoiceToOrderRelational(invoice.id, order, options),
+    onSuccess: (saved, { order }) => {
+      toast.success(`Linked to order ${order.order_number || order.id}`);
+      invalidateAfterOrderLinkChange(saved);
+    },
+    onError: (error) => toast.error(error?.message || "Could not link this order"),
+  });
+
   /**
    * @typedef {{
    *   invoice: any,
@@ -584,8 +658,19 @@ export default function Invoices() {
         onSyncFromInvoice={(order, invoice, options) => syncOrderFromInvoiceMutation.mutate({ order, invoice, options })}
         onCreateOrderFromQuote={(quoteId) => createOrderFromQuoteMutation.mutate(quoteId)}
         isCreatingOrderFromQuote={createOrderFromQuoteMutation.isPending}
+        onCreateOrderFromInvoice={(invoice) => setCreateOrderForInvoice(invoice)}
+        onLinkExistingOrder={(invoice, order, options) => linkExistingOrderMutation.mutate({ invoice, order, options })}
+        isLinkingExistingOrder={linkExistingOrderMutation.isPending}
         isOrderLinkPending={linkOrderMutation.isPending || unlinkOrderMutation.isPending || syncOrderMutation.isPending || syncOrderFromInvoiceMutation.isPending}
       />
+
+      {createOrderForInvoice && (
+        <NewOrderDrawer
+          onClose={() => setCreateOrderForInvoice(null)}
+          onCreate={handleCreateOrderFromInvoice}
+          initialValues={orderInitialValuesFromInvoice(createOrderForInvoice)}
+        />
+      )}
     </div>
   );
 }
