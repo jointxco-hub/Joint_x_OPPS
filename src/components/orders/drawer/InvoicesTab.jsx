@@ -106,7 +106,11 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
 
   const linkedInvoicesQuery = useQuery({
     queryKey: ["orderOppsInvoices", orderId],
-    queryFn: () => listInvoices({ sourceOrderId: orderId, pageSize: 10 }),
+    // Every invoice with this order's id as source_order_id, regardless of
+    // status or of how it got linked (created-from-order, the draft-only
+    // item-sync link, or the invoice-first relational link) - this is the
+    // order's full billing history, so the page size stays generous.
+    queryFn: () => listInvoices({ sourceOrderId: orderId, pageSize: 25 }),
     enabled: Boolean(orderId),
     select: (result) => result.data || [],
   });
@@ -387,8 +391,15 @@ export default function InvoicesTab({ order, onUpdate, totalPaid = 0, onPrint })
       <div className="rounded-2xl border border-border bg-card p-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-semibold text-foreground">Linked OPPS invoices</p>
-            <p className="text-xs text-muted-foreground">Only invoices created inside OPPS for this order appear here.</p>
+            <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              Linked OPPS invoices
+              {linkedOppsInvoices.length > 0 && (
+                <span className="rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-muted-foreground">
+                  {linkedOppsInvoices.length}
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">Every OPPS invoice linked to this order - the full billing history, including how each one was linked.</p>
           </div>
           {linkedInvoicesQuery.isLoading && <span className="text-xs text-muted-foreground">Checking...</span>}
         </div>

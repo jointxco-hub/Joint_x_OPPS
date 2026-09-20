@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link2, UserPlus } from "lucide-react";
+import { AlertTriangle, Link2, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,6 +14,8 @@ import {
 import { dataClient } from "@/api/dataClient";
 import { searchOrdersForInvoiceLink } from "@/api/orders";
 import { searchClients, findClientsByContact } from "@/api/clients";
+import { listSiblingInvoicesForOrder } from "@/api/invoices";
+import { getActiveInvoicesForOrder } from "./orderInvoiceCandidates";
 import { toast } from "sonner";
 
 // Legacy/untyped boundaries, same local-cast convention as OrderLinkPanel.jsx.
@@ -70,6 +72,7 @@ export default function LinkExistingOrderDialog({ invoice, open, onOpenChange, o
   const [clientSearch, setClientSearch] = useState("");
   const [pickedClient, setPickedClient] = useState(/** @type {any} */ (null));
   const [creatingClient, setCreatingClient] = useState(false);
+  const [acknowledgedExistingInvoices, setAcknowledgedExistingInvoices] = useState(false);
 
   const searchQuery = useQuery({
     queryKey: ["invoiceLinkExistingOrderSearch", search.trim()],
@@ -81,6 +84,29 @@ export default function LinkExistingOrderDialog({ invoice, open, onOpenChange, o
     () => (pickedOrder ? resolveLinkMode(invoice, pickedOrder) : null),
     [invoice, pickedOrder]
   );
+
+  // Reuses the SAME listSiblingInvoicesForOrder() call and the same
+  // isActiveInvoiceStatus() predicate (via getActiveInvoicesForOrder)
+  // InvoiceDetailDrawer's own duplicate-invoice warning is built on -
+  // "active invoice" is defined in exactly one place, not redefined
+  // here. This never blocks the relational link; it only warns before
+  // staff confirm one, so the order's existing billing history isn't
+  // discovered by surprise after the fact.
+  const orderInvoicesQuery = useQuery({
+    queryKey: ["invoiceLinkOrderInvoices", pickedOrder?.id],
+    queryFn: () => listSiblingInvoicesForOrder(pickedOrder.id),
+    enabled: Boolean(open && pickedOrder?.id),
+  });
+  const activeLinkedInvoices = useMemo(
+    () => getActiveInvoicesForOrder(orderInvoicesQuery.data || [], pickedOrder?.id),
+    [orderInvoicesQuery.data, pickedOrder?.id]
+  );
+  const needsAcknowledgement = activeLinkedInvoices.length > 0 && !acknowledgedExistingInvoices;
+  // While the existing-invoices check for the picked order is still
+  // loading, treat it the same as "needs acknowledgement" - confirming
+  // must never race ahead of knowing whether this order already has
+  // active invoices.
+  const linkGated = needsAcknowledgement || orderInvoicesQuery.isLoading;
 
   const contactSuggestionQuery = useQuery({
     queryKey: ["invoiceLinkContactSuggestion", invoice?.id, pickedOrder?.id],
@@ -103,6 +129,7 @@ export default function LinkExistingOrderDialog({ invoice, open, onOpenChange, o
     setClientSearch("");
     setPickedClient(null);
     setCreatingClient(false);
+    setAcknowledgedExistingInvoices(false);
   };
 
   // Covers every close path, including the parent closing this dialog
@@ -111,6 +138,13 @@ export default function LinkExistingOrderDialog({ invoice, open, onOpenChange, o
   useEffect(() => {
     if (!open) reset();
   }, [open]);
+
+  // A fresh acknowledgement is required for EVERY order picked - staff
+  // switching from one candidate order to another must never carry over
+  // a checkbox ticked for the first one.
+  useEffect(() => {
+    setAcknowledgedExistingInvoices(false);
+  }, [pickedOrder?.id]);
 
   const close = () => {
     onOpenChange?.(false);
@@ -213,6 +247,35 @@ export default function LinkExistingOrderDialog({ invoice, open, onOpenChange, o
               </button>
             </div>
 
+            {orderInvoicesQuery.isLoading && (
+              <p className="text-xs text-muted-foreground">Checking this order's existing invoices...</p>
+            )}
+
+            {activeLinkedInvoices.length > 0 && (
+              <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="flex items-center gap-2 font-semibold">
+                  <AlertTriangle className="h-4 w-4" />
+                  This order already has {activeLinkedInvoices.length} active invoice{activeLinkedInvoices.length === 1 ? "" : "s"}
+                </p>
+                <p className="text-xs text-amber-800">
+                  {activeLinkedInvoices.map((inv) => inv.invoice_number).join(", ")}
+                </p>
+                <p className="text-xs text-amber-800">
+                  Linking is still allowed and will not void, unlink, or reassign any of these - it only adds
+                  this invoice to the same order's relationship. Voided invoices are not counted here.
+                </p>
+                <label className="flex items-start gap-2 text-xs font-medium">
+                  <input
+                    type="checkbox"
+                    checked={acknowledgedExistingInvoices}
+                    onChange={(event) => setAcknowledgedExistingInvoices(event.target.checked)}
+                    className="mt-0.5"
+                  />
+                  I understand this order already has active invoice(s) linked and want to link this one too.
+                </label>
+              </div>
+            )}
+
             {resolution?.mode === "direct" && (
               <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm">
                 <p className="text-foreground">This invoice and order already share the same client identity.</p>
@@ -300,17 +363,17 @@ export default function LinkExistingOrderDialog({ invoice, open, onOpenChange, o
         <UIDialogFooter>
           <UIButton variant="outline" onClick={close} className="rounded-xl">Cancel</UIButton>
           {pickedOrder && resolution?.mode === "direct" && (
-            <UIButton onClick={confirmDirect} disabled={isPending} className="rounded-xl">
+            <UIButton onClick={confirmDirect} disabled={isPending || linkGated} className="rounded-xl">
               <Link2 className="h-3.5 w-3.5" /> Link order
             </UIButton>
           )}
           {pickedOrder && resolution?.mode === "attach" && (
-            <UIButton onClick={confirmAttach} disabled={isPending} className="rounded-xl">
+            <UIButton onClick={confirmAttach} disabled={isPending || linkGated} className="rounded-xl">
               <Link2 className="h-3.5 w-3.5" /> Attach and link
             </UIButton>
           )}
           {pickedOrder && resolution?.mode === "both_clientless" && (
-            <UIButton onClick={confirmAttach} disabled={isPending || !pickedClient} className="rounded-xl">
+            <UIButton onClick={confirmAttach} disabled={isPending || !pickedClient || linkGated} className="rounded-xl">
               <Link2 className="h-3.5 w-3.5" /> Attach and link
             </UIButton>
           )}

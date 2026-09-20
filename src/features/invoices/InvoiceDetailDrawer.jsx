@@ -26,6 +26,7 @@ import InvoiceStatusBadge from "./InvoiceStatusBadge";
 import OrderLinkPanel from "./OrderLinkPanel";
 import { buildZohoInvoiceCsv, getZohoInvoiceExportFileName } from "./zohoInvoiceCsv";
 import { getInvoiceDisplayStates } from "./invoiceDisplayStatus";
+import { isActiveInvoiceStatus } from "./orderInvoiceCandidates";
 import { printIminReceipt } from "@/lib/pos/iminPrinter";
 import { getClientContactSnapshot, clientToInvoiceContactFields, buildPublicInvoiceUrl } from "@/api/invoices";
 import { getCourierRequirementGap } from "@/lib/shippingRequirements";
@@ -168,7 +169,7 @@ export default function InvoiceDetailDrawer({
       })
     : null;
   const items = Array.isArray(invoice?.items) ? invoice.items : [];
-  const activeDuplicates = duplicateInvoices.filter((item) => item.status !== "void");
+  const activeDuplicates = duplicateInvoices.filter((item) => isActiveInvoiceStatus(item.status));
   const displayStates = getInvoiceDisplayStates(invoice);
   const isDraft = invoice?.status === "draft";
   const canTakePayment = invoice && !["draft", "paid", "void"].includes(invoice.status);
