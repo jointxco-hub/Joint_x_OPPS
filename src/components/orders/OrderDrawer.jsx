@@ -456,6 +456,34 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     }
   };
 
+  // Logged client-side, not from the orders_paxi_dispatch_gate trigger:
+  // a BEFORE UPDATE trigger that raises an exception rolls back
+  // everything in that same transaction, including any log row the
+  // trigger itself tried to insert first, so a rejected write can't be
+  // recorded from inside the rejection.
+  const logPaxiDispatchBlockedEvent = async (attemptedStatus) => {
+    const actorName = currentUserQuery.data?.full_name || currentUserQuery.data?.email || "Unknown";
+    try {
+      await supabase.from("opps_activity_events").insert({
+        tenant_id: order.tenant_id,
+        actor_email: currentUserQuery.data?.email,
+        actor_name: actorName,
+        event_type: "order_paxi_dispatch_blocked",
+        entity_type: "order",
+        entity_id: order.id,
+        summary: `${actorName} tried to mark ${order.order_number || "an order"} as ${statusConfig[attemptedStatus]?.label || attemptedStatus} — ${shippingGapReason}`,
+        metadata: {
+          attempted_status: attemptedStatus,
+          courier: order.courier,
+          fulfillment_type: order.fulfillment_type,
+          reason: shippingGapReason,
+        },
+      });
+    } catch {
+      // Best-effort audit trail only — the block itself already happened client-side.
+    }
+  };
+
   const performUnlock = (reason) => {
     onUpdate(order.id, { products_locked_at: null, products_locked_by: null });
     toast.success("Products unlocked for correction");
@@ -1409,6 +1437,25 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                             <DropdownMenuItem
                               key={status}
                               onClick={() => {
+                                // The "Correct to..." menu can jump straight
+                                // to any status, including 'delivered' —
+                                // skipping 'shipped' entirely. Gate both the
+                                // same way the primary lifecycle button
+                                // already gates 'shipped'; the
+                                // orders_paxi_dispatch_gate trigger is the
+                                // authoritative server-side version of this
+                                // same check either way.
+                                if (
+                                  (status === "shipped" || status === "delivered") &&
+                                  shippingGapReason
+                                ) {
+                                  toast.error(
+                                    `Complete delivery details before dispatch - ${shippingGapReason}.`
+                                  );
+                                  logPaxiDispatchBlockedEvent(status);
+                                  return;
+                                }
+
                                 const correctionPayload = {
                                   status,
                                 };
@@ -1466,16 +1513,38 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                 // regardless of whether this button is disabled.
                 const isProductionTransition = s === 'in_production';
                 const blockedByReadiness = isProductionTransition && drawerData.lineProductionReadiness?.order_readiness === 'blocked';
+                // Same reasoning for dispatch: the orders_paxi_dispatch_gate
+                // trigger is the authoritative server-side gate for
+                // shipped/delivered. Left clickable (not `disabled`) so the
+                // rejection is an explicit, loggable action instead of a
+                // silently greyed-out button — see logPaxiDispatchBlockedEvent.
+                const isDispatchTransition = s === 'shipped' || s === 'delivered';
+                const blockedByDispatchGap = isDispatchTransition && Boolean(shippingGapReason);
                 return (
                   <button
                     key={s}
-                    onClick={() => onUpdate(order.id, { status: s })}
+                    onClick={() => {
+                      if (blockedByDispatchGap) {
+                        toast.error(`Complete delivery details before dispatch - ${shippingGapReason}.`);
+                        logPaxiDispatchBlockedEvent(s);
+                        return;
+                      }
+                      onUpdate(order.id, { status: s });
+                    }}
                     disabled={blockedByReadiness}
-                    title={blockedByReadiness ? 'One or more production lines are not ready yet - see the Products section for details.' : undefined}
+                    title={
+                      blockedByReadiness
+                        ? 'One or more production lines are not ready yet - see the Products section for details.'
+                        : blockedByDispatchGap
+                          ? `Complete delivery details before dispatch - ${shippingGapReason}.`
+                          : undefined
+                    }
                     className={`flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-full transition-all capitalize ${
                       blockedByReadiness
                         ? 'bg-secondary/50 text-muted-foreground cursor-not-allowed'
-                        : 'bg-secondary hover:bg-border'
+                        : blockedByDispatchGap
+                          ? 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                          : 'bg-secondary hover:bg-border'
                     }`}
                   >
                     Next: {statusConfig[s]?.label || s}
@@ -1687,7 +1756,20 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                         Quick Solution lifecycle is controlled from the action bar.
                       </p>
                     </div>
-                  ) : (<Select value={statusValue} onValueChange={v => onUpdate(order.id, { status: v })}>
+                  ) : (<Select
+                    value={statusValue}
+                    onValueChange={v => {
+                      // Same gate as the "Next: {status}" pills below —
+                      // client-side UX only, orders_paxi_dispatch_gate is
+                      // the authoritative server-side version.
+                      if ((v === 'shipped' || v === 'delivered') && shippingGapReason) {
+                        toast.error(`Complete delivery details before dispatch - ${shippingGapReason}.`);
+                        logPaxiDispatchBlockedEvent(v);
+                        return;
+                      }
+                      onUpdate(order.id, { status: v });
+                    }}
+                  >
                     <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
                       <SelectValue />
                     </SelectTrigger>
