@@ -433,23 +433,37 @@ export default function Invoices() {
     const createdOrder = await orderEntity.create(orderData);
     queryClient.invalidateQueries({ queryKey: ["orders"] });
     setCreateOrderForInvoice(null);
+
+    // Attach only ever fills a NULL side: this invoice had no client, and
+    // the order form's own client resolution (existing-name match or a
+    // fresh Client.create) landed on one - attaching it here is the exact
+    // same staff action that just created this order from this invoice,
+    // not fuzzy matching. When the invoice already has a client, never
+    // pass attachClientId - a mismatch there must fall through to
+    // CLIENT_MISMATCH and be resolved explicitly via "Link Existing Order".
+    const attachOptions = !invoice.customer_id && createdOrder.client_id
+      ? { attachClientId: createdOrder.client_id }
+      : undefined;
+
     try {
-      // No attach here: only reached when this invoice already had a
-      // client (locked into the order form via initialValues.client_id,
-      // so the created order's client_id necessarily matches). If the
-      // invoice had no client, this plain link falls through to
-      // CLIENT_MISMATCH by design - staff finishes that case explicitly
-      // via "Link Existing Order", which is the one place this workflow
-      // ever attaches a client.
-      await linkInvoiceToOrderRelational(invoice.id, createdOrder);
+      await linkInvoiceToOrderRelational(invoice.id, createdOrder, attachOptions);
       toast.success(`Order ${createdOrder.order_number} created and linked to this invoice`);
+      invalidateAfterOrderLinkChange(invoice);
+      // Only navigate away on a confirmed link - an unlinked order is not
+      // yet something staff asked to be taken to.
+      navigate(`/Orders?open=${createdOrder.id}`);
     } catch (error) {
+      invalidateAfterOrderLinkChange(invoice);
+      // Stay on the invoice page (the invoice drawer never closed - only
+      // the create-order drawer did, above) so staff can immediately use
+      // "Link Existing Order" to finish. Viewing the created order is
+      // still one explicit click away via the toast action, never
+      // automatic.
       toast.warning(
-        `Order ${createdOrder.order_number} created, but couldn't be linked automatically (${error?.message || "client mismatch"}). Use "Link Existing Order" on this invoice to finish.`
+        `Order ${createdOrder.order_number} created, but couldn't be linked automatically (${error?.message || "client mismatch"}). Use "Link Existing Order" on this invoice to finish.`,
+        { action: { label: "View order", onClick: () => navigate(`/Orders?open=${createdOrder.id}`) } }
       );
     }
-    invalidateAfterOrderLinkChange(invoice);
-    navigate(`/Orders?open=${createdOrder.id}`);
   };
 
   const linkExistingOrderMutation = useMutation({
