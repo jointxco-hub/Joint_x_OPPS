@@ -264,7 +264,7 @@ export default function NewOrderDrawer({ onClose, onCreate, initialValues }) {
 
   const clientContextFiles = Array.isArray(clientFileLibrary?.files) ? clientFileLibrary.files.slice(0, 6) : [];
 
-  // Scored client suggestions â€” includes fuzzy matches from Client entity + order history names
+  // Scored client suggestions — includes fuzzy matches from Client entity + order history names
   const { clientSuggestions, didYouMean } = useMemo(() => {
     const q = (clientSearch || form.client_name || "").trim();
     if (!q) {
@@ -629,7 +629,7 @@ export default function NewOrderDrawer({ onClose, onCreate, initialValues }) {
           <div className="relative">
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
               Client *
-              {form.client_id && <span className="ml-2 text-primary font-medium">âœ“ linked</span>}
+              {form.client_id && <span className="ml-2 text-primary font-medium">✓ linked</span>}
             </label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
@@ -688,7 +688,7 @@ export default function NewOrderDrawer({ onClose, onCreate, initialValues }) {
             )}
             {!form.client_id && form.client_name.trim() && (
               <p className="text-xs text-muted-foreground mt-1">
-                New client â€” will be created automatically on save
+                New client — will be created automatically on save
               </p>
             )}
           </div>
@@ -1002,7 +1002,7 @@ export default function NewOrderDrawer({ onClose, onCreate, initialValues }) {
                 <SelectContent>
                   <SelectItem value="__none">No PO linked</SelectItem>
                   {activePOs.map(po => (
-                    <SelectItem key={po.id} value={po.id}>{po.po_number} â€” {po.status}</SelectItem>
+                    <SelectItem key={po.id} value={po.id}>{po.po_number} — {po.status}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1113,7 +1113,7 @@ export default function NewOrderDrawer({ onClose, onCreate, initialValues }) {
                         }}
                         onFocus={() => setPickerOpenIdx(i)}
                         onBlur={() => setTimeout(() => setPickerOpenIdx(null), 150)}
-                        placeholder="Search inventory or type nameâ€¦"
+                        placeholder="Search inventory or type name…"
                         className="rounded-xl h-9 text-sm w-full"
                       />
                       {pickerOpenIdx === i && (

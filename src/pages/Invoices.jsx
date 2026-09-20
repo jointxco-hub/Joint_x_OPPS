@@ -454,11 +454,12 @@ export default function Invoices() {
       navigate(`/Orders?open=${createdOrder.id}`);
     } catch (error) {
       invalidateAfterOrderLinkChange(invoice);
-      // Stay on the invoice page (the invoice drawer never closed - only
-      // the create-order drawer did, above) so staff can immediately use
-      // "Link Existing Order" to finish. Viewing the created order is
-      // still one explicit click away via the toast action, never
-      // automatic.
+      // Restore the invoice drawer (suspended, not closed, when Create
+      // Order was clicked) so staff land back on the invoice and can
+      // immediately use "Link Existing Order" to finish. Viewing the
+      // created order is still one explicit click away via the toast
+      // action, never an automatic redirect.
+      setSelectedInvoice(invoice);
       toast.warning(
         `Order ${createdOrder.order_number} created, but couldn't be linked automatically (${error?.message || "client mismatch"}). Use "Link Existing Order" on this invoice to finish.`,
         { action: { label: "View order", onClick: () => navigate(`/Orders?open=${createdOrder.id}`) } }
@@ -672,7 +673,17 @@ export default function Invoices() {
         onSyncFromInvoice={(order, invoice, options) => syncOrderFromInvoiceMutation.mutate({ order, invoice, options })}
         onCreateOrderFromQuote={(quoteId) => createOrderFromQuoteMutation.mutate(quoteId)}
         isCreatingOrderFromQuote={createOrderFromQuoteMutation.isPending}
-        onCreateOrderFromInvoice={(invoice) => setCreateOrderForInvoice(invoice)}
+        onCreateOrderFromInvoice={(invoice) => {
+          // Suspend (not dismiss) the invoice drawer - NewOrderDrawer is a
+          // plain fixed-position overlay, not portaled/z-indexed above the
+          // shared vaul Drawer, so both being open at once visually hides
+          // it behind the invoice drawer. One active drawer at a time:
+          // this closes the invoice drawer while keeping the invoice
+          // object itself in createOrderForInvoice, so it can reopen on
+          // cancel or on a failed auto-link without an extra fetch.
+          setSelectedInvoice(null);
+          setCreateOrderForInvoice(invoice);
+        }}
         onLinkExistingOrder={(invoice, order, options) => linkExistingOrderMutation.mutate({ invoice, order, options })}
         isLinkingExistingOrder={linkExistingOrderMutation.isPending}
         isOrderLinkPending={linkOrderMutation.isPending || unlinkOrderMutation.isPending || syncOrderMutation.isPending || syncOrderFromInvoiceMutation.isPending}
@@ -680,7 +691,13 @@ export default function Invoices() {
 
       {createOrderForInvoice && (
         <NewOrderDrawer
-          onClose={() => setCreateOrderForInvoice(null)}
+          onClose={() => {
+            // Cancelling Create Order restores the invoice drawer exactly
+            // where the user left it - "suspend", not "discard".
+            const invoice = createOrderForInvoice;
+            setCreateOrderForInvoice(null);
+            setSelectedInvoice(invoice);
+          }}
           onCreate={handleCreateOrderFromInvoice}
           initialValues={orderInitialValuesFromInvoice(createOrderForInvoice)}
         />
