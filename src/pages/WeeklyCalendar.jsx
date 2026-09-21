@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,7 +56,7 @@ export default function WeeklyCalendar() {
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => dataClient.entities.User.list('-created_date', 100)
+    queryFn: () => listOppsTeamDirectory()
   });
 
   const { data: projects = [] } = useQuery({

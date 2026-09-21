@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
+import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import {
   getOrderProductionReadiness,
   isValidReadinessOrderId,
@@ -149,7 +150,7 @@ export function useOrderDrawerData(order, activeTab = "details") {
 
   const usersQuery = useQuery({
     queryKey: ["users", "directory"],
-    queryFn: () => dataClient.entities.User.list("name", 100),
+    queryFn: () => listOppsTeamDirectory(),
     enabled: activeTab === "details" || activeTab === "tasks",
     staleTime: DIRECTORY_STALE_TIME,
   });

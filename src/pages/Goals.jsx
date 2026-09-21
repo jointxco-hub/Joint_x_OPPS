@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Target, Plus, Star, Pencil, Archive, ChevronRight } from "lucide-react";
@@ -217,7 +218,7 @@ export default function Goals() {
 
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
-    queryFn: () => dataClient.entities.User.list("name", 200),
+    queryFn: () => listOppsTeamDirectory(),
   });
 
   const archiveMutation = useMutation({
