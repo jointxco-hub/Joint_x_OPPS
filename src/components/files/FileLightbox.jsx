@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { dataClient } from "@/api/dataClient";
+import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import { supabase } from "@/lib/supabaseClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,7 @@ export default function FileLightbox({ file = null, files = [], index = 0, onInd
 
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
-    queryFn: () => dataClient.entities.User.list('-created_date', 100)
+    queryFn: () => listOppsTeamDirectory()
   });
 
   const mentionableUsers = users.filter(isAssignableTeamUser);

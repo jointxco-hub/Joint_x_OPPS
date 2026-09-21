@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { dataClient } from "@/api/dataClient";
+import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, ClipboardList, CheckCircle2, Circle, Clock,
@@ -76,7 +77,7 @@ export default function Tasks() {
 
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
-    queryFn: () => dataClient.entities.User.list("name", 200),
+    queryFn: () => listOppsTeamDirectory(),
   });
 
   const updateMutation = useMutation({

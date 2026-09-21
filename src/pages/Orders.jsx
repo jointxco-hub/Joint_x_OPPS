@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
+import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import { describeCheckedUpdateError } from "@/lib/checkedUpdate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer } from "lucide-react";
@@ -350,7 +351,7 @@ export default function Orders() {
 
   const { data: users = [] } = useQuery({
     queryKey: ["users", "directory"],
-    queryFn: () => dataClient.entities.User.list("name", 100),
+    queryFn: () => listOppsTeamDirectory(),
     staleTime: 300_000,
   });
 
