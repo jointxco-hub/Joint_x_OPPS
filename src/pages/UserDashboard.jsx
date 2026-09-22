@@ -15,10 +15,12 @@ import { toast } from "sonner";
 // lib
 import { getWeekNumber, scoreColor } from "@/lib/twelveWeekYear";
 import { getTaskCompletionPatch, getTaskEntityName, isTaskComplete, toEntityTaskPayload } from "@/lib/taskAdapters";
+import { deriveMyRoleSummary } from "@/lib/employeeIdentity";
 
 // hooks
 import { useCompanyNorthStar } from "@/hooks/useCompanyNorthStar";
 import { useActiveCompanyCycle } from "@/hooks/useActiveCompanyCycle";
+import { useMyTenantId } from "@/hooks/useMyTenantId";
 import { useMyRole } from "@/hooks/useMyRole";
 import { useMyTags } from "@/hooks/useMyTags";
 import { useMyExecutionScore } from "@/hooks/useMyExecutionScore";
@@ -63,9 +65,18 @@ export default function UserDashboard() {
   const { data: cycle } = useActiveCompanyCycle();
   const currentWeek = cycle ? getWeekNumber(cycle.start_date) : 0;
 
+  // ── Tenant (joint-x) ──────────────────────────────────────────────────
+  const { data: tenantId } = useMyTenantId(user?.auth_user_id);
+
   // ── Role / Tags / Execution Score ────────────────────────────────────────
-  const { data: myRole } = useMyRole(userEmail);
-  const { data: myTags = [] } = useMyTags(userEmail);
+  // Phase 2C: canonical auth_user_id+tenant_id first, legacy email
+  // fallback only for identities not yet resolved to a tenant.
+  const { data: myRoleAssignments = [] } = useMyRole(user?.auth_user_id, tenantId, userEmail);
+  const { primaryRole, roleKeys, supportsQbr } = useMemo(
+    () => deriveMyRoleSummary(myRoleAssignments),
+    [myRoleAssignments]
+  );
+  const { data: myTags = [] } = useMyTags(roleKeys, tenantId);
   const { data: execScore } = useMyExecutionScore(user?.auth_user_id, userEmail, cycle?.id);
 
   // ── KPIs (company-scope, or assigned to me) ──────────────────────────────
@@ -76,16 +87,18 @@ export default function UserDashboard() {
   });
 
   // ── WAM weekly scores ────────────────────────────────────────────────────
+  // Phase 2C: canonical auth_user_id+tenant_id first (same id-first,
+  // email-fallback shape as useMyExecutionScore.js), legacy email filter
+  // only for identities not yet resolved to a tenant.
   const { data: weeklyScores = [] } = useQuery({
-    queryKey: ["weekly-scores", userEmail, cycle?.id],
-    enabled: !!userEmail && !!cycle?.id && !!supabase,
+    queryKey: ["weekly-scores", user?.auth_user_id || userEmail, tenantId, cycle?.id],
+    enabled: !!(user?.auth_user_id || userEmail) && !!cycle?.id && !!supabase,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("weekly_scores")
-        .select("*")
-        .eq("user_email", userEmail)
-        .eq("cycle_id", cycle.id)
-        .order("week_number", { ascending: true });
+      let query = supabase.from("weekly_scores").select("*").eq("cycle_id", cycle.id);
+      query = (user?.auth_user_id && tenantId)
+        ? query.eq("auth_user_id", user.auth_user_id).eq("tenant_id", tenantId)
+        : query.eq("user_email", userEmail);
+      const { data, error } = await query.order("week_number", { ascending: true });
       if (error) throw error;
       return data ?? [];
     },
@@ -338,9 +351,19 @@ export default function UserDashboard() {
         {/* 4 — 3-col row: Execution Score | My Role | Daily QBR */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <ExecutionScoreCard score={execScore} />
-          <MyRoleCard role={myRole} />
-          <DailyQbrCheck userEmail={userEmail} />
+          <MyRoleCard role={primaryRole} />
+          <DailyQbrCheck authUserId={user?.auth_user_id} tenantId={tenantId} userEmail={userEmail} />
         </div>
+        {/* Phase 2C: role-specific derivation — supportsQbr comes from the
+            existing roles.supports_qbr flag (deriveMyRoleSummary), not an
+            invented role taxonomy. Only shown once a primary role is
+            actually known and explicitly doesn't support QBR, so it
+            never appears for "no role assigned yet". */}
+        {primaryRole && supportsQbr === false && (
+          <p className="-mt-4 mb-6 text-xs text-muted-foreground">
+            {primaryRole.name} doesn't carry a defined Queen Bee Role — the daily QBR check above is optional for you.
+          </p>
+        )}
 
         {/* 5 — Stats row */}
         <div className="grid grid-cols-2 gap-3 mb-6 md:grid-cols-4">
@@ -434,7 +457,7 @@ export default function UserDashboard() {
         </div>
 
         {/* 7 — My Tags Inbox */}
-        <MyTagsInbox tags={myTags} userEmail={userEmail} />
+        <MyTagsInbox tags={myTags} />
 
         <section className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
