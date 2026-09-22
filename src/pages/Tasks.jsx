@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
+import { resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Search, ClipboardList, CheckCircle2, Circle, Clock,
@@ -256,10 +257,9 @@ export default function Tasks() {
                         const isDone = task.status === "complete";
                         const isOverdue = task.due_date && isPast(new Date(task.due_date)) && !isDone;
                         const StatusIcon = isDone ? CheckCircle2 : isOverdue ? AlertTriangle : Circle;
-                        const assignedUsers = users.filter(u =>
-                          Array.isArray(task.assigned_to)
-                            ? task.assigned_to.includes(u.email)
-                            : u.email === task.assigned_to
+                        const assignedUsers = resolveAssignedTeamUsers(
+                          { authUserIds: task.assigned_auth_user_ids, emails: task.assigned_to },
+                          users
                         );
 
                         return (

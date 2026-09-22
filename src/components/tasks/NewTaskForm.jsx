@@ -7,7 +7,7 @@ import { createWithOfflineQueue } from "@/lib/offlineQueue";
 import { supabase } from "@/lib/supabaseClient";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
-import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel, teamUserIdentity, findTeamUserByAuthId } from "@/lib/teamUsers";
 
 export default function NewTaskForm({ users = [], onClose, onCreate }) {
   const [title, setTitle] = useState("");
@@ -24,19 +24,28 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
     if (!trimmed) { toast.error("Task title is required"); return; }
     setLoading(true);
     try {
+      // Phase 2B: assignedTo now holds an auth_user_id; resolve the
+      // matching directory member so both the canonical id array and the
+      // legacy email array can be dual-written together.
+      const assignee = assignedTo && assignedTo !== "_none" ? findTeamUserByAuthId(users, assignedTo) : null;
+      const assigneeEmail = assignee?.email || assignee?.user_email || null;
       const payload = {
         title: trimmed,
         status: "not_started",
         priority,
         deadline: deadline || undefined,
         production_type: productionType || undefined,
-        assigned_to: assignedTo && assignedTo !== "_none" ? [assignedTo] : [],
+        assigned_to: assigneeEmail ? [assigneeEmail] : [],
+        assigned_auth_user_ids: assignedTo && assignedTo !== "_none" ? [assignedTo] : [],
       };
       const created = await createWithOfflineQueue("OpsTask", payload);
-      if (!created?.isQueuedOffline && created?.tenant_id && assignedTo && assignedTo !== "_none") {
+      if (!created?.isQueuedOffline && created?.tenant_id && assigneeEmail) {
         const actor = await dataClient.auth.me().catch(() => null);
+        // Push notification infrastructure still addresses recipients by
+        // email (item 10) - not rewritten here, just fed the resolved
+        // compatibility email instead of the raw select value.
         supabase.functions.invoke("send-push-notification", {
-          body: { tenant_id: created.tenant_id, user_email: assignedTo, event_type: "TASK_ASSIGNED", payload: { task_id: created.id, message: `${actor?.full_name || actor?.email || "A team member"} assigned you: ${trimmed}` } },
+          body: { tenant_id: created.tenant_id, user_email: assigneeEmail, event_type: "TASK_ASSIGNED", payload: { task_id: created.id, message: `${actor?.full_name || actor?.email || "A team member"} assigned you: ${trimmed}` } },
         }).then(({ error }) => { if (error) console.warn("Task assignment push notification failed:", error); });
       }
       toast.success(created?.isQueuedOffline ? "Task saved offline. It will sync when online." : "Task created");
@@ -122,7 +131,7 @@ export default function NewTaskForm({ users = [], onClose, onCreate }) {
                   <SelectContent>
                     <SelectItem value="_none">Unassigned</SelectItem>
                     {users.filter(isAssignableTeamUser).map(u => (
-                      <SelectItem key={u.id || u.email} value={u.email || u.user_email}>
+                      <SelectItem key={u.id || u.email} value={teamUserIdentity(u)}>
                         {userDisplayName(u)} - {userRoleLabel(u)}
                       </SelectItem>
                     ))}

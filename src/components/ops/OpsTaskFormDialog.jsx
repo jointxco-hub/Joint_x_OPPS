@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Users, Paperclip, Plus, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel, teamUserIdentity, teamUserKey, resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import SignedFileLink from "@/components/common/SignedFileLink";
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -40,16 +40,33 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
     comments: []
   });
 
+  // Phase 2B: selectedUsers now tracks the resolved DIRECTORY MEMBER
+  // objects (id-first, email-fallback), not bare emails, so both the
+  // canonical id array and the legacy email array can be dual-written
+  // together on submit.
   const [selectedUsers, setSelectedUsers] = useState(
-    Array.isArray(task?.assigned_to) ? task.assigned_to : task?.assigned_to ? [task.assigned_to] : []
+    resolveAssignedTeamUsers(
+      { authUserIds: task?.assigned_auth_user_ids, emails: task?.assigned_to },
+      users
+    )
   );
   const [newFileUrl, setNewFileUrl] = useState("");
   const [newFileName, setNewFileName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [newComment, setNewComment] = useState("");
 
-  const toggleUser = (email) => {
-    setSelectedUsers(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
+  const toggleUser = (user) => {
+    // teamUserKey(), not raw auth_user_id: an unresolved legacy
+    // placeholder (see resolveAssignedTeamUsers in teamUsers.js) has
+    // auth_user_id: null, and so can a genuinely active-but-not-yet-
+    // linked directory member - comparing auth_user_id directly would
+    // let two unrelated "nobody" values match each other.
+    const key = teamUserKey(user);
+    setSelectedUsers(prev =>
+      prev.some(u => teamUserKey(u) === key)
+        ? prev.filter(u => teamUserKey(u) !== key)
+        : [...prev, user]
+    );
   };
 
   const handleClientChange = (clientId) => {
@@ -103,7 +120,17 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit({ ...formData, assigned_to: selectedUsers });
+    // Phase 2B dual-write: canonical auth id array + legacy email array,
+    // built together from the same resolved selection, at IDENTICAL
+    // length, position-for-position (null in the id array for any entry
+    // with no real auth_user_id, never a shorter/compacted array) - see
+    // TaskDrawer.jsx's toggleAssignee for why a shorter id array would
+    // desync positions on the next read.
+    onSubmit({
+      ...formData,
+      assigned_to: selectedUsers.map(u => u.email || u.user_email),
+      assigned_auth_user_ids: selectedUsers.map(u => u.auth_user_id || null),
+    });
   };
 
   const set = (key, val) => setFormData(prev => ({ ...prev, [key]: val }));
@@ -226,17 +253,19 @@ export default function OpsTaskFormDialog({ task, users, clients, orders, projec
               {users.length === 0 && <p className="text-xs text-slate-400">No users found</p>}
               {users.filter(isAssignableTeamUser).map(u => (
                 <label key={u.id} className="flex items-center gap-2 cursor-pointer">
-                  <Checkbox checked={selectedUsers.includes(u.email)} onCheckedChange={() => toggleUser(u.email)} />
-                  <span className="text-sm">{userDisplayName(u)} · {userRoleLabel(u)}</span>
+                  <Checkbox
+                    checked={selectedUsers.some(su => teamUserKey(su) === teamUserKey(u))}
+                    onCheckedChange={() => toggleUser(u)}
+                  />
+                  <span className="text-sm">{userDisplayName(u)} Â· {userRoleLabel(u)}</span>
                 </label>
               ))}
             </div>
             {selectedUsers.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-2">
-                {selectedUsers.map(email => {
-                  const u = users.find(x => x.email === email);
-                  return <Badge key={email} variant="outline" className="text-xs">{u?.full_name || email}</Badge>;
-                })}
+                {selectedUsers.map(u => (
+                  <Badge key={u.auth_user_id || u.email} variant="outline" className="text-xs">{u.full_name || u.email}</Badge>
+                ))}
               </div>
             )}
           </div>

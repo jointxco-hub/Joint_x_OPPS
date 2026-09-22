@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
-import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, userRoleLabel, teamUserKey, resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import CommentThread from "@/components/common/CommentThread";
 import MediaPreview from "@/components/common/MediaPreview";
 import FileLightbox from "@/components/files/FileLightbox";
@@ -86,16 +86,37 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
     onUpdate({ subtasks: (task.subtasks || []).filter(s => s.id !== id) });
   };
 
-  const assignedUsers = users.filter(u =>
-    Array.isArray(task.assigned_to)
-      ? task.assigned_to.includes(u.email)
-      : u.email === task.assigned_to
+  // Phase 2B: prefer the canonical auth_user_id array, falling back to
+  // resolving the legacy email(s) against the tenant directory only when
+  // the task has no auth ids backfilled/saved yet.
+  const assignedUsers = resolveAssignedTeamUsers(
+    { authUserIds: task.assigned_auth_user_ids, emails: task.assigned_to },
+    users
   );
 
-  const toggleAssignee = (email) => {
-    const current = Array.isArray(task.assigned_to) ? task.assigned_to : task.assigned_to ? [task.assigned_to] : [];
-    const next = current.includes(email) ? current.filter(e => e !== email) : [...current, email];
-    onUpdate({ assigned_to: next });
+  // Dual-write: every toggle updates BOTH the canonical id array and the
+  // legacy email array together, so they never drift apart during the
+  // Phase 2B compatibility window. Operates on directory member objects
+  // (not bare emails) so both fields are always available to write.
+  //
+  // Both arrays are written at IDENTICAL length, position-for-position
+  // (null in the id array wherever an entry has no real auth_user_id -
+  // i.e. it's still an unresolved legacy placeholder being carried
+  // through unchanged, not actively assigned here) - never a shorter id
+  // array. A shorter id array would desync positions on the next read:
+  // resolveAssignedTeamUsers() indexes each array independently, so
+  // dropping a null instead of keeping its slot would shift a LATER
+  // real id into the wrong (unresolved) person's position.
+  const toggleAssignee = (user) => {
+    const key = teamUserKey(user);
+    const isAssigned = assignedUsers.some(u => teamUserKey(u) === key);
+    const nextUsers = isAssigned
+      ? assignedUsers.filter(u => teamUserKey(u) !== key)
+      : [...assignedUsers, user];
+    onUpdate({
+      assigned_auth_user_ids: nextUsers.map(u => u.auth_user_id || null),
+      assigned_to: nextUsers.map(u => u.email || u.user_email),
+    });
   };
 
   const subtasksDone = (task.subtasks || []).filter(s => s.completed).length;
@@ -283,7 +304,7 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
               {assignedUsers.map(u => (
                 <button
                   key={u.id}
-                  onClick={() => toggleAssignee(u.email)}
+                  onClick={() => toggleAssignee(u)}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium hover:bg-red-50 hover:text-red-600 transition-colors"
                   title="Click to remove"
                 >
@@ -300,10 +321,10 @@ export default function TaskDrawer({ task, users = [], onClose, onUpdate, onArch
                 {users.filter(isAssignableTeamUser).map(u => (
                   <label key={u.id || u.email} className="flex items-center gap-2 cursor-pointer p-1 rounded-lg hover:bg-secondary/50">
                     <Checkbox
-                      checked={Array.isArray(task.assigned_to) ? task.assigned_to.includes(u.email) : task.assigned_to === u.email}
-                      onCheckedChange={() => toggleAssignee(u.email)}
+                      checked={assignedUsers.some(au => teamUserKey(au) === teamUserKey(u))}
+                      onCheckedChange={() => toggleAssignee(u)}
                     />
-                    <span className="text-sm">{userDisplayName(u)} · {userRoleLabel(u)}</span>
+                    <span className="text-sm">{userDisplayName(u)} ï¿½ {userRoleLabel(u)}</span>
                   </label>
                 ))}
               </div>

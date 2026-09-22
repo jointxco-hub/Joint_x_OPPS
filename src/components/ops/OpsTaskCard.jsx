@@ -8,6 +8,7 @@ import {
   Trash2, Pencil, Plus, Paperclip, MessageSquare, AlertTriangle, Archive
 } from "lucide-react";
 import SignedFileLink from "@/components/common/SignedFileLink";
+import { resolveAssignedTeamUsers } from "@/lib/teamUsers";
 
 const statusColors = {
   not_started: "bg-slate-100 text-slate-700",
@@ -43,8 +44,13 @@ export default function OpsTaskCard({ task, users, onStatusToggle, onUpdate, onE
   const [showSubtaskForm, setShowSubtaskForm] = useState(false);
   const [subtaskName, setSubtaskName] = useState("");
 
-  const assignedUsers = users.filter(u =>
-    Array.isArray(task.assigned_to) ? task.assigned_to.includes(u.email) : u.email === task.assigned_to
+  // Phase 2B: prefer canonical auth ids, fall back to legacy email(s)
+  // only for rows with no auth ids backfilled/saved yet. Subtasks' own
+  // assigned_to (a nested JSON field, not a table column) is unrelated
+  // and out of scope for this migration.
+  const assignedUsers = resolveAssignedTeamUsers(
+    { authUserIds: task.assigned_auth_user_ids, emails: task.assigned_to },
+    users
   );
 
   const completedSubtasks = (task.subtasks || []).filter(s => s.completed).length;

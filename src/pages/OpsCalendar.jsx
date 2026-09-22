@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
-import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, teamUserIdentity, resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -162,7 +162,14 @@ export default function OpsCalendar() {
       if (t.status === 'archived' && filterStatus !== 'archived') return false;
       if (search && !t.title?.toLowerCase().includes(search.toLowerCase()) &&
           !t.client_name?.toLowerCase().includes(search.toLowerCase())) return false;
-      if (filterUser !== 'all' && !(t.assigned_to || []).includes(filterUser)) return false;
+      // Phase 2B: filterUser now holds an auth_user_id (or "all"). Resolve
+      // this task's assignees id-first/email-fallback so both backfilled
+      // and not-yet-backfilled rows filter correctly - never silently
+      // drops a legacy-only assignee from the match.
+      if (filterUser !== 'all' && !resolveAssignedTeamUsers(
+        { authUserIds: t.assigned_auth_user_ids, emails: t.assigned_to },
+        users
+      ).some(u => u.auth_user_id === filterUser)) return false;
       if (filterStatus !== 'all' && t.status !== filterStatus) return false;
       if (filterType !== 'all' && t.production_type !== filterType) return false;
       return true;
@@ -261,7 +268,7 @@ export default function OpsCalendar() {
                   <SelectTrigger className="w-36 h-9 rounded-xl"><SelectValue placeholder="All Members" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Members</SelectItem>
-                    {users.filter(isAssignableTeamUser).map(u => <SelectItem key={u.id} value={u.email}>{userDisplayName(u)}</SelectItem>)}
+                    {users.filter(isAssignableTeamUser).map(u => <SelectItem key={u.id} value={teamUserIdentity(u)}>{userDisplayName(u)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Select value={filterStatus} onValueChange={setFilterStatus}>

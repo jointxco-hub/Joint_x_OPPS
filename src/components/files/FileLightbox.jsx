@@ -14,6 +14,16 @@ import { isAssignableTeamUser, userDisplayName, userRoleLabel } from "@/lib/team
 import { useSignedFileUrl } from "@/lib/privateFiles";
 import { classifyFileReference, fileNameFromReference, fileUrlFrom, getThumbnailWindow, isEditableKeyboardTarget } from "@/lib/filePresentation";
 
+// Phase 2B follow-up (not done in this pass): `mentioned_user` below still
+// stores the tagged person's email. dataClient.entities.FileComment has no
+// ENTITY_CONFIG entry in src/api/dataClient.js, so it currently resolves
+// through the browser-local/offline entity fallback, not a real Supabase
+// table - confirmed against production: no deployed comments/mentions
+// table exists containing mentioned_user or comment_text. Before adding a
+// canonical mentioned_auth_user_id here, a decision is needed on whether
+// file comments stay client-local or get a real tenant-scoped server
+// model - that decision, not a guessed table name, is the actual
+// blocker. Left unchanged in this pass.
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 0.25;

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
-import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, teamUserIdentity, findTeamUserByAuthId, resolveAssignedTeamUser } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -240,7 +240,12 @@ export default function NotesHub() {
 
 function BugCard({ bug, users }) {
   const [editing, setEditing] = useState(false);
-  const assignedUser = users.find(u => u.email === bug.assigned_to);
+  // Phase 2B: prefer canonical auth id, fall back to legacy email only
+  // when the row has no auth id yet.
+  const assignedUser = resolveAssignedTeamUser(
+    { authUserId: bug.assigned_auth_user_id, email: bug.assigned_to },
+    users
+  );
 
   return (
     <>
@@ -286,7 +291,12 @@ function BugCard({ bug, users }) {
 }
 
 function IdeaCard({ idea, users }) {
-  const assignedUser = users.find(u => u.email === idea.assigned_to);
+  // Phase 2B: prefer canonical auth id, fall back to legacy email only
+  // when the row has no auth id yet.
+  const assignedUser = resolveAssignedTeamUser(
+    { authUserId: idea.assigned_auth_user_id, email: idea.assigned_to },
+    users
+  );
   
   return (
     <Card>
@@ -336,6 +346,7 @@ function BugFormDialog({ users, onClose, existing }) {
     screenshot_url: existing.screenshot_url || "",
     priority: existing.priority || "medium",
     assigned_to: existing.assigned_to || "",
+    assigned_auth_user_id: existing.assigned_auth_user_id || "",
     status: existing.status || "open",
   } : {
     description: "",
@@ -343,13 +354,31 @@ function BugFormDialog({ users, onClose, existing }) {
     screenshot_url: "",
     priority: "medium",
     assigned_to: "",
+    assigned_auth_user_id: "",
     status: "open"
   });
   const [uploading, setUploading] = useState(false);
   const queryClient = useQueryClient();
 
+  // Phase 2B dual-write: selecting an assignee updates the canonical auth
+  // id and the legacy email together, so they never drift apart.
+  const setAssignee = (value) => {
+    if (value === "unassigned") {
+      setFormData(f => ({ ...f, assigned_auth_user_id: "", assigned_to: "" }));
+      return;
+    }
+    const user = findTeamUserByAuthId(users, value);
+    setFormData(f => ({
+      ...f,
+      assigned_auth_user_id: value,
+      assigned_to: user?.email || user?.user_email || "",
+    }));
+  };
+
   const createMutation = useMutation({
     mutationFn: async (data) => {
+      // reported_by is audit/history attribution - unchanged, per
+      // instruction, not part of this migration.
       if (existing) {
         return dataClient.entities.BugReport.update(existing.id, data);
       }
@@ -385,7 +414,7 @@ function BugFormDialog({ users, onClose, existing }) {
         <DialogHeader>
           <DialogTitle>{existing ? "Edit Bug Report" : "Report Bug"}</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to === "unassigned" ? null : formData.assigned_to }); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to || null, assigned_auth_user_id: formData.assigned_auth_user_id || null }); }} className="space-y-4">
           <div>
             <Label>Bug Description *</Label>
             <Textarea
@@ -452,14 +481,14 @@ function BugFormDialog({ users, onClose, existing }) {
 
             <div>
               <Label>Assign To</Label>
-              <Select value={formData.assigned_to} onValueChange={(v) => setFormData({...formData, assigned_to: v})}>
+              <Select value={formData.assigned_auth_user_id || "unassigned"} onValueChange={setAssignee}>
                 <SelectTrigger>
                   <SelectValue placeholder="Optional..." />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="unassigned">Unassigned</SelectItem>
                   {users.filter(isAssignableTeamUser).map(user => (
-                    <SelectItem key={user.id} value={user.email}>
+                    <SelectItem key={user.id} value={teamUserIdentity(user)}>
                       {userDisplayName(user)}
                     </SelectItem>
                   ))}
@@ -487,13 +516,31 @@ function IdeaFormDialog({ users, onClose }) {
     category: "other",
     attachment_url: "",
     assigned_to: "",
+    assigned_auth_user_id: "",
     status: "pending"
   });
   const [uploading, setUploading] = useState(false);
   const queryClient = useQueryClient();
 
+  // Phase 2B dual-write: selecting an assignee updates the canonical auth
+  // id and the legacy email together, so they never drift apart.
+  const setAssignee = (value) => {
+    if (value === "unassigned") {
+      setFormData(f => ({ ...f, assigned_auth_user_id: "", assigned_to: "" }));
+      return;
+    }
+    const user = findTeamUserByAuthId(users, value);
+    setFormData(f => ({
+      ...f,
+      assigned_auth_user_id: value,
+      assigned_to: user?.email || user?.user_email || "",
+    }));
+  };
+
   const createMutation = useMutation({
     mutationFn: async (data) => {
+      // submitted_by is audit/history attribution - unchanged, per
+      // instruction, not part of this migration.
       const user = await dataClient.auth.me().catch(() => null);
       return createWithOfflineQueue("Idea", { ...data, submitted_by: user?.email });
     },
@@ -526,7 +573,7 @@ function IdeaFormDialog({ users, onClose }) {
         <DialogHeader>
           <DialogTitle>New Idea</DialogTitle>
         </DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to === "unassigned" ? null : formData.assigned_to }); }} className="space-y-4">
+        <form onSubmit={(e) => { e.preventDefault(); createMutation.mutate({ ...formData, assigned_to: formData.assigned_to || null, assigned_auth_user_id: formData.assigned_auth_user_id || null }); }} className="space-y-4">
           <div>
             <Label>Idea Title *</Label>
             <Input
@@ -592,14 +639,14 @@ function IdeaFormDialog({ users, onClose }) {
 
           <div>
             <Label>Assign To</Label>
-            <Select value={formData.assigned_to} onValueChange={(v) => setFormData({...formData, assigned_to: v})}>
+            <Select value={formData.assigned_auth_user_id || "unassigned"} onValueChange={setAssignee}>
               <SelectTrigger>
                 <SelectValue placeholder="Optional..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="unassigned">Unassigned</SelectItem>
                 {users.filter(isAssignableTeamUser).map(user => (
-                  <SelectItem key={user.id} value={user.email}>
+                  <SelectItem key={user.id} value={teamUserIdentity(user)}>
                     {userDisplayName(user)}
                   </SelectItem>
                 ))}

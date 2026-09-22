@@ -5,6 +5,7 @@ import { resolveOfflineUserFromSession, resolveOnlineUserFromAuthCheck } from '@
 import { supabaseErrorMessage } from '@/lib/supabaseErrorMessage';
 import { OP_ERROR_CODES, createOpError, isOpError } from '@/lib/opError';
 import { performCheckedUpdate, classifySupabaseWriteError } from '@/lib/checkedUpdate';
+import { resolveSelfProfilePatch, applyOfflineSelfProfilePatch, buildUpdatedLocalUser } from '@/lib/teamUsers';
 
 const localStore = new Map();
 const warnedEntities = new Set();
@@ -184,6 +185,7 @@ const ENTITY_CONFIG = {
       quoted_price: 'total_amount',
       tracking_code: 'tracking_number',
       client_id: 'client_id',
+      assigned_to_auth_user_id: 'assigned_to_auth_user_id',
     },
     normalize(row) {
       const products = Array.isArray(row.products) ? row.products : [];
@@ -250,6 +252,14 @@ const ENTITY_CONFIG = {
         order_file_folders: payload.order_file_folders,
         assigned_team: payload.assigned_team,
         assigned_to: payload.assigned_to,
+        // Phase 2B canonical identity - dual-written alongside the legacy
+        // email fields during the compatibility window. Migrated
+        // separately (assigned_to and assigned_team are independent
+        // semantics - one supersedes neither).
+        assigned_to_auth_user_id: payload.assigned_to_auth_user_id,
+        assigned_team_auth_user_ids: Array.isArray(payload.assigned_team_auth_user_ids)
+          ? payload.assigned_team_auth_user_ids
+          : undefined,
         pipeline_stage: payload.pipeline_stage,
         production_method: payload.production_method,
         production_detail_stage: payload.production_detail_stage,
@@ -288,6 +298,7 @@ const ENTITY_CONFIG = {
       updated_date: 'updated_at',
       due_date: 'deadline',
       project_id: 'linked_goal_id',
+      assigned_auth_user_id: 'assigned_auth_user_id',
     },
     normalize(row) {
       return {
@@ -305,6 +316,11 @@ const ENTITY_CONFIG = {
         assigned_to: payload.assigned_to,
         assigned_to_name: payload.assigned_to_name,
         assigned_user_id: payload.assigned_user_id,
+        // Phase 2B canonical identity - dual-written alongside the legacy
+        // assigned_to email during the compatibility window. Never
+        // repurposes assigned_user_id (that references public.users.id,
+        // not auth_user_id - see the Phase 2B migration header).
+        assigned_auth_user_id: payload.assigned_auth_user_id,
         deadline: payload.deadline ?? payload.due_date,
         week_number: numberOrUndefined(payload.week_number),
         status: normalizeTaskStatus(payload.status),
@@ -359,6 +375,9 @@ const ENTITY_CONFIG = {
         week_number: numberOrUndefined(payload.week_number),
         day_of_week: payload.day_of_week || undefined,
         assigned_to: Array.isArray(payload.assigned_to) ? payload.assigned_to : [],
+        // Phase 2B canonical identity - dual-written alongside legacy
+        // assigned_to (emails) during the compatibility window.
+        assigned_auth_user_ids: Array.isArray(payload.assigned_auth_user_ids) ? payload.assigned_auth_user_ids : [],
         client_id: cleanId(payload.client_id),
         client_name: payload.client_name || undefined,
         order_id: cleanId(payload.order_id),
@@ -1155,6 +1174,7 @@ const ENTITY_CONFIG = {
       created_date: 'created_at',
       updated_date: 'updated_at',
       assigned_to: 'assigned_to',
+      assigned_auth_user_id: 'assigned_auth_user_id',
       reported_by: 'reported_by',
       status: 'status',
       priority: 'priority',
@@ -1169,6 +1189,11 @@ const ENTITY_CONFIG = {
         screenshot_url: payload.screenshot_url,
         priority: payload.priority,
         assigned_to: payload.assigned_to,
+        // Phase 2B canonical identity - dual-written alongside legacy
+        // assigned_to (email) during the compatibility window.
+        // reported_by is explicitly OUT of scope (audit/history, not
+        // team assignment) - left untouched.
+        assigned_auth_user_id: payload.assigned_auth_user_id,
         reported_by: payload.reported_by,
         status: payload.status,
         is_archived: payload.is_archived,
@@ -1184,6 +1209,7 @@ const ENTITY_CONFIG = {
       created_date: 'created_at',
       updated_date: 'updated_at',
       assigned_to: 'assigned_to',
+      assigned_auth_user_id: 'assigned_auth_user_id',
       submitted_by: 'submitted_by',
       status: 'status',
       category: 'category',
@@ -1198,6 +1224,11 @@ const ENTITY_CONFIG = {
         category: payload.category,
         attachment_url: payload.attachment_url,
         assigned_to: payload.assigned_to,
+        // Phase 2B canonical identity - dual-written alongside legacy
+        // assigned_to (email) during the compatibility window.
+        // submitted_by is explicitly OUT of scope (audit/history, not
+        // team assignment) - left untouched.
+        assigned_auth_user_id: payload.assigned_auth_user_id,
         submitted_by: payload.submitted_by,
         status: payload.status,
         is_archived: payload.is_archived,
@@ -1243,6 +1274,7 @@ const ENTITY_CONFIG = {
       scope: 'scope',
       is_north_star: 'is_north_star',
       assigned_to: 'assigned_to',
+      assigned_auth_user_id: 'assigned_auth_user_id',
       status: 'status',
       is_archived: 'is_archived',
     },
@@ -1259,6 +1291,9 @@ const ENTITY_CONFIG = {
         title: payload.title,
         description: payload.description,
         assigned_to: payload.assigned_to,
+        // Phase 2B canonical identity - dual-written alongside legacy
+        // assigned_to (email) during the compatibility window.
+        assigned_auth_user_id: payload.assigned_auth_user_id,
         status: payload.status,
         progress: numberOrUndefined(payload.progress),
         start_date: payload.start_date,
@@ -1297,6 +1332,9 @@ const ENTITY_CONFIG = {
         title: payload.title,
         description: payload.description,
         assigned_to: Array.isArray(payload.assigned_to) ? payload.assigned_to : undefined,
+        // Phase 2B canonical identity - dual-written alongside legacy
+        // assigned_to (emails) during the compatibility window.
+        assigned_auth_user_ids: Array.isArray(payload.assigned_auth_user_ids) ? payload.assigned_auth_user_ids : undefined,
         status: payload.status,
         priority: payload.priority,
         completed_at: payload.completed_at,
@@ -2469,14 +2507,43 @@ async function getCurrentUser() {
   const { data, error: authError } = await supabase.auth.getUser();
   const authUser = data?.user ?? null;
 
-  const profileResult = authUser
+  // Phase 2B: the canonical, RLS-aligned lookup is auth_user_id =
+  // auth.uid() - this is exactly what Phase 2A's opps_users_read policy
+  // (auth_user_id = auth.uid() OR is_app_admin()) grants every signed-in
+  // identity for their own row, unconditionally. This must run first and
+  // alone, not folded into an .or(...) with the email arm: RLS is
+  // enforced server-side regardless of the client query's shape, so an
+  // .or(auth_user_id.eq...,user_email.eq...) query never actually
+  // broadens what an ordinary user can read - but it obscured that the
+  // email arm was already dead for them, and for an app admin it could
+  // return a DIFFERENT row than the one actually linked to their own
+  // auth identity if some other user's row happened to share their
+  // email. Two separate, explicit queries instead.
+  let profileResult = authUser
     ? await supabase
         .from('users')
         .select('*')
-        .or(`auth_user_id.eq.${authUser.id},user_email.eq.${authUser.email}`)
+        .eq('auth_user_id', authUser.id)
         .limit(1)
         .maybeSingle()
     : { data: null };
+
+  // Compatibility fallback for the legitimate migration case only: a
+  // public.users row exists for this person but auth_user_id hasn't been
+  // linked yet (still null). Under Phase 2A RLS this can only ever
+  // succeed for an is_app_admin() caller - for an ordinary signed-in
+  // identity, RLS's own auth_user_id = auth.uid() requirement makes this
+  // query return nothing no matter what it asks for, exactly as before.
+  // This does NOT reopen broad email-based lookup: it's not a new grant,
+  // just an explicit second attempt at what RLS already allows.
+  if (authUser && !profileResult.data && !profileResult.error) {
+    profileResult = await supabase
+      .from('users')
+      .select('*')
+      .eq('user_email', authUser.email)
+      .limit(1)
+      .maybeSingle();
+  }
 
   const { user, cacheAction, revoked } = resolveOnlineUserFromAuthCheck({
     authError,
@@ -2553,53 +2620,76 @@ export const dataClient = {
       return getCurrentUser();
     },
 
+    // Phase 2B: Phase 2A restricted direct public.users INSERT/UPDATE to
+    // is_app_admin() only (closing a privilege-escalation gap - see
+    // 20260921150000/20260921210000). This used to write straight to
+    // public.users, which under that policy now either silently affects
+    // 0 rows or is denied outright for every ordinary user - it only
+    // ever updates the CALLER's own safe fields (full_name,
+    // preferred_name, avatar_url), so it now goes through the narrow
+    // update_my_opps_profile() RPC (auth_user_id = auth.uid(), no
+    // target-user argument, cannot touch role/department/is_active/
+    // auth_user_id/user_email/tenant role - see
+    // 20260921224500_opps_self_profile_update_rpc.sql) instead of a
+    // direct table write. Provisioning a brand-new profile row is out of
+    // scope for this method, same as it is for that RPC.
+    //
+    // Sends TRUE PATCH semantics: only the fields actually present in
+    // `payload` (per resolveSelfProfilePatch) go to the RPC at all - the
+    // RPC's own `p_patch ? 'field_name'` check is what actually
+    // guarantees an omitted field is left alone, but the client must
+    // still not SEND a field it didn't mean to touch, since sending
+    // `null` for it is indistinguishable from an intentional clear once
+    // it reaches the RPC. An earlier version of both this method and the
+    // RPC always sent/set all three fields, so updating only full_name
+    // silently cleared preferred_name/avatar_url.
     async updateMe(payload = {}) {
       const user = await getCurrentUser();
       if (!user) {
-        currentUser = {
-          ...(currentUser ?? {}),
-          ...payload,
-        };
+        // Offline/unconfigured-client fallback: no server round trip is
+        // possible here, but the local cache must still only ever accept
+        // the same three safe fields the RPC would - never the raw
+        // payload wholesale. applyOfflineSelfProfilePatch() (teamUsers.js)
+        // reads only from resolveSelfProfilePatch's already-filtered
+        // output, so email/role/department/is_active/auth_user_id/
+        // user_email can never reach the local cache here either,
+        // regardless of what the caller's payload object contains.
+        currentUser = applyOfflineSelfProfilePatch(currentUser, resolveSelfProfilePatch(payload));
         return currentUser;
       }
 
-      if (supabase) {
-        const profilePayload = ENTITY_CONFIG.User.serialize({
-          ...user,
-          ...payload,
-          auth_user_id: user.id,
-          user_email: payload.email ?? user.email,
-        });
+      const patch = resolveSelfProfilePatch(payload);
+      let saved = null;
 
-        const { data: existingProfile } = await supabase
-          .from('users')
-          .select('id')
-          .or(`auth_user_id.eq.${user.id},user_email.eq.${user.email}`)
-          .limit(1)
-          .maybeSingle();
+      if (supabase && Object.keys(patch).length > 0) {
+        const { data, error } = await supabase.rpc('update_my_opps_profile', { p_patch: patch });
+        if (error) throw error;
+        saved = Array.isArray(data) ? data[0] : data;
 
-        if (existingProfile?.id) {
-          await supabase.from('users').update(profilePayload).eq('id', existingProfile.id);
-        } else {
-          await supabase.from('users').insert(profilePayload);
-        }
-
+        // Supabase Auth metadata - kept only for display/avatar
+        // compatibility with anything that reads it from the JWT/session
+        // directly rather than public.users. Synced to the RPC's own
+        // returned post-save state (the authoritative values, whether or
+        // not this particular call touched them), not the raw patch, and
+        // deliberately never includes `role`: that field belongs solely
+        // to public.users.role (the column is_app_admin() trusts), and a
+        // client-writable copy of it in auth metadata serves no
+        // legitimate purpose here.
         await supabase.auth.updateUser({
           data: {
-            full_name: payload.full_name ?? payload.name ?? user.full_name,
-            avatar_url: payload.profile_photo ?? payload.avatar_url ?? user.profile_photo,
-            role: payload.role ?? user.role,
+            full_name: saved?.full_name ?? user.full_name,
+            avatar_url: saved?.avatar_url ?? user.profile_photo ?? user.avatar_url,
           },
         });
       }
 
-      currentUser = {
-        ...user,
-        ...payload,
-        email: payload.email ?? user.email,
-        full_name: payload.full_name ?? payload.name ?? user.full_name,
-        profile_photo: payload.profile_photo ?? payload.avatar_url ?? user.profile_photo,
-      };
+      // buildUpdatedLocalUser() (teamUsers.js) takes only `user` (the
+      // pre-existing local identity) and `saved` (the RPC's own narrowed
+      // return row) - no `payload` parameter exists, so there is no way
+      // for the caller's raw payload to reach the result. email and
+      // every privilege-bearing field always come from `user`, never
+      // from `saved` or `payload`.
+      currentUser = buildUpdatedLocalUser({ user, saved });
 
       return currentUser;
     },

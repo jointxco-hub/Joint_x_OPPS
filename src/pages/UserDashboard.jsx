@@ -66,7 +66,7 @@ export default function UserDashboard() {
   // ── Role / Tags / Execution Score ────────────────────────────────────────
   const { data: myRole } = useMyRole(userEmail);
   const { data: myTags = [] } = useMyTags(userEmail);
-  const { data: execScore } = useMyExecutionScore(userEmail, cycle?.id);
+  const { data: execScore } = useMyExecutionScore(user?.auth_user_id, userEmail, cycle?.id);
 
   // ── KPIs (company-scope, or assigned to me) ──────────────────────────────
   const { data: kpis = [] } = useQuery({
@@ -92,14 +92,18 @@ export default function UserDashboard() {
   });
 
   // ── Goals (mine, active) ─────────────────────────────────────────────────
+  // Phase 2B: filter by the canonical auth_user_id when available; only
+  // fall back to the legacy email filter for identities with no
+  // auth_user_id on their own public.users row yet.
   const { data: myGoals = [] } = useQuery({
-    queryKey: ["my-goals", userEmail],
-    enabled: !!userEmail,
+    queryKey: ["my-goals", user?.auth_user_id || userEmail],
+    enabled: !!(user?.auth_user_id || userEmail),
     queryFn: () =>
-      dataClient.entities.Goal.filter({
-        assigned_to: userEmail,
-        is_archived: false,
-      }),
+      dataClient.entities.Goal.filter(
+        user?.auth_user_id
+          ? { assigned_auth_user_id: user.auth_user_id, is_archived: false }
+          : { assigned_to: userEmail, is_archived: false }
+      ),
   });
 
   const { data: whatsappConversations = [] } = useQuery({
@@ -131,11 +135,16 @@ export default function UserDashboard() {
   });
 
   // ── Legacy Task entity (kept for backwards compat) ────────────────────────
+  // Phase 2B: same id-first, email-fallback pattern as myGoals above.
   const { data: legacyTasks = [] } = useQuery({
-    queryKey: ["user-tasks", userEmail],
-    enabled: !!userEmail,
+    queryKey: ["user-tasks", user?.auth_user_id || userEmail],
+    enabled: !!(user?.auth_user_id || userEmail),
     queryFn: () =>
-      dataClient.entities.Task.filter({ assigned_to: userEmail, is_archived: false }),
+      dataClient.entities.Task.filter(
+        user?.auth_user_id
+          ? { assigned_auth_user_id: user.auth_user_id, is_archived: false }
+          : { assigned_to: userEmail, is_archived: false }
+      ),
   });
 
   const updateTaskMutation = useMutation({
@@ -181,11 +190,20 @@ export default function UserDashboard() {
   };
 
   // ── Derived stats ─────────────────────────────────────────────────────────
-  // All OpsTask items assigned to me (primary task entity)
-  const myOpsTasks = opsTasks.filter(t =>
-    t.status !== "archived" &&
-    (Array.isArray(t.assigned_to) ? t.assigned_to.includes(userEmail) : t.assigned_to === userEmail)
-  );
+  // All OpsTask items assigned to me (primary task entity). Phase 2B:
+  // prefer the canonical auth id array; only fall back to comparing the
+  // legacy email array for rows that have no auth ids backfilled/saved
+  // yet (an empty assigned_auth_user_ids array is the "not yet
+  // backfilled" signal, not "assigned to no one" - a genuinely
+  // unassigned row also has an empty legacy assigned_to, so the email
+  // fallback correctly yields false for it either way).
+  const myOpsTasks = opsTasks.filter(t => {
+    if (t.status === "archived") return false;
+    if (Array.isArray(t.assigned_auth_user_ids) && t.assigned_auth_user_ids.length) {
+      return t.assigned_auth_user_ids.includes(user?.auth_user_id);
+    }
+    return Array.isArray(t.assigned_to) ? t.assigned_to.includes(userEmail) : t.assigned_to === userEmail;
+  });
 
   // Merge with legacy Task items assigned to me
   const allMyTasks = [
