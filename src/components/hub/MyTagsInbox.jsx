@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { SourceBadge } from '@/lib/opsDisplay';
 
-export default function MyTagsInbox({ tags = [], userEmail }) {
+export default function MyTagsInbox({ tags = [] }) {
   const qc = useQueryClient();
 
   const resolveMutation = useMutation({
@@ -14,7 +14,12 @@ export default function MyTagsInbox({ tags = [], userEmail }) {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['my-tags', userEmail] });
+      // Phase 2C: useMyTags() now keys its query by the caller's
+      // role_keys (order_tags is role-based, not email-based - see
+      // useMyTags.js). Invalidate by the 'my-tags' prefix alone rather
+      // than trying to reproduce the exact (deduped/filtered) key shape
+      // useMyTags() builds internally.
+      qc.invalidateQueries({ queryKey: ['my-tags'] });
       toast.success('Tag resolved');
     },
     onError: () => toast.error('Could not resolve tag'),

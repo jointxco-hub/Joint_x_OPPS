@@ -18,6 +18,7 @@ import {
 import { createPageUrl } from "../utils";
 import { toast } from "sonner";
 import { detectIminPrinter, printIminReceipt } from "@/lib/pos/iminPrinter";
+import { matchesUserRoleAssignment } from "@/lib/employeeIdentity";
 
 const criticalityColors = {
   critical: "bg-red-100 text-red-700",
@@ -148,6 +149,25 @@ export default function RolesManagement() {
     queryFn: () => dataClient.entities.UserRole.list('-assigned_at', 500)
   });
 
+  // Phase 2C: user_roles.tenant_id is being introduced alongside the
+  // legacy user_email key (see
+  // supabase/migrations/20260922100000_opps_employee_hub_phase2c_identity.sql).
+  // Operational roles are OPPS-only today (is_opps_staff() itself
+  // hardcodes tenant.slug = 'joint-x'), so new assignments from this page
+  // are always stamped with the joint-x tenant id specifically - not
+  // "whichever tenant the admin happens to belong to" - resolved once
+  // here and reused for every assignment made from this page.
+  const { data: joinTXTenantId } = useQuery({
+    queryKey: ['tenantId', 'joint-x'],
+    queryFn: async () => {
+      if (!supabase) return null;
+      const { data, error } = await supabase.from('tenants').select('id').eq('slug', 'joint-x').maybeSingle();
+      if (error) throw error;
+      return data?.id ?? null;
+    },
+    staleTime: 600_000,
+  });
+
   const activeRoles = roles.filter(r => r.is_active);
 
   // Role mutations
@@ -193,8 +213,18 @@ export default function RolesManagement() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['userRoles'] }); toast.success("Role removed"); }
   });
   const setPrimaryMutation = useMutation({
-    mutationFn: async ({ userEmail, assignment }) => {
-      const existing = userRoles.filter(r => r.user_email === userEmail);
+    // Phase 2C correction: user_roles is now tenant-scoped. Recomputing
+    // is_primary across every row that merely SHARES this person's email
+    // (the previous behavior) could reach into a different tenant's
+    // assignment for the same person. matchesUserRoleAssignment()
+    // (src/lib/employeeIdentity.js) requires the row's own tenant_id to
+    // be compatible with joinTXTenantId (or still unresolved) before it
+    // counts, and prefers the canonical auth_user_id match when both
+    // sides have one.
+    mutationFn: async ({ userEmail, assignment, authUserId }) => {
+      const existing = userRoles.filter(r =>
+        matchesUserRoleAssignment(r, { authUserId, email: userEmail, tenantId: joinTXTenantId })
+      );
       await Promise.all(existing.map(r => dataClient.entities.UserRole.update(r.id, { is_primary: r.id === assignment.id })));
     },
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['userRoles'] }); toast.success("Primary role updated"); }
@@ -260,6 +290,7 @@ export default function RolesManagement() {
             users={visibleUsers}
             roles={activeRoles}
             userRoles={userRoles}
+            tenantId={joinTXTenantId}
             authUsersError={authUsersError}
             authUsersFetching={authUsersFetching}
             onRefreshAuthUsers={() => refetchAuthUsers()}
@@ -304,10 +335,27 @@ export default function RolesManagement() {
               if (user?.is_auth_only) {
                 await createUserMutation.mutateAsync(directoryPayloadForUser(user));
               }
-              assignRoleMutation.mutate({ user_email: userEmail, role_key: roleKey, is_primary: !userRoles.some(r => r.user_email === userEmail) });
+              assignRoleMutation.mutate({
+                user_email: userEmail,
+                // Phase 2C canonical identity - only included when
+                // actually resolvable, never guessed; compactObject()
+                // (dataClient.js) drops undefined keys, so this simply
+                // falls back to a user_email-only legacy row when either
+                // isn't known yet.
+                auth_user_id: user?.auth_user_id || undefined,
+                tenant_id: joinTXTenantId || undefined,
+                role_key: roleKey,
+                // Tenant-scoped: only an existing assignment for THIS
+                // person in THIS tenant (or a still-unresolved row for
+                // them) should stop this new one from defaulting to
+                // primary - see matchesUserRoleAssignment().
+                is_primary: !userRoles.some(r =>
+                  matchesUserRoleAssignment(r, { authUserId: user?.auth_user_id, email: userEmail, tenantId: joinTXTenantId })
+                ),
+              });
             }}
             onRemove={(assignment) => removeRoleMutation.mutate(assignment.id)}
-            onPrimary={(userEmail, assignment) => setPrimaryMutation.mutate({ userEmail, assignment })}
+            onPrimary={(userEmail, assignment, authUserId) => setPrimaryMutation.mutate({ userEmail, assignment, authUserId })}
           />
         )}
 
@@ -861,7 +909,7 @@ Never leave a client waiting more than 4 hours without an update.
 
 // ── Team Access tab ───────────────────────────────────────────────────────────
 
-function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onRestore, onInvite, onAddToDirectory, onAssign, onRemove, onPrimary }) {
+function UserRoleAssignments({ users, roles, userRoles, tenantId, authUsersError, authUsersFetching, onRefreshAuthUsers, onSystemRoleChange, onDeactivate, onRestore, onInvite, onAddToDirectory, onAssign, onRemove, onPrimary }) {
   const [selectedRoles, setSelectedRoles] = useState({});
   const [invite, setInvite] = useState({ email: "", name: "", role: "user" });
   const [showInactive, setShowInactive] = useState(false);
@@ -938,7 +986,12 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUser
           <p className="text-sm text-slate-500">No users found yet.</p>
         ) : listedUsers.map(user => {
           const email = user.email || user.user_email;
-          const assignments = userRoles.filter(r => r.user_email === email);
+          // Tenant-scoped: a row for this email in a DIFFERENT tenant
+          // must not render as this person's Joint X role badges - see
+          // matchesUserRoleAssignment() (src/lib/employeeIdentity.js).
+          const assignments = userRoles.filter(r =>
+            matchesUserRoleAssignment(r, { authUserId: user.auth_user_id, email, tenantId })
+          );
           const selected = selectedRoles[email] || "";
           const lastSignIn = formatTeamAccessDate(user.last_sign_in_at);
           const confirmedAt = formatTeamAccessDate(user.confirmed_at);
@@ -1013,7 +1066,7 @@ function UserRoleAssignments({ users, roles, userRoles, authUsersError, authUser
                   const role = roleByKey[assignment.role_key];
                   return (
                     <span key={assignment.id} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs">
-                      <button type="button" onClick={() => onPrimary(email, assignment)} className={assignment.is_primary ? "text-yellow-600" : "text-slate-400"}>
+                      <button type="button" onClick={() => onPrimary(email, assignment, user.auth_user_id)} className={assignment.is_primary ? "text-yellow-600" : "text-slate-400"}>
                         <Crown className="w-3.5 h-3.5" />
                       </button>
                       {role?.name || assignment.role_key}

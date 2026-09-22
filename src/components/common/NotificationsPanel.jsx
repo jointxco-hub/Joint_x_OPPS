@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
+import { useMyTenantId } from "@/hooks/useMyTenantId";
+import { shouldQueryOrderTags } from "@/lib/employeeIdentity";
 import { AlertTriangle, Bell, CheckSquare, Clock, MessageSquare, Tag, X } from "lucide-react";
 
 // Phase 2B follow-up (not done in this pass): the fileComments query below
@@ -117,14 +119,40 @@ export default function NotificationsPanel({ placement = "topbar" }) {
     staleTime: 120_000,
   });
 
+  // Phase 2C: order_tags is role_key-based, not person-based (0 of 282
+  // live rows have user_email populated), so filtering tags by
+  // user_email could never match anything - this panel's tag count has
+  // effectively always been dead/zero. Resolve the caller's own
+  // operational role_keys first (auth_user_id-based; email fallback for
+  // identities not yet resolved), then filter order_tags by those.
+  const { data: myRoleKeys = [] } = useQuery({
+    queryKey: ["myRoleKeys", "notifications", me?.id, me?.email],
+    enabled: !!(me?.id || me?.email) && !!supabase,
+    queryFn: async () => {
+      let query = supabase.from("user_roles").select("role_key");
+      query = me?.id ? query.eq("auth_user_id", me.id) : query.eq("user_email", me.email);
+      const { data, error } = await query;
+      if (error) throw error;
+      return [...new Set((data ?? []).map((r) => r.role_key).filter(Boolean))];
+    },
+    staleTime: 300_000,
+  });
+
+  // Correction round: same tenant-scoping fix applied to useMyTags.js
+  // (this panel has its own separate order_tags query, not routed
+  // through that hook) - order_tags.tenant_id exists live and must not
+  // be left to RLS alone to keep this query scoped to one tenant.
+  const { data: tenantId } = useMyTenantId(me?.id);
+
   const { data: tags = [] } = useQuery({
-    queryKey: ["myTags", "panel", me?.email],
-    enabled: !!me?.email,
+    queryKey: ["myTags", "panel", myRoleKeys, tenantId],
+    enabled: shouldQueryOrderTags({ roleKeys: myRoleKeys, tenantId }) && !!supabase,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("order_tags")
         .select("id, role_key, action, orders(order_number, client_name, pipeline_stage, source)")
-        .eq("user_email", me.email)
+        .eq("tenant_id", tenantId)
+        .in("role_key", myRoleKeys)
         .is("resolved_at", null)
         .limit(10);
       if (error) throw error;

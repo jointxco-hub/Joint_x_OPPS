@@ -1400,6 +1400,8 @@ const ENTITY_CONFIG = {
       created_date: 'created_at',
       cycle_id: 'cycle_id',
       user_email: 'user_email',
+      auth_user_id: 'auth_user_id',
+      tenant_id: 'tenant_id',
       week_number: 'week_number',
     },
     normalize(row) {
@@ -1408,6 +1410,11 @@ const ENTITY_CONFIG = {
     serialize(payload) {
       return compactObject({
         cycle_id: payload.cycle_id,
+        // Phase 2C canonical identity - dual-written alongside legacy
+        // user_email during the compatibility window (see
+        // 20260922100000_opps_employee_hub_phase2c_identity.sql).
+        auth_user_id: payload.auth_user_id,
+        tenant_id: payload.tenant_id,
         user_email: payload.user_email,
         week_number: numberOrUndefined(payload.week_number),
         tactics_planned: numberOrUndefined(payload.tactics_planned),
@@ -1458,6 +1465,8 @@ const ENTITY_CONFIG = {
     sortMap: { assigned_at: 'assigned_at' },
     filterMap: {
       user_email: 'user_email',
+      auth_user_id: 'auth_user_id',
+      tenant_id: 'tenant_id',
       role_key: 'role_key',
       is_primary: 'is_primary',
     },
@@ -1466,6 +1475,11 @@ const ENTITY_CONFIG = {
     },
     serialize(payload) {
       return compactObject({
+        // Phase 2C canonical identity - dual-written alongside legacy
+        // user_email during the compatibility window (see
+        // 20260922100000_opps_employee_hub_phase2c_identity.sql).
+        auth_user_id: payload.auth_user_id,
+        tenant_id: payload.tenant_id,
         user_email: payload.user_email,
         role_key: payload.role_key,
         is_primary: payload.is_primary,
@@ -1480,6 +1494,8 @@ const ENTITY_CONFIG = {
     filterMap: {
       created_date: 'created_at',
       user_email: 'user_email',
+      auth_user_id: 'auth_user_id',
+      tenant_id: 'tenant_id',
       date: 'date',
       role_key: 'role_key',
     },
@@ -1488,6 +1504,10 @@ const ENTITY_CONFIG = {
     },
     serialize(payload) {
       return compactObject({
+        // Phase 2C canonical identity - dual-written alongside legacy
+        // user_email during the compatibility window.
+        auth_user_id: payload.auth_user_id,
+        tenant_id: payload.tenant_id,
         user_email: payload.user_email,
         role_key: payload.role_key,
         date: payload.date,
