@@ -9,6 +9,15 @@ import { dataClient } from "@/api/dataClient";
 import { toast } from "sonner";
 import { isAssignableTeamUser } from "@/lib/teamUsers";
 
+// Phase 2B finding, NOT converted in this pass: this is a SECOND, separate
+// mentions mechanism from the FileComment one (FileLightbox.jsx/
+// NotificationsPanel.jsx) - comments and their `mentions: [{email,...}]`
+// are stored as JSONB inside the parent record's own `comments` column
+// (tasks/ops_tasks/orders all have one), not a dedicated table. Unlike
+// FileComment, this is NOT blocked by a missing-table problem - the
+// parent tables are already migrated in this branch. Left unconverted
+// here purely due to scope/time, not a technical blocker - flagged
+// explicitly as a missed-migration item rather than silently left out.
 const REACTIONS = ["👍", "❤️", "✅", "🔥", "🙌"];
 
 const VISIBILITY = [

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
-import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, teamUserIdentity, findTeamUserByAuthId } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Target, Plus, Star, Pencil, Archive, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,9 +27,25 @@ const EMPTY_FORM = {
 
 function GoalFormModal({ open, onClose, existing, users = [], currentUser }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState(existing ?? { ...EMPTY_FORM, assigned_to: currentUser?.email || "" });
+  const [form, setForm] = useState(existing ?? {
+    ...EMPTY_FORM,
+    assigned_to: currentUser?.email || "",
+    assigned_auth_user_id: currentUser?.auth_user_id || "",
+  });
   const admin = isAdmin(currentUser);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  // Phase 2B dual-write: a single assignee selection updates both the
+  // canonical auth id and the legacy email together, so they never drift
+  // apart during the compatibility window.
+  const setAssignee = (authUserId) => {
+    const user = findTeamUserByAuthId(users, authUserId);
+    setForm(f => ({
+      ...f,
+      assigned_auth_user_id: authUserId || "",
+      assigned_to: user?.email || user?.user_email || "",
+    }));
+  };
 
   const mutation = useMutation({
     mutationFn: (data) =>
@@ -57,6 +73,9 @@ function GoalFormModal({ open, onClose, existing, users = [], currentUser }) {
       start_date: form.start_date || null,
       end_date: form.end_date || null,
       assigned_to: admin ? (form.assigned_to || null) : (existing?.assigned_to || currentUser?.email || null),
+      assigned_auth_user_id: admin
+        ? (form.assigned_auth_user_id || null)
+        : (existing?.assigned_auth_user_id || currentUser?.auth_user_id || null),
     });
   };
 
@@ -123,11 +142,11 @@ function GoalFormModal({ open, onClose, existing, users = [], currentUser }) {
         <div>
           <label className="text-xs font-medium text-foreground block mb-1">Assigned to</label>
           {admin ? (
-            <select value={form.assigned_to || ""} onChange={set("assigned_to")}
+            <select value={form.assigned_auth_user_id || ""} onChange={(e) => setAssignee(e.target.value)}
               className="w-full h-11 md:h-10 rounded-xl border border-input bg-background px-3 text-sm">
               <option value="">Unassigned / company</option>
               {users.filter(isAssignableTeamUser).map(user => (
-                <option key={user.id} value={user.email}>{userDisplayName(user)}</option>
+                <option key={user.id} value={teamUserIdentity(user)}>{userDisplayName(user)}</option>
               ))}
             </select>
           ) : (
@@ -236,9 +255,17 @@ export default function Goals() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["goals"] }),
   });
 
+  // Phase 2B: prefer the canonical auth id when the goal has one; only
+  // fall back to comparing legacy email for goals that predate the
+  // backfill (assigned_auth_user_id still null).
+  const isMyGoal = (g) =>
+    g.assigned_auth_user_id
+      ? g.assigned_auth_user_id === currentUser?.auth_user_id
+      : g.assigned_to === currentUser?.email;
+
   const visibleGoals = isAdmin(currentUser)
     ? goals
-    : goals.filter(g => !g.assigned_to || g.assigned_to === currentUser?.email || g.scope === "company");
+    : goals.filter(g => !g.assigned_to || isMyGoal(g) || g.scope === "company");
   const active = visibleGoals.filter(g => !g.is_archived && g.status !== "completed");
   const completed = visibleGoals.filter(g => !g.is_archived && g.status === "completed");
   const northStar = active.find(g => g.is_north_star);

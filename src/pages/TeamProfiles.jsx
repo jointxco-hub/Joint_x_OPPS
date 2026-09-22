@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
+import { findTeamUserByEmail, teamUserKey, resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -79,18 +80,34 @@ export default function TeamProfiles() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['teamMembers'] }); toast.success("Removed!"); }
   });
 
+  // Phase 2B: TeamMember.user_email ("Link User Account") is NOT itself
+  // migrated - it stays the profile-to-login link. But task/order
+  // assignment matching now prefers the linked directory account's
+  // canonical auth_user_id, only falling back to a direct email compare
+  // for a member whose account isn't (or isn't yet) in the directory.
+  const isTaskAssignedToMember = (t, member) => {
+    const linkedUser = findTeamUserByEmail(users, member.user_email);
+    const authIds = Array.isArray(t.assigned_auth_user_ids)
+      ? t.assigned_auth_user_ids
+      : t.assigned_auth_user_id ? [t.assigned_auth_user_id] : [];
+    const emails = Array.isArray(t.assigned_to) ? t.assigned_to : t.assigned_to ? [t.assigned_to] : [];
+    const assignees = resolveAssignedTeamUsers({ authUserIds: authIds, emails }, users);
+    // teamUserKey(), not raw auth_user_id: linkedUser or an unresolved
+    // placeholder in `assignees` could both have auth_user_id: null,
+    // which must never compare equal to each other.
+    return linkedUser
+      ? assignees.some(u => teamUserKey(u) === teamUserKey(linkedUser))
+      : emails.includes(member.user_email);
+  };
+
   const getMemberTasks = (member) => {
-    return tasks.filter(t =>
-      Array.isArray(t.assigned_to)
-        ? t.assigned_to.includes(member.user_email)
-        : t.assigned_to === member.user_email
-    ).filter(t => t.status !== 'archived');
+    return tasks.filter(t => isTaskAssignedToMember(t, member)).filter(t => t.status !== 'archived');
   };
 
   const getMemberOrders = (member) => {
     return orders.filter(o =>
       o.client_email === member.user_email ||
-      tasks.some(t => t.order_id === o.id && (t.assigned_to || []).includes(member.user_email))
+      tasks.some(t => t.order_id === o.id && isTaskAssignedToMember(t, member))
     );
   };
 

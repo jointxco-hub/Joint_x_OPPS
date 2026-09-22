@@ -4,6 +4,7 @@ import TenantBadge from "@/components/orders/TenantBadge";
 import OrderClassificationBadge from "@/components/orders/OrderClassificationBadge";
 import { getTenantDisplayMeta } from "@/lib/tenantDisplay";
 import { getClientPaymentStatus, getClientSafeOrderStatus } from "@/lib/xosOrderStatus";
+import { teamUserIdentity, resolveAssignedTeamUser, resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import {
   X, Package, CreditCard, Paperclip,
   CheckCircle2, ChevronRight, ExternalLink,
@@ -852,7 +853,16 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
       status: "not_started",
       priority: newTaskPriority,
       deadline: newTaskDeadline || undefined,
-      assigned_to: newTaskAssignee && newTaskAssignee !== "_none" ? [newTaskAssignee] : [],
+      // Phase 2B dual-write: newTaskAssignee is now an auth_user_id;
+      // resolve the matching email alongside it so both arrays stay in
+      // sync on this new OpsTask.
+      assigned_to: (() => {
+        const user = safeUsers.find(u => u.auth_user_id === newTaskAssignee);
+        return newTaskAssignee && newTaskAssignee !== "_none" && user
+          ? [user.email || user.user_email].filter(Boolean)
+          : [];
+      })(),
+      assigned_auth_user_ids: newTaskAssignee && newTaskAssignee !== "_none" ? [newTaskAssignee] : [],
       order_id: order.id,
       notes: `Order #${order.order_number || ''} - ${order.client_name || ''}`.trim(),
     });
@@ -1056,7 +1066,15 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   const statusValue = ORDER_STATUSES.includes(String(order.status || ""))
     ? String(order.status)
     : "confirmed";
-  const assignedToValue = selectValue(order.assigned_to);
+  // Phase 2B: assigned_to_auth_user_id and assigned_team_auth_user_ids
+  // are distinct identities from order.assigned_to/assigned_team - one
+  // does not supersede the other, each is migrated separately.
+  const assignedToValue = selectValue(
+    resolveAssignedTeamUser(
+      { authUserId: order.assigned_to_auth_user_id, email: order.assigned_to },
+      safeUsers
+    )?.auth_user_id
+  );
   const courierValue = selectValue(order.courier);
   const resolvedCouriers = couriers?.length ? couriers : DEFAULT_COURIERS;
   const courier = resolvedCouriers.find(c => c.value === order.courier);
@@ -1883,16 +1901,31 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                   <User className="w-3 h-3 text-muted-foreground" />
                   <p className="text-xs text-muted-foreground">Assigned To</p>
                 </div>
-                <Select value={assignedToValue} onValueChange={v => onUpdate(order.id, { assigned_to: v === '__none' ? null : v })}>
+                <Select
+                  value={assignedToValue}
+                  onValueChange={v => {
+                    // Dual-write: canonical auth id + legacy compatibility
+                    // email together, never one without the other.
+                    if (v === '__none') {
+                      onUpdate(order.id, { assigned_to: null, assigned_to_auth_user_id: null });
+                      return;
+                    }
+                    const user = safeUsers.find(u => u.auth_user_id === v);
+                    onUpdate(order.id, {
+                      assigned_to: user?.email || user?.user_email || null,
+                      assigned_to_auth_user_id: v,
+                    });
+                  }}
+                >
                   <SelectTrigger className="h-7 border-0 bg-transparent p-0 text-xs font-medium">
                     <SelectValue placeholder="Unassigned" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none">Unassigned</SelectItem>
                     {safeUsers
-                      .map((u) => ({ ...u, value: u.email || u.user_email || u.id }))
+                      .map((u) => ({ ...u, value: teamUserIdentity(u) }))
                       .filter((u) => u.value)
-                      .map(u => <SelectItem key={u.id || u.value} value={u.value}>{u.full_name || u.name || u.value}</SelectItem>)}
+                      .map(u => <SelectItem key={u.id || u.value} value={u.value}>{u.full_name || u.name || u.email}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -2118,11 +2151,11 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                       <SelectItem value="_none">Unassigned</SelectItem>
                       {safeUsers
                         .filter(u => u.is_active !== false)
-                        .map((u) => ({ ...u, value: u.email || u.user_email || u.id }))
+                        .map((u) => ({ ...u, value: teamUserIdentity(u) }))
                         .filter((u) => u.value)
                         .map(u => (
                         <SelectItem key={u.id || u.value} value={u.value} className="text-xs">
-                          {u.full_name || u.name || u.value}
+                          {u.full_name || u.name || u.email}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2172,9 +2205,21 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
                       {task.deadline && <span className="text-xs text-muted-foreground">{format(new Date(task.deadline), 'MMM d')}</span>}
-                      {Array.isArray(task.assigned_to) && task.assigned_to.length > 0 && (
-                        <span className="text-xs text-muted-foreground truncate">{task.assigned_to[0]}</span>
-                      )}
+                      {(() => {
+                        // Phase 2B: prefer canonical auth id(s), fall back
+                        // to legacy email(s). task here is a raw Task or
+                        // OpsTask row (single vs array shape).
+                        const authIds = Array.isArray(task.assigned_auth_user_ids)
+                          ? task.assigned_auth_user_ids
+                          : task.assigned_auth_user_id ? [task.assigned_auth_user_id] : [];
+                        const emails = Array.isArray(task.assigned_to)
+                          ? task.assigned_to
+                          : task.assigned_to ? [task.assigned_to] : [];
+                        const assignee = resolveAssignedTeamUsers({ authUserIds: authIds, emails }, safeUsers)[0];
+                        return assignee ? (
+                          <span className="text-xs text-muted-foreground truncate">{assignee.full_name || assignee.email}</span>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${

@@ -4,6 +4,16 @@ import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
 import { AlertTriangle, Bell, CheckSquare, Clock, MessageSquare, Tag, X } from "lucide-react";
 
+// Phase 2B follow-up (not done in this pass): the fileComments query below
+// still filters mentions by email (mentioned_user: me.email). Same
+// blocker as FileLightbox.jsx - dataClient.entities.FileComment has no
+// real Supabase table (see that file's header note), so there is no
+// mentioned_auth_user_id to query yet. isAssignedToMe() below is also
+// still email-based for task/ops-task due-date notifications
+// (assigned_to/assignee_email/owner_email) - left unchanged in this pass
+// per scope (task/goal/order assignment identity, converted elsewhere in
+// Phase 2B, was not re-plumbed into this specific notification-building
+// helper); flagged here rather than silently left unmentioned.
 const doneStatuses = ["done", "complete", "completed"];
 
 function isAssignedToMe(item, email) {

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
-import { isAssignableTeamUser, userDisplayName } from "@/lib/teamUsers";
+import { isAssignableTeamUser, userDisplayName, teamUserKey, resolveAssignedTeamUsers } from "@/lib/teamUsers";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -443,9 +443,14 @@ function TaskRow({ task, users, goals, onStatusToggle, onUpdate, onEdit, onDelet
   const [showSubtaskForm, setShowSubtaskForm] = useState(false);
   const [subtaskName, setSubtaskName] = useState("");
   
-  const assignedUsers = Array.isArray(task.assigned_to) 
-    ? users.filter(u => task.assigned_to.includes(u.email))
-    : task.assigned_to ? users.filter(u => u.email === task.assigned_to) : [];
+  // Phase 2B: prefer canonical auth ids, fall back to legacy email(s)
+  // only for rows with no auth ids backfilled/saved yet. Subtasks' own
+  // assigned_to (nested JSON, not a table column) is unrelated and out
+  // of scope for this migration.
+  const assignedUsers = resolveAssignedTeamUsers(
+    { authUserIds: task.assigned_auth_user_ids, emails: task.assigned_to },
+    users
+  );
 
   const linkedGoal = goals?.find(g => g.id === task.goal_id);
 
@@ -628,18 +633,39 @@ function TaskFormDialog({ task, users, projects, orders, goals, onClose, onSubmi
     subtasks: []
   });
 
+  // Phase 2B: selectedUsers now tracks resolved directory member objects
+  // (id-first, email-fallback), so both arrays can be dual-written
+  // together on submit.
   const [selectedUsers, setSelectedUsers] = useState(
-    Array.isArray(task?.assigned_to) ? task.assigned_to : task?.assigned_to ? [task.assigned_to] : []
+    resolveAssignedTeamUsers(
+      { authUserIds: task?.assigned_auth_user_ids, emails: task?.assigned_to },
+      users
+    )
   );
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSubmit({ ...formData, assigned_to: selectedUsers });
+    // Phase 2B dual-write: both arrays at IDENTICAL length, position-for-
+    // position (null in the id array for any entry with no real
+    // auth_user_id) - see TaskDrawer.jsx's toggleAssignee for why a
+    // shorter id array would desync positions on the next read.
+    onSubmit({
+      ...formData,
+      assigned_to: selectedUsers.map(u => u.email || u.user_email),
+      assigned_auth_user_ids: selectedUsers.map(u => u.auth_user_id || null),
+    });
   };
 
-  const toggleUser = (email) => {
+  const toggleUser = (user) => {
+    // teamUserKey(), not raw auth_user_id - see its definition in
+    // teamUsers.js for why comparing auth_user_id directly is unsafe
+    // (an unresolved placeholder and a genuinely unlinked directory
+    // member would otherwise both compare null === null).
+    const key = teamUserKey(user);
     setSelectedUsers(prev =>
-      prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]
+      prev.some(u => teamUserKey(u) === key)
+        ? prev.filter(u => teamUserKey(u) !== key)
+        : [...prev, user]
     );
   };
 
@@ -735,8 +761,8 @@ function TaskFormDialog({ task, users, projects, orders, goals, onClose, onSubmi
               {users.filter(isAssignableTeamUser).map(user => (
                 <label key={user.id} className="flex items-center gap-2 cursor-pointer">
                   <Checkbox
-                    checked={selectedUsers.includes(user.email)}
-                    onCheckedChange={() => toggleUser(user.email)}
+                    checked={selectedUsers.some(u => teamUserKey(u) === teamUserKey(user))}
+                    onCheckedChange={() => toggleUser(user)}
                   />
                   <span className="text-sm">{userDisplayName(user)}</span>
                 </label>
@@ -744,14 +770,11 @@ function TaskFormDialog({ task, users, projects, orders, goals, onClose, onSubmi
             </div>
             {selectedUsers.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-2">
-                {selectedUsers.map(email => {
-                  const user = users.find(u => u.email === email);
-                  return (
-                    <Badge key={email} variant="outline" className="text-xs">
-                      {user?.full_name || email}
-                    </Badge>
-                  );
-                })}
+                {selectedUsers.map(user => (
+                  <Badge key={user.auth_user_id || user.email} variant="outline" className="text-xs">
+                    {user.full_name || user.email}
+                  </Badge>
+                ))}
               </div>
             )}
           </div>

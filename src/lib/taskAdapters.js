@@ -14,6 +14,16 @@ const OPS_TO_LEGACY_STATUS = {
   complete: "done",
 };
 
+// Phase 2B: normalize the canonical auth-id field(s) into the same
+// unified array shape as assigned_to below, for both entity types, so
+// every view/component can read task.assigned_auth_user_ids without
+// caring whether the underlying row is a single-assignee Task or an
+// array-assignee OpsTask.
+function toAuthUserIdArray(task) {
+  if (Array.isArray(task.assigned_auth_user_ids)) return task.assigned_auth_user_ids.filter(Boolean);
+  return task.assigned_auth_user_id ? [task.assigned_auth_user_id] : [];
+}
+
 export function normalizeOpsTaskForViews(task) {
   return {
     ...task,
@@ -21,6 +31,7 @@ export function normalizeOpsTaskForViews(task) {
     _viewId: `OpsTask:${task.id}`,
     due_date: task.due_date || task.deadline,
     assigned_to: Array.isArray(task.assigned_to) ? task.assigned_to : task.assigned_to ? [task.assigned_to] : [],
+    assigned_auth_user_ids: toAuthUserIdArray(task),
     production_type: task.production_type || "general",
   };
 }
@@ -38,6 +49,7 @@ export function normalizeLegacyTaskForOpsViews(task) {
     order_id: orderId,
     linked_order_id: orderId,
     assigned_to: Array.isArray(task.assigned_to) ? task.assigned_to : task.assigned_to ? [task.assigned_to] : [],
+    assigned_auth_user_ids: toAuthUserIdArray(task),
     production_type: task.production_type || "general",
     production_stage: task.production_stage || task.department,
     supporting_files: task.supporting_files || (task.file_urls || []).map((url) => ({ name: url, url })),
@@ -71,10 +83,18 @@ export function toEntityTaskPayload(task, patch = {}) {
 
   if (entityName === "Task") {
     const assigned = Array.isArray(merged.assigned_to) ? merged.assigned_to[0] : merged.assigned_to;
+    // Phase 2B dual-write: canonical auth id alongside the legacy email,
+    // collapsed to a single value to match the Task entity's single-
+    // assignee column (assigned_auth_user_id, not the array shape the
+    // merged UI view normalizes everything to).
+    const assignedAuthUserId = Array.isArray(merged.assigned_auth_user_ids)
+      ? merged.assigned_auth_user_ids[0]
+      : merged.assigned_auth_user_id;
     return {
       title: merged.title,
       description: merged.description || merged.notes,
       assigned_to: assigned || undefined,
+      assigned_auth_user_id: assignedAuthUserId || undefined,
       deadline: merged.deadline || merged.due_date || undefined,
       status: patch.status === "archived" ? undefined : OPS_TO_LEGACY_STATUS[merged.status] || merged.status,
       priority: merged.priority,
@@ -87,5 +107,7 @@ export function toEntityTaskPayload(task, patch = {}) {
     };
   }
 
+  // OpsTask: assigned_auth_user_ids already carries through via ...merged
+  // (it's already in the array shape ops_tasks.serialize() expects).
   return merged;
 }

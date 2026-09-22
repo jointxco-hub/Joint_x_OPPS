@@ -2,6 +2,7 @@ import { Component, Suspense, lazy, useState, useEffect, useMemo, useCallback } 
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
+import { teamUserIdentity, resolveAssignedTeamUser } from "@/lib/teamUsers";
 import { describeCheckedUpdateError } from "@/lib/checkedUpdate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Package, LayoutGrid, List, AlertTriangle, Printer } from "lucide-react";
@@ -475,13 +476,22 @@ export default function Orders() {
     if (statusFilter === "active" && ["delivered", "cancelled"].includes(o.status)) return false;
     if (statusFilter === "delivered" && o.status !== "delivered") return false;
     if (statusFilter === "cancelled" && o.status !== "cancelled") return false;
-    if (assigneeFilter !== "all" && o.assigned_to !== assigneeFilter) return false;
+    // Phase 2B: assigneeFilter now holds an auth_user_id (or "all").
+    // Resolve this order's single assignee id-first/email-fallback so
+    // both backfilled and not-yet-backfilled orders filter correctly.
+    if (assigneeFilter !== "all") {
+      const assignee = resolveAssignedTeamUser(
+        { authUserId: o.assigned_to_auth_user_id, email: o.assigned_to },
+        users
+      );
+      if (assignee?.auth_user_id !== assigneeFilter) return false;
+    }
     if (search) {
       const q = search.toLowerCase();
       return orderSearchText(o).includes(q);
     }
     return true;
-  }), [orders, statusFilter, assigneeFilter, search]);
+  }), [orders, statusFilter, assigneeFilter, search, users]);
 
   const counts = useMemo(() => ({
     active:    orders.filter(o => !o.is_archived && !o.excluded_from_reports && !["delivered","cancelled"].includes(o.status)).length,
@@ -643,7 +653,7 @@ export default function Orders() {
               >
                 <option value="all">All assignees</option>
                 {(/** @type {any[]} */ (users)).map((/** @type {any} */ u) => (
-                  <option key={u.id} value={u.email}>{u.full_name || u.name || u.email}</option>
+                  <option key={u.id} value={teamUserIdentity(u)}>{u.full_name || u.name || u.email}</option>
                 ))}
               </select>
             )}
