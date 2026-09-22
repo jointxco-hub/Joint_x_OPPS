@@ -139,3 +139,15 @@ export function resolveLineThumbnail(product, { clientProduct, catalogItem } = {
   if (catalogItem?.image_url) return catalogItem.image_url;
   return "";
 }
+
+// MULTI-PICTURE PRODUCT ITEM LINE — the line's own frozen gallery
+// (product.image_gallery), written once at add-time by
+// xos_add_composed_client_product_to_order and never re-derived live.
+// Absent/empty for every line created before this feature, or for a
+// line whose source Client Product had no gallery at add-time — in
+// both cases this returns [], matching the pre-existing single-image
+// UI exactly (no +N badge, no gallery/lightbox affordance).
+export function resolveLineImageGallery(product) {
+  const gallery = Array.isArray(product?.image_gallery) ? product.image_gallery : [];
+  return gallery.filter((entry) => entry && typeof entry.image_ref === "string" && entry.image_ref.length > 0);
+}

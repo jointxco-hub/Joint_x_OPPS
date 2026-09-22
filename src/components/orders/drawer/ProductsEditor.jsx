@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
+import QuickImageGallery from "@/components/common/QuickImageGallery";
 import { isImageReference } from "@/lib/imageReference";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
@@ -20,7 +21,7 @@ import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice
 import { xosAddComposedClientProductToOrder, mapXosComposedAddError } from "@/api/xosClientProduct";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
-import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
+import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, resolveLineImageGallery, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 import { selectableClientProductsForOrder, clientProductToPickerItem, applyClientProductPickToNewRow, clientProductStatusLabel } from "@/features/orders/clientProductPicker";
 import { getClientProductApprovals, hasCurrentRevisionApproval, currentRevisionApprovalRecord } from "@/api/clientProductApprovals";
 
@@ -66,6 +67,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // client_product, activity events, or snapshots - purely a read/display
   // action, entirely separate from "Set/Change thumbnail" above.
   const [quickPreview, setQuickPreview] = useState(null);
+  const [galleryPreview, setGalleryPreview] = useState(null);
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
@@ -1544,16 +1546,25 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   catalogItem: catalogAndStockPickerItems.find((item) => item.id === (p.catalog_item_id || p.inventory_item_id)),
                 });
                 const isRealImage = Boolean(resolvedThumb) && isImageReference(resolvedThumb);
+                const gallery = resolveLineImageGallery(p);
+                const hasGallery = gallery.length > 1;
                 return (
                   <div className="flex-shrink-0">
                     {isRealImage ? (
                       <button
                         type="button"
-                        onClick={() => setQuickPreview({ value: resolvedThumb, title: p.name, subtitle: "Product image" })}
-                        className="block h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 transition-opacity hover:opacity-80"
-                        title="View image"
+                        onClick={() => (hasGallery
+                          ? setGalleryPreview({ images: gallery, title: p.name })
+                          : setQuickPreview({ value: resolvedThumb, title: p.name, subtitle: "Product image" }))}
+                        className="relative block h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50 transition-opacity hover:opacity-80"
+                        title={hasGallery ? `View ${gallery.length} pictures` : "View image"}
                       >
                         <SecureImage value={resolvedThumb} alt="" className="h-full w-full object-cover" fallback={null} />
+                        {hasGallery && (
+                          <span className="absolute bottom-0 right-0 rounded-tl-md bg-black/70 px-1 text-[9px] font-medium leading-tight text-white">
+                            +{gallery.length - 1}
+                          </span>
+                        )}
                       </button>
                     ) : (
                       <div className="h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary/50">
@@ -2161,6 +2172,15 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         value={quickPreview?.value}
         title={quickPreview?.title}
         subtitle={quickPreview?.subtitle}
+      />
+
+      {/* MULTI-PICTURE PRODUCT ITEM LINE - gallery/lightbox for a line
+          with more than one frozen picture. View-only, no writes. */}
+      <QuickImageGallery
+        open={Boolean(galleryPreview)}
+        onClose={() => setGalleryPreview(null)}
+        images={galleryPreview?.images}
+        title={galleryPreview?.title}
       />
 
       {/* Phase 1E - Edit production. Compact modal, preloads current
