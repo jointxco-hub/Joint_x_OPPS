@@ -32,7 +32,9 @@ begin
   if position($$when 'cafe.operations.manage' then membership.tenant_role in ('owner', 'admin')$$ in v_definition) = 0 then
     raise exception 'cafe.operations.manage must still be exactly active owner/admin';
   end if;
-  if position($$when 'cafe.counter.operate' then membership.tenant_role in ('owner', 'admin', 'member')$$ in v_definition) = 0 then
+  -- Prefix match on purpose: CAFE-ACCESS-04 is a forward migration that appends counter_staff to this list, and this test
+  -- runs against the final schema. The EXACT current list is pinned by cafe_access_04_counter_staff_role.sql.
+  if position($$when 'cafe.counter.operate' then membership.tenant_role in ('owner', 'admin', 'member'$$ in v_definition) = 0 then
     raise exception 'cafe.counter.operate must admit active owner, admin and member';
   end if;
   -- 'member' appears exactly once in the body: in the counter arm and nowhere else.
