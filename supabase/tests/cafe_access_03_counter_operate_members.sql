@@ -87,6 +87,7 @@ declare
   u_app_admin uuid := gen_random_uuid();
   u_opps_staff uuid := gen_random_uuid();
   u_cafe_member uuid := gen_random_uuid();       -- member of the real Cafe tenant
+  u_cafe_admin uuid := gen_random_uuid();        -- admin of the real Cafe tenant (authorized-succeeds control)
   u_promoted uuid := gen_random_uuid();
 
   v_cap text;
@@ -108,7 +109,7 @@ begin
   from (values
     (u_member, 'member'), (u_member_b, 'memberb'), (u_foreign_member, 'foreignmember'), (u_suspended_member, 'suspendedmember'),
     (u_admin, 'admin'), (u_owner, 'owner'), (u_app_admin, 'appadmin'), (u_opps_staff, 'oppsstaff'),
-    (u_cafe_member, 'cafemember'), (u_promoted, 'promoted')
+    (u_cafe_member, 'cafemember'), (u_cafe_admin, 'cafeadmin'), (u_promoted, 'promoted')
   ) as u(id, label);
 
   -- SETUP-ONLY approved-owner claim (the real OPPS trigger allows a role='admin' users row only
@@ -131,6 +132,7 @@ begin
          (v_target, u_admin, 'admin', 'active'),
          (v_target, u_owner, 'owner', 'active'),
          (v_cafe, u_cafe_member, 'member', 'active'),
+         (v_cafe, u_cafe_admin, 'admin', 'active'),
          (v_target, u_promoted, 'member', 'active');
 
   execute 'set local role authenticated';
@@ -258,44 +260,154 @@ begin
     raise exception 'CAFE_ACCESS_03: demoted back to member, manage must go and the counter must stay';
   end if;
 
-  -- ── 9. holding the counter capability opens NOTHING else: the real Cafe admin RPCs still deny a member ──
+  -- ── 9. holding the counter capability opens NOTHING else: outcomes, not is_app_admin()/
+  --    is_opps_staff() probes. Those two helpers are used far more widely across OPPS than Cafe
+  --    authorization, and is_opps_staff() is INTENTIONALLY broader than "may this person manage a
+  --    Cafe tenant" for the wider OPPS permission model (an active member of a tenant flagged
+  --    'opps_workspace' with the 'opps.access' permission granted satisfies it - deliberately, and
+  --    that is not this test's concern to narrow or assert against). What this test proves instead
+  --    is the actual security contract: what a member of the REAL Cafe tenant can and cannot
+  --    DO through the protected RPCs, given has_tenant_capability(cafe.operations.manage) - not what
+  --    any particular internal helper returns for them. ──
   perform set_config('request.jwt.claims', jsonb_build_object('sub', u_cafe_member, 'role', 'authenticated')::text, true);
   if public.has_tenant_capability(v_cafe, 'cafe.counter.operate') is distinct from true
      or public.has_tenant_capability(v_cafe, 'cafe.operations.manage') is distinct from false then
     raise exception 'CAFE_ACCESS_03: the real Cafe tenant member must hold the counter capability and not manage';
   end if;
-  if public.is_app_admin() is distinct from false or public.is_opps_staff() is distinct from false then
-    raise exception 'CAFE_ACCESS_03: a Cafe member is not an app admin and not OPPS staff';
-  end if;
-  -- handoff queue (cafe.operations.manage)
+
+  -- handoff-management RPCs: catalogue-management's sibling surface. All three are denied to a
+  -- member; none require cafe.counter.operate to be checked separately - denial here IS the proof
+  -- that cafe.counter.operate never implies cafe.operations.manage for these RPCs.
   begin
     perform public.admin_list_quick_solution_opps_handoffs('quick-solution');
     raise exception 'CAFE_ACCESS_03: a member must not list OPPS handoffs';
   exception when others then
     get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
-    if v_state is distinct from '42501' or v_message <> 'You do not have access to Quick Solution handoffs.' then
-      raise exception 'CAFE_ACCESS_03: handoff denial changed: % "%"', v_state, v_message;
+    if v_state is distinct from '42501' then
+      raise exception 'CAFE_ACCESS_03: handoff listing must deny a member with 42501, got % "%"', v_state, v_message;
     end if;
   end;
-  -- product and pricing administration
+
+  -- admin_preview_quick_solution_opps_handoff and admin_send_quick_solution_order_to_opps both
+  -- look the order up BEFORE checking authorization, so a non-existent id would only prove
+  -- "not found" (22023) for EVERY caller, authorized or not - never the actual authorization gate.
+  -- A real order is required: cafe.counter.operate (which this member DOES hold) is enough to
+  -- create one, so this also proves that creating an order never implies the manage capability
+  -- needed to preview or send it.
+  declare
+    v_order jsonb;
+    v_order_id uuid;
   begin
-    perform public.admin_update_quick_solution_product('quick-solution', 'scan', '{"name":"x"}'::jsonb, '{"strategy":"PER_UNIT","unitPrice":1,"minUnits":1,"maxUnits":5}'::jsonb, 'x');
-    raise exception 'CAFE_ACCESS_03: a member must not edit products or prices';
+    v_order := public.create_quick_solution_counter_order('cafe-access-03-order-' || v_suffix, 'scan', '{"units":1}'::jsonb);
+    v_order_id := (v_order ->> 'orderId')::uuid;
+    if v_order_id is null then
+      raise exception 'CAFE_ACCESS_03_TEST_SETUP: a real Cafe tenant member must be able to create the fixture order (cafe.counter.operate)';
+    end if;
+
+    begin
+      perform public.admin_preview_quick_solution_opps_handoff(v_order_id);
+      raise exception 'CAFE_ACCESS_03: a member must not preview an OPPS handoff, even for their own order';
+    exception when others then
+      get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+      if v_state is distinct from '42501' then
+        raise exception 'CAFE_ACCESS_03: handoff preview must deny a member with 42501, got % "%"', v_state, v_message;
+      end if;
+    end;
+
+    begin
+      perform public.admin_send_quick_solution_order_to_opps(v_order_id);
+      raise exception 'CAFE_ACCESS_03: a member must not send an order to OPPS, even their own';
+    exception when others then
+      get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+      if v_state is distinct from '42501' then
+        raise exception 'CAFE_ACCESS_03: sending to OPPS must deny a member with 42501, got % "%"', v_state, v_message;
+      end if;
+    end;
+
+    execute 'reset role';
+    if exists (select 1 from commerce.service_orders so where so.id = v_order_id and so.opps_order_id is not null) then
+      execute 'set local role authenticated';
+      raise exception 'CAFE_ACCESS_03: ESCALATION REGRESSION - a denied send-to-OPPS call still linked a real OPPS order';
+    end if;
+    execute 'set local role authenticated';
+  end;
+
+  -- catalogue-management RPCs (regression coverage for the escalation this audit found: before the
+  -- security patch, a plain member could both READ the staff pricing catalogue and WRITE a
+  -- product's name/pricing outright, because these RPCs still gated on
+  -- is_app_admin()/is_opps_staff() after is_opps_staff() was broadened for the wider OPPS permission
+  -- model. has_tenant_capability(cafe.operations.manage) does not have that exposure).
+  declare
+    v_before_name text; v_after_name text; v_before_version text; v_after_version text;
+  begin
+    execute 'reset role';
+    select p.name, c.pricing_version into v_before_name, v_before_version
+    from commerce.service_product_configs c join commerce.products p on p.id = c.product_id
+    where c.tenant_id = v_cafe and c.source_key = 'scan';
+    execute 'set local role authenticated';
+
+    begin
+      perform public.admin_get_quick_solution_catalog('quick-solution');
+      raise exception 'CAFE_ACCESS_03: a member must not read the staff-only catalogue (pricing definitions)';
+    exception when others then
+      get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+      if v_state is distinct from '42501' then
+        raise exception 'CAFE_ACCESS_03: the staff catalogue must deny a member with 42501, got % "%"', v_state, v_message;
+      end if;
+    end;
+
+    begin
+      perform public.admin_update_quick_solution_product('quick-solution', 'scan', '{"name":"CAFE_ACCESS_03_ESCALATION_PROBE"}'::jsonb, '{"strategy":"PER_UNIT","unitPrice":1,"minUnits":1,"maxUnits":5}'::jsonb, v_before_version);
+      raise exception 'CAFE_ACCESS_03: a member must not edit products or prices';
+    exception when others then
+      get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+      if v_state is distinct from '42501' then
+        raise exception 'CAFE_ACCESS_03: product admin must deny a member with 42501, got % "%"', v_state, v_message;
+      end if;
+    end;
+
+    -- the denied write must be a no-op: this is the actual regression proof, not just an errcode
+    execute 'reset role';
+    select p.name, c.pricing_version into v_after_name, v_after_version
+    from commerce.service_product_configs c join commerce.products p on p.id = c.product_id
+    where c.tenant_id = v_cafe and c.source_key = 'scan';
+    execute 'set local role authenticated';
+    if v_after_name is distinct from v_before_name or v_after_version is distinct from v_before_version then
+      raise exception 'CAFE_ACCESS_03: ESCALATION REGRESSION - a denied admin_update_quick_solution_product call still changed the product (name % -> %, version % -> %)',
+        v_before_name, v_after_name, v_before_version, v_after_version;
+    end if;
+  end;
+
+  -- authorized Cafe operations/admin user still succeeds through the same catalogue RPC - a REAL
+  -- admin of the REAL Cafe tenant (u_admin/u_owner above are deliberately of v_target, a different
+  -- tenant, so they cannot be reused here without also proving tenant isolation false-negative;
+  -- u_cafe_admin is scoped to v_cafe on purpose).
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', u_cafe_admin, 'role', 'authenticated')::text, true);
+  begin
+    v_definition := public.admin_get_quick_solution_catalog('quick-solution')::text;
   exception when others then
     get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
-    if v_state is distinct from '42501' then
-      raise exception 'CAFE_ACCESS_03: product admin must deny a member with 42501, got % "%"', v_state, v_message;
-    end if;
+    raise exception 'CAFE_ACCESS_03: an authorized Cafe admin must be able to read the catalogue, got % "%"', v_state, v_message;
   end;
+  if v_definition is null then
+    raise exception 'CAFE_ACCESS_03: the catalogue read for an authorized Cafe admin must return data';
+  end if;
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', u_cafe_member, 'role', 'authenticated')::text, true);
+
+  -- cross-tenant isolation on the catalogue RPC itself: an admin/owner of a DIFFERENT tenant must
+  -- still be denied the real Cafe tenant's catalogue (has_tenant_capability's own tenant isolation,
+  -- already proven above, is re-proven here at the RPC boundary, not only at the primitive).
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', u_owner, 'role', 'authenticated')::text, true);
   begin
     perform public.admin_get_quick_solution_catalog('quick-solution');
-    raise exception 'CAFE_ACCESS_03: a member must not read the staff-only catalogue (pricing definitions)';
+    raise exception 'CAFE_ACCESS_03: an owner of a DIFFERENT tenant must not read the real Cafe catalogue';
   exception when others then
     get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
     if v_state is distinct from '42501' then
-      raise exception 'CAFE_ACCESS_03: the staff catalogue must deny a member with 42501, got % "%"', v_state, v_message;
+      raise exception 'CAFE_ACCESS_03: cross-tenant catalogue access must deny with 42501, got % "%"', v_state, v_message;
     end if;
   end;
+
   execute 'reset role';
 end
 $behavior$;
