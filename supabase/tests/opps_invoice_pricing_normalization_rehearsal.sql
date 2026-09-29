@@ -13,10 +13,20 @@
 -- rows) is created and asserted against inside the same transaction that
 -- gets rolled back at the end. No real tenant, user, or invoice is touched.
 --
--- Auth is simulated via the hardcoded owner-email override already present
--- in the live public.is_app_admin() / public.user_finance_level() bodies
--- (both grant access for auth.jwt()->>'email' = 'jointx.co@gmail.com'),
--- so this does not depend on any public.users/auth.users row existing.
+-- is_app_admin()/user_finance_level() are satisfied via the hardcoded
+-- owner-email override already present in their live bodies (both grant
+-- access for auth.jwt()->>'email' = 'jointx.co@gmail.com') -- that part is
+-- unchanged and does not require a public.users row.
+--
+-- can_access_tenant(), however, is confirmed to require a real, active
+-- public.tenant_memberships row (tenant_id NOT NULL FK, auth_user_id NOT
+-- NULL FK -> auth.users(id), tenant_role default 'member', status default
+-- 'active', unique(tenant_id, auth_user_id)) -- it cannot be bypassed the
+-- same way, so this fixture creates a disposable auth.users row and an
+-- active tenant_memberships row (tenant_role='finance') linking it to the
+-- disposable tenant. The auth.users insert reuses the exact column set
+-- already proven to work against this database in this repo's own
+-- supabase/tests/xos_orders_preview.sql.
 
 do $$
 declare
@@ -29,6 +39,27 @@ declare
   v_stale_updated_at  timestamptz;
   v_item_total        numeric;
 begin
+  -- Fixtures are created FIRST, while still running as the SQL Editor's
+  -- privileged role. The prior rehearsal switched to `authenticated`
+  -- before these inserts and hit 42501 permission denied for table
+  -- auth.users -- `authenticated` has no INSERT grant on it, only the
+  -- privileged editor role does. So: insert first, simulate the
+  -- authenticated actor only afterward, for the RPC calls below.
+  insert into public.tenants (slug, name, status)
+  values ('rehearsal-invoice-norm-' || substr(v_fake_user_id::text, 1, 8), 'Rehearsal Invoice Normalization', 'active')
+  returning id into v_tenant_id;
+
+  insert into auth.users (id, aud, role, email, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+  values (
+    v_fake_user_id, 'authenticated', 'authenticated',
+    'rehearsal-invoice-norm-' || substr(v_fake_user_id::text, 1, 8) || '@example.test',
+    now(), '{}'::jsonb, '{}'::jsonb, now(), now()
+  );
+
+  insert into public.tenant_memberships (tenant_id, auth_user_id, tenant_role, status)
+  values (v_tenant_id, v_fake_user_id, 'finance', 'active');
+
+  -- Only now simulate the authenticated actor for save_opps_invoice_with_items.
   perform set_config(
     'request.jwt.claims',
     json_build_object('sub', v_fake_user_id, 'email', 'jointx.co@gmail.com', 'role', 'authenticated')::text,
@@ -36,11 +67,7 @@ begin
   );
   perform set_config('role', 'authenticated', true);
 
-  insert into public.tenants (slug, name, status)
-  values ('rehearsal-invoice-norm-' || substr(v_fake_user_id::text, 1, 8), 'Rehearsal Invoice Normalization', 'active')
-  returning id into v_tenant_id;
-
-  raise notice '--- fixtures ready: tenant=%, fake_user=% ---', v_tenant_id, v_fake_user_id;
+  raise notice '--- fixtures ready: tenant=%, fake_user=%, membership=finance/active ---', v_tenant_id, v_fake_user_id;
 
   -- ============================================================
   -- TEST 1 + TEST 3: a correct grand total still saves, and the
@@ -167,10 +194,25 @@ begin
 
   -- ============================================================
   -- TEST 7: existing draft update/concurrency behaviour unchanged
-  -- (valid token succeeds, stale token is rejected).
+  -- (valid token succeeds, mismatched token is rejected).
+  --
+  -- NOTE: this rehearsal runs inside a single explicit transaction, and
+  -- Postgres's now() (used by the RPC to stamp updated_at) returns the
+  -- same transaction-start timestamp for every statement within that
+  -- transaction -- it does not advance the way real wall-clock time does
+  -- across separate production requests. So the updated_at captured
+  -- before 7a and the value 7a's own update writes are IDENTICAL inside
+  -- this rehearsal, and reusing the pre-7a value for 7b would not
+  -- actually be stale. Production itself is unaffected -- there,
+  -- updated_at genuinely advances between separate requests. To prove
+  -- the guard without depending on wall-clock time advancing, 7b instead
+  -- submits a deliberately different token (the real post-7a updated_at
+  -- minus one hour) -- the guard is an exact-match check
+  -- (`is distinct from`), so any mismatch, manufactured or naturally
+  -- stale, must be rejected identically.
   -- ============================================================
   select * into v_row from public.opps_invoices where id = v_invoice_id;  -- refresh: REHEARSAL-001
-  v_stale_updated_at := v_row.updated_at;
+  v_stale_updated_at := v_row.updated_at;  -- the CURRENT, correct token for 7a
 
   select save_opps_invoice_with_items(
     v_tenant_id, v_invoice_id,
@@ -187,6 +229,11 @@ begin
   end if;
   raise notice 'TEST 7a passed: valid concurrency token accepted';
 
+  -- Manufacture a deliberately different token so the guard is proven
+  -- regardless of transaction-frozen timestamps.
+  select updated_at into v_stale_updated_at from public.opps_invoices where id = v_invoice_id;
+  v_stale_updated_at := v_stale_updated_at - interval '1 hour';
+
   begin
     perform save_opps_invoice_with_items(
       v_tenant_id, v_invoice_id,
@@ -195,16 +242,16 @@ begin
         'invoice_date', current_date, 'shipping_charge', 0, 'adjustment', 0, 'total', 115
       ),
       jsonb_build_array(jsonb_build_object('item_name', 'Widget', 'quantity', 1, 'rate', 100, 'discount', 0, 'tax_percentage', 15)),
-      v_stale_updated_at,  -- deliberately the PRE-7a timestamp, now stale
+      v_stale_updated_at,  -- deliberately wrong: real updated_at minus 1 hour
       1, false
     );
-    raise exception 'TEST 7b FAILED: stale concurrency token was accepted';
+    raise exception 'TEST 7b FAILED: mismatched concurrency token was accepted';
   exception
     when others then
       if sqlerrm not like 'INVOICE_STALE_VERSION%' then
         raise exception 'TEST 7b FAILED: wrong error raised: %', sqlerrm;
       end if;
-      raise notice 'TEST 7b passed: stale token rejected as expected (%)', sqlerrm;
+      raise notice 'TEST 7b passed: mismatched token rejected as expected (%)', sqlerrm;
   end;
 
   raise notice '=== ALL REHEARSAL TESTS PASSED ===';
