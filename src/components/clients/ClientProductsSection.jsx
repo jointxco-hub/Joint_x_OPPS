@@ -868,7 +868,11 @@ function ClientProductPriceComposition({ product }) {
 
       <div className="space-y-1 border-t border-slate-100 pt-2">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-slate-500">Calculated unit sell price</span>
+          <span className="text-slate-500">Agreed price</span>
+          <span className="font-semibold text-slate-800">{money(breakdown.unit_price)}</span>
+        </div>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-500">Computed components</span>
           <span className="font-semibold text-slate-800">{money(calculatedUnit)}</span>
         </div>
         {onceTotal > 0 && (
@@ -878,14 +882,16 @@ function ClientProductPriceComposition({ product }) {
           </div>
         )}
         <div className="flex items-center justify-between text-xs">
-          <span className="text-slate-500">Example total at qty 1</span>
-          <span className="font-semibold text-slate-800">{money(calculatedUnit + onceTotal)}</span>
+          <span className="text-slate-500">Order total at qty 1 (current saved price)</span>
+          <span className="font-semibold text-slate-800">{money(breakdown.unit_price + onceTotal)}</span>
         </div>
       </div>
 
       {breakdown.reconciled === false && (
         <p className="text-[11px] text-amber-600">
-          Saved client price ({money(breakdown.unit_price)}) doesn't match the calculated unit price above — the next order add will use the calculated price shown here.
+          Saved client price differs from the current component calculation.
+          Orders continue to use the saved client price unless a staff price
+          override is supplied.
         </p>
       )}
     </div>

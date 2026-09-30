@@ -198,7 +198,7 @@ export default function ScopedComponentsEditor({
                     <span className="ml-1.5 text-slate-400">R{component.default_sell_price} ×1 once-off</span>
                   ) : (
                     <>
-                      <span className="ml-1.5 text-slate-400">x{component.quantity_per_unit}</span>
+                      <span className="ml-1.5 text-slate-400">Stock qty ×{component.quantity_per_unit}</span>
                       {component.default_sell_price != null && (
                         <span className="ml-1.5 text-slate-400">R{component.default_sell_price}</span>
                       )}
