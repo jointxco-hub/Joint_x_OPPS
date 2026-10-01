@@ -34,6 +34,26 @@ prepared but **not yet applied to production**. See the dedicated section
 near the end of this document for the full record. No wildcard row was
 touched.
 
+**Update — 2026-10-02 (RBAC Remediation Phase 0 — applied, reconciled):**
+`20261001100000_opps_rbac_source_of_truth_restoration.sql` was applied to
+production. The apply itself succeeded cleanly (preflight hash guard
+passed, all six `CREATE OR REPLACE FUNCTION` statements ran, transaction
+committed). Post-apply verification then found all six functions'
+recorded hashes had changed from both the pre-apply baseline and the
+pre-commit local verification. Root cause, confirmed by direct
+inspection and a byte-for-byte semantic diff (not assumed from the hash
+mismatch alone): the migration's own body text has a blank line
+immediately after each `AS $function$` delimiter; since the newline
+ending that line is already the first character inside the dollar-quoted
+string, the blank line adds a *second* leading newline rather than
+reproducing the original single one. All six functions now carry two
+leading newlines in `prosrc` instead of one. This was accepted as the new
+canonical baseline rather than corrected with a follow-up migration — see
+the dedicated "Phase 0 — production apply + reconciliation" section below
+for the full old/new hash table and semantic-diff proof. No executable
+SQL, permission row, wildcard row, tenant membership, or RLS behavior
+changed. Slice 1 remains unapplied.
+
 This is kept deliberately separate from the Café
 authorization security patch
 (`20260927120000_qs_administration_capability_authorization.sql`, Café
@@ -552,20 +572,26 @@ for this function.
 
 `pg_get_functiondef()`'s rendered function body is **not byte-identical**
 to the raw `prosrc` catalog value it's generated from — empirically, it
-silently drops exactly one leading newline character that `prosrc`
-preserves verbatim (confirmed by extracting the body region directly out
-of `pg_get_functiondef()` output, hashing it, and finding it does NOT
-reproduce the recorded body/`prosrc` md5; re-querying `prosrc` directly
-and hashing that DOES reproduce it). This has no effect on behavior
-whatsoever — it's purely a decompiler rendering quirk — but it means a
-restoration migration built naively from `pg_get_functiondef()` text
-will not achieve byte-for-byte `prosrc` parity unless this one leading
-blank line is restored after `AS $function$`. The migration in this
-restoration pass (`20261001100000_opps_rbac_source_of_truth_restoration.sql`)
-is built from raw `prosrc` (queried directly) for exactly this reason,
-and each of its six function bodies has been verified locally (md5 of
-the extracted migration text vs. the recorded live `prosrc` hash) to
-match exactly.
+silently drops a leading newline that `prosrc` preserves verbatim. This
+has no effect on behavior whatsoever — it's purely a decompiler rendering
+quirk. The migration in this restoration pass
+(`20261001100000_opps_rbac_source_of_truth_restoration.sql`) is built
+from raw `prosrc` (queried directly) for this reason, not from
+`pg_get_functiondef()`'s rendering.
+
+**Correction (2026-10-02):** the paragraph above originally also claimed
+that re-inserting one blank line after `AS $function$` reproduces this
+dropped newline, and that local pre-commit verification confirmed exact
+hash parity against the live `prosrc`. Both claims were wrong. The
+newline ending the `AS $function$` line is *itself* the dropped newline
+`pg_get_functiondef()` loses — the original live `prosrc` for all six
+functions begins with exactly one leading newline, already supplied by
+that line ending alone, with no blank line needed below it. Adding a
+blank line there supplies a *second* leading newline, not a reproduction
+of the first. This was not caught before the production apply. See
+"Phase 0 — production apply + reconciliation" below for the resulting
+hash drift, its confirmed harmlessness, and the decision to accept it as
+the new canonical baseline.
 
 ## Disposition
 
@@ -626,6 +652,93 @@ undertaken, should:
 - See the next section for RBAC Remediation Slice 1 (the first actual
   behavior change, not just restoration), including its production
   transaction rehearsal result.
+
+## RBAC Remediation Phase 0 — production apply + reconciliation (2026-10-02)
+
+**Status: applied to production. Hash drift found, root-caused, and
+reconciled as a documentation-only correction. No corrective SQL issued.
+No executable behavior changed.**
+
+`20261001100000_opps_rbac_source_of_truth_restoration.sql` was applied to
+production inside a transaction with a preflight hash guard
+(`BEGIN; <preflight>; <migration>; COMMIT;`). The preflight passed against
+the pre-apply baseline below, all six `CREATE OR REPLACE FUNCTION`
+statements ran without error, and the transaction committed.
+
+Post-apply verification then found every one of the six functions'
+`full_hash` / `body_hash` had changed from both the pre-apply baseline and
+the pre-commit local verification recorded in this migration's own header
+comments. Owner (`postgres`), `SECURITY DEFINER` (`true` for all six),
+volatility (`STABLE` for five, `VOLATILE` for `admin_set_workspace_member_role`),
+`search_path`, and ACL all matched the migration's declared values exactly
+— the drift was confined to the hash columns.
+
+**Root cause (confirmed, not inferred):** every function body in the
+migration file reads:
+
+```sql
+AS $function$
+                                 ← blank line
+  select ...                    ← body
+```
+
+The newline ending the `AS $function$` line is already the first
+character inside the dollar-quoted string. The blank line immediately
+below it is a **second**, additional newline — not a reproduction of the
+one `pg_get_functiondef()` drops. The original live `prosrc` for all six
+functions began with exactly one leading newline; the migration as
+written and applied produces two. This pattern was confirmed present for
+all six functions in the committed file (not an isolated typo), and the
+live post-apply `prosrc` for all six was confirmed to begin with two
+leading newlines, matching the file exactly.
+
+**Semantic-diff proof (not hash-mismatch inference alone):** the body
+text of each function was extracted from the migration file between its
+`AS $function$` / `$function$;` delimiters and compared directly,
+character-for-character, against the live `prosrc` pulled from production
+after the apply. Result for all six functions: the file's body and the
+live body are **byte-for-byte identical** (confirming the apply itself
+transported the file's content exactly, with no corruption in transit),
+and the only difference between that body and the pre-restoration
+original is the leading-newline count (2 vs. 1). No other character
+differs anywhere in any of the six bodies.
+
+**Old → new hash table:**
+
+| Function | Original full hash | Original body hash | Current full hash | Current body hash |
+|---|---|---|---|---|
+| `has_tenant_permission(uuid,text)` | `b7c9df19f951ebc4749d4aa036760106` | `138d1867582099cb9580e43ee5e415ae` | `1c4f8ddedbbe7d774cf8d422891b92cb` | `f00f15045f6212cc88bbbb074a58c575` |
+| `is_opps_staff()` | `4d0a70c336188670017c33dec9ec0fd2` | `2767717a6fd60a202ba30343438e6f4e` | `83ed4016cafa795f7a0231a9e7bf0784` | `37331b76e4651a385581989e4b9655be` |
+| `is_opps_workspace_tenant(uuid)` | `d4eeb5e828f923a5e56ba465bfca0eab` | `0edde73cde7c0d15c452bf6e82a75f84` | `92253b36777450d70b61481e9ba29d80` | `88f75c8ed5f69dba9df2c934e9ece326` |
+| `admin_list_workspace_members(uuid)` | `6ad42b6911ad9f762bb8cb645a99c584` | `9c536d030f06b5c1948a6ca0ed237881` | `6f594df925c27a0c09e12e52ab05c07d` | `60ead26b04fdb3c882c0c66a702de2ef` |
+| `admin_list_workspace_roles(uuid)` | `aec5b5daaffa08049b59f4415f870b2d` | `14cbca95db2fd8e0cbc0f0d6241d5338` | `0c722331e7c1c2ade8fb7323581dcf11` | `ac1f42a4ec60a09ce52a94ba270c51fd` |
+| `admin_set_workspace_member_role(uuid,text)` | `c87cf5bb28a402eb08826fdd5ecde9ae` | `d264543fc3452bfc9b6eb50edfa1ff33` | `e113e45cf6b019e271b2a20678a3dc21` | `1e0db63ffa60c0cd5f2d029996ae30a2` |
+
+**Decision:** the extra leading blank line is confirmed behavior-neutral —
+it has no effect on SQL/PL-pgSQL parsing or execution. Issuing a
+corrective migration purely to restore single-leading-newline byte parity
+was judged not worth a further production write. The current
+(double-leading-newline) state is accepted as the new canonical baseline.
+These "current post-restoration hash" values are now also recorded in the
+migration file's own header comments, next to the original
+pre-restoration values, for each of the six functions.
+
+**Confirmed unchanged by this apply or this reconciliation:** no row in
+`tenant_access_role_permissions` or `tenant_access_roles` was touched; no
+`'*'` wildcard grant changed; no `tenant_memberships` row changed; no RLS
+policy changed; Slice 1
+(`20261001110000_rbac_slice1_harden_workspace_role_change.sql`) remains
+unapplied, with no bookkeeping row for its version.
+
+**Note for Slice 1:** the "pre-Slice live baseline" hash recorded in the
+Slice 1 section below (`c87cf5bb28a402eb08826fdd5ecde9ae` /
+`d264543fc3452bfc9b6eb50edfa1ff33`) is the *original* pre-restoration
+hash for `admin_set_workspace_member_role`, not the current live hash
+(`e113e45cf6b019e271b2a20678a3dc21` / `1e0db63ffa60c0cd5f2d029996ae30a2`).
+Any future preflight hash check run before applying Slice 1 must use the
+current value, not the one recorded at the time Slice 1 was written. This
+is a bookkeeping note only — Slice 1's own migration SQL is untouched by
+this reconciliation.
 
 ## RBAC Remediation Slice 1 — workspace-role hardening (2026-10-01/02)
 

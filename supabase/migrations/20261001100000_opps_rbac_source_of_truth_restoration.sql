@@ -30,15 +30,31 @@
 --
 -- Hash-parity note: pg_get_functiondef()'s rendered body is NOT byte-
 -- identical to the raw prosrc catalog value it's generated from -- it
--- silently drops a single leading newline that prosrc preserves verbatim
--- (confirmed empirically: extracting the body region straight out of
--- pg_get_functiondef() output and hashing it does NOT reproduce the live
--- body/prosrc md5 below; inserting that one leading blank line after each
--- `AS $function$` line below does). Every function body below is therefore
--- built from raw prosrc (queried directly, bypassing pg_get_functiondef's
--- body rendering), not from the pg_get_functiondef string itself, and has
--- been verified byte-for-byte (via local md5, not a live round-trip) to
--- match the live body hash listed above each function.
+-- silently drops a leading newline that prosrc preserves verbatim. Every
+-- function body below is built from raw prosrc (queried directly,
+-- bypassing pg_get_functiondef's body rendering), not from the
+-- pg_get_functiondef string itself.
+--
+-- CORRECTION (2026-10-02, post-apply reconciliation): the original
+-- pre-restoration prosrc for all six functions had exactly ONE leading
+-- newline (the newline that ends the `AS $function$` line itself). This
+-- migration's bodies add a second, visually-blank line directly below
+-- `AS $function$`, which is an ADDITIONAL newline on top of that implicit
+-- one -- not a reproduction of it. The pre-commit local verification
+-- claimed below (and originally in this note) incorrectly reported a
+-- body-hash match; it did not. The actual post-apply live prosrc for all
+-- six functions now begins with TWO leading newlines, confirmed both by
+-- live query and by a byte-for-byte extraction/diff of this file's own
+-- committed bodies against the live prosrc (exact match, zero other
+-- differences). This has been accepted as the new canonical baseline --
+-- see the "Live hash" line for each function below, which now records
+-- both the original pre-restoration hash and the current post-restoration
+-- (double-leading-newline) hash actually live in production. The
+-- difference is a single inert blank line inside each dollar-quoted SQL/
+-- PL/pgSQL body; it has no effect on parsing or execution. No corrective
+-- migration was issued -- see
+-- docs/OPPS_PERMISSION_MODEL_SOURCE_OF_TRUTH_RESTORATION_2026-09-27.md for
+-- the full reconciliation record.
 --
 -- Not restored in this migration (deliberately out of scope for Phase 0):
 -- public.tenant_access_roles / public.tenant_access_role_permissions table
@@ -50,8 +66,12 @@
 
 -- ---------------------------------------------------------------------
 -- 1. public.has_tenant_permission(uuid, text)
--- Live hash (full definition): b7c9df19f951ebc4749d4aa036760106
--- Live hash (body only):       138d1867582099cb9580e43ee5e415ae
+-- Original pre-restoration hash (full):  b7c9df19f951ebc4749d4aa036760106
+-- Original pre-restoration hash (body):  138d1867582099cb9580e43ee5e415ae
+-- Current post-restoration hash (full):  1c4f8ddedbbe7d774cf8d422891b92cb
+-- Current post-restoration hash (body):  f00f15045f6212cc88bbbb074a58c575
+-- (hash changed only because of the extra leading newline -- see the
+-- hash-parity correction note above; no executable SQL differs)
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.has_tenant_permission(p_tenant_id uuid, p_permission_key text)
  RETURNS boolean
@@ -98,8 +118,12 @@ grant execute on function public.has_tenant_permission(uuid, text) to authentica
 
 -- ---------------------------------------------------------------------
 -- 2. public.is_opps_staff()
--- Live hash (full definition): 4d0a70c336188670017c33dec9ec0fd2
--- Live hash (body only):       2767717a6fd60a202ba30343438e6f4e
+-- Original pre-restoration hash (full):  4d0a70c336188670017c33dec9ec0fd2
+-- Original pre-restoration hash (body):  2767717a6fd60a202ba30343438e6f4e
+-- Current post-restoration hash (full):  83ed4016cafa795f7a0231a9e7bf0784
+-- Current post-restoration hash (body):  37331b76e4651a385581989e4b9655be
+-- (hash changed only because of the extra leading newline -- see the
+-- hash-parity correction note above; no executable SQL differs)
 --
 -- NOTE: an older, materially different version of this function was
 -- previously tracked (e.g. commit ba53023, "feat(quotes Q1): canonical
@@ -156,8 +180,12 @@ grant execute on function public.is_opps_staff() to authenticated, service_role;
 
 -- ---------------------------------------------------------------------
 -- 3. public.is_opps_workspace_tenant(uuid)
--- Live hash (full definition): d4eeb5e828f923a5e56ba465bfca0eab
--- Live hash (body only):       0edde73cde7c0d15c452bf6e82a75f84
+-- Original pre-restoration hash (full):  d4eeb5e828f923a5e56ba465bfca0eab
+-- Original pre-restoration hash (body):  0edde73cde7c0d15c452bf6e82a75f84
+-- Current post-restoration hash (full):  92253b36777450d70b61481e9ba29d80
+-- Current post-restoration hash (body):  88f75c8ed5f69dba9df2c934e9ece326
+-- (hash changed only because of the extra leading newline -- see the
+-- hash-parity correction note above; no executable SQL differs)
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.is_opps_workspace_tenant(p_tenant_id uuid)
  RETURNS boolean
@@ -185,8 +213,12 @@ grant execute on function public.is_opps_workspace_tenant(uuid) to authenticated
 
 -- ---------------------------------------------------------------------
 -- 4. public.admin_list_workspace_members(uuid)
--- Live hash (full definition): 6ad42b6911ad9f762bb8cb645a99c584
--- Live hash (body only):       9c536d030f06b5c1948a6ca0ed237881
+-- Original pre-restoration hash (full):  6ad42b6911ad9f762bb8cb645a99c584
+-- Original pre-restoration hash (body):  9c536d030f06b5c1948a6ca0ed237881
+-- Current post-restoration hash (full):  6f594df925c27a0c09e12e52ab05c07d
+-- Current post-restoration hash (body):  60ead26b04fdb3c882c0c66a702de2ef
+-- (hash changed only because of the extra leading newline -- see the
+-- hash-parity correction note above; no executable SQL differs)
 --
 -- NOTE: gates on has_tenant_permission(p_tenant_id, 'staff.manage') OR
 -- is_app_admin() -- 'staff.manage' is a permission_key not previously
@@ -245,8 +277,12 @@ grant execute on function public.admin_list_workspace_members(uuid) to authentic
 
 -- ---------------------------------------------------------------------
 -- 5. public.admin_list_workspace_roles(uuid)
--- Live hash (full definition): aec5b5daaffa08049b59f4415f870b2d
--- Live hash (body only):       14cbca95db2fd8e0cbc0f0d6241d5338
+-- Original pre-restoration hash (full):  aec5b5daaffa08049b59f4415f870b2d
+-- Original pre-restoration hash (body):  14cbca95db2fd8e0cbc0f0d6241d5338
+-- Current post-restoration hash (full):  0c722331e7c1c2ade8fb7323581dcf11
+-- Current post-restoration hash (body):  ac1f42a4ec60a09ce52a94ba270c51fd
+-- (hash changed only because of the extra leading newline -- see the
+-- hash-parity correction note above; no executable SQL differs)
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.admin_list_workspace_roles(p_tenant_id uuid)
  RETURNS jsonb
@@ -293,8 +329,12 @@ grant execute on function public.admin_list_workspace_roles(uuid) to authenticat
 
 -- ---------------------------------------------------------------------
 -- 6. public.admin_set_workspace_member_role(uuid, text)
--- Live hash (full definition): c87cf5bb28a402eb08826fdd5ecde9ae
--- Live hash (body only):       d264543fc3452bfc9b6eb50edfa1ff33
+-- Original pre-restoration hash (full):  c87cf5bb28a402eb08826fdd5ecde9ae
+-- Original pre-restoration hash (body):  d264543fc3452bfc9b6eb50edfa1ff33
+-- Current post-restoration hash (full):  e113e45cf6b019e271b2a20678a3dc21
+-- Current post-restoration hash (body):  1e0db63ffa60c0cd5f2d029996ae30a2
+-- (hash changed only because of the extra leading newline -- see the
+-- hash-parity correction note above; no executable SQL differs)
 --
 -- NOTE: this is the mutating member of the three admin_* functions --
 -- VOLATILE (the default; not STABLE like the other five), and the only
