@@ -5,10 +5,28 @@
 -- (that migration restores the function's CURRENT live body unchanged;
 -- this one is the first actual behavior change). Current live full/body
 -- hashes re-verified immediately before writing this migration:
---   full definition: c87cf5bb28a402eb08826fdd5ecde9ae
---   body only:       d264543fc3452bfc9b6eb50edfa1ff33
+--   full definition: c87cf5bb28a402eb08826fdd5ecde9ae  (pre-Phase-0-apply)
+--   body only:       d264543fc3452bfc9b6eb50edfa1ff33  (pre-Phase-0-apply)
 -- (identical to the hashes recorded in Phase 0 -- confirms no drift since
 -- that restoration pass.)
+--
+-- RECONCILED (2026-10-02): Phase 0 has since been applied to production
+-- and reconciled onto a new canonical baseline -- the restoration
+-- migration's own bodies introduced one extra leading newline into each
+-- function's prosrc (confirmed behavior-neutral; accepted rather than
+-- corrected -- see
+-- docs/OPPS_PERMISSION_MODEL_SOURCE_OF_TRUTH_RESTORATION_2026-09-27.md,
+-- "Phase 0 -- production apply + reconciliation"). The CURRENT live
+-- baseline for admin_set_workspace_member_role, which this migration's
+-- CREATE OR REPLACE now runs against, is:
+--   full definition: e113e45cf6b019e271b2a20678a3dc21
+--   body only:       1e0db63ffa60c0cd5f2d029996ae30a2
+-- This migration file's own CREATE OR REPLACE body is unchanged by this
+-- reconciliation -- it already uses the same "one blank line after
+-- AS $function$" convention as Phase 0, so applying it unmodified
+-- reproduces that same accepted double-leading-newline representation.
+-- No guard logic, hierarchy rule, signature, ACL, SECURITY DEFINER,
+-- search_path, or audit-insert behavior changed.
 --
 -- Does NOT touch: wildcard permission rows, tenant_access_role_permissions,
 -- Employee Hub RLS, frontend code, Orders behavior, any other role or

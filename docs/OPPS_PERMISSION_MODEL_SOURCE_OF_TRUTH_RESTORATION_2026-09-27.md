@@ -416,8 +416,11 @@ $function$
 
 ### `public.admin_set_workspace_member_role(uuid, text)`
 
-Full-definition hash: `c87cf5bb28a402eb08826fdd5ecde9ae`
-Body-only hash: `d264543fc3452bfc9b6eb50edfa1ff33`
+Full-definition hash: `c87cf5bb28a402eb08826fdd5ecde9ae` (as discovered,
+2026-10-01, pre-Phase-0-apply — see "Phase 0 — production apply +
+reconciliation" below for the current canonical hash)
+Body-only hash: `d264543fc3452bfc9b6eb50edfa1ff33` (as discovered,
+pre-Phase-0-apply)
 ACL: `authenticated, service_role` (not granted to `public`/`anon`)
 Volatility: `VOLATILE` (the default — this is the only one of the six
 that mutates anything; the other five are read-only/`STABLE`)
@@ -730,21 +733,34 @@ policy changed; Slice 1
 (`20261001110000_rbac_slice1_harden_workspace_role_change.sql`) remains
 unapplied, with no bookkeeping row for its version.
 
-**Note for Slice 1:** the "pre-Slice live baseline" hash recorded in the
-Slice 1 section below (`c87cf5bb28a402eb08826fdd5ecde9ae` /
-`d264543fc3452bfc9b6eb50edfa1ff33`) is the *original* pre-restoration
-hash for `admin_set_workspace_member_role`, not the current live hash
-(`e113e45cf6b019e271b2a20678a3dc21` / `1e0db63ffa60c0cd5f2d029996ae30a2`).
-Any future preflight hash check run before applying Slice 1 must use the
-current value, not the one recorded at the time Slice 1 was written. This
-is a bookkeeping note only — Slice 1's own migration SQL is untouched by
-this reconciliation.
+**Note for Slice 1 (resolved 2026-10-02):** the "pre-Slice live baseline"
+hash originally recorded in the Slice 1 section below
+(`c87cf5bb28a402eb08826fdd5ecde9ae` / `d264543fc3452bfc9b6eb50edfa1ff33`)
+was the *original* pre-restoration hash for
+`admin_set_workspace_member_role`, not the current live hash. Both the
+Slice 1 migration's own header comment and the Slice 1 section below have
+since been updated to record the current canonical baseline
+(`e113e45cf6b019e271b2a20678a3dc21` / `1e0db63ffa60c0cd5f2d029996ae30a2`)
+alongside the original, as a "RBAC Slice 1 baseline reconciliation"
+documentation-only change. Slice 1's own guard logic, hierarchy rules,
+signature, ACL, and all other executable behavior were untouched by that
+reconciliation — only hash commentary changed. Slice 1's production
+rehearsal was re-run against the current baseline before any permanent
+apply, per this repo's rehearsal-before-apply convention; see the
+rehearsal result in the Slice 1 section below.
 
 ## RBAC Remediation Slice 1 — workspace-role hardening (2026-10-01/02)
 
 **Status: migration and rehearsal prepared, production transaction
-rehearsal passed, migration NOT yet applied to production, nothing
-committed as of this note's own writing.**
+rehearsal passed against the original pre-Phase-0-apply baseline
+(2026-10-01/02), migration NOT yet applied to production. Baseline
+reconciled (2026-10-02, see below) after Phase 0 went live and its hash
+drift was accepted as canonical; rehearsal re-run against the current
+baseline (full `e113e45cf6b019e271b2a20678a3dc21`, body
+`1e0db63ffa60c0cd5f2d029996ae30a2`) inside a fresh BEGIN...ROLLBACK —
+all 23 cases passed again, zero fixture residue, hash restored exactly,
+no bookkeeping row inserted for `20261001110000`. Still NOT applied to
+production.**
 
 Builds on Phase 0 above. Hardens `public.admin_set_workspace_member_role`
 against two issues found while auditing the wider RBAC system (not
@@ -756,10 +772,27 @@ universally available), and no role-hierarchy ceiling at all (an `admin`
 caller could promote anyone, including themselves, to `'owner'`).
 
 Migration: `supabase/migrations/20261001110000_rbac_slice1_harden_workspace_role_change.sql`.
-Pre-Slice live baseline (confirmed unchanged immediately before writing
-this migration, and reconfirmed immediately before this note): full
-definition hash `c87cf5bb28a402eb08826fdd5ecde9ae`, body hash
-`d264543fc3452bfc9b6eb50edfa1ff33`. Only this one function is touched —
+Pre-Slice live baseline as originally confirmed when this migration was
+written (2026-10-01, pre-Phase-0-apply): full definition hash
+`c87cf5bb28a402eb08826fdd5ecde9ae`, body hash
+`d264543fc3452bfc9b6eb50edfa1ff33`.
+
+**Baseline reconciled (2026-10-02):** Phase 0 was applied to production
+and reconciled onto a new canonical baseline in the interim (see "Phase
+0 — production apply + reconciliation" above) — the pre-Slice baseline
+Slice 1's `CREATE OR REPLACE` now actually runs against is full
+definition hash `e113e45cf6b019e271b2a20678a3dc21`, body hash
+`1e0db63ffa60c0cd5f2d029996ae30a2`. The difference between the two
+baselines is exactly the accepted extra leading newline, confirmed
+behavior-neutral; nothing else about the live function changed in the
+interim. Slice 1's own migration SQL (guard logic, hierarchy rules,
+signature, ACL, `SECURITY DEFINER`, `search_path`, audit insert) was not
+altered by this reconciliation — only this documentation and the
+migration's own header comment were updated to record the current
+baseline, and the production rehearsal was re-run against it before any
+permanent apply.
+
+Only this one function is touched —
 signature, owner, `SECURITY DEFINER`, `search_path`, and ACL all
 unchanged; the existing primary authorization gate, role validation, and
 `tenant_access_audit_log` insert are all preserved verbatim. **No
