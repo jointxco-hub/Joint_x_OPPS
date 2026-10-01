@@ -5,15 +5,24 @@ import {
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
 } from "@/components/ui/drawer";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { CommercialDocument, buildQuoteDocumentModel } from "@/features/commercial-doc";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { UserCheck } from "lucide-react";
 import QuoteStatusBadge from "./QuoteStatusBadge";
 import QuoteRevisionHistory from "./QuoteRevisionHistory";
 import QuoteShareControls from "./QuoteShareControls";
 import {
   isQuoteEditable, HAS_QUOTE_SEND_TRANSITION, canSendQuote, hasUnsentChanges, isPublished,
+  canApproveQuoteOnBehalf, APPROVAL_SOURCE_OPTIONS,
 } from "./quoteStatus";
+
+const APPROVAL_SOURCE_LABELS = Object.fromEntries(APPROVAL_SOURCE_OPTIONS.map((o) => [o.value, o.label]));
 
 // Button (src/components/ui/button.jsx) is a plain forwardRef with no prop
 // typing, so tsc only sees RefAttributes<any> on it — every consumer
@@ -52,11 +61,26 @@ const EVENT_LABELS = {
 // 'converted' is now logged by both conversion paths (Quote -> Order and
 // the direct Quote -> Invoice path) — the event_type itself is unchanged
 // (no new value), so the label is disambiguated from metadata.conversion_type.
+// Same convention for on-behalf approval: event_type stays 'accepted' (no
+// new enum value), disambiguated by actor_kind='staff' +
+// metadata.approval_mode='on_behalf' — this must NEVER read as "Accepted"
+// (which would imply the client clicked it themselves).
 function eventLabel(ev) {
   if (ev.event_type === "converted" && ev?.metadata?.conversion_type === "direct_invoice") {
     return "Converted to invoice";
   }
+  if (ev.event_type === "accepted" && ev.actor_kind === "staff" && ev?.metadata?.approval_mode === "on_behalf") {
+    return "Approved on behalf of client";
+  }
   return EVENT_LABELS[ev.event_type] || ev.event_type;
+}
+
+function eventActorSuffix(ev) {
+  if (ev.event_type === "accepted" && ev.actor_kind === "staff" && ev?.metadata?.approval_mode === "on_behalf") {
+    const sourceLabel = APPROVAL_SOURCE_LABELS[ev?.metadata?.approval_source] || ev?.metadata?.approval_source;
+    return ev.actor_label ? ` — ${ev.actor_label}${sourceLabel ? ` (${sourceLabel})` : ""}` : "";
+  }
+  return ev.actor_label ? ` — ${ev.actor_label}` : "";
 }
 
 // Same interaction language as InvoiceDetailDrawer: bottom Drawer,
@@ -82,6 +106,8 @@ export default function QuoteDetailDrawer({
   isConvertingToInvoice = false,
   linkedInvoiceStatus = null, // { status, amount_paid } — fetched by the parent only when converted_invoice_id is set and no order exists yet
   loadError = null,
+  canApproveOnBehalf = false, // frontend convenience gate only — server remains authoritative
+  isApprovingOnBehalf = false,
   onOpenChange,
   onEdit,
   onRevise,
@@ -93,11 +119,24 @@ export default function QuoteDetailDrawer({
   onViewOrder,
   onConvertToInvoice,
   onViewInvoice,
+  onApproveOnBehalf,
 }) {
   const header = quote || summaryQuote || {};
   const status = header.status || "draft";
   const unsent = hasUnsentChanges(quote || header);
   const published = isPublished(quote || header);
+
+  // Approve on behalf of client (Slice 02B-1)
+  const [onBehalfOpen, setOnBehalfOpen] = useState(false);
+  const [onBehalfSource, setOnBehalfSource] = useState("");
+  const [onBehalfNote, setOnBehalfNote] = useState("");
+  const showApproveOnBehalf = canApproveOnBehalf && canApproveQuoteOnBehalf(quote || header);
+  const closeOnBehalfDialog = () => { setOnBehalfOpen(false); setOnBehalfSource(""); setOnBehalfNote(""); };
+  const confirmApproveOnBehalf = () => {
+    const payload = { quote: quote || header, approvalSource: onBehalfSource, note: onBehalfNote.trim() || null };
+    closeOnBehalfDialog();
+    onApproveOnBehalf?.(payload);
+  };
 
   // preview: default to the published/formal quote when one exists,
   // otherwise the draft (current head).
@@ -187,6 +226,17 @@ export default function QuoteDetailDrawer({
                   className="h-11 rounded-xl sm:h-9"
                 >
                   <Send className="h-4 w-4" /> {isSending ? "Sending..." : sendLabel}
+                </Button>
+              ) : null}
+              {showApproveOnBehalf ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setOnBehalfOpen(true)}
+                  disabled={!quote || isApprovingOnBehalf}
+                  className="h-11 rounded-xl sm:h-9"
+                >
+                  <UserCheck className="h-4 w-4" /> Approve on behalf of client
                 </Button>
               ) : null}
               {showOrderAction ? (
@@ -381,7 +431,7 @@ export default function QuoteDetailDrawer({
                             <span className="text-foreground">
                               {eventLabel(ev)}
                               {ev.event_type === "sent" && ev?.metadata?.resend ? " (resend)" : ""}
-                              {ev.actor_label ? ` — ${ev.actor_label}` : ""}
+                              {eventActorSuffix(ev)}
                             </span>
                             <span className="text-xs text-muted-foreground">{when(ev.created_at)}</span>
                           </div>
@@ -447,6 +497,54 @@ export default function QuoteDetailDrawer({
           ) : (
             <p className="p-6 text-sm text-muted-foreground">Preview unavailable — this quote has no saved revision yet.</p>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={onBehalfOpen} onOpenChange={(next) => { if (!next) closeOnBehalfDialog(); else setOnBehalfOpen(true); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve on behalf of client</DialogTitle>
+            <DialogDescription>
+              Approving on behalf of: <span className="font-semibold text-foreground">{header.customer_name || "this client"}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Approval source *</Label>
+              <Select value={onBehalfSource} onValueChange={setOnBehalfSource}>
+                <SelectTrigger><SelectValue placeholder="How did the client approve?" /></SelectTrigger>
+                <SelectContent>
+                  {APPROVAL_SOURCE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note / reference (optional)</Label>
+              <Textarea
+                rows={3}
+                value={onBehalfNote}
+                onChange={(e) => setOnBehalfNote(e.target.value)}
+                placeholder="e.g. Confirmed by client on WhatsApp, 30 Sep 2026"
+              />
+            </div>
+            <p className="rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">
+              You are recording this approval on behalf of the client. The audit
+              history will show that you performed the approval.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={closeOnBehalfDialog}>Cancel</Button>
+              <Button
+                className="flex-1"
+                disabled={!onBehalfSource || isApprovingOnBehalf}
+                onClick={confirmApproveOnBehalf}
+              >
+                {isApprovingOnBehalf ? "Confirming..." : "Confirm approval on behalf"}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </Drawer>

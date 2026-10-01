@@ -98,6 +98,30 @@ export function canShareQuote(quote) {
   );
 }
 
+// ── Approve on behalf of client (Slice 02B-1) ───────────────────────────
+// Status check only - this is NOT the authorization check. The server
+// (accept_quote_on_behalf) is the sole authority on WHO may call this;
+// this only decides whether the action could possibly succeed given the
+// quote's current state, mirroring accept_public_quote's own acceptable
+// statuses exactly.
+export const ON_BEHALF_APPROVABLE_QUOTE_STATUSES = new Set(["sent", "viewed", "changes_requested"]);
+
+export function canApproveQuoteOnBehalf(quote) {
+  return (
+    Boolean(quote?.published_revision_id) &&
+    ON_BEHALF_APPROVABLE_QUOTE_STATUSES.has(String(quote?.status || "draft"))
+  );
+}
+
+export const APPROVAL_SOURCE_OPTIONS = [
+  { value: "whatsapp", label: "WhatsApp approval" },
+  { value: "phone", label: "Phone/verbal approval" },
+  { value: "in_person", label: "In-person approval" },
+  { value: "email", label: "Email approval" },
+  { value: "assisted", label: "Assisted/non-technical client" },
+  { value: "other", label: "Other" },
+];
+
 // Is a public link live right now? Issued, not revoked, still visible, and
 // (if an expiry was set) not past it. Mirrors get_public_quote's own gate.
 export function hasActiveQuoteShare(quote) {

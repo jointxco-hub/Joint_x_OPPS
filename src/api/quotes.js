@@ -534,6 +534,44 @@ export async function convertQuoteToOrder(quoteId) {
   return data;
 }
 
+// ── Approve on behalf of client (Slice 02B-1) ───────────────────────────
+// Records that a high-trust operator captured the client's approval
+// through an offline/delegated channel. The server is the sole
+// authority on who may call this (is_app_admin() OR an active owner/admin
+// tenant_memberships row on the quote's own tenant) - this wrapper adds
+// no logic of its own, only error-message mapping, same convention as
+// every other quote RPC wrapper in this file.
+const QUOTE_APPROVAL_ON_BEHALF_ERROR_MESSAGES = {
+  QUOTE_APPROVAL_AUTH_REQUIRED: "You must be signed in to record an approval.",
+  QUOTE_APPROVAL_ON_BEHALF_DENIED: "You don't have permission to approve a quote on behalf of a client.",
+  QUOTE_NOT_FOUND: "That quote could not be found.",
+  QUOTE_NOT_ACCEPTABLE: "This quote is no longer in a state that can be approved.",
+  QUOTE_APPROVAL_SOURCE_REQUIRED: "Choose how the client approved before confirming.",
+  QUOTE_PUBLISHED_REVISION_CHANGED: "This quote changed since it was loaded — reopen it and try again.",
+};
+
+export async function acceptQuoteOnBehalf({ quoteId, expectedRevisionNumber, approvalSource, note = null }) {
+  ensureSupabase();
+  const { data, error } = await supabase.rpc("accept_quote_on_behalf", {
+    p_quote_id: quoteId,
+    p_expected_revision_number: expectedRevisionNumber,
+    p_approval_source: approvalSource,
+    p_note: note,
+  });
+  if (error) {
+    const raw = String(error.message || "");
+    const code = Object.keys(QUOTE_APPROVAL_ON_BEHALF_ERROR_MESSAGES).find((k) => raw.includes(k));
+    throw Object.assign(
+      new Error(code ? QUOTE_APPROVAL_ON_BEHALF_ERROR_MESSAGES[code] : raw || "Could not record the approval."),
+      { code: code || error.code || "QUOTE_APPROVAL_ON_BEHALF_FAILED", cause: error },
+    );
+  }
+  if (!data?.ok) {
+    throw Object.assign(new Error("The approval returned an incomplete result."), { code: "QUOTE_APPROVAL_ON_BEHALF_RESULT_INVALID" });
+  }
+  return data;
+}
+
 // ── quote -> invoice direct conversion (Phase 1, second path) ───────────
 // The second Quote -> Order/Invoice path: send the invoice first, without
 // requiring an order yet. See

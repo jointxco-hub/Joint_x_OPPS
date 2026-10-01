@@ -9,11 +9,12 @@ import {
 } from "@/components/ui/dialog";
 import { dataClient } from "@/api/dataClient";
 import { canAccessInvoices } from "@/lib/financeAccess";
+import { isAdmin } from "@/lib/admin";
 import {
   listQuotes, getQuote, listQuoteRevisions, listQuoteEvents, getQuoteDocument,
   saveQuoteWithItems, quoteDraftFromClientRequest, markQuoteSent,
   issueQuoteShare, rotateQuoteShareToken, revokeQuoteShare,
-  convertQuoteToOrder, convertQuoteToInvoice,
+  convertQuoteToOrder, convertQuoteToInvoice, acceptQuoteOnBehalf,
 } from "@/api/quotes";
 import { getInvoice } from "@/api/invoices";
 import { listClientRequests } from "@/api/clientRequests";
@@ -44,6 +45,17 @@ export default function Quotes() {
     staleTime: 300_000,
   });
   const canAccess = canAccessInvoices(userQuery.data);
+  // Approve on behalf of client (Slice 02B-1): frontend convenience gate
+  // only. isAdmin() mirrors one branch of the RPC's real server-side
+  // authorization (is_app_admin()) exactly — same role check, same
+  // hardcoded owner-email list. It does not check the RPC's other branch
+  // (an owner/admin tenant_memberships row on the quote's own tenant),
+  // since that requires per-quote tenant data this list-level check has
+  // no access to; a tenant owner/admin who isn't also flagged admin in
+  // public.users.role simply won't see the button in this first pass —
+  // an under-inclusive frontend gap, not a security one, since the RPC
+  // enforces the real policy regardless of what this shows.
+  const canApproveOnBehalf = isAdmin(userQuery.data);
   const linkedQuoteId = searchParams.get("open");
 
   // Deep-link from another record's "View Quote" (e.g. an order's Quote
@@ -200,6 +212,20 @@ export default function Quotes() {
     onError: (error) => toast.error(error?.message || "Could not create an invoice from this quote"),
   });
 
+  const approveOnBehalfMutation = useMutation({
+    mutationFn: (/** @type {{ quote: any, approvalSource: string, note: string|null }} */ input) => acceptQuoteOnBehalf({
+      quoteId: input.quote.id,
+      expectedRevisionNumber: input.quote.published_revision_number,
+      approvalSource: input.approvalSource,
+      note: input.note,
+    }),
+    onSuccess: (_result, input) => {
+      toast.success(`Approval recorded on behalf of the client for ${input.quote.quote_number || "this quote"}`);
+      invalidateQuote(input.quote.id);
+    },
+    onError: (error) => toast.error(error?.message || "Could not record the approval"),
+  });
+
   // "Create Invoice" on the quote drawer means two different things
   // depending on whether an order already exists: with no order, it's the
   // new direct Quote -> Invoice RPC; with an order, that invoice belongs
@@ -301,6 +327,8 @@ export default function Quotes() {
         isConvertingToInvoice={convertToInvoiceMutation.isPending}
         linkedInvoiceStatus={linkedInvoiceStatusQuery.data ? { status: linkedInvoiceStatusQuery.data.status, amount_paid: linkedInvoiceStatusQuery.data.amount_paid } : null}
         loadError={detailQuery.error}
+        canApproveOnBehalf={canApproveOnBehalf}
+        isApprovingOnBehalf={approveOnBehalfMutation.isPending}
         onOpenChange={(open) => {
           if (open) return;
           setSelectedQuote(null);
@@ -320,6 +348,7 @@ export default function Quotes() {
         onViewOrder={(orderId) => navigate(`/Orders?open=${orderId}`)}
         onConvertToInvoice={handleCreateInvoiceFromQuote}
         onViewInvoice={(invoiceId) => navigate(`/Invoices?invoice=${invoiceId}`)}
+        onApproveOnBehalf={(input) => approveOnBehalfMutation.mutate(input)}
       />
 
       <Dialog open={requestPickerOpen} onOpenChange={setRequestPickerOpen}>
