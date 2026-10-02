@@ -860,3 +860,90 @@ interpretive history):
   `tenant_access_role_permissions`, exactly as before — this slice only
   hardens the one RPC's own internal logic, independent of that broader,
   still-open remediation question.
+
+## RBAC Remediation Slice 2 — staff.manage + employee.team.read/manage, hybrid preservation model (2026-10-02)
+
+**Status: migration, frontend change, and rehearsal prepared and committed.
+Production transaction rehearsal passed (36/36). Migration NOT yet applied
+to production; frontend NOT yet deployed.**
+
+Builds on Phase 0 and Slice 1 above. Closes the remaining wildcard-driven
+exposure: `admin_list_workspace_roles`/`admin_list_workspace_members` had
+no secondary guard at all (any joint-x member/staff could list every
+member's name/email/role via the `'*'` wildcard — live information
+disclosure); `employee.team.read`/`employee.team.manage` gate exactly
+three tables (`qbrs`, `user_roles`, `weekly_scores` — confirmed via a full
+`pg_policies` scan) with the same wildcard exposure for team-wide access.
+
+**Design decision (hybrid preservation model):** an earlier tenant-agnostic
+draft of the fix (owner/admin membership always wins, for any tenant) was
+rejected after discovering four OTHER tenants (`demo-xos`, `gsb`,
+`tenant-a-qa`, `tenant-b-qa`) each have an active owner/admin membership
+but zero rows in `tenant_access_role_permissions` — a tenant-agnostic
+helper would have newly granted them access they don't have today. The
+shipped design instead hardcodes the tightened rule to the literal
+`joint-x` tenant only:
+
+```sql
+CREATE OR REPLACE FUNCTION public.has_high_trust_workspace_permission(p_tenant_id uuid, p_permission_key text)
+ ...
+  select case
+    when public.is_app_admin() then true
+    when (select t.slug from public.tenants t where t.id = p_tenant_id) = 'joint-x' then
+      exists(... tenant_role in ('owner','admin') ...)
+    else
+      public.has_tenant_permission(p_tenant_id, p_permission_key)
+  end;
+```
+
+Every other tenant (including `quick-solution`, which has 58 of its own
+permission rows) delegates unchanged to the pre-existing
+`has_tenant_permission()` — verified unmodified, not recursive.
+
+Migration: `supabase/migrations/20261002090000_rbac_slice2_harden_staff_manage_employee_team.sql`.
+Creates the helper above; replaces the first gate in all three
+workspace-admin RPCs (proven via automated text diff, not assumed, that
+each function's body is otherwise byte-identical to its live/tracked
+predecessor — Slice 1's entire hierarchy-guard block in
+`admin_set_workspace_member_role` is untouched); alters 12 Employee Hub
+RLS policies on `qbrs`/`user_roles`/`weekly_scores` to swap the
+`employee.team.read`/`employee.team.manage` branch for the same helper,
+leaving every self-row branch and the NULL-tenant app-admin branch
+untouched (`user_roles` still has no self-row INSERT/UPDATE/DELETE branch
+at all, matching its live shape).
+
+Frontend: `src/components/workspace/WorkspaceSwitcher.jsx`'s "Manage
+workspace access" control now checks `currentWorkspace?.slug ===
+'joint-x' ? (app-admin || owner || admin) : can('staff.manage')` — mirrors
+the backend exactly, no global replacement of `can('staff.manage')`.
+
+**Production transaction rehearsal (2026-10-02): 36/36 passed.**
+`supabase/tests/rbac_slice2_rehearsal.sql`, run inside `BEGIN...ROLLBACK`
+(zero `COMMIT`). Covered: all three workspace-admin RPCs for app-admin/
+owner/admin (success) and wildcard member/staff (rejected) against the
+**real** joint-x tenant_id with disposable memberships layered on top (a
+disposable lookalike tenant would have incorrectly passed through the
+preserved-wildcard branch, since only the literal `joint-x` slug triggers
+the tightened branch); cross-tenant rejection; Slice 1's hierarchy guards
+confirmed still intact; Employee Hub team-read/team-write vs. self-row
+split on all three tables; and six new hybrid-preservation cases proving
+a zero-permission tenant stays rejected and an explicit-grant tenant
+stays allowed, for all three permission keys, using disposable Tenant C/D
+fixtures. Two bugs were found and fixed while actually running this
+rehearsal: a wrapper-only JWT-claim-reset ordering issue (not in the
+tracked file — documented in the file's own header so future wrapper
+assembly doesn't reintroduce it), and a genuine bug in the tracked file's
+own membership-integrity check (it didn't account for
+`add_internal_user_to_joint_x_team()` auto-enrolling the disposable
+app-admin fixture into real joint-x the same way it did during the Slice 1
+rehearsal) — both fixed, both now part of this commit.
+
+Post-rollback, read-only verification confirmed: all three RPCs' hashes
+restored to the exact pre-rehearsal baseline; all 12 Employee Hub policy
+definitions byte-identical to their pre-rehearsal state (combined hash
+match); `tenant_access_role_permissions` (62), wildcard `'*'` count (6),
+and `tenant_memberships` (18) all restored exactly; `quick-solution`'s 58
+permission rows and the four zero-permission tenants' 0 rows both
+confirmed unchanged; zero residue across every disposable table touched;
+no bookkeeping row for `20261002090000`. No permanent production write
+occurred.

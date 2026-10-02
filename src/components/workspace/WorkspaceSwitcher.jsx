@@ -3,6 +3,8 @@ import {
   Building2, Check, ChevronDown, ShieldCheck, Users, X
 } from 'lucide-react';
 import { useWorkspace } from '@/lib/WorkspaceContext';
+import { dataClient } from '@/api/dataClient';
+import { isAdmin } from '@/lib/admin';
 import {
   listWorkspaceMembers,
   listWorkspaceRoles,
@@ -158,9 +160,27 @@ export default function WorkspaceSwitcher({ compact = false }) {
   const { workspaces, currentWorkspace, can, switchWorkspace } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [me, setMe] = useState(null);
+
+  useEffect(() => {
+    dataClient.auth.me().then(setMe).catch(() => {});
+  }, []);
 
   const label = labelFor(currentWorkspace);
-  const canManage = can('staff.manage');
+  // RBAC Slice 2 (hybrid preservation model): mirror the backend exactly.
+  // On joint-x specifically, the backend now ignores the '*' wildcard for
+  // this control and requires app admin OR active owner/admin membership
+  // -- so the frontend does the same, instead of can('staff.manage'),
+  // which resolves true for every joint-x role via the wildcard. On every
+  // OTHER tenant, the backend still delegates to has_tenant_permission()
+  // unchanged, so can('staff.manage') -- unchanged -- is still the
+  // correct frontend check there; replacing it tenant-wide would hide
+  // this control from tenants (e.g. quick-solution) whose owner/admin
+  // currently see it via their own explicit/wildcard grant, not via a
+  // tenant_role check.
+  const canManage = currentWorkspace?.slug === 'joint-x'
+    ? (isAdmin(me) || currentWorkspace?.roleKey === 'owner' || currentWorkspace?.roleKey === 'admin')
+    : can('staff.manage');
   const multiple = workspaces.length > 1;
 
   const currentIndex = useMemo(
