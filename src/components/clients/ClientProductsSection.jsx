@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
@@ -236,8 +237,21 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
     onChanged?.();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
+  // Portaled to document.body so this overlay's `fixed inset-0` resolves
+  // against the real device viewport, not DialogContent's own box -
+  // DialogContent (src/components/ui/dialog.jsx) applies a CSS transform
+  // for its centering trick, and a transformed ancestor establishes the
+  // containing block for fixed descendants. Without this portal, the
+  // workspace was sized/positioned relative to that transformed, 90vh,
+  // independently-scrolling box instead of the viewport - the confirmed
+  // cause of the mobile crop/settle/drift behavior.
+  return createPortal(
+    // z-[91]: now a sibling of ClientAccountDialog's DialogContent (z-[90])
+    // in the global stacking order instead of its descendant, so it must
+    // explicitly outrank it. Stays below the z-[95] confirm modal and the
+    // z-[110] Reconfiguration Draft workflow nested inside this same
+    // subtree, preserving their existing relative order.
+    <div className="fixed inset-0 z-[91] flex items-stretch justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-3 border-b border-slate-200 p-4">
           <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
@@ -270,7 +284,7 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
             <TabsTrigger value="status">Status</TabsTrigger>
           </TabsList>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
             <TabsContent value="details" className="mt-0">
               <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
             </TabsContent>
@@ -299,7 +313,8 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
       </div>
 
       <QuickImagePreview open={Boolean(preview)} onClose={() => setPreview(null)} value={preview?.value} title={preview?.title} />
-    </div>
+    </div>,
+    document.body
   );
 }
 
