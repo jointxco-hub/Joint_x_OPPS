@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { resolveClientProductPrice, getClientProductHistoricalReference } from "@/api/clientProductPriceReview";
+import ReconfigurationDraftWorkflow from "@/components/clients/reconfiguration/ReconfigurationDraftWorkflow";
 
 // PRODUCT CONFIGURATION REVIEW v1 — read-only staff diagnostic panel.
 //
@@ -91,6 +92,7 @@ function FieldRow({ label, value, help = null }) {
 
 export default function ProductConfigurationReview({ product, components = [] }) {
   const [reviewClassification, setReviewClassification] = useState(REVIEW_OPTIONS[0]);
+  const [reconfigureOpen, setReconfigureOpen] = useState(false);
 
   const { data: priceRes, isLoading: priceLoading } = useQuery({
     queryKey: ["resolveClientProductPrice", product.id],
@@ -120,10 +122,22 @@ export default function ProductConfigurationReview({ product, components = [] })
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-slate-800">Pricing &amp; configuration review</p>
-        <span className="text-[10px] uppercase tracking-wide text-slate-400">Read-only</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">Read-only</span>
+          <button
+            type="button"
+            onClick={() => setReconfigureOpen(true)}
+            className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
+          >
+            Reconfigure product (draft)
+          </button>
+        </div>
       </div>
+      {reconfigureOpen && (
+        <ReconfigurationDraftWorkflow product={product} components={components} onClose={() => setReconfigureOpen(false)} />
+      )}
       <p className="text-[11px] text-slate-400">
         Everything below is read directly from the canonical price resolver. This panel never changes
         pricing - it only explains what is already live.
