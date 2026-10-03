@@ -567,7 +567,7 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
           )}
         </DialogHeader>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="min-w-0 grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="min-w-0 rounded-lg border border-slate-200 p-4">
             <p className="text-xs text-slate-500">Total spent</p>
             <p className="min-w-0 break-words text-xl font-semibold">R{(client.total_revenue || 0).toLocaleString()}</p>
@@ -590,8 +590,8 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
 
         {clientId && <CommerceProductsSection clientId={clientId} />}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <section className="rounded-lg border border-slate-200 p-4">
+        <div className="min-w-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <section className="min-w-0 rounded-lg border border-slate-200 p-4">
             <div className="flex items-center gap-2 mb-3">
               <ShoppingBag className="w-4 h-4 text-primary" />
               <h3 className="font-semibold">Linked Orders</h3>
@@ -613,7 +613,7 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
             )}
           </section>
 
-          <section className="rounded-lg border border-slate-200 p-4">
+          <section className="min-w-0 rounded-lg border border-slate-200 p-4">
             <div className="flex items-center gap-2 mb-3">
               <FileText className="w-4 h-4 text-primary" />
               <h3 className="font-semibold">Files & Invoices</h3>
@@ -644,7 +644,7 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
 
         <ClientInvoiceItemHistory items={savedItems} history={itemHistory} />
 
-        <section className="rounded-lg border border-slate-200 p-4">
+        <section className="min-w-0 rounded-lg border border-slate-200 p-4">
           <h3 className="font-semibold mb-3">Special Instructions</h3>
           {instructions.length === 0 ? (
             <p className="text-sm text-slate-500">No special instructions linked from orders.</p>

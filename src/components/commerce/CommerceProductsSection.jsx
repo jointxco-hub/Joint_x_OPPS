@@ -42,7 +42,7 @@ export function CommerceProductsSection({ clientId }) {
   });
 
   return (
-    <section className="rounded-lg border border-slate-200 p-4">
+    <section className="min-w-0 rounded-lg border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Package className="w-4 h-4 text-primary" />

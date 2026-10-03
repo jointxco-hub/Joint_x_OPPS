@@ -88,7 +88,7 @@ export function ClientProductsSection({ clientId }) {
   const invalidateProducts = () => queryClient.invalidateQueries({ queryKey: productsQueryKey });
 
   return (
-    <section className="rounded-lg border border-slate-200 p-4">
+    <section className="min-w-0 rounded-lg border border-slate-200 p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Package className="h-4 w-4 text-primary" />
@@ -110,7 +110,7 @@ export function ClientProductsSection({ clientId }) {
               key={product.id}
               type="button"
               onClick={() => setOpenProductId(product.id)}
-              className="flex w-full items-center gap-3 rounded-md bg-slate-50 p-2.5 text-left hover:bg-slate-100"
+              className="flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-md bg-slate-50 p-2.5 text-left hover:bg-slate-100"
             >
               <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-white">
                 <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-4 w-4" /></div>} />
