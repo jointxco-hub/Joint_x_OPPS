@@ -36,6 +36,7 @@ import GarmentVariantsSection from "@/components/composition/GarmentVariantsSect
 import TreatmentsSection from "@/components/composition/TreatmentsSection";
 import { getClientProductPriceComposition } from "@/api/xosClientProduct";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import ProductConfigurationReview from "@/components/clients/ProductConfigurationReview";
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
 
@@ -989,6 +990,10 @@ function ProductionTab({ product, readinessState, canConfigure }) {
           </ul>
         )}
       </div>
+
+      {/* Read-only pricing & configuration review - visible regardless of
+          production write access, unlike the editable sections below. */}
+      <ProductConfigurationReview product={product} components={safe.components} />
 
       {!canConfigure ? (
         <>
