@@ -547,42 +547,42 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{client.name}</DialogTitle>
-          <p className="text-sm text-slate-500">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <DialogHeader className="min-w-0">
+          <DialogTitle className="break-words">{client.name}</DialogTitle>
+          <p className="min-w-0 break-words text-sm text-slate-500">
             {client.is_order_only ? 'Auto-linked from orders' : client.company_name || client.brand_name || 'Client account'}
           </p>
           {(client.whatsapp_name || client.saved_contact_name) && (
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 min-w-0 break-words text-xs text-slate-500">
               {client.whatsapp_name ? `WhatsApp: ${client.whatsapp_name}` : ''}
               {client.whatsapp_name && client.saved_contact_name ? ' · ' : ''}
               {client.saved_contact_name ? `Saved as: ${client.saved_contact_name}` : ''}
             </p>
           )}
           {(client.pep_code || client.preferred_courier || client.delivery_note) && (
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 min-w-0 break-words text-xs text-slate-500">
               {[client.preferred_courier, client.pep_code, client.delivery_note].filter(Boolean).join(' · ')}
             </p>
           )}
         </DialogHeader>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="rounded-lg border border-slate-200 p-4">
+          <div className="min-w-0 rounded-lg border border-slate-200 p-4">
             <p className="text-xs text-slate-500">Total spent</p>
-            <p className="text-xl font-semibold">R{(client.total_revenue || 0).toLocaleString()}</p>
+            <p className="min-w-0 break-words text-xl font-semibold">R{(client.total_revenue || 0).toLocaleString()}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 p-4">
+          <div className="min-w-0 rounded-lg border border-slate-200 p-4">
             <p className="text-xs text-slate-500">Orders</p>
-            <p className="text-xl font-semibold">{client.total_orders || 0}</p>
+            <p className="min-w-0 break-words text-xl font-semibold">{client.total_orders || 0}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 p-4">
+          <div className="min-w-0 rounded-lg border border-slate-200 p-4">
             <p className="text-xs text-slate-500">Active</p>
-            <p className="text-xl font-semibold">{client.active_orders || 0}</p>
+            <p className="min-w-0 break-words text-xl font-semibold">{client.active_orders || 0}</p>
           </div>
-          <div className="rounded-lg border border-slate-200 p-4">
+          <div className="min-w-0 rounded-lg border border-slate-200 p-4">
             <p className="text-xs text-slate-500">Done</p>
-            <p className="text-xl font-semibold">{client.completed_orders || 0}</p>
+            <p className="min-w-0 break-words text-xl font-semibold">{client.completed_orders || 0}</p>
           </div>
         </div>
 

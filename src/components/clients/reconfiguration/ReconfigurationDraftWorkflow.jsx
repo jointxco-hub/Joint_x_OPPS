@@ -91,8 +91,8 @@ function StepHeader({ title, subtitle = null }) {
 function FieldRow({ label, value }) {
   return (
     <div className="flex items-start justify-between gap-3 py-1 text-xs">
-      <span className="text-slate-500">{label}</span>
-      <span className="text-right font-medium text-slate-800">{value}</span>
+      <span className="flex-shrink-0 text-slate-500">{label}</span>
+      <span className="min-w-0 flex-1 break-all text-right font-medium text-slate-800">{value}</span>
     </div>
   );
 }
@@ -102,13 +102,13 @@ function CompareCard({ label, current, draft, unit = "" }) {
     <div className="rounded-lg border border-slate-200 p-3">
       <p className="mb-2 text-xs font-medium text-slate-600">{label}</p>
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-md bg-slate-50 p-2">
+        <div className="min-w-0 rounded-md bg-slate-50 p-2">
           <p className="text-[10px] uppercase tracking-wide text-slate-400">Live</p>
-          <p className="text-sm font-semibold text-slate-700">{current}{unit}</p>
+          <p className="min-w-0 break-words text-sm font-semibold text-slate-700">{current}{unit}</p>
         </div>
-        <div className="rounded-md bg-amber-50 p-2">
+        <div className="min-w-0 rounded-md bg-amber-50 p-2">
           <p className="text-[10px] uppercase tracking-wide text-amber-600">Draft</p>
-          <p className="text-sm font-semibold text-amber-800">{draft}{unit}</p>
+          <p className="min-w-0 break-words text-sm font-semibold text-amber-800">{draft}{unit}</p>
         </div>
       </div>
     </div>
@@ -238,7 +238,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
               <StepHeader title="Confirm product identity" subtitle="Names repeat. The id does not." />
               <div className="space-y-1 rounded-lg bg-slate-50 p-3">
                 <FieldRow label="Client" value={clientName} />
-                <FieldRow label="client_product_id" value={<code className="text-[11px]">{product.id}</code>} />
+                <FieldRow label="client_product_id" value={<code className="break-all text-[11px]">{product.id}</code>} />
                 <FieldRow label="Client-facing name" value={product.client_facing_name || "—"} />
                 <FieldRow label="Internal name" value={product.internal_name || "—"} />
                 <FieldRow label="Lifecycle status" value={product.status || "—"} />
@@ -376,7 +376,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                           <select
                             value={c.role}
                             onChange={(e) => updateComponent(c.draftId, { role: e.target.value })}
-                            className="rounded-md border border-slate-200 px-2 py-1 text-[11px]"
+                            className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1 text-[11px]"
                           >
                             {COMPONENT_ROLE_OPTIONS.map((r) => (
                               <option key={r.value} value={r.value}>{r.label}</option>
@@ -389,7 +389,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                               value={c.defaultSellPrice ?? ""}
                               onChange={(e) => updateComponent(c.draftId, { defaultSellPrice: e.target.value === "" ? null : e.target.value })}
                               placeholder="Sell price"
-                              className="h-7 text-[11px]"
+                              className="h-7 min-w-0 text-[11px]"
                             />
                           ) : (
                             <Input
@@ -398,7 +398,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                               value={c.quantityPerUnit ?? ""}
                               onChange={(e) => updateComponent(c.draftId, { quantityPerUnit: e.target.value === "" ? null : e.target.value })}
                               placeholder="Consumption qty"
-                              className="h-7 text-[11px]"
+                              className="h-7 min-w-0 text-[11px]"
                             />
                           )}
                         </div>
@@ -629,11 +629,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
 
         {step < 8 && (
           <div className="flex items-center justify-between gap-2 border-t border-slate-200 px-4 py-3">
-            <Button type="button" variant="outline" onClick={goBack} disabled={step === 0} className="h-11 flex-1 gap-1.5 text-sm">
-              <ChevronLeft className="h-4 w-4" /> Back
+            <Button type="button" variant="outline" onClick={goBack} disabled={step === 0} className="h-11 min-w-0 flex-1 gap-1.5 text-sm">
+              <ChevronLeft className="h-4 w-4 flex-shrink-0" /> Back
             </Button>
-            <Button type="button" onClick={goNext} disabled={!canAdvanceFromStep(step)} className="h-11 flex-1 gap-1.5 text-sm">
-              {step === 7 ? "Finish draft review" : "Next"} <ChevronRight className="h-4 w-4" />
+            <Button type="button" onClick={goNext} disabled={!canAdvanceFromStep(step)} className="h-11 min-w-0 flex-1 gap-1.5 text-sm">
+              {step === 7 ? "Finish review" : "Next"} <ChevronRight className="h-4 w-4 flex-shrink-0" />
             </Button>
           </div>
         )}

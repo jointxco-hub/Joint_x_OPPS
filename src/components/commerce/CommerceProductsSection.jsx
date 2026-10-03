@@ -350,12 +350,12 @@ function ProductOnboardingDialog({ clientId, onClose, onSaved }) {
                 </Button>
               </div>
               {variants.map((v, idx) => (
-                <div key={idx} className="grid grid-cols-6 gap-1.5 items-center rounded-md bg-slate-50 p-2">
-                  <Input className="col-span-2" placeholder="Title" value={v.title} onChange={(e) => updateVariant(idx, { title: e.target.value })} />
-                  <Input placeholder="Size" value={v.size} onChange={(e) => updateVariant(idx, { size: e.target.value })} />
-                  <Input placeholder="Color" value={v.color} onChange={(e) => updateVariant(idx, { color: e.target.value })} />
-                  <Input placeholder="SKU" value={v.sku} onChange={(e) => updateVariant(idx, { sku: e.target.value })} />
-                  <Button variant="ghost" size="icon" onClick={() => removeVariant(idx)}>
+                <div key={idx} className="grid grid-cols-2 sm:grid-cols-6 gap-1.5 items-center rounded-md bg-slate-50 p-2">
+                  <Input className="col-span-2 min-w-0" placeholder="Title" value={v.title} onChange={(e) => updateVariant(idx, { title: e.target.value })} />
+                  <Input className="min-w-0" placeholder="Size" value={v.size} onChange={(e) => updateVariant(idx, { size: e.target.value })} />
+                  <Input className="min-w-0" placeholder="Color" value={v.color} onChange={(e) => updateVariant(idx, { color: e.target.value })} />
+                  <Input className="min-w-0" placeholder="SKU" value={v.sku} onChange={(e) => updateVariant(idx, { sku: e.target.value })} />
+                  <Button variant="ghost" size="icon" className="justify-self-start" onClick={() => removeVariant(idx)}>
                     <Trash2 className="w-3.5 h-3.5 text-red-400" />
                   </Button>
                 </div>
