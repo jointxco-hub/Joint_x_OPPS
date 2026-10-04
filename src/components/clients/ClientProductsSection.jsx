@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { Package, Plus, X, ExternalLink, Image as ImageIcon, Eye } from "lucide-react";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
@@ -237,84 +238,111 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
     onChanged?.();
   };
 
-  // Portaled to document.body so this overlay's `fixed inset-0` resolves
-  // against the real device viewport, not DialogContent's own box -
-  // DialogContent (src/components/ui/dialog.jsx) applies a CSS transform
-  // for its centering trick, and a transformed ancestor establishes the
-  // containing block for fixed descendants. Without this portal, the
-  // workspace was sized/positioned relative to that transformed, 90vh,
-  // independently-scrolling box instead of the viewport - the confirmed
-  // cause of the mobile crop/settle/drift behavior.
-  return createPortal(
-    // z-[91]: now a sibling of ClientAccountDialog's DialogContent (z-[90])
-    // in the global stacking order instead of its descendant, so it must
-    // explicitly outrank it. Stays below the z-[95] confirm modal and the
-    // z-[110] Reconfiguration Draft workflow nested inside this same
-    // subtree, preserving their existing relative order.
-    <div className="fixed inset-0 z-[91] flex items-stretch justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start gap-3 border-b border-slate-200 p-4">
-          <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
-            <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-semibold">{product.client_facing_name}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <StatusBadge status={product.status} />
-              <ReadinessBadge state={readinessState} />
-              {product.visible_in_account && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>}
+  // Registered as a nested Radix modal Dialog instead of a raw
+  // createPortal(..., document.body) div. The parent ClientAccountDialog
+  // is itself a modal Radix Dialog, which sets document.body's
+  // pointer-events to "none" for as long as it's open and only restores
+  // "auto" on DOM nodes it has registered as a DismissableLayer (see
+  // @radix-ui/react-dismissable-layer). A plain portaled <div> is
+  // invisible to that bookkeeping, so it silently inherited "none" and
+  // became untappable while still rendering correctly - this is what
+  // made the workspace visible but non-interactive. Using Dialog.Content
+  // here registers this exact node as its own layer in the SAME shared
+  // layer stack, so it gets its own "auto" override (and correctly
+  // suppresses the parent's, protecting it underneath) while still
+  // using Radix's own Portal to document.body - preserving the viewport-
+  // stable sizing the original portal fix was for, since DialogContent
+  // (src/components/ui/dialog.jsx) applies a CSS transform for its
+  // centering trick, and this node is never a descendant of that
+  // transformed box either way.
+  // Always "open" while this component is mounted - ClientProductsSection
+  // only renders it when a product is selected, so the mount itself IS
+  // the open state. The only way Radix itself asks to close it is Escape
+  // (there is no Radix Trigger/Close wired up here); forwarded to the
+  // same onClose the header button and backdrop click already use.
+  // No separate Dialog.Overlay - the parent dialog's own backdrop is
+  // already dimmed, and this panel's one div already supplies its own
+  // bg-black/50 backdrop for the space beside it, exactly as before.
+  return (
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogPortal>
+        {/* z-[91]: must still outrank the parent's DialogContent (z-[90]).
+            Stays below the z-[95] StatusTab confirm modal and the z-[110]
+            Reconfiguration Draft workflow nested inside this same
+            subtree - both are plain descendants of this node now, so
+            they inherit this node's own pointer-events:auto override and
+            need no changes of their own. */}
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          onClick={onClose}
+          className="fixed inset-0 z-[91] flex items-stretch justify-end bg-black/50 backdrop-blur-sm outline-none"
+        >
+          <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 border-b border-slate-200 p-4">
+              <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <DialogPrimitive.Title asChild>
+                  <p className="truncate text-base font-semibold">{product.client_facing_name}</p>
+                </DialogPrimitive.Title>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={product.status} />
+                  <ReadinessBadge state={readinessState} />
+                  {product.visible_in_account && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>}
+                </div>
+                <a
+                  href={`${XLAB_ADMIN_BASE}/${product.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+                >
+                  <ExternalLink className="h-3 w-3" /> Advanced · open in X LAB Admin
+                </a>
+              </div>
+              <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
             </div>
-            <a
-              href={`${XLAB_ADMIN_BASE}/${product.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
-            >
-              <ExternalLink className="h-3 w-3" /> Advanced · open in X LAB Admin
-            </a>
+
+            <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
+              <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
+                <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="artwork">Artwork</TabsTrigger>
+                <TabsTrigger value="production">Production</TabsTrigger>
+                <TabsTrigger value="status">Status</TabsTrigger>
+              </TabsList>
+
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+                <TabsContent value="details" className="mt-0">
+                  <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
+                </TabsContent>
+                <TabsContent value="artwork" className="mt-0">
+                  <ArtworkTab
+                    product={product}
+                    clientId={clientId}
+                    readiness={readiness}
+                    artworkRows={Array.isArray(artworkRows) ? artworkRows : []}
+                    onChanged={refetchAll}
+                    onPreview={setPreview}
+                  />
+                </TabsContent>
+                <TabsContent value="production" className="mt-0">
+                  <ProductionTab
+                    product={product}
+                    readinessState={readinessState}
+                    canConfigure={canConfigureProduction}
+                  />
+                </TabsContent>
+                <TabsContent value="status" className="mt-0">
+                  <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
+                </TabsContent>
+              </div>
+            </Tabs>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
-        </div>
 
-        <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="artwork">Artwork</TabsTrigger>
-            <TabsTrigger value="production">Production</TabsTrigger>
-            <TabsTrigger value="status">Status</TabsTrigger>
-          </TabsList>
-
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-            <TabsContent value="details" className="mt-0">
-              <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
-            </TabsContent>
-            <TabsContent value="artwork" className="mt-0">
-              <ArtworkTab
-                product={product}
-                clientId={clientId}
-                readiness={readiness}
-                artworkRows={Array.isArray(artworkRows) ? artworkRows : []}
-                onChanged={refetchAll}
-                onPreview={setPreview}
-              />
-            </TabsContent>
-            <TabsContent value="production" className="mt-0">
-              <ProductionTab
-                product={product}
-                readinessState={readinessState}
-                canConfigure={canConfigureProduction}
-              />
-            </TabsContent>
-            <TabsContent value="status" className="mt-0">
-              <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
-            </TabsContent>
-          </div>
-        </Tabs>
-      </div>
-
-      <QuickImagePreview open={Boolean(preview)} onClose={() => setPreview(null)} value={preview?.value} title={preview?.title} />
-    </div>,
-    document.body
+          <QuickImagePreview open={Boolean(preview)} onClose={() => setPreview(null)} value={preview?.value} title={preview?.title} />
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
   );
 }
 
