@@ -260,18 +260,42 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
   // the open state. The only way Radix itself asks to close it is Escape
   // (there is no Radix Trigger/Close wired up here); forwarded to the
   // same onClose the header button and backdrop click already use.
-  // No separate Dialog.Overlay - the parent dialog's own backdrop is
-  // already dimmed, and this panel's one div already supplies its own
-  // bg-black/50 backdrop for the space beside it, exactly as before.
+  // A nested Dialog.Overlay IS required here, even though this panel's
+  // own div already supplies its own bg-black/50 backdrop and the parent
+  // dialog is already dimmed. In this installed Radix version,
+  // react-remove-scroll (the library behind Radix's modal scroll lock)
+  // is mounted ONLY by DialogOverlayImpl, never by Content - skipping
+  // Overlay meant this nested Dialog never registered its own scroll
+  // lock, leaving the PARENT's lock as the only one active. That lock's
+  // "shard" (the one region it still allows real scrolling in) is the
+  // parent's own content node - it has no idea this nested workspace
+  // exists, so it cancelled every wheel/touchmove event inside it,
+  // breaking scrolling even after tap/click interaction was fixed.
+  // Rendering Overlay here mounts this Dialog's OWN scroll lock, whose
+  // shard is THIS Dialog's own content node - react-remove-scroll keeps
+  // a stack of every mounted lock and only the most-recently-mounted one
+  // is ever active, so this correctly supersedes the parent's lock for
+  // as long as this workspace is open, and the parent's lock silently
+  // resumes the moment this one unmounts. Uses the raw Radix primitive
+  // directly (not the shared, styled DialogOverlay export) so it can be
+  // fully transparent - no second dark layer - without touching
+  // dialog.jsx. It carries none of Content's DismissableLayer/pointer-
+  // events logic, and this nested Content already covers the entire
+  // viewport itself, so Overlay is fully covered and intercepts nothing.
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogPortal>
-        {/* z-[91]: must still outrank the parent's DialogContent (z-[90]).
+        {/* z-[91] on both Overlay and Content, same convention dialog.jsx
+            itself uses for the parent pair (both z-[90]) - Content still
+            paints on top because it's the later DOM sibling. Together
+            they must still outrank the parent's DialogContent (z-[90]).
             Stays below the z-[95] StatusTab confirm modal and the z-[110]
             Reconfiguration Draft workflow nested inside this same
-            subtree - both are plain descendants of this node now, so
-            they inherit this node's own pointer-events:auto override and
-            need no changes of their own. */}
+            subtree - both are plain descendants of Content, so they
+            inherit its pointer-events:auto override and fall inside this
+            Dialog's own scroll-lock shard, needing no changes of their
+            own. */}
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[91] bg-transparent" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
           onClick={onClose}
