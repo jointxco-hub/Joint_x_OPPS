@@ -184,13 +184,21 @@ export function mapDraftComponentToBackendFields(component) {
 // New-then-removed rows are never included, by construction. Existing,
 // untouched rows are still sent as 'update' (safely idempotent on the
 // server) rather than diffed - the smallest-state option for this slice.
+//
+// New-component creation is disabled in the Save V1 draft UI (no real
+// component-type selector exists yet, so there's no honest mapping from
+// the UI's 4-bucket role to one of the real component_type values for a
+// row that never had a stored type). This function is the backend-facing
+// safety net for that: ANY row with isNew still true - whether the UI
+// somehow let one through or a stale draft session predates this guard -
+// is left out of the payload entirely, never sent as an 'insert'.
 export function buildSaveComponentPayload(draftComponents) {
   const rows = Array.isArray(draftComponents) ? draftComponents : [];
   const payload = [];
   for (const c of rows) {
-    if (c.isNew && c.removed) continue; // never sent
+    if (c.isNew) continue; // new-component creation is disabled for Save V1 - never sent
 
-    if (!c.isNew && c.removed) {
+    if (c.removed) {
       payload.push({ action: "remove", source_id: c.sourceId });
       continue;
     }
@@ -200,8 +208,8 @@ export function buildSaveComponentPayload(draftComponents) {
     const price = c.defaultSellPrice == null || c.defaultSellPrice === "" ? null : Number(c.defaultSellPrice);
 
     payload.push({
-      action: c.isNew ? "insert" : "update",
-      source_id: c.isNew ? null : c.sourceId,
+      action: "update",
+      source_id: c.sourceId,
       component_type: mapped.component_type,
       billing_mode: mapped.billing_mode,
       default_sell_price: price,

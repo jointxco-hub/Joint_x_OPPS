@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Plus, Trash2, Loader2, CheckCircle2 } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Trash2, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,7 +19,6 @@ import {
   COMPONENT_ROLE_OPTIONS,
   DIVERGENCE_REASONS,
   buildDraftComponents,
-  addDraftComponent,
   groupByRole,
   describeComponentDelta,
   describeComponentChanges,
@@ -44,6 +43,9 @@ import {
 // write permission for a read-only purpose with no real justification.
 
 const money = (n) => (n == null || n === "" ? "—" : `R${Number(n).toFixed(2)}`);
+
+const COMMERCIAL_ROLES = new Set(["COMMERCIAL_PER_UNIT", "COMMERCIAL_ONCE"]);
+const NON_COMMERCIAL_ROLES = new Set(["PRODUCTION_BOM", "INFORMATIONAL"]);
 
 const STEPS = [
   "Identity",
@@ -176,8 +178,26 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const needsIdentityAck = duplicates.length > 0 || usageCount > 0;
 
   const liveAgreed = result?.agreed_unit_price ?? null;
-  const proposedNum = proposedAgreedPrice === "" ? null : Number(proposedAgreedPrice);
+  // "" means "keep current" (sent as agreedPriceAction: "keep") - every
+  // other value must be a finite, non-negative number before it's ever
+  // treated as a real proposed price. Checked by validity, never
+  // truthiness, so a typed "0" (a legitimate zero price) stays valid.
+  const priceInputError =
+    proposedAgreedPrice !== "" && (!Number.isFinite(Number(proposedAgreedPrice)) || Number(proposedAgreedPrice) < 0)
+      ? "Enter a valid agreed price."
+      : null;
+  const proposedNum = proposedAgreedPrice === "" || priceInputError ? null : Number(proposedAgreedPrice);
   const priceChanged = proposedNum != null && Number(proposedNum) !== Number(liveAgreed ?? 0);
+
+  // FIX 2 — new-component creation is disabled for Save V1 (no explicit
+  // component-type selector exists yet). This only matters as a safety
+  // net for state that predates this fix (e.g. a draft session that was
+  // already open when this change shipped) - the Add button itself is
+  // gone, so no NEW row can be created going forward.
+  const pendingNewComponents = useMemo(
+    () => draftComponents.filter((c) => c.isNew && !c.removed),
+    [draftComponents]
+  );
 
   // Step 6 semantics, corrected: "diverged" and "unresolved_components" are
   // different problems and must not share one gate.
@@ -255,6 +275,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
       queryClient.invalidateQueries({ queryKey: ["resolveClientProductPrice", product.id] });
       queryClient.invalidateQueries({ queryKey: ["clientProductHistoricalReference", product.id] });
       queryClient.invalidateQueries({ queryKey: ["productComponents", product.id] });
+      // The parent product object (client_price, status, etc.) comes from
+      // this DIFFERENT query, not from resolveClientProductPrice - without
+      // this, StatusTab and the workspace header would keep showing the
+      // pre-save agreed price until the whole workspace is closed/reopened.
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForClient", product.client_id] });
     },
   });
 
@@ -291,8 +316,20 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
     }
   };
 
+  // Shared close guard: while a save or a stale-draft reload is in
+  // flight, the workflow must not close through the header X, the
+  // backdrop, or the local Close button - the request itself keeps
+  // running either way (nothing here cancels it), this only prevents the
+  // user from losing visibility into its result while it's happening.
+  const closeBlocked = saveMutation.isPending || reloading;
+  const handleClose = () => {
+    if (closeBlocked) return;
+    onClose();
+  };
+
   const canAdvanceFromStep = (idx) => {
     if (idx === 0) return !needsIdentityAck || identityAck;
+    if (idx === 2) return !priceInputError;
     if (idx === 5) return divergenceSatisfied;
     return true;
   };
@@ -308,20 +345,37 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   };
   const goBack = () => setStep((s) => Math.max(s - 1, 0));
 
+  // A genuine move from a non-commercial bucket (Production/BOM or
+  // Informational) into a commercial one must never silently reactivate
+  // whatever price happened to already be stored - that price was inert
+  // by construction (those types are excluded from canonical pricing),
+  // so the user must explicitly enter a fresh one. Any other transition
+  // (unchanged role, non-commercial<->non-commercial, or commercial<->
+  // commercial) preserves the existing price untouched.
   const updateComponent = (draftId, patch) =>
-    setDraftComponents((rows) => rows.map((r) => (r.draftId === draftId ? { ...r, ...patch } : r)));
+    setDraftComponents((rows) => rows.map((r) => {
+      if (r.draftId !== draftId) return r;
+      const next = { ...r, ...patch };
+      if (
+        patch.role && patch.role !== r.role &&
+        NON_COMMERCIAL_ROLES.has(r.role) && COMMERCIAL_ROLES.has(patch.role)
+      ) {
+        next.defaultSellPrice = null;
+      }
+      return next;
+    }));
   const removeComponent = (draftId) =>
     setDraftComponents((rows) => rows.map((r) => (r.draftId === draftId ? { ...r, removed: true } : r)));
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-stretch justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[110] flex items-stretch justify-end bg-black/60 backdrop-blur-sm" onClick={handleClose}>
       <div className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-800">Reconfigure (draft) · {product.client_facing_name || "Unnamed product"}</p>
             <p className="text-[11px] text-slate-400">Step {step + 1} of {STEPS.length} · {STEPS[step]}</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close">
+          <button type="button" onClick={handleClose} disabled={closeBlocked} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -435,7 +489,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                   onChange={(e) => setProposedAgreedPrice(e.target.value)}
                   className="mt-1"
                 />
-                <p className="mt-1 text-[11px] text-slate-400">Nothing is written. Leave blank to keep the live agreed price unchanged in this draft.</p>
+                {priceInputError ? (
+                  <p className="mt-1 text-[11px] text-red-600">{priceInputError}</p>
+                ) : (
+                  <p className="mt-1 text-[11px] text-slate-400">Nothing is written. Leave blank to keep the live agreed price unchanged in this draft.</p>
+                )}
               </div>
               <TrainingNote
                 checking="What this product is actually selling for today, versus what we think it should be."
@@ -498,6 +556,9 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                             />
                           )}
                         </div>
+                        {(opt.value === "COMMERCIAL_PER_UNIT" || opt.value === "COMMERCIAL_ONCE") && (c.defaultSellPrice == null || c.defaultSellPrice === "") && (
+                          <p className="mt-1.5 text-[10px] text-amber-700">Enter a commercial price for this reclassified component.</p>
+                        )}
                       </div>
                     ))}
                     {(roleGroups[opt.value] || []).length === 0 && (
@@ -506,9 +567,14 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                   </div>
                 </div>
               ))}
-              <Button type="button" variant="outline" size="sm" onClick={() => setDraftComponents((rows) => addDraftComponent(rows))} className="gap-1.5">
-                <Plus className="h-3.5 w-3.5" /> Add component to draft
-              </Button>
+              {pendingNewComponents.length > 0 && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800">
+                  {pendingNewComponents.length} new component(s) in this draft can't be saved yet and will be left out of Save — see below.
+                </div>
+              )}
+              <p className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">
+                Adding new components will be enabled once component types can be selected explicitly.
+              </p>
               <p className="mt-3 text-[11px] text-slate-400">Consumption (BOM) quantity never multiplies price — it describes what gets used, not what it costs.</p>
               <TrainingNote
                 checking="Whether each component is actually priced, or just describes production."
@@ -713,7 +779,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <Button type="button" variant="outline" onClick={() => { setStoppedEarly(false); setStep(0); }} className="h-11 text-sm">
                   Go back and edit
                 </Button>
-                <Button type="button" variant="secondary" onClick={onClose} className="h-11 text-sm">
+                <Button type="button" variant="secondary" onClick={handleClose} className="h-11 text-sm">
                   Close and discard draft
                 </Button>
               </div>
@@ -739,7 +805,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 )}
               </div>
               <div className="mt-3">
-                <Button type="button" onClick={onClose} className="h-11 w-full text-sm">
+                <Button type="button" onClick={handleClose} className="h-11 w-full text-sm">
                   Done
                 </Button>
               </div>
@@ -787,15 +853,18 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <Button
                   type="button"
                   onClick={() => { if (saveMutation.isPending) return; saveMutation.mutate(); }}
-                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError}
+                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError || Boolean(priceInputError)}
                   className="h-11 text-sm"
                 >
                   {saveMutation.isPending ? "Saving…" : "Save configuration"}
                 </Button>
+                {priceInputError && (
+                  <p className="text-[11px] text-red-600">{priceInputError} Go back to the Commercial step to fix it.</p>
+                )}
                 <Button type="button" variant="outline" onClick={() => setStep(0)} disabled={saveMutation.isPending} className="h-11 text-sm">
                   Go back and edit
                 </Button>
-                <Button type="button" variant="secondary" onClick={onClose} disabled={saveMutation.isPending} className="h-11 text-sm">
+                <Button type="button" variant="secondary" onClick={handleClose} disabled={closeBlocked} className="h-11 text-sm">
                   Close and discard draft
                 </Button>
               </div>
