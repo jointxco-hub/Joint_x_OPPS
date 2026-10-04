@@ -1,11 +1,17 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Plus, Trash2, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { dataClient } from "@/api/dataClient";
-import { resolveClientProductPrice, getClientProductHistoricalReference } from "@/api/clientProductPriceReview";
+import {
+  resolveClientProductPrice,
+  getClientProductHistoricalReference,
+  getClientProductConfigurationFingerprint,
+  saveClientProductReconfiguration,
+  parseSaveError,
+} from "@/api/clientProductPriceReview";
 import { PRODUCTION_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
 import {
   CLASSIFICATION_OPTIONS,
@@ -17,6 +23,7 @@ import {
   groupByRole,
   describeComponentDelta,
   describeComponentChanges,
+  buildSaveComponentPayload,
   buildInitialProduction,
 } from "./reconfigurationDraftModel";
 
@@ -127,7 +134,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const [production, setProduction] = useState(() => buildInitialProduction(product));
   const [stoppedEarly, setStoppedEarly] = useState(false);
 
-  const { data: priceRes } = useQuery({
+  const { data: priceRes, refetch: refetchPrice } = useQuery({
     queryKey: ["resolveClientProductPrice", product.id],
     queryFn: () => resolveClientProductPrice({ clientProductId: product.id }),
     enabled: Boolean(product.id),
@@ -135,7 +142,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   });
   const result = priceRes?.data;
 
-  const { data: historyRes } = useQuery({
+  const { data: historyRes, refetch: refetchHistory } = useQuery({
     queryKey: ["clientProductHistoricalReference", product.id],
     queryFn: () => getClientProductHistoricalReference({ clientProductId: product.id, limit: 5 }),
     enabled: Boolean(product.id),
@@ -194,6 +201,95 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const delta = useMemo(() => describeComponentDelta(components, draftComponents), [components, draftComponents]);
   const roleGroups = useMemo(() => groupByRole(draftComponents), [draftComponents]);
   const componentChanges = useMemo(() => describeComponentChanges(draftComponents), [draftComponents]);
+
+  // ── SAVE V1 wiring ──────────────────────────────────────────────────
+  const queryClient = useQueryClient();
+
+  // Fetched exactly once, when this draft session mounts, then frozen -
+  // never silently refetched before Save. Refetching right before Save
+  // would defeat stale-draft protection (it would always match whatever
+  // is live at that moment, even if someone else just changed it).
+  const [expectedFingerprint, setExpectedFingerprint] = useState(null);
+  const [fingerprintError, setFingerprintError] = useState(null);
+  useEffect(() => {
+    let active = true;
+    setExpectedFingerprint(null);
+    setFingerprintError(null);
+    getClientProductConfigurationFingerprint({ clientProductId: product.id }).then(({ data, error }) => {
+      if (!active) return;
+      if (error) setFingerprintError(error);
+      else setExpectedFingerprint(data);
+    });
+    return () => { active = false; };
+    // product.id only - this must run exactly once per draft session,
+    // not on every re-render.
+  }, [product.id]);
+
+  // saveClientProductReconfiguration never rejects - it always resolves
+  // to {data, error} (the established wrapper convention in this
+  // codebase) - so success/failure is read from that resolved shape,
+  // not from react-query's own isError/isSuccess (which would otherwise
+  // always report "resolved" regardless of a backend rejection).
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const agreedPriceAction = proposedNum == null ? "keep" : "set";
+      return saveClientProductReconfiguration({
+        clientProductId: product.id,
+        expectedFingerprint,
+        agreedPriceAction,
+        newAgreedPrice: agreedPriceAction === "set" ? proposedNum : null,
+        components: buildSaveComponentPayload(draftComponents),
+        classification,
+        divergenceReason: reasonRequired ? divergenceReason : null,
+        divergenceNote: divergenceReason === "Other" ? divergenceNote : null,
+        incompleteAcknowledged: incompleteAck,
+        context: "reconfiguration_draft_v1",
+      });
+    },
+    onSuccess: ({ data }) => {
+      if (!data?.ok) return; // backend rejected - nothing to refresh
+      // Refresh the SAME query keys Product Configuration Review and the
+      // Production tab's own component list already use, by key - the
+      // shared QueryClient instance propagates this to every subscriber
+      // regardless of where in the tree it lives, with no new prop chain.
+      queryClient.invalidateQueries({ queryKey: ["resolveClientProductPrice", product.id] });
+      queryClient.invalidateQueries({ queryKey: ["clientProductHistoricalReference", product.id] });
+      queryClient.invalidateQueries({ queryKey: ["productComponents", product.id] });
+    },
+  });
+
+  const saveSucceeded = Boolean(saveMutation.data?.data?.ok);
+  const saveResult = saveSucceeded ? saveMutation.data.data : null;
+  const saveParsedError = saveMutation.data?.error ? parseSaveError(saveMutation.data.error) : null;
+  const isStaleDraftError = saveParsedError?.code === "SAVE_STALE_FINGERPRINT";
+
+  const [reloading, setReloading] = useState(false);
+  const handleReloadAfterStale = async () => {
+    if (!window.confirm("Unsaved draft changes will be lost. Reload the current configuration?")) return;
+    setReloading(true);
+    try {
+      const [priceR, historyR, freshComponents, fingerprintR] = await Promise.all([
+        refetchPrice(),
+        refetchHistory(),
+        dataClient.entities.ProductComponent.filter({ client_product_id: product.id }, "sort_order", 200),
+        getClientProductConfigurationFingerprint({ clientProductId: product.id }),
+      ]);
+      setDraftComponents(buildDraftComponents(Array.isArray(freshComponents) ? freshComponents : []));
+      setExpectedFingerprint(fingerprintR?.data ?? null);
+      setFingerprintError(fingerprintR?.error ?? null);
+      setProposedAgreedPrice("");
+      setDivergenceReason(null);
+      setDivergenceNote("");
+      setIncompleteAck(false);
+      setClassification(null);
+      setStoppedEarly(false);
+      saveMutation.reset();
+      setStep(0);
+      void priceR; void historyR; // results already applied via react-query cache
+    } finally {
+      setReloading(false);
+    }
+  };
 
   const canAdvanceFromStep = (idx) => {
     if (idx === 0) return !needsIdentityAck || identityAck;
@@ -606,14 +702,12 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
             </div>
           )}
 
-          {step === 8 && (
+          {step === 8 && stoppedEarly && (
             <div>
-              <StepHeader title={stoppedEarly ? "Draft stopped early" : "Finish draft review"} />
+              <StepHeader title="Draft stopped early" />
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-center">
                 <p className="text-sm font-semibold text-emerald-800">Draft complete — nothing was saved.</p>
-                {stoppedEarly && (
-                  <p className="mt-1 text-xs text-emerald-700">Stopped early because this product was classified as {CLASSIFICATION_OPTIONS.find((o) => o.value === classification)?.label}.</p>
-                )}
+                <p className="mt-1 text-xs text-emerald-700">Stopped early because this product was classified as {CLASSIFICATION_OPTIONS.find((o) => o.value === classification)?.label}.</p>
               </div>
               <div className="mt-3 flex flex-col gap-2">
                 <Button type="button" variant="outline" onClick={() => { setStoppedEarly(false); setStep(0); }} className="h-11 text-sm">
@@ -623,6 +717,91 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                   Close and discard draft
                 </Button>
               </div>
+            </div>
+          )}
+
+          {step === 8 && !stoppedEarly && saveSucceeded && (
+            <div>
+              <StepHeader title="Saved" />
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                <div className="flex items-center gap-2 text-emerald-800">
+                  <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
+                  <p className="text-sm font-semibold">Configuration saved.</p>
+                </div>
+                <div className="mt-3 space-y-1 rounded-lg bg-white/70 p-2.5 text-xs">
+                  <FieldRow label="Resulting agreed price" value={money(saveResult.agreed_price)} />
+                  <FieldRow label="Canonical status" value={saveResult.canonical?.reconciliation_status || "—"} />
+                </div>
+                {saveResult.canonical?.reconciliation_status === "unresolved_components" && (
+                  <p className="mt-2 text-[11px] text-amber-700">
+                    This product's pricing is still incomplete on the server — saving did not resolve it. That's expected: a save can only record the configuration honestly, never manufacture a resolved price.
+                  </p>
+                )}
+              </div>
+              <div className="mt-3">
+                <Button type="button" onClick={onClose} className="h-11 w-full text-sm">
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {step === 8 && !stoppedEarly && !saveSucceeded && (
+            <div>
+              <StepHeader title="Finish draft review" />
+
+              {!saveMutation.isPending && !saveParsedError && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <p className="font-medium">Saving will make this configuration real.</p>
+                  <p className="mt-1">This is still a draft until you press Save. Nothing has been written yet.</p>
+                </div>
+              )}
+
+              {saveMutation.isPending && (
+                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+                  Saving — please wait, don't close this window.
+                </div>
+              )}
+
+              {saveParsedError && isStaleDraftError && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  <p className="font-semibold">{saveParsedError.friendly}</p>
+                  <p className="mt-1">Your draft changes can't be saved on top of a configuration that's moved on. Reload to see the current state and start the draft again.</p>
+                  <Button type="button" onClick={handleReloadAfterStale} disabled={reloading} className="mt-2 h-10 w-full text-xs">
+                    {reloading ? "Reloading…" : "Reload current configuration"}
+                  </Button>
+                </div>
+              )}
+
+              {saveParsedError && !isStaleDraftError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                  <p className="font-semibold break-words">{saveParsedError.friendly}</p>
+                  <Button type="button" variant="outline" onClick={() => saveMutation.reset()} className="mt-2 h-10 w-full text-xs">
+                    Try again
+                  </Button>
+                </div>
+              )}
+
+              <div className="mt-3 flex flex-col gap-2">
+                <Button
+                  type="button"
+                  onClick={() => { if (saveMutation.isPending) return; saveMutation.mutate(); }}
+                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError}
+                  className="h-11 text-sm"
+                >
+                  {saveMutation.isPending ? "Saving…" : "Save configuration"}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setStep(0)} disabled={saveMutation.isPending} className="h-11 text-sm">
+                  Go back and edit
+                </Button>
+                <Button type="button" variant="secondary" onClick={onClose} disabled={saveMutation.isPending} className="h-11 text-sm">
+                  Close and discard draft
+                </Button>
+              </div>
+              {fingerprintError && !expectedFingerprint && (
+                <p className="mt-2 text-[11px] text-red-600 break-words">Could not load this product's current configuration fingerprint — Save is unavailable until this draft is reopened. ({fingerprintError})</p>
+              )}
             </div>
           )}
         </div>
