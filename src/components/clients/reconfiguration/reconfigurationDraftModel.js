@@ -147,6 +147,46 @@ export function describeComponentChanges(draftComponents) {
   return { added, removed, reclassified };
 }
 
+// Step 6 gating needs to know whether the draft is actively touching the
+// commercial component total the live resolver already judged against -
+// deliberately a presence check ("could this draft move the computed
+// total away from what the live resolver saw?"), never a price
+// calculation. It never sums a total or claims a new reconciliation
+// status - only the server's resolver does that at Save. A component
+// counts as pricing-affecting here if, relative to its live baseline,
+// it was removed while live-commercial, moved into or out of the
+// commercial bucket, or kept its commercial bucket but its price value
+// differs (explicit 0 is a real value, never treated as blank).
+export function hasPricingAffectingComponentChanges(liveComponents, draftComponents) {
+  const liveFamily = (Array.isArray(liveComponents) ? liveComponents : []).filter(
+    (c) => !c.garment_variant_id && !c.treatment_id && c.is_active !== false
+  );
+  const liveById = new Map(liveFamily.map((c) => [c.id, c]));
+  const isCommercialRole = (role) => role === "COMMERCIAL_PER_UNIT" || role === "COMMERCIAL_ONCE";
+
+  for (const row of Array.isArray(draftComponents) ? draftComponents : []) {
+    if (row.isNew) continue; // never sent to the server - can never affect the server's total
+
+    const live = row.sourceId ? liveById.get(row.sourceId) : null;
+    const liveIsCommercial = live ? isCommercialRole(inferRoleForComponentType(live.component_type, live.billing_mode)) : false;
+
+    if (row.removed) {
+      if (liveIsCommercial) return true; // removing a priced commercial component changes the total
+      continue;
+    }
+
+    const draftIsCommercial = isCommercialRole(row.role);
+    if (draftIsCommercial !== liveIsCommercial) return true; // moved into or out of the commercial bucket
+
+    if (draftIsCommercial) {
+      const livePrice = live ? Number(live.default_sell_price ?? 0) : 0;
+      const draftPrice = row.defaultSellPrice == null || row.defaultSellPrice === "" ? 0 : Number(row.defaultSellPrice);
+      if (draftPrice !== livePrice) return true;
+    }
+  }
+  return false;
+}
+
 // SAVE V1 — maps a draft component's UI-only `role` back onto the real
 // backend fields (component_type, billing_mode). `role` is deliberately
 // a Draft/UI simplification (4 buckets) that does not uniquely determine

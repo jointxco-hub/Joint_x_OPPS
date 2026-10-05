@@ -22,6 +22,7 @@ import {
   groupByRole,
   describeComponentDelta,
   describeComponentChanges,
+  hasPricingAffectingComponentChanges,
   buildSaveComponentPayload,
   buildInitialProduction,
 } from "./reconfigurationDraftModel";
@@ -199,18 +200,41 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
     [draftComponents]
   );
 
-  // Step 6 semantics, corrected: "diverged" and "unresolved_components" are
+  // A component edit that touches the commercial total is exactly as
+  // capable of resolving a live divergence as a resolved server Save
+  // would be - so "the live row is diverged" alone must not force a
+  // "why is it okay to keep this diverged" reason onto a draft that's
+  // actively trying to change that total. This is a presence check only
+  // (see hasPricingAffectingComponentChanges) - it never computes what
+  // the new total would BE, only whether the draft touches it at all.
+  const pricingAffectingComponentChange = useMemo(
+    () => hasPricingAffectingComponentChanges(components, draftComponents),
+    [components, draftComponents]
+  );
+  const liveDiverged = result?.reconciliation_status === "diverged";
+
+  // Step 6 semantics: "diverged" and "unresolved_components" are
   // different problems and must not share one gate.
   //   - A price CHANGE always asks why, regardless of live status - that's
   //     a commercial decision the draft is making right now.
-  //   - Retaining an already-diverged live price (no price change) asks a
-  //     DIFFERENT question: why is it okay that this stays diverged.
+  //   - Retaining an already-diverged live price with NO pricing-affecting
+  //     component change asks a DIFFERENT question: why is it okay that
+  //     this stays diverged - the draft isn't attempting to change it.
+  //   - Live divergence WITH a pricing-affecting component change is
+  //     neither of those - the draft may be resolving or reshaping that
+  //     exact divergence, and only the server's resolver can judge the
+  //     result at Save, so this is informational only, never a reason
+  //     prompt and never a locally-claimed new reconciliation status.
   //   - An incomplete (unresolved_components) live state is a DATA gap, not
   //     a commercial decision - it gets an acknowledgment, never a
   //     "negotiated rate"-style reason, and never implies the unsaved draft
   //     itself has been judged divergent (only the live row has).
-  const reasonMode = priceChanged ? "price-changed" : result?.reconciliation_status === "diverged" ? "retain-diverged" : "none";
-  const reasonRequired = reasonMode !== "none";
+  const reasonMode = priceChanged
+    ? "price-changed"
+    : liveDiverged
+      ? (pricingAffectingComponentChange ? "diverged-pending-reconciliation" : "retain-diverged")
+      : "none";
+  const reasonRequired = reasonMode === "price-changed" || reasonMode === "retain-diverged";
   const reasonSatisfied = !reasonRequired || (divergenceReason && (divergenceReason !== "Other" || divergenceNote.trim().length > 0));
 
   const incompleteAckRequired = result?.reconciliation_status === "unresolved_components";
@@ -616,12 +640,27 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
             <div>
               <StepHeader title="Divergence &amp; completeness" subtitle="Local draft fields only — not saved." />
 
-              {/* A: live diverged, draft retains the same price - asks WHY it's okay to keep it that way */}
+              {/* A: live diverged, draft retains the same price AND isn't touching any
+                  commercial component that could change that divergence - asks WHY
+                  it's okay to keep it that way */}
               {reasonMode === "retain-diverged" && (
                 <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5">
                   <p className="text-xs font-medium text-amber-800">Current live pricing is divergent.</p>
                   <p className="mt-1 text-xs text-amber-700">
                     The draft keeps the current agreed price, and that price doesn't match the live computed component total. Choose why that's intentional:
+                  </p>
+                </div>
+              )}
+
+              {/* A2: live diverged, but the draft IS touching a commercial component -
+                  it may be resolving or reshaping that exact divergence, so this is
+                  informational only. No reason is asked for and no new reconciliation
+                  status is claimed here - the server's resolver judges the result. */}
+              {reasonMode === "diverged-pending-reconciliation" && (
+                <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 p-2.5">
+                  <p className="text-xs font-medium text-blue-800">Live pricing is currently divergent.</p>
+                  <p className="mt-1 text-xs text-blue-700">
+                    This draft changes pricing components and may resolve or change that divergence. Final reconciliation will be verified by the server before commit.
                   </p>
                 </div>
               )}
@@ -670,8 +709,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 </div>
               )}
 
-              {/* D / neutral: reconciled or no_composition, price unchanged - nothing to explain */}
-              {!reasonRequired && !incompleteAckRequired && (
+              {/* D / neutral: reconciled or no_composition, price unchanged - nothing to
+                  explain. Gated on reasonMode === "none" rather than !reasonRequired so
+                  this doesn't double up with A2's informational message above, which is
+                  also a case where no reason is required but there IS something to say. */}
+              {reasonMode === "none" && !incompleteAckRequired && (
                 <p className="rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500">
                   Nothing to explain here — the proposed price matches the live agreed price, and the live state doesn't require a reason or an acknowledgment.
                 </p>
