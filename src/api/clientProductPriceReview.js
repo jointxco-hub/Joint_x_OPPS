@@ -155,6 +155,13 @@ const SAVE_ERROR_MESSAGES = {
   SAVE_NEGATIVE_COMPONENT_PRICE: "Component prices can't be negative.",
   SAVE_DIVERGENCE_REASON_REQUIRED: "A reason is required before this can be saved.",
   SAVE_INCOMPLETE_UNACKNOWLEDGED: "Please acknowledge the incomplete pricing before saving.",
+  // Reachable once Add Component ships (V1.1 Slice 2) - mapped now so the
+  // error path is ready ahead of that capability, not reachable from any
+  // path this slice adds.
+  SAVE_INVALID_COMPONENT_TYPE: "That component type isn't supported here.",
+  SAVE_INVALID_BILLING_MODE: "That billing mode isn't supported for this component.",
+  SAVE_INVALID_COMPONENT_ACTION: "That component change couldn't be understood. Please reopen this draft and try again.",
+  SAVE_INVALID_COMPONENT_ID: "One of these components has an invalid reference. Please reopen this draft and try again.",
 };
 
 export function parseSaveError(rawMessage) {

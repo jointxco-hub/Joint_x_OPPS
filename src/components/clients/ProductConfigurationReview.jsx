@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { resolveClientProductPrice, getClientProductHistoricalReference } from "@/api/clientProductPriceReview";
 import ReconfigurationDraftWorkflow from "@/components/clients/reconfiguration/ReconfigurationDraftWorkflow";
+import { getReconciliationStatusMeta, getPriceSourceLabel } from "@/components/clients/reconfiguration/resolverStatusLabels";
 
 // PRODUCT CONFIGURATION REVIEW v1 — read-only staff diagnostic panel.
 //
@@ -22,29 +23,6 @@ import ReconfigurationDraftWorkflow from "@/components/clients/reconfiguration/R
 const money = (n) => `R${Number(n || 0).toFixed(2)}`;
 
 const COMMERCIAL_TYPES = new Set(["blank_garment", "print_service", "setup_fee", "addon"]);
-
-const STATUS_META = {
-  reconciled: {
-    label: "Pricing aligned",
-    hint: "The agreed price matches what the priced components add up to.",
-    tone: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  },
-  diverged: {
-    label: "Agreed price differs from component total",
-    hint: "This can be intentional (a negotiated rate) - it is not automatically a problem.",
-    tone: "bg-slate-100 text-slate-700 border-slate-200",
-  },
-  unresolved_components: {
-    label: "Pricing incomplete",
-    hint: "One or more pricing components has no sell price set yet.",
-    tone: "bg-amber-50 text-amber-800 border-amber-200",
-  },
-  no_composition: {
-    label: "No pricing composition",
-    hint: "No priced components exist for this product yet.",
-    tone: "bg-slate-100 text-slate-500 border-slate-200",
-  },
-};
 
 const NEXT_ACTION = {
   reconciled: "No action needed.",
@@ -131,7 +109,7 @@ export default function ProductConfigurationReview({ product, components = [] })
             onClick={() => setReconfigureOpen(true)}
             className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100"
           >
-            Reconfigure product (draft)
+            Configure product
           </button>
         </div>
       </div>
@@ -156,7 +134,7 @@ export default function ProductConfigurationReview({ product, components = [] })
             <FieldRow label="Effective unit price" value={money(result.effective_unit_price)} help="What an order line would actually charge today." />
             <FieldRow label="Agreed unit price" value={result.agreed_unit_price == null ? "Not set" : money(result.agreed_unit_price)} />
             <FieldRow label="Computed from components" value={result.computed_unit_price == null ? "Not available" : money(result.computed_unit_price)} />
-            <FieldRow label="Price source" value={result.price_source} help="Which value won: an override, the agreed price, or a zero default." />
+            <FieldRow label="Price source" value={getPriceSourceLabel(result.price_source)} help="Which value won: an override, the agreed price, or a zero default." />
             {result.requires_quote && (
               <p className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
                 Marked as requiring a quote. Shown for information only - this never hides the price fields above.
@@ -166,7 +144,7 @@ export default function ProductConfigurationReview({ product, components = [] })
 
           {/* B) Status label mapping */}
           {(() => {
-            const meta = STATUS_META[result.reconciliation_status] || STATUS_META.no_composition;
+            const meta = getReconciliationStatusMeta(result.reconciliation_status);
             return (
               <div className={`rounded-lg border px-2.5 py-2 text-xs ${meta.tone}`}>
                 <p className="font-medium">{meta.label}</p>

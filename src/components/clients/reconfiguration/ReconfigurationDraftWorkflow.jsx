@@ -26,16 +26,20 @@ import {
   buildSaveComponentPayload,
   buildInitialProduction,
 } from "./reconfigurationDraftModel";
+import { getReconciliationStatusMeta, getPriceSourceLabel } from "./resolverStatusLabels";
 
-// CLIENT PRODUCT RECONFIGURATION — DRAFT V1.
+// CLIENT PRODUCT RECONFIGURATION — Configure product (Save V1.1).
 //
-// Zero-write simulation. Nothing in this file calls .create()/.update()/
-// .delete() on any entity, and nothing calls any RPC other than the two
+// Steps 1-7 and the pre-Save state of step 8 are a zero-write draft:
+// nothing in this file calls .create()/.update()/.delete() on any entity
+// directly, and the only RPCs called before Save is pressed are the
 // read-only helpers already used by Product Configuration Review v1
-// (resolveClientProductPrice, getClientProductHistoricalReference).
-// Draft state lives only in this component's own useState - closing the
-// workflow discards it; nothing is written to localStorage, a table, or
-// any backend.
+// (resolveClientProductPrice, getClientProductHistoricalReference,
+// getClientProductConfigurationFingerprint). Draft state lives only in
+// this component's own useState - closing the workflow before Save
+// discards it; nothing is written to localStorage, a table, or any
+// backend until the staff member explicitly presses Save, which calls
+// the one authoritative RPC: save_client_product_reconfiguration.
 //
 // Mounted at the SAME visibility boundary as the review panel it opens
 // from (any staff who can open this client product at all), not behind
@@ -60,13 +64,43 @@ const STEPS = [
   "Finish",
 ];
 
-function SafetyBanner() {
+function DraftBanner() {
   return (
     <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-amber-900">
-      <p className="text-sm font-semibold">Draft simulation — no changes will be saved</p>
+      <p className="text-sm font-semibold">Draft — changes are not saved until final confirmation</p>
       <p className="mt-0.5 text-[11px] text-amber-800">
-        Current live data stays unchanged. Historical orders stay unchanged. Closing this workflow discards the draft.
+        Live configuration is unchanged. Historical transactions are unchanged. Closing before Save discards this draft.
       </p>
+    </div>
+  );
+}
+
+// SAVE V1.1 — a staff-friendly label is always the PRIMARY text wherever a
+// resolver value is shown; this is the one place the matching raw enum
+// value stays available, one click away, instead of disappearing.
+function RawResolverState({ reconciliationStatus, priceSource, requiresQuote }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full px-2.5 py-1.5 text-left text-[11px] font-medium text-slate-500">
+        {open ? "Hide raw resolver state" : "Show raw resolver state"}
+      </button>
+      {open && (
+        <dl className="space-y-1 border-t border-slate-200 px-2.5 py-2 text-[11px]">
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-400">reconciliation_status</dt>
+            <dd className="font-mono text-slate-600">{String(reconciliationStatus ?? "—")}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-400">price_source</dt>
+            <dd className="font-mono text-slate-600">{String(priceSource ?? "—")}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-slate-400">requires_quote</dt>
+            <dd className="font-mono text-slate-600">{String(Boolean(requiresQuote))}</dd>
+          </div>
+        </dl>
+      )}
     </div>
   );
 }
@@ -285,7 +319,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
         components: buildSaveComponentPayload(draftComponents),
         classification,
         divergenceReason: reasonRequired ? divergenceReason : null,
-        divergenceNote: divergenceReason === "Other" ? divergenceNote : null,
+        // Sent regardless of which reason was chosen - the server already
+        // accepts a note alongside any reason, not only "Other". Trimmed
+        // so whitespace-only input still resolves to null, same as the
+        // empty-string case.
+        divergenceNote: divergenceNote.trim() || null,
         incompleteAcknowledged: incompleteAck,
         context: "reconfiguration_draft_v1",
       });
@@ -396,7 +434,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
       <div className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-slate-800">Reconfigure (draft) · {product.client_facing_name || "Unnamed product"}</p>
+            <p className="truncate text-sm font-semibold text-slate-800">Configure product · {product.client_facing_name || "Unnamed product"}</p>
             <p className="text-[11px] text-slate-400">Step {step + 1} of {STEPS.length} · {STEPS[step]}</p>
           </div>
           <button type="button" onClick={handleClose} disabled={closeBlocked} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 disabled:opacity-40" aria-label="Close">
@@ -404,7 +442,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
           </button>
         </div>
 
-        <SafetyBanner />
+        {/* Hidden once the Save has actually succeeded - this is a draft
+            warning, and the configuration is no longer a draft at that
+            point. Still shown for the stopped-early path, since nothing
+            was written there either. */}
+        {!(step === 8 && saveSucceeded) && <DraftBanner />}
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {step === 0 && (
@@ -491,10 +533,15 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <FieldRow label="Agreed price (live)" value={money(result?.agreed_unit_price)} />
                 <FieldRow label="Computed price (live)" value={money(result?.computed_unit_price)} />
                 <FieldRow label="Effective price (live)" value={money(result?.effective_unit_price)} />
-                <FieldRow label="Reconciliation status (live)" value={result?.reconciliation_status || "—"} />
-                <FieldRow label="Price source (live)" value={result?.price_source || "—"} />
+                <FieldRow label="Reconciliation status (live)" value={getReconciliationStatusMeta(result?.reconciliation_status).label} />
+                <FieldRow label="Price source (live)" value={getPriceSourceLabel(result?.price_source)} />
                 <FieldRow label="Requires quote (live)" value={result?.requires_quote ? "Yes" : "No"} />
               </div>
+              <RawResolverState
+                reconciliationStatus={result?.reconciliation_status}
+                priceSource={result?.price_source}
+                requiresQuote={result?.requires_quote}
+              />
 
               {classification === "XLAB_COMMERCIAL" && (
                 <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-2.5 text-xs text-blue-800">
@@ -616,8 +663,13 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <FieldRow label="Agreed" value={money(result?.agreed_unit_price)} />
                 <FieldRow label="Computed" value={money(result?.computed_unit_price)} />
                 <FieldRow label="Effective" value={money(result?.effective_unit_price)} />
-                <FieldRow label="Status" value={result?.reconciliation_status || "—"} />
+                <FieldRow label="Status" value={getReconciliationStatusMeta(result?.reconciliation_status).label} />
               </div>
+              <RawResolverState
+                reconciliationStatus={result?.reconciliation_status}
+                priceSource={result?.price_source}
+                requiresQuote={result?.requires_quote}
+              />
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                 <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-600">Draft estimate — proposed changes (descriptive, not computed)</p>
                 <FieldRow label="Proposed agreed price" value={proposedAgreedPrice === "" ? "Unchanged" : money(proposedNum)} />
@@ -626,7 +678,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <FieldRow label="Components missing a price" value={`${delta.live.unresolvedCount} live → ${delta.draft.unresolvedCount} draft`} />
               </div>
               <p className="mt-3 rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">
-                Final canonical result will be verified by the server when save capability is introduced.
+                Final canonical result is verified by the server at Save.
               </p>
               <TrainingNote
                 checking="What's changing in the draft, without pretending to know the final price."
@@ -685,13 +737,21 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                       </label>
                     ))}
                   </div>
-                  {divergenceReason === "Other" && (
-                    <Textarea
-                      value={divergenceNote}
-                      onChange={(e) => setDivergenceNote(e.target.value)}
-                      placeholder="Required: explain the reason"
-                      className="mt-2 text-xs"
-                    />
+                  {/* Available for every reason, not only "Other" - optional
+                      except when the reason itself is "Other", where an
+                      explanation is required instead of a free preset. */}
+                  {divergenceReason && (
+                    <div className="mt-2">
+                      <label className="text-[11px] font-medium text-slate-600">
+                        {divergenceReason === "Other" ? "Explain the reason (required)" : "Note (optional)"}
+                      </label>
+                      <Textarea
+                        value={divergenceNote}
+                        onChange={(e) => setDivergenceNote(e.target.value)}
+                        placeholder={divergenceReason === "Other" ? "Required: explain the reason" : "Optional: add context for this decision"}
+                        className="mt-1 text-xs"
+                      />
+                    </div>
                   )}
                 </>
               )}
@@ -781,13 +841,18 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
               <StepHeader title="Before / after" subtitle="Current canonical state vs. proposed draft — nothing below has been saved." />
 
               <div className="mb-3 space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
-                <FieldRow label="Current resolver status" value={result?.reconciliation_status || "—"} />
+                <FieldRow label="Current resolver status" value={getReconciliationStatusMeta(result?.reconciliation_status).label} />
                 <FieldRow label="Proposed agreed price" value={proposedAgreedPrice === "" ? "Unchanged" : money(proposedNum)} />
                 <FieldRow label="Draft component changes" value={`+${componentChanges.added} / -${componentChanges.removed} / reclassified ${componentChanges.reclassified}`} />
                 <FieldRow label="Canonical post-save result" value="Not yet validated" />
               </div>
-              <p className="mb-3 text-[11px] text-slate-400">
-                The draft itself has no canonical status of its own — only the live row above has been resolved by the server. Saving (once available) would be the first time these proposed values are validated canonically.
+              <RawResolverState
+                reconciliationStatus={result?.reconciliation_status}
+                priceSource={result?.price_source}
+                requiresQuote={result?.requires_quote}
+              />
+              <p className="mb-3 mt-3 text-[11px] text-slate-400">
+                The draft itself has no canonical status of its own — only the live row above has been resolved by the server. Saving validates these proposed values canonically for the first time.
               </p>
 
               <div className="space-y-2.5">
@@ -834,12 +899,17 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                 <div className="flex items-center gap-2 text-emerald-800">
                   <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
-                  <p className="text-sm font-semibold">Configuration saved.</p>
+                  <p className="text-sm font-semibold">Configuration saved — this configuration is now live.</p>
                 </div>
                 <div className="mt-3 space-y-1 rounded-lg bg-white/70 p-2.5 text-xs">
                   <FieldRow label="Resulting agreed price" value={money(saveResult.agreed_price)} />
-                  <FieldRow label="Canonical status" value={saveResult.canonical?.reconciliation_status || "—"} />
+                  <FieldRow label="Canonical status" value={getReconciliationStatusMeta(saveResult.canonical?.reconciliation_status).label} />
                 </div>
+                <RawResolverState
+                  reconciliationStatus={saveResult.canonical?.reconciliation_status}
+                  priceSource={saveResult.canonical?.price_source}
+                  requiresQuote={saveResult.canonical?.requires_quote}
+                />
                 {saveResult.canonical?.reconciliation_status === "unresolved_components" && (
                   <p className="mt-2 text-[11px] text-amber-700">
                     This product's pricing is still incomplete on the server — saving did not resolve it. That's expected: a save can only record the configuration honestly, never manufacture a resolved price.
@@ -860,8 +930,8 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
 
               {!saveMutation.isPending && !saveParsedError && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  <p className="font-medium">Saving will make this configuration real.</p>
-                  <p className="mt-1">This is still a draft until you press Save. Nothing has been written yet.</p>
+                  <p className="font-medium">Ready to save — nothing has been written yet.</p>
+                  <p className="mt-1">Pressing Save will make this the live configuration.</p>
                 </div>
               )}
 
