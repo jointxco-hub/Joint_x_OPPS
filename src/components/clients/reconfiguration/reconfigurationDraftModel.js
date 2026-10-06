@@ -26,6 +26,19 @@ export const COMPONENT_ROLE_OPTIONS = [
   { value: "INFORMATIONAL", label: "D. Informational / non-pricing", group: "production" },
 ];
 
+// SAVE V1.1 SLICE 2 — the only component_type values a brand-new row may
+// be created as (matches the server's own insert-only guard in
+// save_client_product_reconfiguration). Reclassifying an EXISTING
+// component can still move it to/from material/packaging/labour/other
+// via the role selector below - this list only bounds what a staff
+// member can pick when adding a component that never existed before.
+export const NEW_COMPONENT_TYPE_OPTIONS = [
+  { value: "blank_garment", label: "Blank garment", defaultBillingMode: "per_unit" },
+  { value: "print_service", label: "Print / branding service", defaultBillingMode: "per_unit" },
+  { value: "setup_fee", label: "Setup fee", defaultBillingMode: "once_per_order" },
+  { value: "addon", label: "Add-on", defaultBillingMode: "per_unit" },
+];
+
 // Best-guess starting role for each existing component_type - staff can
 // always override it in the draft. This mirrors the same split Review
 // v1 already uses (COMMERCIAL_TYPES in ProductConfigurationReview.jsx),
@@ -77,7 +90,18 @@ export function buildDraftComponents(components) {
     });
 }
 
-export function addDraftComponent(draftComponents) {
+// SAVE V1.1 SLICE 2 — componentType/billingMode/label/defaultSellPrice are
+// collected up front (the Add Component form) because a brand-new row has
+// no prior server type to default from, unlike an existing row. Once
+// added, `storedType` is set to that explicit choice, so the row behaves
+// exactly like any other draft row from then on (same role selector, same
+// price field, same remove button) - mapDraftComponentToBackendFields's
+// existing "preserve the stored type when role is unchanged" branch
+// applies to it identically. quantity_per_unit is fixed at 1 - these four
+// commercial types are never BOM-consumption rows, so there is no
+// legitimate reason to expose that field for a new row.
+export function addDraftComponent(draftComponents, { componentType, billingMode, label, defaultSellPrice }) {
+  const role = inferRoleForComponentType(componentType, billingMode);
   return [
     ...draftComponents,
     {
@@ -85,13 +109,13 @@ export function addDraftComponent(draftComponents) {
       sourceId: null,
       isNew: true,
       removed: false,
-      label: "",
-      storedType: null,
-      role: "COMMERCIAL_PER_UNIT",
-      initialRole: "COMMERCIAL_PER_UNIT",
-      billingMode: "per_unit",
-      defaultSellPrice: null,
-      quantityPerUnit: null,
+      label: label || "",
+      storedType: componentType,
+      role,
+      initialRole: role,
+      billingMode: billingMode || "per_unit",
+      defaultSellPrice: defaultSellPrice == null || defaultSellPrice === "" ? null : defaultSellPrice,
+      quantityPerUnit: 1,
     },
   ];
 }
@@ -225,31 +249,35 @@ export function mapDraftComponentToBackendFields(component) {
 // untouched rows are still sent as 'update' (safely idempotent on the
 // server) rather than diffed - the smallest-state option for this slice.
 //
-// New-component creation is disabled in the Save V1 draft UI (no real
-// component-type selector exists yet, so there's no honest mapping from
-// the UI's 4-bucket role to one of the real component_type values for a
-// row that never had a stored type). This function is the backend-facing
-// safety net for that: ANY row with isNew still true - whether the UI
-// somehow let one through or a stale draft session predates this guard -
-// is left out of the payload entirely, never sent as an 'insert'.
+// SAVE V1.1 SLICE 2 — a row with isNew still true is sent as action:
+// "insert" (never with a source_id). component_type/billing_mode come
+// from the SAME mapDraftComponentToBackendFields() call update rows use -
+// since addDraftComponent() seeds storedType with the staff-chosen type,
+// the "preserve the stored type when role is unchanged" branch applies
+// to a new row exactly as it does an existing one. quantity_per_unit is
+// always 1 for a new row - these four commercial types are never a BOM-
+// consumption quantity, so the row's own (fixed) quantityPerUnit is used
+// unconditionally rather than read from user input.
 export function buildSaveComponentPayload(draftComponents) {
   const rows = Array.isArray(draftComponents) ? draftComponents : [];
   const payload = [];
   for (const c of rows) {
-    if (c.isNew) continue; // new-component creation is disabled for Save V1 - never sent
+    if (c.isNew && c.removed) continue; // added then removed before save - never sent
 
-    if (c.removed) {
+    if (!c.isNew && c.removed) {
       payload.push({ action: "remove", source_id: c.sourceId });
       continue;
     }
 
     const mapped = mapDraftComponentToBackendFields(c);
-    const qty = c.quantityPerUnit == null || c.quantityPerUnit === "" ? 1 : Number(c.quantityPerUnit);
+    const qty = c.isNew
+      ? 1
+      : (c.quantityPerUnit == null || c.quantityPerUnit === "" ? 1 : Number(c.quantityPerUnit));
     const price = c.defaultSellPrice == null || c.defaultSellPrice === "" ? null : Number(c.defaultSellPrice);
 
     payload.push({
-      action: "update",
-      source_id: c.sourceId,
+      action: c.isNew ? "insert" : "update",
+      source_id: c.isNew ? null : c.sourceId,
       component_type: mapped.component_type,
       billing_mode: mapped.billing_mode,
       default_sell_price: price,
@@ -258,6 +286,24 @@ export function buildSaveComponentPayload(draftComponents) {
     });
   }
   return payload;
+}
+
+// SAVE V1.1 SLICE 2 — a pending new row needs a real label and a valid
+// price before it can be sent at all (the server rejects a blank label
+// on insert with SAVE_COMPONENT_LABEL_REQUIRED, and has no concept of a
+// deliberately-unpriced NEW commercial row the way an existing one can
+// be left unresolved). Price validity mirrors the agreed-price field's
+// own rule exactly: checked by Number.isFinite, never truthiness, so an
+// explicit 0 is valid and only blank/NaN/negative are not.
+export function isPendingNewComponentValid(component) {
+  const hasLabel = Boolean(component.label && component.label.trim());
+  const priceNum = Number(component.defaultSellPrice);
+  const hasValidPrice =
+    component.defaultSellPrice != null &&
+    component.defaultSellPrice !== "" &&
+    Number.isFinite(priceNum) &&
+    priceNum >= 0;
+  return hasLabel && hasValidPrice;
 }
 
 export function buildInitialProduction(product) {

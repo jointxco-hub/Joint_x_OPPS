@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Trash2, Loader2, CheckCircle2 } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Plus, Trash2, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,13 +17,16 @@ import {
   CLASSIFICATION_OPTIONS,
   EARLY_STOP_CLASSIFICATIONS,
   COMPONENT_ROLE_OPTIONS,
+  NEW_COMPONENT_TYPE_OPTIONS,
   DIVERGENCE_REASONS,
   buildDraftComponents,
+  addDraftComponent,
   groupByRole,
   describeComponentDelta,
   describeComponentChanges,
   hasPricingAffectingComponentChanges,
   buildSaveComponentPayload,
+  isPendingNewComponentValid,
   buildInitialProduction,
 } from "./reconfigurationDraftModel";
 import { getReconciliationStatusMeta, getPriceSourceLabel } from "./resolverStatusLabels";
@@ -165,6 +168,10 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const [classification, setClassification] = useState(null);
   const [proposedAgreedPrice, setProposedAgreedPrice] = useState("");
   const [draftComponents, setDraftComponents] = useState(() => buildDraftComponents(components));
+  const [newComponentType, setNewComponentType] = useState(NEW_COMPONENT_TYPE_OPTIONS[0].value);
+  const [newComponentBillingMode, setNewComponentBillingMode] = useState(NEW_COMPONENT_TYPE_OPTIONS[0].defaultBillingMode);
+  const [newComponentLabel, setNewComponentLabel] = useState("");
+  const [newComponentPrice, setNewComponentPrice] = useState("");
   const [divergenceReason, setDivergenceReason] = useState(null);
   const [divergenceNote, setDivergenceNote] = useState("");
   const [incompleteAck, setIncompleteAck] = useState(false);
@@ -224,14 +231,18 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const proposedNum = proposedAgreedPrice === "" || priceInputError ? null : Number(proposedAgreedPrice);
   const priceChanged = proposedNum != null && Number(proposedNum) !== Number(liveAgreed ?? 0);
 
-  // FIX 2 — new-component creation is disabled for Save V1 (no explicit
-  // component-type selector exists yet). This only matters as a safety
-  // net for state that predates this fix (e.g. a draft session that was
-  // already open when this change shipped) - the Add button itself is
-  // gone, so no NEW row can be created going forward.
+  // SAVE V1.1 SLICE 2 — new commercial components can now be added; this
+  // tracks pending (not-yet-saved) new rows so Save can be blocked until
+  // every one of them has a real label and a valid price, matching what
+  // the server itself will enforce (SAVE_COMPONENT_LABEL_REQUIRED) -
+  // caught here first, before a round trip to the server.
   const pendingNewComponents = useMemo(
     () => draftComponents.filter((c) => c.isNew && !c.removed),
     [draftComponents]
+  );
+  const invalidPendingNewComponents = useMemo(
+    () => pendingNewComponents.filter((c) => !isPendingNewComponentValid(c)),
+    [pendingNewComponents]
   );
 
   // A component edit that touches the commercial total is exactly as
@@ -429,6 +440,27 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const removeComponent = (draftId) =>
     setDraftComponents((rows) => rows.map((r) => (r.draftId === draftId ? { ...r, removed: true } : r)));
 
+  // SAVE V1.1 SLICE 2 — the one-time creation step for a brand-new
+  // commercial component. Label and price are validated the same way
+  // isPendingNewComponentValid checks them, so the button simply can't
+  // be pressed into an invalid state; nothing here ever re-derives a
+  // price or claims a canonical result - the server still owns that
+  // entirely, same as every other mutation in this workflow.
+  const newComponentPriceValid =
+    newComponentPrice !== "" && Number.isFinite(Number(newComponentPrice)) && Number(newComponentPrice) >= 0;
+  const canAddComponent = newComponentLabel.trim().length > 0 && newComponentPriceValid;
+  const handleAddComponent = () => {
+    if (!canAddComponent) return;
+    setDraftComponents((rows) => addDraftComponent(rows, {
+      componentType: newComponentType,
+      billingMode: newComponentBillingMode,
+      label: newComponentLabel.trim(),
+      defaultSellPrice: newComponentPrice,
+    }));
+    setNewComponentLabel("");
+    setNewComponentPrice("");
+  };
+
   return (
     <div className="fixed inset-0 z-[110] flex items-stretch justify-end bg-black/60 backdrop-blur-sm" onClick={handleClose}>
       <div className="flex h-full w-full max-w-xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -595,7 +627,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                           </button>
                         </div>
                         <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-slate-400">
-                          <span>stored as: {c.storedType || "new"}</span>
+                          <span>{c.isNew ? `new · ${c.storedType}` : `stored as: ${c.storedType || "unknown"}`}</span>
                         </div>
                         <div className="mt-2 grid grid-cols-2 gap-2">
                           <select
@@ -638,14 +670,57 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                   </div>
                 </div>
               ))}
-              {pendingNewComponents.length > 0 && (
+              {invalidPendingNewComponents.length > 0 && (
                 <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-800">
-                  {pendingNewComponents.length} new component(s) in this draft can't be saved yet and will be left out of Save — see below.
+                  {invalidPendingNewComponents.length} new component(s) need a label and a valid price before they can be saved.
                 </div>
               )}
-              <p className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">
-                Adding new components will be enabled once component types can be selected explicitly.
-              </p>
+
+              <div className="rounded-lg border border-dashed border-slate-300 p-2.5">
+                <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">Add commercial component</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={newComponentType}
+                    onChange={(e) => {
+                      const next = NEW_COMPONENT_TYPE_OPTIONS.find((t) => t.value === e.target.value);
+                      setNewComponentType(e.target.value);
+                      if (next) setNewComponentBillingMode(next.defaultBillingMode);
+                    }}
+                    className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1 text-[11px]"
+                  >
+                    {NEW_COMPONENT_TYPE_OPTIONS.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={newComponentBillingMode}
+                    onChange={(e) => setNewComponentBillingMode(e.target.value)}
+                    className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1 text-[11px]"
+                  >
+                    <option value="per_unit">Per unit</option>
+                    <option value="once_per_order">Once per order</option>
+                  </select>
+                </div>
+                <Input
+                  value={newComponentLabel}
+                  onChange={(e) => setNewComponentLabel(e.target.value)}
+                  placeholder="Label (required)"
+                  className="mt-2 h-8 text-xs"
+                />
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  value={newComponentPrice}
+                  onChange={(e) => setNewComponentPrice(e.target.value)}
+                  placeholder="Sell price (required)"
+                  className="mt-2 h-8 text-xs"
+                />
+                <Button type="button" variant="outline" size="sm" onClick={handleAddComponent} disabled={!canAddComponent} className="mt-2 w-full gap-1.5">
+                  <Plus className="h-3.5 w-3.5" /> Add to draft
+                </Button>
+                <p className="mt-1.5 text-[10px] text-slate-400">A real label and a valid price (0 is valid) are required before this can be added.</p>
+              </div>
+
               <p className="mt-3 text-[11px] text-slate-400">Consumption (BOM) quantity never multiplies price — it describes what gets used, not what it costs.</p>
               <TrainingNote
                 checking="Whether each component is actually priced, or just describes production."
@@ -965,11 +1040,14 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <Button
                   type="button"
                   onClick={() => { if (saveMutation.isPending) return; saveMutation.mutate(); }}
-                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError || Boolean(priceInputError)}
+                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError || Boolean(priceInputError) || invalidPendingNewComponents.length > 0}
                   className="h-11 text-sm"
                 >
                   {saveMutation.isPending ? "Saving…" : "Save configuration"}
                 </Button>
+                {invalidPendingNewComponents.length > 0 && (
+                  <p className="text-[11px] text-red-600">{invalidPendingNewComponents.length} new component(s) still need a label and a valid price. Go back to the Components step to fix it.</p>
+                )}
                 {priceInputError && (
                   <p className="text-[11px] text-red-600">{priceInputError} Go back to the Commercial step to fix it.</p>
                 )}
