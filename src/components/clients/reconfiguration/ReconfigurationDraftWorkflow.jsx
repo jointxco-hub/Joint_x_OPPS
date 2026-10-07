@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, ChevronLeft, ChevronRight, AlertTriangle, Info, Plus, Trash2, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -169,6 +169,20 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const [classification, setClassification] = useState(null);
   const [proposedAgreedPrice, setProposedAgreedPrice] = useState("");
   const [draftComponents, setDraftComponents] = useState(() => buildDraftComponents(components));
+  // `components` comes from the Production tab's own query one level up
+  // and can still be loading (default []) at the exact instant this
+  // workflow mounts, racing ahead of the real data by a few hundred ms.
+  // The lazy useState above only ever runs once, so without this effect
+  // a draft opened during that window is permanently seeded empty even
+  // after the real components arrive - re-sync for as long as the staff
+  // member hasn't actually touched a row yet; userEditedDraftComponentsRef
+  // is flipped true by every mutator below so an in-progress edit is
+  // never silently clobbered by a later (e.g. background) refetch.
+  const userEditedDraftComponentsRef = useRef(false);
+  useEffect(() => {
+    if (userEditedDraftComponentsRef.current) return;
+    setDraftComponents(buildDraftComponents(components));
+  }, [components]);
   const [newComponentType, setNewComponentType] = useState(NEW_COMPONENT_TYPE_OPTIONS[0].value);
   const [newComponentBillingMode, setNewComponentBillingMode] = useState(NEW_COMPONENT_TYPE_OPTIONS[0].defaultBillingMode);
   const [newComponentLabel, setNewComponentLabel] = useState("");
@@ -394,6 +408,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
         dataClient.entities.ProductComponent.filter({ client_product_id: product.id }, "sort_order", 200),
         getClientProductConfigurationFingerprint({ clientProductId: product.id }),
       ]);
+      userEditedDraftComponentsRef.current = false;
       setDraftComponents(buildDraftComponents(Array.isArray(freshComponents) ? freshComponents : []));
       setExpectedFingerprint(fingerprintR?.data ?? null);
       setFingerprintError(fingerprintR?.error ?? null);
@@ -447,7 +462,8 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   // so the user must explicitly enter a fresh one. Any other transition
   // (unchanged role, non-commercial<->non-commercial, or commercial<->
   // commercial) preserves the existing price untouched.
-  const updateComponent = (draftId, patch) =>
+  const updateComponent = (draftId, patch) => {
+    userEditedDraftComponentsRef.current = true;
     setDraftComponents((rows) => rows.map((r) => {
       if (r.draftId !== draftId) return r;
       const next = { ...r, ...patch };
@@ -459,8 +475,11 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
       }
       return next;
     }));
-  const removeComponent = (draftId) =>
+  };
+  const removeComponent = (draftId) => {
+    userEditedDraftComponentsRef.current = true;
     setDraftComponents((rows) => rows.map((r) => (r.draftId === draftId ? { ...r, removed: true } : r)));
+  };
 
   // SAVE V1.1 SLICE 2 — the one-time creation step for a brand-new
   // commercial component. Label and price are validated the same way
@@ -473,6 +492,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const canAddComponent = newComponentLabel.trim().length > 0 && newComponentPriceValid;
   const handleAddComponent = () => {
     if (!canAddComponent) return;
+    userEditedDraftComponentsRef.current = true;
     setDraftComponents((rows) => addDraftComponent(rows, {
       componentType: newComponentType,
       billingMode: newComponentBillingMode,
@@ -495,6 +515,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
     blankGarmentPrice !== "" && Number.isFinite(Number(blankGarmentPrice)) && Number(blankGarmentPrice) >= 0;
   const handleUseBlankGarmentTemplate = () => {
     if (!blankGarmentPriceValid) return;
+    userEditedDraftComponentsRef.current = true;
     setDraftComponents((rows) => addDraftComponent(rows, {
       componentType: "blank_garment",
       billingMode: "per_unit",
