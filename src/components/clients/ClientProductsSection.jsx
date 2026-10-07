@@ -34,8 +34,13 @@ import { toStaffMessage } from "@/lib/pgErrorMessages";
 import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
 import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
 import TreatmentsSection from "@/components/composition/TreatmentsSection";
+import { productionWorkflowRpc } from "@/api/productionWorkflowResolution";
+import { getClientProductApprovals, hasCurrentRevisionApproval } from "@/api/clientProductApprovals";
 import { getClientProductPriceComposition } from "@/api/xosClientProduct";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+
+/** @type {React.ComponentType<any>} */
+const LifecycleSelectItem = SelectItem;
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
 
@@ -232,6 +237,9 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
   const refetchAll = () => {
     queryClient.invalidateQueries({ queryKey: readinessQueryKey });
     queryClient.invalidateQueries({ queryKey: artworkQueryKey });
+    queryClient.invalidateQueries({ queryKey: ["clientProductArtworkForOrder"] });
+    queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder"] });
+    queryClient.invalidateQueries({ queryKey: ["orderLineProductionReadiness"] });
     onChanged?.();
   };
 
@@ -495,6 +503,14 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
     onError: (error) => toast.error(error?.message || "Could not link artwork"),
   });
 
+  const confirmFile = useMutation({
+    mutationFn: (/** @type {{id: string, revision: number}} */ artwork) => productionWorkflowRpc("confirm_client_product_production_file", {
+      p_artwork_id: artwork.id, p_expected_revision: artwork.revision,
+    }),
+    onSuccess: () => { toast.success("Production file confirmed"); onChanged?.(); },
+    onError: (error) => toast.error(error.message),
+  });
+
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 p-3">
@@ -506,7 +522,7 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
         </div>
         {legacyFallback ? (
           <p className="mt-1 text-xs text-amber-700">
-            Requirements unconfirmed — inferred from existing artwork. Confirm the list to lock readiness.
+            Confirm which placements require artwork. Each linked production file must also be confirmed separately.
           </p>
         ) : requiredFromRpc.length === 0 ? (
           <p className="mt-1 text-xs text-slate-500">Explicitly no artwork required for this product.</p>
@@ -563,6 +579,14 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
                   {current ? "Change" : "Link"}
                 </Button>
               </div>
+              {current?.status === "pending" && (
+                <div className="mt-2 border-t border-slate-100 pt-2">
+                  <p className="mb-2 text-xs text-amber-700">Linked file awaiting production confirmation. Review the file before confirming.</p>
+                  <button type="button" className="rounded-md border px-3 py-2 text-sm disabled:opacity-50" disabled={confirmFile.isPending} onClick={() => {
+                    if (window.confirm(`Confirm ${current.file_name || placement} is the correct production file? This does not record customer approval.`)) confirmFile.mutate(current);
+                  }}>Confirm production file</button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -645,6 +669,33 @@ function RequiredPlacementsEditor({ product, initial, onSaved }) {
 function StatusTab({ product, onSaved, readinessState }) {
   const queryClient = useQueryClient();
   const [pendingChange, setPendingChange] = useState(null); // { kind, label, apply }
+  const [approvalSource, setApprovalSource] = useState("whatsapp");
+  const [approvalReference, setApprovalReference] = useState("");
+  const { data: approvals, isLoading: approvalLoading, isError: approvalError } = useQuery({
+    queryKey: ["clientProductApprovals", product.id],
+    queryFn: async () => {
+      const result = await getClientProductApprovals(product.id);
+      if (result.error) throw new Error(result.error);
+      return result.data;
+    },
+    enabled: Boolean(product.id),
+  });
+  const currentApproved = hasCurrentRevisionApproval(approvals, product.revision);
+  const artworkReady = ["ready", "no_artwork_required"].includes(readinessState);
+  const approvalMutation = useMutation({
+    mutationFn: () => productionWorkflowRpc("record_client_product_approval_on_behalf", {
+      p_client_product_id: product.id, p_expected_revision: product.revision,
+      p_approval_source: approvalSource, p_approval_reference: approvalReference,
+    }),
+    onSuccess: () => {
+      toast.success("Customer approval recorded for this revision");
+      setApprovalReference("");
+      queryClient.invalidateQueries({ queryKey: ["clientProductApprovals", product.id] });
+      queryClient.invalidateQueries({ queryKey: ["orderLineProductionReadiness"] });
+      onSaved?.();
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const readyForCustomer = ["ready_for_client_review", "client_changes_requested", "client_approved", "ready_to_order", "active"].includes(product.status || "");
 
   const applyMutation = useMutation({
@@ -680,22 +731,47 @@ function StatusTab({ product, onSaved, readinessState }) {
           value={product.status || "draft"}
           onValueChange={(next) => {
             if (next === product.status) return;
+            if (["client_approved", "ready_to_order", "active"].includes(next) && !currentApproved) {
+              toast.error("Record customer approval for this revision first."); return;
+            }
+            if (["ready_to_order", "active"].includes(next) && !artworkReady) {
+              toast.error("Confirm the required production files first."); return;
+            }
             requestChange("status", `Change status to "${next.replace(/_/g, " ")}"`, { status: next });
           }}
         >
           <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {CLIENT_PRODUCT_STATUSES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s.replace(/_/g, " ")}</SelectItem>)}
+            {CLIENT_PRODUCT_STATUSES.map((s) => <LifecycleSelectItem key={s} value={s} disabled={(["client_approved", "ready_to_order", "active"].includes(s) && !currentApproved) || (["ready_to_order", "active"].includes(s) && !artworkReady)} className="capitalize">{s.replace(/_/g, " ")}</LifecycleSelectItem>)}
           </SelectContent>
         </Select>
         <p className="mt-1.5 text-[11px] text-slate-500">
           draft → ready for client review → client approved / changes requested → ready to order → active (plus archived).
-          Marking &quot;ready to order&quot; is blocked by the database until required artwork placements are confirmed.
+          Lifecycle labels do not record approval. Customer approval is tied to the current revision; production files are confirmed in Artwork.
         </p>
         {readyForCustomer && readinessState !== "ready" && readinessState !== "no_artwork_required" && (
           <p className="mt-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
             This product is in a customer-facing status but its artwork is not ready — check the Artwork tab.
           </p>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+        <p className="text-sm font-medium">Customer approval · revision {product.revision ?? "—"}</p>
+        <p className="text-xs text-slate-500">{approvalLoading ? "Checking approval…" : approvalError ? "Approval could not be verified. Reload before changing status." : currentApproved ? "Approval recorded for this revision." : "No customer approval recorded for this revision."}</p>
+        {!currentApproved && !approvalLoading && !approvalError && (
+          <>
+            <p className="text-xs text-slate-500">Admin: record an approval already received from the customer. This does not confirm artwork files.</p>
+            <label className="block text-sm" htmlFor="product-approval-source">Approval received through</label>
+            <select id="product-approval-source" className="w-full rounded-md border p-2 text-sm" value={approvalSource} onChange={(e) => setApprovalSource(e.target.value)}>
+              <option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="in_person">In person</option><option value="phone">Phone</option>
+            </select>
+            <label className="block text-sm" htmlFor="product-approval-reference">Approval reference</label>
+            <textarea className="w-full rounded-md border p-2 text-sm" id="product-approval-reference" value={approvalReference} maxLength={2000} onChange={(e) => setApprovalReference(e.target.value)} placeholder="Who approved, when, and the message or conversation reference" />
+            <button type="button" className="rounded-md border px-3 py-2 text-sm disabled:opacity-50" disabled={!approvalReference.trim() || approvalMutation.isPending} onClick={() => {
+              if (window.confirm(`Record the customer's approval for revision ${product.revision}? Confirm that the customer approved this exact revision.`)) approvalMutation.mutate();
+            }}>Record customer approval</button>
+          </>
         )}
       </div>
 
