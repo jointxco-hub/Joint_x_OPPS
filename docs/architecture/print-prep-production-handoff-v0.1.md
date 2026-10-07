@@ -99,7 +99,17 @@ The first implementation should fail closed if any of these are missing:
 - artwork.revision_ids
 - production.quantity
 
-Target width may remain nullable only when the production component legitimately requires operator sizing. Print Prep must then show that as an operator decision, not invent a value.
+Sizing may remain unset when the production component legitimately requires operator sizing. Print Prep must then show that as an operator decision, not invent a value.
+
+### Sizing modes
+
+The contract supports three operator-safe sizing modes:
+
+- `width` — width is authoritative; height follows artwork aspect ratio.
+- `height` — height is authoritative; width follows artwork aspect ratio. This is important for tall/back prints where a width-first rule could exceed the blank.
+- `custom` — explicit width + height. `lock_aspect_ratio=true` keeps artwork proportional; unlocking proportions must be an explicit operator choice.
+
+OPPS/X LAB should eventually save this sizing object as part of the production configuration before the order is frozen. Preset names (Small/Standard/Large) are UI conveniences only; the frozen production contract carries the resolved sizing rule/dimensions. Until OPPS/X LAB sizing persistence is implemented, Print Prep remains allowed to make the sizing decision locally and the handoff sends `sizing: null`.
 
 ## 5. Existing OPPS fields mapped into the contract
 
@@ -129,7 +139,7 @@ When the payload is accepted, Print Prep should populate the compact operator UI
 - artwork identity
 - production method
 - placement
-- target width if supplied
+- sizing mode/dimensions if supplied
 - quantity
 
 The existing three-stage operator UI remains:
