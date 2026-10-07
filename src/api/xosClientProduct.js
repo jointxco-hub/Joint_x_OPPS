@@ -74,3 +74,61 @@ export async function getClientProductPriceComposition({ clientProductId, quanti
   if (error) return { data: null, error: error.message };
   return { data, error: null };
 }
+
+// MULTI-PICTURE PRODUCT ITEM LINE — wrappers for the canonical
+// client_product_images RPCs (X LAB migration 20260917090000, staging
+// only in this phase). Every call is staff-only, tenant-scoped
+// server-side - these wrappers add no authorization logic of their own.
+
+export async function getClientProductImages({ clientProductId }) {
+  if (!clientProductId) return { data: null, error: "Missing client product id" };
+  const { data, error } = await supabase.rpc("admin_get_client_product_images", {
+    p_client_product_id: clientProductId,
+  });
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
+export async function addClientProductImage({ clientProductId, assetId = null, imageRef, role = "reference", caption = null }) {
+  if (!clientProductId || !imageRef) return { data: null, error: "Missing client product or image reference" };
+  const { data, error } = await supabase.rpc("admin_add_client_product_image", {
+    p_client_product_id: clientProductId,
+    p_asset_id: assetId,
+    p_image_ref: imageRef,
+    p_role: role,
+    p_caption: caption,
+  });
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
+export async function setClientProductImageRole({ imageId, role }) {
+  if (!imageId || !role) return { data: null, error: "Missing image or role" };
+  const { data, error } = await supabase.rpc("admin_set_client_product_image_role", {
+    p_image_id: imageId,
+    p_role: role,
+  });
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
+export async function reorderClientProductImages({ clientProductId, orderedIds }) {
+  if (!clientProductId || !Array.isArray(orderedIds)) return { data: null, error: "Missing client product or order" };
+  const { data, error } = await supabase.rpc("admin_reorder_client_product_images", {
+    p_client_product_id: clientProductId,
+    p_ordered_ids: orderedIds,
+  });
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
+export async function retireClientProductImage({ imageId }) {
+  if (!imageId) return { data: null, error: "Missing image id" };
+  const { data, error } = await supabase.rpc("admin_retire_client_product_image", {
+    p_image_id: imageId,
+  });
+  if (error) return { data: null, error: error.message };
+  return { data, error: null };
+}
+
+export const CLIENT_PRODUCT_IMAGE_ROLES = ["primary", "front", "back", "detail", "reference"];

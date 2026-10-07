@@ -56,7 +56,7 @@ test("the order-line thumbnail is only clickable (opens the preview) when a real
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   assert.ok(source.includes("const isRealImage = Boolean(resolvedThumb) && isImageReference(resolvedThumb);"), "clickability must be gated on an actual image reference, not just any truthy value");
   const gateIndex = source.indexOf("const isRealImage = Boolean(resolvedThumb)");
-  const block = source.slice(gateIndex, gateIndex + 1400);
+  const block = source.slice(gateIndex, gateIndex + 1800);
   assert.ok(block.includes("isRealImage ? ("), "the clickable <button> wrapper must be conditional on isRealImage");
   assert.ok(block.includes("<Package className=\"m-3 h-6 w-6 text-muted-foreground/50\" />"), "a line with no real image must still show the plain, non-interactive placeholder icon");
 });

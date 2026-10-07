@@ -6,6 +6,7 @@ import {
   applyMatchExistingProduct,
   applyKeepCommercialOnly,
   resolveLineThumbnail,
+  resolveLineImageGallery,
   isProductionCapableLine,
 } from "../src/features/orders/lineConfiguration.js";
 
@@ -230,4 +231,36 @@ test("resolveLineThumbnail: tier 4 - empty string when nothing resolves (caller 
 test("resolveLineThumbnail: handles no options object passed at all", () => {
   const url = resolveLineThumbnail({ image_url: "" });
   assert.equal(url, "");
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// resolveLineImageGallery (MULTI-PICTURE PRODUCT ITEM LINE)
+// ─────────────────────────────────────────────────────────────────────
+
+test("resolveLineImageGallery: [] when the line has no image_gallery at all (every pre-existing order line)", () => {
+  assert.deepEqual(resolveLineImageGallery({ image_url: "https://x/product.jpg" }), []);
+});
+
+test("resolveLineImageGallery: [] when image_gallery is present but empty", () => {
+  assert.deepEqual(resolveLineImageGallery({ image_gallery: [] }), []);
+});
+
+test("resolveLineImageGallery: passes through a populated gallery unchanged", () => {
+  const gallery = [
+    { image_ref: "https://x/a.jpg", role: "primary", sort_order: 0 },
+    { image_ref: "https://x/b.jpg", role: "front", sort_order: 1 },
+  ];
+  assert.deepEqual(resolveLineImageGallery({ image_gallery: gallery }), gallery);
+});
+
+test("resolveLineImageGallery: filters out any entry with no usable image_ref, rather than crashing the +N count", () => {
+  const gallery = [
+    { image_ref: "https://x/a.jpg", role: "primary" },
+    { role: "front" },
+    { image_ref: "", role: "back" },
+    null,
+  ];
+  assert.deepEqual(resolveLineImageGallery({ image_gallery: gallery }), [
+    { image_ref: "https://x/a.jpg", role: "primary" },
+  ]);
 });

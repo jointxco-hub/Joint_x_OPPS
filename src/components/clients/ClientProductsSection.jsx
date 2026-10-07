@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Package, Plus, X, ExternalLink, Image as ImageIcon, Eye } from "lucide-react";
+import { Package, Plus, X, ExternalLink, Image as ImageIcon, Eye, Star, ArrowLeft, ArrowRight, Trash2 } from "lucide-react";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
@@ -34,7 +34,15 @@ import { toStaffMessage } from "@/lib/pgErrorMessages";
 import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEditor";
 import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
 import TreatmentsSection from "@/components/composition/TreatmentsSection";
-import { getClientProductPriceComposition } from "@/api/xosClientProduct";
+import {
+  getClientProductPriceComposition,
+  getClientProductImages,
+  addClientProductImage,
+  setClientProductImageRole,
+  reorderClientProductImages,
+  retireClientProductImage,
+  CLIENT_PRODUCT_IMAGE_ROLES,
+} from "@/api/xosClientProduct";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
@@ -262,8 +270,9 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
         </div>
 
         <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
+          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-5">
             <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="pictures">Pictures</TabsTrigger>
             <TabsTrigger value="artwork">Artwork</TabsTrigger>
             <TabsTrigger value="production">Production</TabsTrigger>
             <TabsTrigger value="status">Status</TabsTrigger>
@@ -272,6 +281,9 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             <TabsContent value="details" className="mt-0">
               <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
+            </TabsContent>
+            <TabsContent value="pictures" className="mt-0">
+              <PicturesTab product={product} clientId={clientId} onPreview={setPreview} />
             </TabsContent>
             <TabsContent value="artwork" className="mt-0">
               <ArtworkTab
@@ -448,6 +460,127 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
           confirmVerb="Use"
           onClose={() => setShowThumbPicker(false)}
           onConfirm={([asset]) => asset && thumbnailMutation.mutate(asset)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Pictures tab ──────────────────────────────────────────────────────
+// MULTI-PICTURE PRODUCT ITEM LINE — commercial/display pictures only
+// (Primary/Front/Back/Detail/Reference). Deliberately separate from the
+// Artwork tab, which is production print files - never mixed here.
+const ROLE_LABEL = { primary: "Primary", front: "Front", back: "Back", detail: "Detail", reference: "Reference" };
+
+function PicturesTab({ product, clientId, onPreview }) {
+  const queryClient = useQueryClient();
+  const [showPicker, setShowPicker] = useState(false);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["clientProductImages", product.id],
+    queryFn: () => getClientProductImages({ clientProductId: product.id }),
+  });
+  const gallery = Array.isArray(data?.data?.gallery) ? data.data.gallery : [];
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["clientProductImages", product.id] });
+
+  const addMutation = useMutation({
+    mutationFn: (asset) => addClientProductImage({ clientProductId: product.id, assetId: asset.id, imageRef: asset.file_url, role: "reference" }),
+    onSuccess: (res) => { if (res.error) { toast.error(res.error); return; } toast.success("Picture added"); setShowPicker(false); invalidate(); },
+    onError: (error) => toast.error(error?.message || "Could not add picture"),
+  });
+  const roleMutation = useMutation({
+    mutationFn: ({ imageId, role }) => setClientProductImageRole({ imageId, role }),
+    onSuccess: (res) => { if (res.error) { toast.error(res.error); return; } invalidate(); },
+    onError: (error) => toast.error(error?.message || "Could not change role"),
+  });
+  const reorderMutation = useMutation({
+    mutationFn: (orderedIds) => reorderClientProductImages({ clientProductId: product.id, orderedIds }),
+    onSuccess: (res) => { if (res.error) { toast.error(res.error); return; } invalidate(); },
+    onError: (error) => toast.error(error?.message || "Could not reorder"),
+  });
+  const retireMutation = useMutation({
+    mutationFn: (imageId) => retireClientProductImage({ imageId }),
+    onSuccess: (res) => { if (res.error) { toast.error(res.error); return; } toast.success("Picture removed"); invalidate(); },
+    onError: (error) => toast.error(error?.message || "Could not remove picture"),
+  });
+
+  const move = (index, direction) => {
+    const next = [...gallery];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    reorderMutation.mutate(next.map((g) => g.id).filter(Boolean));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-slate-500">Commercial pictures shown to staff and (where allowed) the client — never production print files.</p>
+        <Button variant="outline" size="sm" onClick={() => setShowPicker(true)}><Plus className="mr-1 h-3.5 w-3.5" /> Add picture</Button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-slate-400">Loading…</p>
+      ) : gallery.length === 0 ? (
+        <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-slate-400">No pictures yet</div>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          {gallery.map((img, index) => (
+            <div key={img.id || index} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
+              <button
+                type="button"
+                className="relative block h-20 w-full overflow-hidden rounded-md bg-slate-100"
+                onClick={() => onPreview({ value: img.image_ref, title: ROLE_LABEL[img.role] || img.role })}
+              >
+                <SecureImage value={img.image_ref} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
+                {img.role === "primary" && (
+                  <span className="absolute left-1 top-1 flex items-center gap-0.5 rounded-full bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 shadow-sm">
+                    <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-400" /> Primary
+                  </span>
+                )}
+              </button>
+              <Select value={img.role} onValueChange={(role) => roleMutation.mutate({ imageId: img.id, role })} disabled={!img.id}>
+                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {CLIENT_PRODUCT_IMAGE_ROLES.map((r) => (
+                    <SelectItem key={r} value={r} className="text-xs">{ROLE_LABEL[r]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex items-center justify-between">
+                <div className="flex gap-0.5">
+                  <Button variant="ghost" size="icon" className="h-6 w-6" disabled={index === 0 || !img.id} onClick={() => move(index, -1)}><ArrowLeft className="h-3 w-3" /></Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" disabled={index === gallery.length - 1 || !img.id} onClick={() => move(index, 1)}><ArrowRight className="h-3 w-3" /></Button>
+                </div>
+                <Button
+                  variant="ghost" size="icon" className="h-6 w-6 text-red-500 hover:text-red-600"
+                  disabled={!img.id}
+                  title={!img.id ? "Set via Details tab" : "Remove"}
+                  onClick={() => retireMutation.mutate(img.id)}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {gallery.some((g) => !g.id) && (
+        <p className="text-[11px] text-slate-400">The legacy thumbnail (set from the Details tab) shows here until at least one picture is added directly.</p>
+      )}
+
+      {showPicker && (
+        <ClientAssetPickerModal
+          clientId={clientId}
+          selectionMode="single"
+          defaultCategory="Mockups"
+          uploadCategory="Mockups"
+          title="Add picture"
+          description="Pick an existing client file or upload a new one. New pictures start as Reference — assign a role above."
+          confirmVerb="Add"
+          onClose={() => setShowPicker(false)}
+          onConfirm={([asset]) => asset && addMutation.mutate(asset)}
         />
       )}
     </div>
