@@ -95,6 +95,15 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // controls - lines with no matching client product render exactly as
   // before.
   const queryClient = useQueryClient();
+
+  // Production readiness is derived from the current frozen snapshots.
+  // Any snapshot/revision mutation must invalidate BOTH the snapshot query
+  // and the server-computed readiness query so the operator never sees
+  // blockers from the previous revision.
+  const refreshLineProductionState = () => {
+    refreshLineProductionState();
+    queryClient.invalidateQueries({ queryKey: ["orderLineProductionReadiness", order.id] });
+  };
   const { data: currentUser } = useQuery({
     queryKey: ["currentUser"],
     queryFn: () => dataClient.auth.me(),
@@ -493,7 +502,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const confirmAttach = useMutation({
     mutationFn: async () => writeAttachSnapshots(pendingResolution),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      refreshLineProductionState();
       setPendingResolution(null);
       toast.success("Composition attached to this line");
     },
@@ -610,7 +619,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           snapshotOutcome = "needs_review";
         } else {
           await writeAttachSnapshots(result);
-          queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+          refreshLineProductionState();
         }
       } catch (err) {
         // The commercial lines are already created and safe (idempotent
@@ -802,7 +811,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       return { clientProductCreated, created };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      refreshLineProductionState();
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
       setAddingPrintOptionLineId("");
       setPrintOptionForm(emptyPrintOptionForm());
@@ -884,7 +893,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       return data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      refreshLineProductionState();
       queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] });
       const rev = data?.snapshot?.revision;
       toast.success(rev ? `Production updated — revision ${rev}` : "Production updated");
@@ -893,7 +902,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     onError: (err) => {
       const msg = err?.message || "Could not update production";
       if (msg.includes("SNAPSHOT_REVISION_STALE")) {
-        queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+        refreshLineProductionState();
         toast.error("Another change was saved first — this component was reloaded. Re-open Edit production and try again.");
         setEditingSnapshot(null);
       } else {
@@ -928,7 +937,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       return revised.data;
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      refreshLineProductionState();
       queryClient.invalidateQueries({ queryKey: ["clientProductArtworkForOrder"] });
       queryClient.invalidateQueries({ queryKey: ["orderLineProductionTracking", order.id] });
       const rev = data?.snapshot?.revision;
@@ -938,7 +947,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     onError: (err) => {
       const msg = err?.message || "Could not link artwork";
       if (msg.includes("SNAPSHOT_REVISION_STALE")) {
-        queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+        refreshLineProductionState();
         toast.error("Another change was saved first — this component was reloaded. Open the picker again to relink.");
         setArtworkPickerSnapshot(null);
       } else if (msg.includes("SNAPSHOT_ARTWORK_RELINK_NO_CHANGE")) {
@@ -1178,7 +1187,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       // onUpdate's own follow-up write is then a true no-op (identical
       // value), reusing the existing sync path without inventing a new one.
       onUpdate(order.id, { products: freshOrder.products });
-      queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
+      refreshLineProductionState();
       pendingDuplicateTargetIdsRef.current.delete(variables.sourceLineId);
 
       const count = data?.cloned_component_count;
