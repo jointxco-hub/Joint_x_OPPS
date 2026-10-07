@@ -33,9 +33,9 @@ test("handoff reuses the canonical production-readiness computation", async () =
 test("handoff rejects non-print snapshots and carries frozen artwork revision ids", async () => {
   const src = await readSource();
   assert.ok(src.includes("PRINT_PREP_HANDOFF_NOT_PRINT_COMPONENT"));
-  assert.ok(src.includes("'revision_ids', coalesce(v_snapshot.artwork_revision_ids"));
+  assert.ok(src.includes("'revision_ids', to_jsonb(coalesce(v_snapshot.artwork_revision_ids"));
   assert.ok(src.includes("from public.client_product_artwork a"));
-  assert.ok(src.includes("where a.id in"));
+  assert.ok(src.includes("where a.id = any (v_snapshot.artwork_revision_ids)"));
 });
 
 test("handoff contract is software-agnostic and does not expose Corel identity as canonical data", async () => {
