@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
+import PrintPrepHandoffDialog from "@/components/orders/PrintPrepHandoffDialog";
 import { isImageReference } from "@/lib/imageReference";
 import { PRODUCTION_METHODS, PRODUCTION_DETAIL_STAGES, PRINT_COMPONENT_METHODS, PLACEMENT_PRESETS } from "@/lib/productionStages";
 import { computeCompositionPricing, toMoney } from "@/lib/compositionPricing";
@@ -66,6 +67,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // client_product, activity events, or snapshots - purely a read/display
   // action, entirely separate from "Set/Change thumbnail" above.
   const [quickPreview, setQuickPreview] = useState(null);
+  // Read-only OPPS -> Print Prep handoff. The RPC returns a frozen-snapshot
+  // contract; opening this dialog never mutates the order or production state.
+  const [printPrepHandoff, setPrintPrepHandoff] = useState(null);
 
   const { data: catalogItems = [] } = useQuery({
     queryKey: ["catalogItems"],
@@ -1661,6 +1665,11 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   onChangeArtwork={(snapshot) => setArtworkPickerSnapshot(snapshot)}
                   relinkingArtworkSnapshotId={relinkArtwork.isPending ? artworkPickerSnapshot?.id : ""}
                   onPreview={(value, title) => setQuickPreview({ value, title, subtitle: "Linked artwork" })}
+                  onOpenPrintPrepHandoff={(snapshot) => setPrintPrepHandoff({
+                    orderId: order.id,
+                    lineId: p.line_id,
+                    snapshotId: snapshot.id,
+                  })}
                 />
               )}
               </div>
@@ -2163,6 +2172,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         subtitle={quickPreview?.subtitle}
       />
 
+      <PrintPrepHandoffDialog
+        open={Boolean(printPrepHandoff)}
+        onClose={() => setPrintPrepHandoff(null)}
+        orderId={printPrepHandoff?.orderId}
+        lineId={printPrepHandoff?.lineId}
+        snapshotId={printPrepHandoff?.snapshotId}
+      />
+
       {/* Phase 1E - Edit production. Compact modal, preloads current
           values, shows Rev N, explains Save creates a new revision.
           Cancel writes nothing. */}
@@ -2306,6 +2323,7 @@ function LineProduction({
   currentArtworkForClientProduct, onArtworkLinked,
   onReviewForMyProducts, reviewingForMyProducts,
   artworkById, onEditProduction, onChangeArtwork, relinkingArtworkSnapshotId, onPreview,
+  onOpenPrintPrepHandoff,
 }) {
   const hasSnapshots = snapshots.length > 0;
   // ORDERS CLIENT-PRODUCT REUSE PHASE 2 - the server RPC is authoritative;
@@ -2571,6 +2589,17 @@ function LineProduction({
                   >
                     Rev {snapshot.revision || 1}
                   </span>
+                  {snapshot.component_type === "print_service" && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPrintPrepHandoff?.(snapshot)}
+                      disabled={readinessStatus === "blocked"}
+                      title={readinessStatus === "blocked" ? "Resolve production blockers before sending this component to Print Prep" : "Create a read-only Print Prep handoff from this frozen production component"}
+                      className="flex flex-shrink-0 items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Factory className="h-2.5 w-2.5" /> Print Prep
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onEditProduction?.(snapshot)}
