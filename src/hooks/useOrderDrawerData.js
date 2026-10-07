@@ -186,7 +186,9 @@ export function useOrderDrawerData(order, activeTab = "details") {
     retry: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchOnMount: false,
+    // Reopening must refresh decisions made while this drawer was closed.
+    // An invalidated inactive query otherwise keeps its old blocker forever.
+    refetchOnMount: "always",
   });
 
   useEffect(() => {
