@@ -1,4 +1,5 @@
 import { productionWorkflowRpc } from "@/api/productionWorkflowResolution";
+import ArtworkDownloadButton from "@/components/orders/ArtworkDownloadButton";
 import { useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2715,7 +2716,7 @@ function LineProduction({
                         </button>
                       </div>
                       {linked ? (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           {isImageReference(linked.file_path) && (
                             <SecureImage
                               value={linked.file_path}
@@ -2740,6 +2741,8 @@ function LineProduction({
                           >
                             View
                           </button>
+                          <ArtworkDownloadButton filePath={linked.file_path} fileName={linked.file_name || "Artwork"}
+                            className="flex-shrink-0 rounded-full border border-slate-300 bg-background px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50" />
                         </div>
                       ) : (
                         <p className="text-slate-500">

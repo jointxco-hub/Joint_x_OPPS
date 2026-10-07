@@ -3,6 +3,7 @@ import { Clipboard, Download, Factory, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getPrintPrepHandoff, printPrepHandoffFileName } from "@/api/printPrepHandoff";
 import { Button } from "@/components/ui/button";
+import ArtworkDownloadButton from "@/components/orders/ArtworkDownloadButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 function downloadJson(payload) {
@@ -98,6 +99,16 @@ export default function PrintPrepHandoffDialog({ open, onClose, orderId, lineId,
               )}
             </div>
 
+            <div className="space-y-2">
+              {(payload.artwork?.assets || []).map((asset) => (
+                <div key={asset.revision_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border p-3">
+                  <span className="min-w-0 break-all text-xs">{asset.display_name || "Artwork"}</span>
+                  <ArtworkDownloadButton filePath={asset.file_path} fileName={asset.display_name || "Artwork"}
+                    className="rounded-lg border border-border px-3 py-2 text-xs font-semibold disabled:opacity-50" />
+                </div>
+              ))}
+            </div>
+
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1 rounded-xl" onClick={copyPayload}>
                 <Clipboard className="mr-2 h-4 w-4" />
@@ -110,7 +121,7 @@ export default function PrintPrepHandoffDialog({ open, onClose, orderId, lineId,
             </div>
 
             <p className="text-[11px] text-muted-foreground">
-              Next slice will let Print Prep import this contract directly. No order or production record is changed by creating this handoff.
+              Import the handoff into Print Prep, then download and select the matching artwork in Corel. Creating this handoff does not change the order or production record.
             </p>
           </div>
         )}
