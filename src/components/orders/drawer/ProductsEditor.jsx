@@ -1,3 +1,4 @@
+import { productionWorkflowRpc } from "@/api/productionWorkflowResolution";
 import { useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -104,6 +105,18 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
     queryClient.invalidateQueries({ queryKey: ["orderLineProductionReadiness", order.id] });
   };
+  const saveProductionScope = useMutation({
+    mutationFn: (/** @type {{lineId: string, scope: string}} */ { lineId, scope }) => productionWorkflowRpc("set_order_line_production_scope", {
+      p_order_id: /** @type {any} */ (order).id, p_line_id: lineId, p_scope: scope,
+    }),
+    onSuccess: (freshOrder) => {
+      onUpdate(/** @type {any} */ (order).id, { products: freshOrder.products, updated_at: freshOrder.updated_at }, { skipServerWrite: true });
+      refreshLineProductionState();
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      toast.success("Production scope updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
   const { data: currentUser } = useQuery({
     queryKey: ["currentUser"],
     queryFn: () => dataClient.auth.me(),
@@ -1617,6 +1630,10 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               )}
               {isProductionCapableLine(p) && (
                 <LineProduction
+                  productionScope={p.production_scope || "garment_and_print"}
+                  scopeLocked={locked || ["in_production", "ready", "shipped", "delivered", "cancelled"].includes(/** @type {any} */ (order).status)}
+                  savingScope={saveProductionScope.isPending}
+                  onChangeScope={(scope) => saveProductionScope.mutate({ lineId: p.line_id, scope })}
                   clientProduct={clientProductForLine(p)}
                   readiness={readinessByLineId.get(p.line_id) || null}
                   snapshots={snapshotsByLineId.get(p.line_id) || []}
@@ -2332,7 +2349,7 @@ function LineProduction({
   currentArtworkForClientProduct, onArtworkLinked,
   onReviewForMyProducts, reviewingForMyProducts,
   artworkById, onEditProduction, onChangeArtwork, relinkingArtworkSnapshotId, onPreview,
-  onOpenPrintPrepHandoff,
+  onOpenPrintPrepHandoff, productionScope, scopeLocked, savingScope, onChangeScope,
 }) {
   const hasSnapshots = snapshots.length > 0;
   // ORDERS CLIENT-PRODUCT REUSE PHASE 2 - the server RPC is authoritative;
@@ -2390,6 +2407,17 @@ function LineProduction({
           </>
         )}
       </button>
+
+      {expanded && hasSnapshots && (
+        <label className="mt-2 block text-xs text-muted-foreground">
+          Joint X supplies
+          <select aria-label="Production supply scope" className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-2 text-sm text-foreground" value={productionScope} disabled={scopeLocked || savingScope} onChange={(e) => onChangeScope?.(e.target.value)}>
+            <option value="garment_and_print">Garment and print</option>
+            <option value="print_only">Print only · no garment supplied</option>
+          </select>
+          <span className="mt-1 block">Print-only scope keeps artwork, approval and production checks.</span>
+        </label>
+      )}
 
       {expanded && readinessLoaded && (blockingReasons.length > 0 || warnings.length > 0) && (
         <div className="mt-1.5 space-y-1">
