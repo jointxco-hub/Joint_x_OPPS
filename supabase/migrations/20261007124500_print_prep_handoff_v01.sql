@@ -165,8 +165,7 @@ begin
       'assets', v_artwork_assets
     ),
     'production', jsonb_build_object(
-      'target_width_mm', null,
-      'target_height_mm', null,
+      'sizing', null,
       'resize_mode', 'size_as_one',
       'line_quantity', v_line_qty,
       'quantity_per_unit', v_qty_per_unit,
