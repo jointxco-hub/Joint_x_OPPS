@@ -15,6 +15,7 @@ import { computeOrderTotal } from "@/lib/orderTotal";
 import { useWorkspace } from "@/lib/WorkspaceContext";
 import { listQuickSolutionStaffCatalog } from "@/lib/quickSolutionStaffCatalog";
 import QuickSolutionOrderLine from "@/components/orders/QuickSolutionOrderLine";
+import { normalizeOrderLineMoney } from "@/lib/orderLineMoney";
 
 /**
  * Fuzzy score between query and target string.
@@ -50,11 +51,19 @@ function fileNameFromUrl(url = "") {
   }
 }
 
-function normalizeRepeatProduct(product = {}) {
+// HOTFIX A - the new draft row this builds always uses the native OPPS
+// convention (price = unit price, see src/lib/orderLineMoney.js), because
+// the repeated order it becomes is a brand-new, staff-created order. The
+// OLD fallback here (`price || unit_price || line_total`) could take a
+// source line's already-multiplied total as if it were per-unit; passing
+// the SOURCE order lets the shared normalizer resolve that correctly
+// before it's ever assigned to `price` on the new draft.
+function normalizeRepeatProduct(product = {}, sourceOrder) {
+  const money = normalizeOrderLineMoney(product, sourceOrder);
   return {
     name: product.name || product.product_name || product.title || "Repeat item",
     quantity: product.quantity || 1,
-    price: product.price || product.unit_price || product.line_total || "",
+    price: money.trusted && money.unitPrice != null ? money.unitPrice : "",
     size: product.size || product.variant_size || "",
     color: product.color || product.colour || product.variant_color || "",
     notes: product.notes || product.production_notes || product.description || "",
@@ -788,7 +797,7 @@ export default function NewOrderDrawer({ onClose, onCreate }) {
                           type="button"
                           onClick={() => {
                             const repeatProducts = Array.isArray(order.products)
-                              ? order.products.filter(Boolean).map(normalizeRepeatProduct)
+                              ? order.products.filter(Boolean).map((product) => normalizeRepeatProduct(product, order))
                               : [];
                             if (!repeatProducts.length) {
                               toast.info("That order has no structured product lines yet.");

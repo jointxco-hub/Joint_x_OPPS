@@ -74,7 +74,7 @@ export default function OrderLinkPanel({
   }, [candidateOrdersQuery.data, search]);
 
   const openLinkPreview = (order) => {
-    const diff = buildOrderInvoiceSyncPlan(order.products, invoice.items || []).diff;
+    const diff = buildOrderInvoiceSyncPlan(order.products, invoice.items || [], undefined, order).diff;
     setPickerOpen(false);
     setConfirmAction({ mode: "link", order, diff });
   };
@@ -85,7 +85,7 @@ export default function OrderLinkPanel({
       orderApplyShippingFee: linkedOrderQuery.data.apply_shipping_fee,
       orderShippingFee: linkedOrderQuery.data.shipping_fee,
       invoiceShippingCharge: invoice.shipping_charge,
-    }).diff;
+    }, linkedOrderQuery.data).diff;
     setConfirmAction({ mode: "sync", order: linkedOrderQuery.data, diff });
   };
 

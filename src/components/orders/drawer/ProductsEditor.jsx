@@ -20,6 +20,7 @@ import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice
 import { xosAddComposedClientProductToOrder, mapXosComposedAddError } from "@/api/xosClientProduct";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
+import { normalizeOrderLineMoney } from "@/lib/orderLineMoney";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 import { selectableClientProductsForOrder, clientProductToPickerItem, applyClientProductPickToNewRow, clientProductStatusLabel } from "@/features/orders/clientProductPicker";
 import { getClientProductApprovals, hasCurrentRevisionApproval, currentRevisionApprovalRecord } from "@/api/clientProductApprovals";
@@ -1277,10 +1278,22 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // but it is NOT a unit - excluded from the unit count so "N units"
   // stays honest. A reserved "breakdown" line (schema-legal, not emitted
   // by anything yet) is informational only and is never billed.
+  // HOTFIX A — `price`/`unit_price`/`line_total` mean different things on
+  // different lines (native OPPS, Commerce storefront, legacy X LAB); see
+  // src/lib/orderLineMoney.js. A line whose money fields can't be
+  // confidently interpreted contributes nothing to productLineTotal and
+  // flags hasUntrustedLineMoney, which gates the "Apply total" action
+  // below - a wrong recomputed total must never be offered for write.
+  let hasUntrustedLineMoney = false;
   const productLineTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
     if (product.line_role === "breakdown") return sum;
-    return sum + (Number(product.price || 0) * Number(product.quantity || 1));
+    const normalized = normalizeOrderLineMoney(product, order);
+    if (!normalized.trusted) {
+      hasUntrustedLineMoney = true;
+      return sum;
+    }
+    return sum + (normalized.lineTotal || 0);
   }, 0);
   const productQuantityTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
@@ -1293,7 +1306,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     applyShippingFee: order.apply_shipping_fee,
     shippingFee: order.shipping_fee,
   });
-  const canApplyProductTotal = orderTotalWithShipping.total > 0 && Math.abs(orderTotalWithShipping.total - orderTotal) > 0.009;
+  const canApplyProductTotal = !hasUntrustedLineMoney
+    && orderTotalWithShipping.total > 0
+    && Math.abs(orderTotalWithShipping.total - orderTotal) > 0.009;
 
   const updateQuantity = (idx, delta) => {
     if (locked) return;
@@ -1461,6 +1476,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               Apply total
             </button>
           )}
+          {!canApplyProductTotal && hasUntrustedLineMoney && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800"
+              title="One or more lines have a price field OPPS can't confidently interpret as a unit price or a line total - review them before the order total can be recalculated."
+            >
+              <AlertTriangle className="h-3 w-3" /> Line pricing needs review
+            </span>
+          )}
           {!addMode && (
             <button type="button" onClick={() => setAddMode(true)} className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">
               <Plus className="w-3 h-3" /> Add
@@ -1477,6 +1500,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         )}
         {products.map((/** @type {any} */ rawProduct, /** @type {number} */ i) => {
           const p = cleanProduct(rawProduct);
+          const lineMoney = normalizeOrderLineMoney(p, order);
           return editingIdx === i ? (
             <div key={i} className="grid gap-2 bg-card rounded-lg px-2 py-2 border border-border sm:grid-cols-[1fr_56px_84px]">
               <Input value={editRow.name} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, name: e.target.value }))}
@@ -1678,9 +1702,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                     </button>
                   </>
                 )}
-                {p.price && (
+                {lineMoney.trusted && lineMoney.lineTotal > 0 && (
                   <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
-                    {formatMoney(Number(p.price) * Number(p.quantity || 1))}
+                    {formatMoney(lineMoney.lineTotal)}
+                  </span>
+                )}
+                {!lineMoney.trusted && (
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800"
+                    title="This line's price field can't be confidently interpreted as a unit price or a line total."
+                  >
+                    Price unclear
                   </span>
                 )}
                 {!locked && (
