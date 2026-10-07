@@ -101,7 +101,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // and the server-computed readiness query so the operator never sees
   // blockers from the previous revision.
   const refreshLineProductionState = () => {
-    refreshLineProductionState();
+    queryClient.invalidateQueries({ queryKey: ["orderLineComponentSnapshots", order.id] });
     queryClient.invalidateQueries({ queryKey: ["orderLineProductionReadiness", order.id] });
   };
   const { data: currentUser } = useQuery({
