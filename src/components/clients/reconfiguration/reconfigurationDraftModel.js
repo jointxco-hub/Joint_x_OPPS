@@ -241,31 +241,42 @@ export function mapDraftComponentToBackendFields(component) {
   }
 }
 
-// SAVE V1 — the exact p_components payload the save RPC expects. Every
-// entry maps straight to the RPC's own per-entry contract (action,
-// source_id, component_type, billing_mode, default_sell_price,
-// quantity_per_unit, label) - no price arithmetic, no derived total.
-// New-then-removed rows are never included, by construction. Existing,
-// untouched rows are still sent as 'update' (safely idempotent on the
-// server) rather than diffed - the smallest-state option for this slice.
-//
-// SAVE V1.1 SLICE 2 — a row with isNew still true is sent as action:
-// "insert" (never with a source_id). component_type/billing_mode come
-// from the SAME mapDraftComponentToBackendFields() call update rows use -
-// since addDraftComponent() seeds storedType with the staff-chosen type,
-// the "preserve the stored type when role is unchanged" branch applies
-// to a new row exactly as it does an existing one. quantity_per_unit is
-// always 1 for a new row - these four commercial types are never a BOM-
-// consumption quantity, so the row's own (fixed) quantityPerUnit is used
-// unconditionally rather than read from user input.
-export function buildSaveComponentPayload(draftComponents) {
+// SAVE V1.2 SLICE 1 — one shared diff, used by both the Save payload and
+// the before/after review (buildComponentChangeSummary below), so there
+// is exactly one place that decides "did this row actually change" -
+// never two parallel algorithms that could quietly disagree. Compares
+// only the five fields the Save RPC can actually write (component_type,
+// billing_mode, default_sell_price, quantity_per_unit, label) against
+// the row's live, currently-stored values. An existing row identical to
+// its live counterpart is left out of the payload entirely (never sent
+// as a no-op 'update') and is absent from `changed`; new/removed rows
+// are unaffected - insert/remove always fire exactly as before. If a
+// row's live counterpart can't be found at all (should not happen in
+// practice), it is treated as changed rather than silently dropped -
+// the safe default when a diff can't be proven.
+function diffDraftComponents(liveComponents, draftComponents) {
+  const liveFamily = (Array.isArray(liveComponents) ? liveComponents : []).filter(
+    (c) => !c.garment_variant_id && !c.treatment_id && c.is_active !== false
+  );
+  const liveById = new Map(liveFamily.map((c) => [c.id, c]));
   const rows = Array.isArray(draftComponents) ? draftComponents : [];
+
   const payload = [];
+  const added = [];
+  const changed = [];
+  const removed = [];
+
   for (const c of rows) {
-    if (c.isNew && c.removed) continue; // added then removed before save - never sent
+    if (c.isNew && c.removed) continue; // added then removed before save - never sent, never shown
 
     if (!c.isNew && c.removed) {
+      const live = liveById.get(c.sourceId);
       payload.push({ action: "remove", source_id: c.sourceId });
+      removed.push({
+        label: live?.label || c.label || "(no label)",
+        componentType: live?.component_type || c.storedType || "unknown",
+        price: live?.default_sell_price ?? null,
+      });
       continue;
     }
 
@@ -274,18 +285,77 @@ export function buildSaveComponentPayload(draftComponents) {
       ? 1
       : (c.quantityPerUnit == null || c.quantityPerUnit === "" ? 1 : Number(c.quantityPerUnit));
     const price = c.defaultSellPrice == null || c.defaultSellPrice === "" ? null : Number(c.defaultSellPrice);
+    const label = c.label || null;
+
+    if (c.isNew) {
+      payload.push({
+        action: "insert",
+        source_id: null,
+        component_type: mapped.component_type,
+        billing_mode: mapped.billing_mode,
+        default_sell_price: price,
+        quantity_per_unit: qty,
+        label,
+      });
+      added.push({ label, componentType: mapped.component_type, price });
+      continue;
+    }
+
+    const live = liveById.get(c.sourceId);
+    const liveIsIdentical =
+      live &&
+      live.component_type === mapped.component_type &&
+      (live.billing_mode || "per_unit") === mapped.billing_mode &&
+      (live.default_sell_price == null ? null : Number(live.default_sell_price)) === price &&
+      Number(live.quantity_per_unit ?? 1) === qty &&
+      (live.label || null) === label;
+
+    if (liveIsIdentical) continue; // unchanged - omit from payload and from the review
 
     payload.push({
-      action: c.isNew ? "insert" : "update",
-      source_id: c.isNew ? null : c.sourceId,
+      action: "update",
+      source_id: c.sourceId,
       component_type: mapped.component_type,
       billing_mode: mapped.billing_mode,
       default_sell_price: price,
       quantity_per_unit: qty,
-      label: c.label || null,
+      label,
+    });
+    changed.push({
+      label: label || live?.label || "(no label)",
+      componentType: mapped.component_type,
+      oldPrice: live?.default_sell_price ?? null,
+      newPrice: price,
     });
   }
-  return payload;
+
+  return { payload, added, changed, removed };
+}
+
+// SAVE V1 — the exact p_components payload the save RPC expects. Every
+// entry maps straight to the RPC's own per-entry contract (action,
+// source_id, component_type, billing_mode, default_sell_price,
+// quantity_per_unit, label) - no price arithmetic, no derived total.
+// New-then-removed rows are never included, by construction.
+//
+// SAVE V1.2 SLICE 1 — an existing row identical to its live stored
+// values is now omitted entirely rather than resent as a no-op
+// 'update' (see diffDraftComponents above). SAVE V1.1 SLICE 2 — a row
+// with isNew still true is sent as action: "insert" (never with a
+// source_id); quantity_per_unit is always 1 for a new row.
+export function buildSaveComponentPayload(liveComponents, draftComponents) {
+  return diffDraftComponents(liveComponents, draftComponents).payload;
+}
+
+// SAVE V1.2 SLICE 1 — the before/after review's data source. Raw stored
+// values only (label, component type, price, old price, new price) -
+// never a computed total, never anything the resolver itself owns.
+// Built from the exact same diff buildSaveComponentPayload uses, so the
+// review can never show a change that wasn't actually sent, or omit one
+// that was.
+export function buildComponentChangeSummary(liveComponents, draftComponents) {
+  const { added, changed, removed } = diffDraftComponents(liveComponents, draftComponents);
+  return { added, changed, removed };
 }
 
 // SAVE V1.1 SLICE 2 — a pending new row needs a real label and a valid

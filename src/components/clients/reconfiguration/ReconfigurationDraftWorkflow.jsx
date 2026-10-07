@@ -26,6 +26,7 @@ import {
   describeComponentChanges,
   hasPricingAffectingComponentChanges,
   buildSaveComponentPayload,
+  buildComponentChangeSummary,
   isPendingNewComponentValid,
   buildInitialProduction,
 } from "./reconfigurationDraftModel";
@@ -172,6 +173,8 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const [newComponentBillingMode, setNewComponentBillingMode] = useState(NEW_COMPONENT_TYPE_OPTIONS[0].defaultBillingMode);
   const [newComponentLabel, setNewComponentLabel] = useState("");
   const [newComponentPrice, setNewComponentPrice] = useState("");
+  const [showBlankGarmentTemplate, setShowBlankGarmentTemplate] = useState(false);
+  const [blankGarmentPrice, setBlankGarmentPrice] = useState("");
   const [divergenceReason, setDivergenceReason] = useState(null);
   const [divergenceNote, setDivergenceNote] = useState("");
   const [incompleteAck, setIncompleteAck] = useState(false);
@@ -291,6 +294,25 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
   const roleGroups = useMemo(() => groupByRole(draftComponents), [draftComponents]);
   const componentChanges = useMemo(() => describeComponentChanges(draftComponents), [draftComponents]);
 
+  // SAVE V1.2 SLICE 1 — computed exactly once and reused everywhere a
+  // "what would Save actually send / change" answer is needed (the
+  // mutation payload, the no-op check, and the before/after review) -
+  // deliberately the same diff, not a second parallel algorithm that
+  // could disagree with the first.
+  const componentPayload = useMemo(
+    () => buildSaveComponentPayload(components, draftComponents),
+    [components, draftComponents]
+  );
+  const componentChangeSummary = useMemo(
+    () => buildComponentChangeSummary(components, draftComponents),
+    [components, draftComponents]
+  );
+  // Classification is session/review context only - never persisted on
+  // client_products - so a classification-only edit is deliberately NOT
+  // enough to make Save active; only an actual price or component change
+  // (the same two things the payload itself is built from) does.
+  const noOpSave = !priceChanged && componentPayload.length === 0;
+
   // ── SAVE V1 wiring ──────────────────────────────────────────────────
   const queryClient = useQueryClient();
 
@@ -327,7 +349,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
         expectedFingerprint,
         agreedPriceAction,
         newAgreedPrice: agreedPriceAction === "set" ? proposedNum : null,
-        components: buildSaveComponentPayload(draftComponents),
+        components: componentPayload,
         classification,
         divergenceReason: reasonRequired ? divergenceReason : null,
         // Sent regardless of which reason was chosen - the server already
@@ -459,6 +481,28 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
     }));
     setNewComponentLabel("");
     setNewComponentPrice("");
+  };
+
+  // SAVE V1.2 SLICE 1 — a thin convenience wrapper around the SAME
+  // addDraftComponent used above; it does not touch proposedAgreedPrice,
+  // does not remove any existing row, and does not call saveMutation -
+  // the new row simply enters the normal draft flow (editable in the
+  // list above, validated by isPendingNewComponentValid, visible in the
+  // Step 7 review, and only ever sent once the staff member presses
+  // Save at Step 8 like any other change).
+  const blankGarmentLabel = `${product.client_facing_name || "Product"} blank garment`;
+  const blankGarmentPriceValid =
+    blankGarmentPrice !== "" && Number.isFinite(Number(blankGarmentPrice)) && Number(blankGarmentPrice) >= 0;
+  const handleUseBlankGarmentTemplate = () => {
+    if (!blankGarmentPriceValid) return;
+    setDraftComponents((rows) => addDraftComponent(rows, {
+      componentType: "blank_garment",
+      billingMode: "per_unit",
+      label: blankGarmentLabel,
+      defaultSellPrice: blankGarmentPrice,
+    }));
+    setShowBlankGarmentTemplate(false);
+    setBlankGarmentPrice("");
   };
 
   return (
@@ -609,6 +653,10 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
           {step === 3 && (
             <div>
               <StepHeader title="Component draft" subtitle="Edits here are local only. Nothing is written to any component row." />
+              <p className="mb-3 rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">
+                <b className="text-slate-600">Commercial pricing components:</b> blank garment, print service, setup fee, add-on.{" "}
+                <b className="text-slate-600">Production/BOM components:</b> material, packaging, labour, other — these do not automatically contribute to the commercial price.
+              </p>
               {COMPONENT_ROLE_OPTIONS.map((opt) => (
                 <div key={opt.value} className="mb-3">
                   <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">{opt.label}</p>
@@ -675,6 +723,37 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                   {invalidPendingNewComponents.length} new component(s) need a label and a valid price before they can be saved.
                 </div>
               )}
+
+              <div className="mb-3 rounded-lg border border-dashed border-slate-300 p-2.5">
+                <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">Shortcut</p>
+                {!showBlankGarmentTemplate ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowBlankGarmentTemplate(true)} className="w-full">
+                    Use blank-garment-only template
+                  </Button>
+                ) : (
+                  <div>
+                    <p className="text-[11px] text-slate-500">
+                      Adds one commercial component — "{blankGarmentLabel}", billed per unit. The agreed price is not changed automatically; set it in the Commercial step and press Save as usual.
+                    </p>
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      value={blankGarmentPrice}
+                      onChange={(e) => setBlankGarmentPrice(e.target.value)}
+                      placeholder="Sell price (required)"
+                      className="mt-2 h-8 text-xs"
+                    />
+                    <div className="mt-2 flex gap-2">
+                      <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => { setShowBlankGarmentTemplate(false); setBlankGarmentPrice(""); }}>
+                        Cancel
+                      </Button>
+                      <Button type="button" size="sm" className="flex-1" disabled={!blankGarmentPriceValid} onClick={handleUseBlankGarmentTemplate}>
+                        Create component
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="rounded-lg border border-dashed border-slate-300 p-2.5">
                 <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">Add commercial component</p>
@@ -935,6 +1014,48 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <CompareCard label="Components missing a price" current={delta.live.unresolvedCount} draft={delta.draft.unresolvedCount} />
                 <CompareCard label="Production/BOM components" current={delta.live.bomCount} draft={delta.draft.bomCount} />
               </div>
+
+              {/* SAVE V1.2 SLICE 1 — the actual component deltas, not just
+                  counts. Raw stored values only (label, type, price) - this
+                  is exactly what componentPayload will send, never a
+                  computed total and never anything the resolver itself
+                  owns. */}
+              <div className="mt-3 space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Component changes in this draft</p>
+                {componentChangeSummary.added.length === 0 &&
+                 componentChangeSummary.changed.length === 0 &&
+                 componentChangeSummary.removed.length === 0 ? (
+                  <p className="rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500">No component changes in this draft.</p>
+                ) : (
+                  <>
+                    {componentChangeSummary.added.length > 0 && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5">
+                        <p className="mb-1 text-[11px] font-medium text-emerald-700">Added</p>
+                        {componentChangeSummary.added.map((c, i) => (
+                          <p key={i} className="text-[11px] text-emerald-800">{c.label} ({c.componentType}) — {money(c.price)}</p>
+                        ))}
+                      </div>
+                    )}
+                    {componentChangeSummary.changed.length > 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5">
+                        <p className="mb-1 text-[11px] font-medium text-amber-700">Changed</p>
+                        {componentChangeSummary.changed.map((c, i) => (
+                          <p key={i} className="text-[11px] text-amber-800">{c.label} ({c.componentType}) — {money(c.oldPrice)} → {money(c.newPrice)}</p>
+                        ))}
+                      </div>
+                    )}
+                    {componentChangeSummary.removed.length > 0 && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-2.5">
+                        <p className="mb-1 text-[11px] font-medium text-red-700">Removed</p>
+                        {componentChangeSummary.removed.map((c, i) => (
+                          <p key={i} className="text-[11px] text-red-800">{c.label} ({c.componentType}) — {money(c.price)}</p>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
               <div className="mt-3 space-y-1 rounded-lg bg-slate-50 p-3 text-xs">
                 <FieldRow label="Classification" value={classification ? CLASSIFICATION_OPTIONS.find((o) => o.value === classification)?.label : "Not set"} />
                 <FieldRow label="Reason recorded" value={reasonRequired ? (divergenceReason || "Not yet chosen") : "Not applicable"} />
@@ -1003,10 +1124,22 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
             <div>
               <StepHeader title="Finish draft review" />
 
-              {!saveMutation.isPending && !saveParsedError && (
+              {!saveMutation.isPending && !saveParsedError && !noOpSave && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                   <p className="font-medium">Ready to save — nothing has been written yet.</p>
                   <p className="mt-1">Pressing Save will make this the live configuration.</p>
+                </div>
+              )}
+
+              {/* SAVE V1.2 SLICE 1 — classification is session/review
+                  context only and never makes Save active on its own; this
+                  reads the exact same componentPayload/priceChanged values
+                  the mutation itself sends, so it can never disagree with
+                  what pressing Save would actually do. */}
+              {!saveMutation.isPending && !saveParsedError && noOpSave && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  <p className="font-medium">No configuration changes to save.</p>
+                  <p className="mt-1">Nothing in this draft differs from the live configuration yet.</p>
                 </div>
               )}
 
@@ -1040,7 +1173,7 @@ export default function ReconfigurationDraftWorkflow({ product, components, onCl
                 <Button
                   type="button"
                   onClick={() => { if (saveMutation.isPending) return; saveMutation.mutate(); }}
-                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError || Boolean(priceInputError) || invalidPendingNewComponents.length > 0}
+                  disabled={saveMutation.isPending || !expectedFingerprint || isStaleDraftError || Boolean(priceInputError) || invalidPendingNewComponents.length > 0 || noOpSave}
                   className="h-11 text-sm"
                 >
                   {saveMutation.isPending ? "Saving…" : "Save configuration"}
