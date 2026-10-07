@@ -108,8 +108,7 @@ begin
   from public.clients c
   where c.id = v_order.client_id;
 
-  if jsonb_typeof(coalesce(v_snapshot.artwork_revision_ids, 'null'::jsonb)) = 'array'
-     and jsonb_array_length(v_snapshot.artwork_revision_ids) > 0 then
+  if cardinality(v_snapshot.artwork_revision_ids) > 0 then
     select coalesce(
       jsonb_agg(
         jsonb_build_object(
@@ -129,10 +128,7 @@ begin
     )
     into v_artwork_assets
     from public.client_product_artwork a
-    where a.id in (
-      select value::uuid
-      from jsonb_array_elements_text(v_snapshot.artwork_revision_ids)
-    );
+    where a.id = any (v_snapshot.artwork_revision_ids);
   end if;
 
   v_line_qty := greatest(coalesce(nullif(v_line ->> 'quantity', '')::numeric, 1), 0);
@@ -165,7 +161,7 @@ begin
       'revision', v_snapshot.revision
     ),
     'artwork', jsonb_build_object(
-      'revision_ids', coalesce(v_snapshot.artwork_revision_ids, '[]'::jsonb),
+      'revision_ids', to_jsonb(coalesce(v_snapshot.artwork_revision_ids, '{}'::uuid[])),
       'assets', v_artwork_assets
     ),
     'production', jsonb_build_object(
