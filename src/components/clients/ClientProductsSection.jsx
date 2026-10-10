@@ -217,6 +217,7 @@ function CreateClientProductDialog({ clientId, onClose, onCreated }) {
 function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState(null);
+  const [activeTab, setActiveTab] = useState("details");
 
   const readinessQueryKey = ["clientProductReadiness", product.id];
   const { data: readinessRes } = useQuery({
@@ -316,7 +317,7 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
           onClick={onClose}
           className="fixed inset-0 z-[91] flex items-stretch justify-end bg-black/50 backdrop-blur-sm outline-none"
         >
-          <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex h-full min-w-0 w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start gap-3 border-b border-slate-200 p-4">
               <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
                 <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
@@ -342,16 +343,23 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
               <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
             </div>
 
-            <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col">
               <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
-                <TabsTrigger value="details">Details</TabsTrigger>
-                <TabsTrigger value="artwork">Artwork</TabsTrigger>
-                <TabsTrigger value="production">Production</TabsTrigger>
-                <TabsTrigger value="status">Status</TabsTrigger>
+                <TabsTrigger className="min-w-0 px-1 text-xs sm:text-sm" value="details">Details</TabsTrigger>
+                <TabsTrigger className="min-w-0 px-1 text-xs sm:text-sm" value="artwork">Artwork</TabsTrigger>
+                <TabsTrigger className="min-w-0 px-1 text-xs sm:text-sm" value="production">Production</TabsTrigger>
+                <TabsTrigger className="min-w-0 px-1 text-xs sm:text-sm" value="status">Approval</TabsTrigger>
               </TabsList>
 
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-                <TabsContent value="details" className="mt-0">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                <TabsContent value="details" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <div className="mb-4 rounded-lg bg-slate-50 p-3 text-sm">
+                    <p className="font-medium">Set up this product</p>
+                    <p className="mt-1 text-xs text-slate-600">Check the garment, confirm artwork and print sizes, review the price, then approve for ordering.</p>
+                    <Button variant="outline" size="sm" className="mt-2" onClick={() => setActiveTab(readinessState === "ready" || readinessState === "no_artwork_required" ? "production" : "artwork")}>
+                      {readinessState === "requirements_unconfirmed" ? "Confirm required placements" : readinessState === "ready" || readinessState === "no_artwork_required" ? "Review garment & pricing" : "Review artwork"}
+                    </Button>
+                  </div>
                   <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
                 </TabsContent>
                 <TabsContent value="artwork" className="mt-0">
@@ -372,8 +380,21 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
                   />
                 </TabsContent>
                 <TabsContent value="status" className="mt-0">
+                  <div className="mb-4 rounded-lg border border-slate-200 p-3 text-xs text-slate-600">
+                    <p className="font-medium text-slate-800">Ordering approval</p>
+                    <p className="mt-1">Pricing and artwork are checked separately. Review both before changing the product status.</p>
+                    {readinessState !== "ready" && readinessState !== "no_artwork_required" && (
+                      <Button variant="outline" size="sm" className="mt-2" onClick={() => setActiveTab("artwork")}>Review artwork requirements</Button>
+                    )}
+                  </div>
                   <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
                 </TabsContent>
+                <div className="mt-4 flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-3">
+                  {activeTab !== "details" && <Button variant="ghost" size="sm" onClick={() => setActiveTab(({ artwork: "details", production: "artwork", status: "production" })[activeTab])}>Back</Button>}
+                  {activeTab !== "status" && <Button variant="outline" size="sm" className="ml-auto" onClick={() => setActiveTab(({ details: "artwork", artwork: "production", production: "status" })[activeTab])}>
+                    {({ details: "Next: artwork", artwork: "Next: garment & pricing", production: "Next: approval" })[activeTab]}
+                  </Button>}
+                </div>
               </div>
             </Tabs>
           </div>
@@ -400,9 +421,25 @@ const DETAIL_TEXT_FIELDS = [
 function DetailsTab({ product, clientId, onSaved, onPreview }) {
   const queryClient = useQueryClient();
   const [showThumbPicker, setShowThumbPicker] = useState(false);
+  const { data: detailComponents = [] } = useQuery({
+    queryKey: ["productComponents", product.id],
+    queryFn: () => dataClient.entities.ProductComponent.filter({ client_product_id: product.id }, "sort_order", 200),
+    enabled: Boolean(product.id),
+  });
+  const linkedBlankIds = [...new Set((Array.isArray(detailComponents) ? detailComponents : [])
+    .filter((c) => c.component_type === "blank_garment" && !c.garment_variant_id && !c.treatment_id && c.is_active !== false)
+    .map((c) => c.inventory_product_id).filter(Boolean))];
+  const linkedBlankId = linkedBlankIds.length === 1 ? linkedBlankIds[0] : null;
+  const { data: linkedBlanks = [] } = useQuery({
+    queryKey: ["linkedBlankForDetails", linkedBlankId],
+    queryFn: () => dataClient.entities.InventoryProduct.filter({ id: linkedBlankId }, "internal_name", 1),
+    enabled: Boolean(linkedBlankId),
+  });
+  const linkedBlank = (Array.isArray(linkedBlanks) ? linkedBlanks : []).find((row) => row.id === linkedBlankId);
+
   const [form, setForm] = useState(() => {
     const base = {};
-    for (const [key] of DETAIL_TEXT_FIELDS) base[key] = product[key] ?? "";
+    for (const [key] of DETAIL_TEXT_FIELDS) base[key] = String(product[key] ?? "");
     base.currency = product.currency ?? "ZAR";
     base.print_locations = product.print_locations != null ? String(product.print_locations) : "";
     base.production_instructions = product.production_instructions ?? "";
@@ -481,22 +518,40 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        {DETAIL_TEXT_FIELDS.map(([key, label]) => (
+      {linkedBlank && ((!form.garment_material.trim() && linkedBlank.material) || (!form.garment_gsm.trim() && linkedBlank.weight_gsm != null)) && (
+        <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
+          <p>Use specifications from {linkedBlank.internal_name || "the linked blank"}. Existing values are kept.</p>
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => set({
+            garment_material: form.garment_material.trim() ? form.garment_material : String(linkedBlank.material || ""),
+            garment_gsm: form.garment_gsm.trim() ? form.garment_gsm : String(linkedBlank.weight_gsm ?? ""),
+          })}>Fill missing garment details</Button>
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {DETAIL_TEXT_FIELDS.filter(([key]) => key !== "placement").map(([key, label]) => (
           <div key={key} className="space-y-1">
             <Label className="text-[11px] text-slate-500">{label}</Label>
             <Input value={form[key]} onChange={(e) => set({ [key]: e.target.value })} />
           </div>
         ))}
-        <div className="space-y-1">
-          <Label className="text-[11px] text-slate-500">Currency</Label>
-          <Input value={form.currency} onChange={(e) => set({ currency: e.target.value })} />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-[11px] text-slate-500">Print locations</Label>
-          <Input type="number" min="0" value={form.print_locations} onChange={(e) => set({ print_locations: e.target.value })} />
-        </div>
       </div>
+      <details className="rounded-lg border border-slate-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-slate-600">Advanced details</summary>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label className="text-[11px] text-slate-500">Legacy placement reference</Label>
+            <Input value={form.placement} onChange={(e) => set({ placement: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-slate-500">Currency</Label>
+            <Input value={form.currency} onChange={(e) => set({ currency: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-slate-500">Print locations</Label>
+            <Input type="number" min="0" value={form.print_locations} onChange={(e) => set({ print_locations: e.target.value })} />
+          </div>
+        </div>
+      </details>
 
       <div className="space-y-1">
         <Label className="text-[11px] text-slate-500">Production instructions</Label>
@@ -541,15 +596,17 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
 function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPreview }) {
   const [pickerPlacement, setPickerPlacement] = useState("");
   const [editingRequirements, setEditingRequirements] = useState(false);
+  const [showUnusedPlacements, setShowUnusedPlacements] = useState(false);
 
   const requiredFromRpc = Array.isArray(readiness?.required_placements) ? readiness.required_placements : [];
   const legacyFallback = readiness?.legacy_fallback === true;
 
-  // Placements to show a row for: the authoritative required set, plus any
-  // placement that already has artwork, plus the presets (so staff can add
-  // one). Order: required first, then the rest.
-  const artworkPlacements = Array.from(new Set(artworkRows.map((a) => a.placement).filter(Boolean)));
-  const allPlacements = Array.from(new Set([...requiredFromRpc, ...artworkPlacements, ...PLACEMENT_PRESETS]));
+  // Keep required and existing family placements visible. Presets are
+  // available through Add placement; treatment-only artwork stays scoped.
+  const artworkPlacements = Array.from(new Set(artworkRows.filter((a) => !a.treatment_id).map((a) => a.placement).filter(Boolean)));
+  const usedPlacements = Array.from(new Set([...requiredFromRpc, ...artworkPlacements]));
+  const unusedPlacements = PLACEMENT_PRESETS.filter((p) => !usedPlacements.includes(p));
+  const allPlacements = showUnusedPlacements ? [...usedPlacements, ...unusedPlacements] : usedPlacements;
 
   const currentByPlacement = new Map();
   const historyCountByPlacement = new Map();
@@ -581,15 +638,15 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-slate-200 p-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-medium">Required placements</p>
           <Button variant="outline" size="sm" onClick={() => setEditingRequirements((v) => !v)}>
-            {editingRequirements ? "Done" : "Edit"}
+            {editingRequirements ? "Close" : legacyFallback ? "Confirm placements" : "Edit"}
           </Button>
         </div>
         {legacyFallback ? (
           <p className="mt-1 text-xs text-amber-700">
-            Requirements unconfirmed — inferred from existing artwork. Confirm the list to lock readiness.
+            Confirm which placements this product needs. Linked files alone do not confirm the requirements.
           </p>
         ) : requiredFromRpc.length === 0 ? (
           <p className="mt-1 text-xs text-slate-500">Explicitly no artwork required for this product.</p>
@@ -650,6 +707,12 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
           );
         })}
       </div>
+
+      {unusedPlacements.length > 0 && (
+        <Button variant="outline" size="sm" aria-expanded={showUnusedPlacements} onClick={() => setShowUnusedPlacements((v) => !v)}>
+          <Plus className="mr-1.5 h-4 w-4" />{showUnusedPlacements ? "Hide unused placements" : "Add placement"}
+        </Button>
+      )}
 
       {readiness?.blocking_reasons?.length > 0 && (
         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-xs text-amber-800">
@@ -1057,26 +1120,18 @@ function ProductionTab({ product, readinessState, canConfigure }) {
 
   return (
     <div className="space-y-3">
-      {/* Overview */}
-      <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-          <span>Composition: <b className="text-slate-800">{summary.familyComponentCount}</b> family{summary.totalComponentCount !== summary.familyComponentCount ? ` (+${summary.totalComponentCount - summary.familyComponentCount} scoped)` : ""}</span>
-          <span>Variants: <b className="text-slate-800">{summary.variantCount}</b></span>
-          <span>Treatments: <b className="text-slate-800">{summary.treatmentCount}</b></span>
-          <span>Mappings: <b className="text-slate-800">{summary.mappingCount}</b></span>
-          <ReadinessBadge state={readinessState} />
+      {(product.print_method || product.print_size || product.production_instructions) && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+          <p className="font-medium">Production instructions</p>
+          <p className="mt-1 text-xs text-slate-600">{[product.print_method, product.print_size].filter(Boolean).join(" · ")}</p>
+          {product.production_instructions && <p className="mt-2 whitespace-pre-wrap break-words text-xs text-slate-600">{product.production_instructions}</p>}
         </div>
+      )}
         {gaps.length > 0 && (
           <ul className="mt-2 list-inside list-disc space-y-0.5 text-[11px] text-amber-700">
             {gaps.map((g, i) => <li key={i}>{g}</li>)}
           </ul>
         )}
-      </div>
-
-      {/* Read-only pricing & configuration review - visible regardless of
-          production write access, unlike the editable sections below. */}
-      <ProductConfigurationReview product={product} components={safe.components} />
-
       {!canConfigure ? (
         <>
           <div className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600">
@@ -1087,7 +1142,7 @@ function ProductionTab({ product, readinessState, canConfigure }) {
         </>
       ) : (
         <>
-          <Section title="Composition" subtitle="Family-level production components." count={summary.familyComponentCount} defaultOpen>
+          <Section title="Garment & print setup" subtitle="Select the blank and check each print placement, size and method." count={summary.familyComponentCount} defaultOpen>
             <ScopedComponentsEditor
               clientProductId={product.id}
               scope={{ type: "family" }}
@@ -1105,37 +1160,55 @@ function ProductionTab({ product, readinessState, canConfigure }) {
             </div>
           </Section>
 
-          <Section title="Garment variants" subtitle="Reusable blank configurations - normalized inventory link where available, manual size fallback otherwise." count={summary.variantCount}>
-            <GarmentVariantsSection
-              clientProductId={product.id}
-              clientProduct={product}
-              internalProducts={internalProducts}
-              pricingDefaultFor={pricingDefaultFor}
-              allComponents={safe.components}
-            />
-          </Section>
+          <details className="rounded-xl border border-slate-200 p-3">
+            <summary className="cursor-pointer text-sm font-medium text-slate-600">Advanced production options</summary>
+            <div className="mt-3 space-y-3">
+            {/* Overview */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                <span>Composition: <b className="text-slate-800">{summary.familyComponentCount}</b> family{summary.totalComponentCount !== summary.familyComponentCount ? ` (+${summary.totalComponentCount - summary.familyComponentCount} scoped)` : ""}</span>
+                <span>Variants: <b className="text-slate-800">{summary.variantCount}</b></span>
+                <span>Treatments: <b className="text-slate-800">{summary.treatmentCount}</b></span>
+                <span>Mappings: <b className="text-slate-800">{summary.mappingCount}</b></span>
+                <ReadinessBadge state={readinessState} />
+              </div>
 
-          <Section title="Treatments" subtitle="Reusable print/production treatments, independent of the garment blank." count={summary.treatmentCount}>
-            <TreatmentsSection
-              clientProductId={product.id}
-              clientProduct={product}
-              internalProducts={internalProducts}
-              pricingDefaultFor={pricingDefaultFor}
-              allComponents={safe.components}
-            />
-          </Section>
+            </div>
 
-          <Section title="Allowed combinations" subtitle="Which treatments are available on which garment variant. Edit the ticks inside each garment variant above; this is the family-level view." count={summary.mappingCount}>
-            <AllowedCombinationsMatrix {...safe} />
-          </Section>
+                <Section title="Garment variants" subtitle="Reusable blank configurations - normalized inventory link where available, manual size fallback otherwise." count={summary.variantCount}>
+                  <GarmentVariantsSection
+                    clientProductId={product.id}
+                    clientProduct={product}
+                    internalProducts={internalProducts}
+                    pricingDefaultFor={pricingDefaultFor}
+                    allComponents={safe.components}
+                  />
+                </Section>
 
-          <Section title="Pricing preview" defaultOpen>
-            <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">{PRICING_PREVIEW_BOUNDARY}</p>
-            <ClientProductPriceComposition product={product} />
-            <p className="mt-2 text-xs text-slate-500">Per-variant previews (family price / variant override + treatment surcharge) appear inside each garment variant when expanded.</p>
-          </Section>
+                <Section title="Treatments" subtitle="Reusable print/production treatments, independent of the garment blank." count={summary.treatmentCount}>
+                  <TreatmentsSection
+                    clientProductId={product.id}
+                    clientProduct={product}
+                    internalProducts={internalProducts}
+                    pricingDefaultFor={pricingDefaultFor}
+                    allComponents={safe.components}
+                  />
+                </Section>
+
+                <Section title="Allowed combinations" subtitle="Which treatments are available on which garment variant. Edit the ticks inside each garment variant above; this is the family-level view." count={summary.mappingCount}>
+                  <AllowedCombinationsMatrix {...safe} />
+                </Section>
+
+                <Section title="Pricing preview">
+                  <p className="rounded-lg bg-slate-50 p-2 text-[11px] text-slate-500">{PRICING_PREVIEW_BOUNDARY}</p>
+                  <ClientProductPriceComposition product={product} />
+                  <p className="mt-2 text-xs text-slate-500">Per-variant previews (family price / variant override + treatment surcharge) appear inside each garment variant when expanded.</p>
+                </Section>
+            </div>
+          </details>
         </>
       )}
+      <ProductConfigurationReview product={product} components={safe.components} />
     </div>
   );
 }

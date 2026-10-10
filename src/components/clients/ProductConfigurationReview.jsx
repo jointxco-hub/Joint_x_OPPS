@@ -25,7 +25,7 @@ const money = (n) => `R${Number(n || 0).toFixed(2)}`;
 const COMMERCIAL_TYPES = new Set(["blank_garment", "print_service", "setup_fee", "addon"]);
 
 const NEXT_ACTION = {
-  reconciled: "No action needed.",
+  reconciled: "Pricing checked. Artwork and ordering approval are reviewed separately.",
   diverged: "No action required if this divergence is intentional. Only revisit it if the difference looks accidental.",
   unresolved_components: "Add a sell price to the component(s) listed below before this product can be added to an order at a computed price.",
   no_composition: "Add pricing components (blank, print, setup fee, or add-on), or confirm this product is meant to be priced by agreed price alone.",
@@ -40,6 +40,7 @@ function Collapsible({ title, subtitle = null, children, count = null }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
         className="flex w-full items-center gap-2 px-2.5 py-2 text-left"
       >
         {open ? <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />}
@@ -100,8 +101,8 @@ export default function ProductConfigurationReview({ product, components = [] })
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-slate-800">Pricing &amp; configuration review</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-800">Price review</p>
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wide text-slate-400">Read-only</span>
           <button
@@ -117,8 +118,7 @@ export default function ProductConfigurationReview({ product, components = [] })
         <ReconfigurationDraftWorkflow product={product} components={components} onClose={() => setReconfigureOpen(false)} />
       )}
       <p className="text-[11px] text-slate-400">
-        Everything below is read directly from the canonical price resolver. This panel never changes
-        pricing - it only explains what is already live.
+        Current saved pricing for new orders.
       </p>
 
       {priceLoading && <p className="text-xs text-slate-400">Loading price review…</p>}
@@ -153,25 +153,6 @@ export default function ProductConfigurationReview({ product, components = [] })
             );
           })()}
 
-          <Collapsible title="Raw resolver state" subtitle="The exact values this panel was built from, for staff who want to see the unprocessed state rather than the summary above.">
-            <dl className="space-y-1 text-[11px]">
-              {["reconciliation_status", "price_source", "requires_quote"].map((key) => (
-                <div key={key} className="flex justify-between gap-3">
-                  <dt className="text-slate-400">{key}</dt>
-                  <dd className="font-mono text-slate-600">{String(result[key])}</dd>
-                </div>
-              ))}
-              {(result.unresolved_components || []).length > 0 && (
-                <div className="flex justify-between gap-3">
-                  <dt className="text-slate-400">unresolved_components</dt>
-                  <dd className="font-mono text-slate-600">
-                    {(result.unresolved_components || []).map((u) => u.label || u.component_id).join(", ")}
-                  </dd>
-                </div>
-              )}
-            </dl>
-          </Collapsible>
-
           {/* C) Component summary, split commercial vs production/BOM */}
           <Collapsible
             title="Pricing components"
@@ -192,6 +173,28 @@ export default function ProductConfigurationReview({ product, components = [] })
                 ))}
               </div>
             )}
+          </Collapsible>
+
+          <details className="rounded-lg border border-slate-200 p-2.5">
+            <summary className="cursor-pointer text-xs font-medium text-slate-600">Advanced pricing details</summary>
+            <div className="mt-3 space-y-3">
+          <Collapsible title="Raw resolver state" subtitle="The exact values this panel was built from, for staff who want to see the unprocessed state rather than the summary above.">
+            <dl className="space-y-1 text-[11px]">
+              {["reconciliation_status", "price_source", "requires_quote"].map((key) => (
+                <div key={key} className="flex justify-between gap-3">
+                  <dt className="text-slate-400">{key}</dt>
+                  <dd className="font-mono text-slate-600">{String(result[key])}</dd>
+                </div>
+              ))}
+              {(result.unresolved_components || []).length > 0 && (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-slate-400">unresolved_components</dt>
+                  <dd className="font-mono text-slate-600">
+                    {(result.unresolved_components || []).map((u) => u.label || u.component_id).join(", ")}
+                  </dd>
+                </div>
+              )}
+            </dl>
           </Collapsible>
 
           <Collapsible
@@ -268,15 +271,9 @@ export default function ProductConfigurationReview({ product, components = [] })
             </div>
           )}
 
-          {/* Recommended next action */}
-          <div className="flex items-start gap-2 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-600">
-            <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
-            <span>{NEXT_ACTION[result.reconciliation_status] || NEXT_ACTION.no_composition}</span>
-          </div>
-
           {/* Temporary, non-persisted review classification */}
           <div className="rounded-lg border border-dashed border-slate-300 p-2.5">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <label className="text-xs font-medium text-slate-600" htmlFor={`review-classification-${product.id}`}>
                 Review classification — not saved
               </label>
@@ -296,6 +293,14 @@ export default function ProductConfigurationReview({ product, components = [] })
               ))}
             </select>
           </div>
+            </div>
+          </details>
+          {/* Recommended next action */}
+          <div className="flex items-start gap-2 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-600">
+            <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+            <span>{NEXT_ACTION[result.reconciliation_status] || NEXT_ACTION.no_composition}</span>
+          </div>
+
         </>
       )}
     </div>
