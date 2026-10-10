@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -138,7 +139,9 @@ export default function Clients() {
   const [showForm, setShowForm] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
   const [selectedClient, setSelectedClient] = useState(null);
+  const [requestedProductId, setRequestedProductId] = useState("");
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // This is the internal OPPS staff management screen, not a tenant-scoped
   // app flow - it must be able to see managed-tenant clients (e.g. GSB)
@@ -283,6 +286,29 @@ export default function Clients() {
       return bTime - aTime;
     });
   }, [clients, orders]);
+
+  // Order line -> OPPS Client Product Workspace deep-link. Same convention
+  // as Orders.jsx's `?open=`/`?orderId=` auto-open: once the target client
+  // resolves, open its account dialog and stash the requested product id
+  // for ClientProductsSection to validate/consume (client-scoped - a
+  // cross-client id is never opened, see ClientProductsSection), then
+  // strip both params immediately so refresh/back behavior stays sane.
+  useEffect(() => {
+    const clientParam = searchParams.get("client");
+    if (!clientParam || clientsWithStats.length === 0) return;
+
+    const target = clientsWithStats.find((c) => c.id === clientParam);
+    if (!target) return;
+
+    setSelectedClient(target);
+    const productParam = searchParams.get("clientProduct");
+    if (productParam) setRequestedProductId(productParam);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("client");
+    next.delete("clientProduct");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, clientsWithStats, setSearchParams]);
 
   const filteredClients = clientsWithStats.filter(client => {
     if (client.is_archived) return false;
@@ -515,8 +541,13 @@ export default function Clients() {
         <ClientAccountDialog
           client={selectedClient}
           open={!!selectedClient}
+          requestedProductId={requestedProductId}
+          onRequestedProductIdHandled={() => setRequestedProductId("")}
           onOpenChange={(open) => {
-            if (!open) setSelectedClient(null);
+            if (!open) {
+              setSelectedClient(null);
+              setRequestedProductId("");
+            }
           }}
         />
       </div>
@@ -524,7 +555,7 @@ export default function Clients() {
   );
 }
 
-function ClientAccountDialog({ client, open, onOpenChange }) {
+function ClientAccountDialog({ client, open, onOpenChange, requestedProductId = "", onRequestedProductIdHandled }) {
 
   const clientId = client && !client.is_order_only ? client.id : "";
   const { data: availableSavedItems = [] } = useQuery({
@@ -586,7 +617,13 @@ function ClientAccountDialog({ client, open, onOpenChange }) {
           </div>
         </div>
 
-        {clientId && <ClientProductsSection clientId={clientId} />}
+        {clientId && (
+          <ClientProductsSection
+            clientId={clientId}
+            requestedProductId={requestedProductId}
+            onRequestedProductIdHandled={onRequestedProductIdHandled}
+          />
+        )}
 
         {clientId && <CommerceProductsSection clientId={clientId} />}
 

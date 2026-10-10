@@ -203,14 +203,35 @@ test("reviewForMyProductsMutation persists client_product_id onto the line witho
   assert.ok(body.includes("if (!orderLine.client_product_id)"), "must not overwrite an already-set client_product_id on repeat use - reuse, not reassign");
 });
 
-test("reviewForMyProductsMutation deep-links to the existing X LAB Admin client-products page - does not build a second review/publish UI in OPPS", async () => {
+// UX Slice: Order line -> OPPS Client Product Workspace deep-link. The
+// main order-line action no longer jumps straight to X LAB Admin - it
+// opens the existing OPPS ClientProductWorkspace (Clients.jsx +
+// ClientProductsSection.jsx), which itself still exposes X LAB Admin as a
+// secondary "Advanced" link (see tests/opps-client-product-workspace.test.mjs).
+// New hierarchy: Order -> OPPS Product Configuration -> optional X LAB Admin.
+test("reviewForMyProductsMutation deep-links to the OPPS Client Product workspace (Clients.jsx), not directly to X LAB Admin", async () => {
   const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
   const start = source.indexOf("const reviewForMyProductsMutation = useMutation({");
   assert.notEqual(start, -1);
-  const body = source.slice(start, start + 1200);
-  assert.ok(body.includes("https://xlab.jointx.co.za/admin/client-products/"), "must deep-link to the authoritative X LAB Admin review/publish surface");
+  const body = source.slice(start, start + 1400);
+  assert.ok(
+    !body.includes("https://xlab.jointx.co.za/admin/client-products/"),
+    "the main order-line action must no longer deep-link directly to X LAB Admin"
+  );
+  assert.ok(!/window\.open\(/.test(body), "must not pop a new external tab for this action");
+  assert.ok(body.includes('navigate(`${createPageUrl("Clients")}?${params.toString()}`)'), "must navigate to the OPPS Clients page deep-link, using the same createPageUrl convention used elsewhere (e.g. OrderDrawer.jsx)");
+  assert.ok(
+    body.includes("client: order.client_id") && body.includes("clientProduct: clientProduct.id"),
+    "must identify the client and client product by their real ids (order.client_id, clientProduct.id) - never by name matching"
+  );
   assert.ok(
     !/import\s+\w+\s+from\s+["'].*AdminClientProductDetail|<ReadinessChecklist|<PublishForClientReview/.test(source),
     "must not import or render any part of the X LAB Admin review UI inside OPPS - a comment referencing it by name for context is fine, an actual import/usage is not"
   );
+});
+
+test("the order-line button reads 'Open product configuration' once a client product is resolved, not 'Open in X LAB Admin'", async () => {
+  const source = await readSource("src/components/orders/drawer/ProductsEditor.jsx");
+  assert.ok(source.includes('clientProduct ? "Open product configuration" : "Review for My Products"'));
+  assert.ok(!source.includes('"Open in X LAB Admin"'), "the old X LAB label must be gone from the order-line action");
 });

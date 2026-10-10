@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -67,7 +67,7 @@ function ReadinessBadge({ state }) {
 // Production configuration (composition / variants / treatments / mapping)
 // is Phase 1F-B and is intentionally NOT here.
 // ─────────────────────────────────────────────────────────────────────
-export function ClientProductsSection({ clientId }) {
+export function ClientProductsSection({ clientId, requestedProductId = "", onRequestedProductIdHandled }) {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [openProductId, setOpenProductId] = useState("");
@@ -86,6 +86,21 @@ export function ClientProductsSection({ clientId }) {
     [clientProducts, clientId],
   );
   const openProduct = scopedProducts.find((p) => p.id === openProductId) || null;
+
+  // Order-line deep-link target (UX Slice: Order -> OPPS Product
+  // Configuration -> optional X LAB Admin). Only opens once this client's
+  // own product list has resolved, and only when the requested id is
+  // actually found among THIS client's scopedProducts - a cross-client id
+  // (stale param, tampered URL, wrong client resolved first) is silently
+  // ignored, never opened. Consumed exactly once either way, via the
+  // parent-owned callback, so it can never re-fire on a later unrelated
+  // render and clobber a manual open.
+  useEffect(() => {
+    if (!requestedProductId || isLoading) return;
+    const match = scopedProducts.find((p) => p.id === requestedProductId);
+    if (match) setOpenProductId(match.id);
+    onRequestedProductIdHandled?.();
+  }, [requestedProductId, isLoading, scopedProducts, onRequestedProductIdHandled]);
 
   const invalidateProducts = () => queryClient.invalidateQueries({ queryKey: productsQueryKey });
 

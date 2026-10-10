@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
+import { createPageUrl } from "@/utils";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +39,7 @@ function newLineId() {
 }
 
 export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "", lineProductionReadiness = null }) {
+  const navigate = useNavigate();
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
@@ -808,16 +811,23 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     onError: (err) => toast.error(err?.message || "Could not add print option"),
   });
 
-  // "Review for My Products" (Phase 5): resolves/creates the client_product
-  // for this line via the exact same shared path as "+ Add print option" -
-  // never a second identity model. Persists client_product_id back onto
-  // the order line only if it isn't already set (never touches price/
-  // quantity/any other commercial field). The client_product itself stays
-  // on its column defaults (status: draft, visible_in_account: false) -
-  // this action never publishes anything. X LAB Admin
-  // (AdminClientProductDetail.jsx) is the one authoritative review/
-  // publish surface - this deep-links to it rather than rebuilding any
-  // part of that UI inside OPPS.
+  // "Review for My Products" / "Open product configuration": resolves/
+  // creates the client_product for this line via the exact same shared
+  // path as "+ Add print option" - never a second identity model.
+  // Persists client_product_id back onto the order line only if it isn't
+  // already set (never touches price/quantity/any other commercial
+  // field). The client_product itself stays on its column defaults
+  // (status: draft, visible_in_account: false) - this action never
+  // publishes anything.
+  // UX Slice (Order -> OPPS Product Configuration -> optional X LAB
+  // Admin): the primary destination is now the existing OPPS
+  // ClientProductWorkspace (src/components/clients/ClientProductsSection.jsx),
+  // reached via the SAME deep-link convention Orders.jsx/Quotes.jsx/
+  // Invoices.jsx already use for cross-page open-by-id (?open=.../
+  // ?invoice=...) - never name matching, always order.client_id +
+  // clientProduct.id. X LAB Admin is still one click away from inside
+  // that workspace ("Advanced - open in X LAB Admin"), it is just no
+  // longer the destination this action jumps to directly.
   const reviewForMyProductsMutation = useMutation({
     mutationFn: async ({ lineId, orderLine }) => {
       const { clientProduct } = await resolveOrCreateClientProductForLine(orderLine);
@@ -831,8 +841,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         applyToLine(lineId, (item) => ({ ...item, client_product_id: clientProduct.id }));
       }
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
-      window.open(`https://xlab.jointx.co.za/admin/client-products/${clientProduct.id}`, "_blank", "noopener,noreferrer");
-      toast.success("Opening in X LAB Admin for review");
+      const params = new URLSearchParams({ client: order.client_id, clientProduct: clientProduct.id });
+      navigate(`${createPageUrl("Clients")}?${params.toString()}`);
+      toast.success("Opening product configuration");
     },
     onError: (err) => toast.error(err?.message || "Could not prepare this product for review"),
   });
@@ -2437,7 +2448,7 @@ function LineProduction({
             onClick={onReviewForMyProducts}
             disabled={reviewingForMyProducts}
           >
-            {reviewingForMyProducts ? "Preparing…" : (clientProduct ? "Open in X LAB Admin" : "Review for My Products")}
+            {reviewingForMyProducts ? "Preparing…" : (clientProduct ? "Open product configuration" : "Review for My Products")}
           </Button>
         </div>
       )}
