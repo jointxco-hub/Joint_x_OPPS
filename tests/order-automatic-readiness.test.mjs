@@ -163,13 +163,17 @@ test.before(async () => {
 });
 
 test("the automatic strip is rendered as its own section, visually separated from and before the manual checklist", () => {
+  // Phase B3 renamed the manual-checklist heading from "Manual /
+  // operational checks" to "Production checks" (the relevance-filtered
+  // model) - the ordering invariant this test actually cares about
+  // (automatic strip renders first) still holds under either heading.
   const stripIndex = card.indexOf("<AutomaticReadinessStrip");
-  const manualHeadingIndex = card.indexOf("Manual / operational checks");
-  const checksListIndex = card.indexOf("{checks.map((check) =>");
+  const manualHeadingIndex = card.indexOf("Production checks");
+  const checksListIndex = card.indexOf("checks.map((check) =>");
   assert.notEqual(stripIndex, -1);
   assert.notEqual(manualHeadingIndex, -1);
   assert.ok(stripIndex < manualHeadingIndex, "the automatic strip must render before the manual checklist heading");
-  assert.ok(manualHeadingIndex < checksListIndex, "the manual heading must sit directly above the existing checks list");
+  assert.ok(manualHeadingIndex < checksListIndex, "the manual heading must sit directly above the checks list");
 });
 
 test("AutomaticReadinessStrip introduces no .update(), no mutation, no Select — it is read-only", () => {
@@ -203,10 +207,13 @@ test("OrderDrawer passes its existing lineProductionReadiness data straight thro
   assert.match(drawer, /lineProductionReadiness=\{drawerData\.lineProductionReadiness\}/);
 });
 
-test("the 8 manual checklist keys and their update path are untouched", () => {
+test("the manual checklist still writes through the same updateOrderProductionReadinessCheck RPC wrapper", () => {
+  // Phase B3 replaced the flat 8-key dropdown UI with a relevance-filtered,
+  // compact row UI (see order-readiness-checklist-relevance-model.test.mjs
+  // for that phase's own assertions) - this test only confirms the write
+  // path itself wasn't bypassed or duplicated.
   assert.match(card, /updateOrderProductionReadinessCheck/);
-  assert.match(card, /STATUS_OPTIONS/);
-  const updateCheckStart = card.indexOf("const updateCheck = (check, status)");
+  const updateCheckStart = card.indexOf("const updateCheck = (check, status, noteValue)");
   assert.notEqual(updateCheckStart, -1);
 });
 
