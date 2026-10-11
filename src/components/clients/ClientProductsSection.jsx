@@ -37,8 +37,18 @@ import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEdi
 import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
 import TreatmentsSection from "@/components/composition/TreatmentsSection";
 import { getClientProductPriceComposition } from "@/api/xosClientProduct";
-import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, UserCheck } from "lucide-react";
 import ProductConfigurationReview from "@/components/clients/ProductConfigurationReview";
+import {
+  getClientProductApprovals,
+  deriveClientProductApprovalState,
+  approvalStateLabel,
+  currentRevisionApprovalRecord,
+  canRecordClientProductApprovalOnBehalf,
+  CLIENT_PRODUCT_APPROVAL_STATES,
+  CLIENT_PRODUCT_APPROVAL_SOURCE_OPTIONS,
+  recordClientProductApprovalOnBehalf,
+} from "@/api/clientProductApprovals";
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
 
@@ -234,6 +244,17 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
     enabled: Boolean(product.id),
   });
 
+  // Client Product Approval (Phase B) - the CONCEPT/revision approval
+  // state, entirely independent of artwork readiness above. Never reads
+  // or writes client_product_artwork / order_line_component_snapshots.
+  const approvalsQueryKey = ["clientProductApprovals", product.id];
+  const { data: approvalsRes } = useQuery({
+    queryKey: approvalsQueryKey,
+    queryFn: () => getClientProductApprovals(product.id),
+    enabled: Boolean(product.id),
+  });
+  const approvalRows = approvalsRes?.data || [];
+
   // Phase 1F-B - proactive read-only UX for the Production tab. This is
   // the EXACT RLS write-gate (inventory_can_review_tenant) for the
   // production-configuration tables, so the tab renders full editors only
@@ -250,6 +271,7 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
   const refetchAll = () => {
     queryClient.invalidateQueries({ queryKey: readinessQueryKey });
     queryClient.invalidateQueries({ queryKey: artworkQueryKey });
+    queryClient.invalidateQueries({ queryKey: approvalsQueryKey });
     onChanged?.();
   };
 
@@ -372,7 +394,7 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
                   />
                 </TabsContent>
                 <TabsContent value="status" className="mt-0">
-                  <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
+                  <StatusTab product={product} onSaved={refetchAll} readinessState={readinessState} approvalRows={approvalRows} />
                 </TabsContent>
               </div>
             </Tabs>
@@ -725,7 +747,135 @@ function RequiredPlacementsEditor({ product, initial, onSaved }) {
 }
 
 // ── Status tab ────────────────────────────────────────────────────────
-function StatusTab({ product, onSaved, readinessState }) {
+// ── Client Product Approval (Phase B) ──────────────────────────────────
+// Concept/revision approval, kept entirely independent of artwork
+// readiness (ReadinessBadge above) and of the lifecycle status Select -
+// clearing CUSTOMER_APPROVAL_MISSING here never touches
+// client_product_artwork.status or any order_line_component_snapshots
+// row. Deliberately never labelled a plain "Approve" button - it records
+// that approval was ALREADY received elsewhere, it does not solicit one.
+// Full class strings per key, never interpolated into a template literal -
+// same safe convention TONE_CLASS already uses above for ReadinessBadge,
+// required so Tailwind's static scanner can see every class it must emit.
+const APPROVAL_STATE_TEXT_CLASS = {
+  [CLIENT_PRODUCT_APPROVAL_STATES.AWAITING]: "text-amber-700",
+  [CLIENT_PRODUCT_APPROVAL_STATES.APPROVED_BY_CLIENT]: "text-emerald-700",
+  [CLIENT_PRODUCT_APPROVAL_STATES.APPROVED_BY_STAFF]: "text-emerald-700",
+};
+
+function ClientProductApprovalCard({ product, approvalRows, onRecorded }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [source, setSource] = useState("");
+  const [note, setNote] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  const state = deriveClientProductApprovalState(approvalRows, product.revision);
+  const record = currentRevisionApprovalRecord(approvalRows, product.revision);
+  const canRecord = canRecordClientProductApprovalOnBehalf(product, approvalRows);
+  const isDraft = String(product.status || "draft") === "draft";
+
+  const closeDialog = () => { setDialogOpen(false); setSource(""); setNote(""); setConfirmed(false); };
+
+  const recordMutation = useMutation({
+    mutationFn: () => recordClientProductApprovalOnBehalf({
+      clientProductId: product.id,
+      expectedRevision: product.revision,
+      approvalSource: source,
+      note: note.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success("Client approval recorded");
+      closeDialog();
+      onRecorded?.();
+    },
+    onError: (error) => toast.error(error?.message || "Could not record the approval"),
+  });
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <Label className="text-[11px] text-slate-500">Client approval (revision {product.revision ?? 1})</Label>
+          <p className={`mt-0.5 text-sm font-medium ${APPROVAL_STATE_TEXT_CLASS[state]}`}>
+            {approvalStateLabel(state)}
+          </p>
+          {record && (
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {state === CLIENT_PRODUCT_APPROVAL_STATES.APPROVED_BY_STAFF
+                ? `Recorded by ${record.recorded_by_label || "staff"}${record.approval_source ? ` · ${record.approval_source.replace(/_/g, " ")}` : ""}`
+                : (record.approved_by_email || record.approved_by_name || "")}
+              {record.approved_at ? ` · ${new Date(record.approved_at).toLocaleString()}` : ""}
+            </p>
+          )}
+        </div>
+        {canRecord && (
+          <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
+            <UserCheck className="mr-1.5 h-4 w-4" /> Record client approval
+          </Button>
+        )}
+      </div>
+      {isDraft && state === CLIENT_PRODUCT_APPROVAL_STATES.AWAITING && (
+        <p className="mt-1.5 rounded-md bg-slate-50 px-2 py-1 text-[11px] text-slate-500">
+          Move this product to &quot;Ready for client review&quot; above before a client approval can be recorded.
+        </p>
+      )}
+
+      {dialogOpen && (
+        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/50 p-4" onClick={closeDialog}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold">Record client approval</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Approving on behalf of: <span className="font-medium text-slate-700">{product.client_facing_name || "this product"}</span>
+            </p>
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-slate-500">Approval channel *</Label>
+                <Select value={source} onValueChange={setSource}>
+                  <SelectTrigger><SelectValue placeholder="How did the client approve?" /></SelectTrigger>
+                  <SelectContent>
+                    {CLIENT_PRODUCT_APPROVAL_SOURCE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-slate-500">Note / reference (optional)</Label>
+                <Textarea
+                  rows={2}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="e.g. Confirmed by client on WhatsApp, 11 Oct 2026"
+                />
+              </div>
+              <label className="flex items-start gap-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                />
+                <span>I am recording approval already received from the client.</span>
+              </label>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={closeDialog}>Cancel</Button>
+                <Button
+                  className="flex-1"
+                  disabled={!source || !confirmed || recordMutation.isPending}
+                  onClick={() => recordMutation.mutate()}
+                >
+                  {recordMutation.isPending ? "Recording…" : "Record approval"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusTab({ product, onSaved, readinessState, approvalRows = [] }) {
   const queryClient = useQueryClient();
   const [pendingChange, setPendingChange] = useState(null); // { kind, label, apply }
   const readyForCustomer = ["ready_for_client_review", "client_changes_requested", "client_approved", "ready_to_order", "active"].includes(product.status || "");
@@ -781,6 +931,8 @@ function StatusTab({ product, onSaved, readinessState }) {
           </p>
         )}
       </div>
+
+      <ClientProductApprovalCard product={product} approvalRows={approvalRows} onRecorded={onSaved} />
 
       <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Storefront-sensitive — changes what customers can do</p>
