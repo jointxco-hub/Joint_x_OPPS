@@ -16,7 +16,7 @@ import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import { PLACEMENT_PRESETS } from "@/lib/productionStages";
-import { findOrCreateClientProductArtworkFromAsset } from "@/api/artworkLinking";
+import { findOrCreateClientProductArtworkFromAsset, confirmClientProductArtworkProductionFile, ARTWORK_REVIEW_DECISIONS } from "@/api/artworkLinking";
 import {
   getClientProductArtworkReadiness,
   setClientProductRequiredArtworkPlacements,
@@ -57,6 +57,21 @@ const TONE_CLASS = {
   amber: "bg-amber-50 text-amber-700 border-amber-200",
   red: "bg-red-50 text-red-700 border-red-200",
   slate: "bg-slate-100 text-slate-600 border-slate-200",
+};
+
+// Artwork Approval Phase B - production-FILE confirmation state (never
+// "Approve" - that word is reserved for the separate client concept/
+// design approval surfaced elsewhere in this workspace). Keyed by the
+// artwork row's own `status`.
+const PRODUCTION_FILE_STATE_LABEL = {
+  pending: "Pending production confirmation",
+  approved: "Production file confirmed",
+  rejected: "Changes requested",
+};
+const PRODUCTION_FILE_STATE_TONE = {
+  pending: "amber",
+  approved: "emerald",
+  rejected: "red",
 };
 
 function StatusBadge({ status }) {
@@ -563,6 +578,8 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
 function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPreview }) {
   const [pickerPlacement, setPickerPlacement] = useState("");
   const [editingRequirements, setEditingRequirements] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState(null); // { artwork, decision }
+  const [reviewNote, setReviewNote] = useState("");
 
   const requiredFromRpc = Array.isArray(readiness?.required_placements) ? readiness.required_placements : [];
   const legacyFallback = readiness?.legacy_fallback === true;
@@ -598,6 +615,22 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
       onChanged?.();
     },
     onError: (error) => toast.error(error?.message || "Could not link artwork"),
+  });
+
+  const closeReviewDialog = () => { setReviewTarget(null); setReviewNote(""); };
+  const reviewMutation = useMutation({
+    mutationFn: () => confirmClientProductArtworkProductionFile({
+      artworkId: reviewTarget.artwork.id,
+      expectedRevision: reviewTarget.artwork.revision,
+      decision: reviewTarget.decision,
+      note: reviewNote.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success(reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "Production file confirmed" : "Changes requested");
+      closeReviewDialog();
+      onChanged?.();
+    },
+    onError: (error) => toast.error(error?.message || "Could not record the review decision"),
   });
 
   return (
@@ -650,8 +683,8 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
                   {current ? (
                     <p className="truncate text-xs text-slate-500">
                       {current.file_name || "linked file"}
-                      <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${current.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                        {current.status}
+                      <span className={`ml-1.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${TONE_CLASS[PRODUCTION_FILE_STATE_TONE[current.status] || "slate"]}`}>
+                        {PRODUCTION_FILE_STATE_LABEL[current.status] || current.status}
                       </span>
                       {historyCount > 1 && <span className="ml-1.5 text-[10px] text-slate-400">Rev {current.revision} · {historyCount} revisions</span>}
                     </p>
@@ -668,6 +701,33 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
                   {current ? "Change" : "Link"}
                 </Button>
               </div>
+              {/* Production-file review actions - the CURRENT revision only.
+                  Never rendered for a historical/non-current row - this block
+                  only exists inside the `current` placement row to begin with. */}
+              {current && (
+                <div className="mt-2 flex gap-2 border-t border-slate-100 pt-2">
+                  {current.status !== ARTWORK_REVIEW_DECISIONS.APPROVED && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setReviewTarget({ artwork: current, decision: ARTWORK_REVIEW_DECISIONS.APPROVED })}
+                    >
+                      Confirm production file
+                    </Button>
+                  )}
+                  {current.status !== ARTWORK_REVIEW_DECISIONS.REJECTED && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setReviewTarget({ artwork: current, decision: ARTWORK_REVIEW_DECISIONS.REJECTED })}
+                    >
+                      Request changes
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -695,6 +755,39 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
           onClose={() => setPickerPlacement("")}
           onConfirm={([asset]) => asset && linkMutation.mutate({ placement: pickerPlacement, asset })}
         />
+      )}
+
+      {reviewTarget && (
+        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/50 p-4" onClick={closeReviewDialog}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold">
+              {reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "Confirm production file" : "Request changes"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {reviewTarget.artwork.placement} · revision {reviewTarget.artwork.revision}
+            </p>
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-slate-500">Note (optional)</Label>
+                <Textarea
+                  rows={2}
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                  placeholder={reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "e.g. File checked, colours and bleed correct" : "e.g. Logo needs to move 1cm left"}
+                />
+              </div>
+              <p className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">
+                This confirms the production FILE only - it does not change whether the client has approved the design.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={closeReviewDialog}>Cancel</Button>
+                <Button className="flex-1" disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate()}>
+                  {reviewMutation.isPending ? "Saving…" : (reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "Confirm production file" : "Request changes")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
