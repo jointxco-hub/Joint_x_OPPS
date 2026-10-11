@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -15,11 +16,17 @@ import {
   isValidReadinessOrderId,
   updateOrderProductionReadinessCheck,
 } from "@/api/productionReadiness";
+import { getClientProductArtworkReadiness } from "@/api/clientProducts";
+import {
+  buildAutomaticReadinessItems,
+  getRepresentedClientProductIds,
+} from "@/lib/orderAutomaticReadiness";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import SignedFileLink from "@/components/common/SignedFileLink";
+import { createPageUrl } from "@/utils";
 
 const STATUS_OPTIONS = [
   { value: "pending", label: "Pending" },
@@ -53,7 +60,7 @@ function isReadinessAuthError(message = "") {
     || lower.includes("row-level security");
 }
 
-export default function ProductionReadinessCard({ order, readinessQuery }) {
+export default function ProductionReadinessCard({ order, readinessQuery, lineProductionReadiness }) {
   const [notes, setNotes] = useState({});
   const [showPrintSheet, setShowPrintSheet] = useState(false);
   const queryClient = useQueryClient();
@@ -61,6 +68,44 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
   const canLoadReadiness = isValidReadinessOrderId(order?.id);
   const { data, isLoading, error, refetch, isAuthorizationBlocked } = readinessQuery || {};
   const authError = isAuthorizationBlocked || isReadinessAuthError(error?.message);
+
+  // Phase B2 - "Ready automatically" strip. Every fact below is read from
+  // an EXISTING authority's own output (payment/approvals come straight
+  // off `data`, line readiness is passed in from the same
+  // get_order_line_production_readiness call OrderDrawer already makes,
+  // artwork readiness is the existing admin_get_client_product_artwork_
+  // readiness RPC called once per represented product - never a
+  // recomputation). This never feeds back into `data.summary.ready_state`
+  // or the manual checklist.
+  const representedClientProductIds = useMemo(() => getRepresentedClientProductIds(order), [order]);
+  const artworkReadinessQueries = useQueries({
+    queries: representedClientProductIds.map((clientProductId) => ({
+      queryKey: ["clientProductArtworkReadiness", clientProductId],
+      queryFn: async () => {
+        const result = await getClientProductArtworkReadiness({ clientProductId });
+        if (result.error) throw new Error(result.error);
+        return result.data;
+      },
+      enabled: canLoadReadiness && Boolean(data) && Boolean(clientProductId),
+      staleTime: 30_000,
+    })),
+  });
+  const artworkReadinessLoading = artworkReadinessQueries.some((q) => q.isLoading);
+  const artworkReadinessEntries = representedClientProductIds.map((clientProductId, index) => ({
+    clientProductId,
+    readiness: artworkReadinessQueries[index]?.data,
+  }));
+  const automaticReadinessItems = data
+    ? buildAutomaticReadinessItems({
+        readinessOrder: data.order,
+        approvals: data.approvals,
+        representedClientProductIds,
+        lineProductionReadiness,
+        artworkReadinessEntries: artworkReadinessLoading ? null : artworkReadinessEntries,
+      }).map((item) =>
+        artworkReadinessLoading && item.key === "production_files" ? { ...item, satisfied: null, detail: null } : item,
+      )
+    : [];
 
   const updateMutation = useMutation({
     mutationFn: updateOrderProductionReadinessCheck,
@@ -172,6 +217,8 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
         </div>
       </div>
 
+      <AutomaticReadinessStrip items={automaticReadinessItems} order={order} />
+
       <div className="grid grid-cols-3 gap-2">
         <Metric label="Checked" value={`${summary.checked_count || 0}/${summary.total_checks || checks.length}`} />
         <Metric label="Warnings" value={summary.warning_count || warnings.length} tone="warn" />
@@ -195,6 +242,7 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
         </div>
       )}
 
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Manual / operational checks</p>
       <div className="space-y-2">
         {checks.map((check) => (
           <div key={check.check_key} className="rounded-xl border border-border bg-secondary/20 p-3">
@@ -284,6 +332,65 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
         />
       )}
     </section>
+  );
+}
+
+// Phase B2 - read-only display of facts the system already knows from
+// other authorities (payment, client approval, line configuration,
+// production files). No Select, no mutation, no checklist write path -
+// this never becomes a 9th/10th/11th/12th manual checklist row.
+function AutomaticReadinessStrip({ items, order }) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const unresolved = items.filter((item) => item.satisfied === false);
+
+  return (
+    <div className="rounded-2xl border border-border bg-secondary/10 p-3">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ready automatically</p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {items.map((item) => (
+          <div
+            key={item.key}
+            className={`flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-medium ${
+              item.satisfied === true
+                ? "bg-emerald-50 text-emerald-700"
+                : item.satisfied === false
+                  ? "bg-amber-50 text-amber-800"
+                  : "bg-secondary/40 text-muted-foreground"
+            }`}
+          >
+            {item.satisfied === true ? (
+              <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+            ) : item.satisfied === false ? (
+              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
+            )}
+            <span className="truncate">{item.label}</span>
+          </div>
+        ))}
+      </div>
+      {unresolved.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {unresolved.map((item) => {
+            const missingId = Array.isArray(item.missingProductIds) ? item.missingProductIds[0] : null;
+            const linkTo =
+              missingId && order?.client_id
+                ? `${createPageUrl("Clients")}?${new URLSearchParams({ client: order.client_id, clientProduct: missingId }).toString()}`
+                : null;
+            return (
+              <p key={item.key} className="text-[11px] leading-5 text-amber-800">
+                <span className="font-semibold">{item.label}:</span> {item.detail || "Not yet satisfied"}
+                {linkTo && (
+                  <Link to={linkTo} className="ml-1 underline underline-offset-2">
+                    Open
+                  </Link>
+                )}
+              </p>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

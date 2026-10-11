@@ -2034,7 +2034,11 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
           {tab === 'readiness' && (
             <React.Suspense fallback={<TabSectionFallback label="Production readiness" />}>
-              <ProductionReadinessCard order={order} readinessQuery={drawerData.readinessQuery} />
+              <ProductionReadinessCard
+                order={order}
+                readinessQuery={drawerData.readinessQuery}
+                lineProductionReadiness={drawerData.lineProductionReadiness}
+              />
             </React.Suspense>
           )}
 
