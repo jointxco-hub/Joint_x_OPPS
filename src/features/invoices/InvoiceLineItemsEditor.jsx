@@ -15,6 +15,7 @@ import {
 import { calculateInvoiceLine } from "./invoiceCalculations";
 import InvoiceItemMediaEditor from "./InvoiceItemMediaEditor";
 import { calculateDtfClientPrice, DTF_CLIENT_RATE_PER_METER } from "@/lib/pricing/dtf";
+import LabeledNumber from "@/features/lineItems/LabeledNumber";
 
 
 
@@ -350,7 +351,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 <button
                   type="button"
                   onClick={() => saveLineAsTemplate(item)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-primary"
+                  className="grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-primary sm:h-8 sm:w-8"
                   aria-label="Save line item"
                   title="Save line item"
                 >
@@ -359,7 +360,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                 <button
                   type="button"
                   onClick={() => removeItem(index)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive"
+                  className="grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive sm:h-8 sm:w-8"
                   aria-label="Remove line item"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -450,7 +451,7 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
                   className="h-8 rounded-lg text-sm"
                 />
               </LabeledNumber>
-              <LabeledNumber label="Rate" className="md:col-span-2">
+              <LabeledNumber label="Price" className="md:col-span-2">
                 <Input
                   value={item.rate ?? ""}
                   onChange={(event) => updateItem(index, { rate: event.target.value })}
@@ -539,13 +540,5 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
         <Plus className="h-4 w-4" /> Add line
       </Button>
     </div>
-  );
-}
-function LabeledNumber({ label, className = "", children }) {
-  return (
-    <label className={`block rounded-lg bg-secondary/25 px-2 py-1 ${className}`}>
-      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }

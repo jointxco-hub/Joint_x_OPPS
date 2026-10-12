@@ -7,6 +7,7 @@ import { calculateInvoiceLine } from "@/features/invoices/invoiceCalculations";
 import { QUOTE_LINE_ROLES } from "./quoteCalculations";
 import { lineIsReviewEligible } from "./quoteProductMapping";
 import QuoteProductPicker from "./QuoteProductPicker";
+import LabeledNumber from "@/features/lineItems/LabeledNumber";
 
 const ROLE_LABELS = {
   product: "Product",
@@ -143,7 +144,7 @@ export default function QuoteLineItemsEditor({ items = [], onChange, clientId = 
               <LabeledNumber label="Qty" className="md:col-span-2">
                 <Input value={item.quantity ?? ""} onChange={(e) => updateItem(index, { quantity: e.target.value })} type="number" min="0" step="0.01" placeholder="1" className="h-8 rounded-lg text-sm" />
               </LabeledNumber>
-              <LabeledNumber label="Rate" className="md:col-span-2">
+              <LabeledNumber label="Price" className="md:col-span-2">
                 <Input
                   value={item.rate ?? ""}
                   onChange={(e) => {
@@ -193,14 +194,5 @@ export default function QuoteLineItemsEditor({ items = [], onChange, clientId = 
         <Plus className="h-4 w-4" /> Add line
       </Button>
     </div>
-  );
-}
-
-function LabeledNumber({ label, className = "", children }) {
-  return (
-    <label className={`block rounded-lg bg-secondary/25 px-2 py-1 ${className}`}>
-      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }
