@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CheckCircle2,
   ClipboardCheck,
   FileCheck2,
+  HelpCircle,
   Printer,
   RefreshCw,
   ShieldAlert,
@@ -17,9 +18,11 @@ import {
   updateOrderProductionReadinessCheck,
 } from "@/api/productionReadiness";
 import { getClientProductArtworkReadiness } from "@/api/clientProducts";
+import { dataClient } from "@/api/dataClient";
 import {
   buildAutomaticReadinessItems,
   getRepresentedClientProductIds,
+  groupOrderArtworkByLine,
 } from "@/lib/orderAutomaticReadiness";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,12 +69,17 @@ export default function ProductionReadinessCard({ order, readinessQuery, linePro
   // Phase B2 - "Ready automatically" strip. Every fact below is read from
   // an EXISTING authority's own output (payment/approvals come straight
   // off `data`, line readiness is passed in from the same
-  // get_order_line_production_readiness call OrderDrawer already makes,
-  // artwork readiness is the existing admin_get_client_product_artwork_
-  // readiness RPC called once per represented product - never a
-  // recomputation). This never feeds back into `data.summary.ready_state`
-  // or the manual checklist.
+  // get_order_line_production_readiness call OrderDrawer already makes).
+  // This never feeds back into `data.summary.ready_state` or the manual
+  // checklist.
   const representedClientProductIds = useMemo(() => getRepresentedClientProductIds(order), [order]);
+
+  // admin_get_client_product_artwork_readiness - the existing authority
+  // for a product's REQUIRED placements, called once per represented
+  // product. Its own 'ready' boolean describes the CURRENT (is_current)
+  // revision only, which is NOT order-specific and is deliberately not
+  // used for the confirmation verdict below - only required_placements
+  // is reused from it.
   const artworkReadinessQueries = useQueries({
     queries: representedClientProductIds.map((clientProductId) => ({
       queryKey: ["clientProductArtworkReadiness", clientProductId],
@@ -89,15 +97,85 @@ export default function ProductionReadinessCard({ order, readinessQuery, linePro
     clientProductId,
     readiness: artworkReadinessQueries[index]?.data,
   }));
+
+  // This order's OWN frozen artwork_revision_ids per represented product/
+  // line/placement - the same OrderLineComponentSnapshot entity/read path
+  // ProductsEditor.jsx already uses for this order, just is_current-
+  // filtered here. A client product's CURRENT artwork state can never
+  // answer "is THIS order's own frozen file confirmed" - an order built
+  // against an older, since-superseded revision needs that specific
+  // revision's own status, not the product's current one. Independent of,
+  // and runs in parallel with, the two queries above - it does not wait
+  // on either of them, and nothing below waits on IT either (see the
+  // per-product artwork query next, which is keyed only on
+  // representedClientProductIds, not on this query's result).
+  const snapshotsQuery = useQuery({
+    queryKey: ["orderLineComponentSnapshots", "automaticReadiness", order?.id],
+    queryFn: () =>
+      dataClient.entities.OrderLineComponentSnapshot.filter(
+        { order_id: order.id, is_current: true },
+        "sort_order",
+        300,
+      ),
+    enabled: canLoadReadiness && Boolean(data) && Boolean(order?.id) && representedClientProductIds.length > 0,
+    staleTime: 30_000,
+  });
+  const snapshotsLoading = snapshotsQuery.isLoading;
+  const snapshots = snapshotsQuery.data || [];
+  const orderArtworkByLine = useMemo(
+    () => groupOrderArtworkByLine(snapshots, representedClientProductIds),
+    [snapshots, representedClientProductIds],
+  );
+
+  // ALL of a product's own artwork rows (every placement, every
+  // historical and current revision) in ONE query per represented
+  // product - not one query per distinct revision id. This is the same
+  // ClientProductArtwork entity used above, just filtered by
+  // client_product_id instead of id (existing batch-read capability: a
+  // product's full artwork history is already a single "WHERE
+  // client_product_id = X" read, no new RPC). Keyed only on
+  // representedClientProductIds, so it starts immediately alongside
+  // snapshotsQuery/artworkReadinessQueries - no waterfall.
+  const productArtworkQueries = useQueries({
+    queries: representedClientProductIds.map((clientProductId) => ({
+      queryKey: ["clientProductArtworkRows", clientProductId],
+      queryFn: () => dataClient.entities.ClientProductArtwork.filter({ client_product_id: clientProductId }, undefined, 200),
+      enabled: canLoadReadiness && Boolean(data) && Boolean(clientProductId),
+      staleTime: 30_000,
+    })),
+  });
+  const productArtworkLoading = productArtworkQueries.some((q) => q.isLoading);
+  const revisionLookup = useMemo(() => {
+    const out = {};
+    for (const query of productArtworkQueries) {
+      for (const row of Array.isArray(query.data) ? query.data : []) {
+        if (!row?.id) continue;
+        out[row.id] = {
+          status: row.status,
+          is_current: row.is_current,
+          clientProductId: row.client_product_id,
+          placement: row.placement,
+        };
+      }
+    }
+    return out;
+  }, [productArtworkQueries]);
+
+  const productionFilesLoading = artworkReadinessLoading || snapshotsLoading || productArtworkLoading;
+
   const automaticReadinessItems = data
     ? buildAutomaticReadinessItems({
         readinessOrder: data.order,
         approvals: data.approvals,
         representedClientProductIds,
         lineProductionReadiness,
-        artworkReadinessEntries: artworkReadinessLoading ? null : artworkReadinessEntries,
+        artworkReadinessEntries: productionFilesLoading ? null : artworkReadinessEntries,
+        orderArtworkByLine: productionFilesLoading ? null : orderArtworkByLine,
+        revisionLookup: productionFilesLoading ? null : revisionLookup,
       }).map((item) =>
-        artworkReadinessLoading && item.key === "production_files" ? { ...item, satisfied: null, detail: null } : item,
+        productionFilesLoading && item.key === "production_files"
+          ? { ...item, satisfied: null, detail: null, unavailable: false }
+          : item,
       )
     : [];
 
@@ -315,47 +393,61 @@ export default function ProductionReadinessCard({ order, readinessQuery, linePro
 // other authorities (payment, client approval, line configuration,
 // production files). No Select, no mutation, no checklist write path -
 // this never becomes a 9th/10th/11th/12th manual checklist row.
+//
+// Four distinct states, never conflated: ready (green), blocked (amber),
+// pending/loading (neutral, spinning), and unavailable (neutral grey,
+// "Not verified" - a genuinely unknown fact, which must never render as
+// a green check just because it isn't a known blocker).
+const AUTOMATIC_READINESS_TONE = {
+  ready: { className: "bg-emerald-50 text-emerald-700", icon: CheckCircle2, spin: false },
+  blocked: { className: "bg-amber-50 text-amber-800", icon: AlertTriangle, spin: false },
+  pending: { className: "bg-secondary/40 text-muted-foreground", icon: RefreshCw, spin: true },
+  unavailable: { className: "bg-slate-100 text-slate-600", icon: HelpCircle, spin: false },
+};
+
+function automaticReadinessTone(item) {
+  if (item.unavailable) return "unavailable";
+  if (item.satisfied === true) return "ready";
+  if (item.satisfied === false) return "blocked";
+  return "pending";
+}
+
 function AutomaticReadinessStrip({ items, order }) {
   if (!Array.isArray(items) || items.length === 0) return null;
-  const unresolved = items.filter((item) => item.satisfied === false);
+  const needsAttention = items.filter((item) => item.satisfied === false || item.unavailable === true);
 
   return (
     <div className="rounded-2xl border border-border bg-secondary/10 p-3">
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ready automatically</p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {items.map((item) => (
-          <div
-            key={item.key}
-            className={`flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-medium ${
-              item.satisfied === true
-                ? "bg-emerald-50 text-emerald-700"
-                : item.satisfied === false
-                  ? "bg-amber-50 text-amber-800"
-                  : "bg-secondary/40 text-muted-foreground"
-            }`}
-          >
-            {item.satisfied === true ? (
-              <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
-            ) : item.satisfied === false ? (
-              <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
-            )}
-            <span className="truncate">{item.label}</span>
-          </div>
-        ))}
+        {items.map((item) => {
+          const tone = AUTOMATIC_READINESS_TONE[automaticReadinessTone(item)];
+          const Icon = tone.icon;
+          return (
+            <div key={item.key} className={`rounded-xl px-2.5 py-2 text-xs font-medium ${tone.className}`}>
+              <div className="flex items-center gap-1.5">
+                <Icon className={`h-3.5 w-3.5 flex-shrink-0 ${tone.spin ? "animate-spin" : ""}`} />
+                <span className="truncate">{item.label}</span>
+              </div>
+              {item.detail && (
+                <p className="mt-0.5 truncate text-[10px] font-normal text-muted-foreground">{item.detail}</p>
+              )}
+            </div>
+          );
+        })}
       </div>
-      {unresolved.length > 0 && (
+      {needsAttention.length > 0 && (
         <div className="mt-2 space-y-1.5">
-          {unresolved.map((item) => {
+          {needsAttention.map((item) => {
             const missingId = Array.isArray(item.missingProductIds) ? item.missingProductIds[0] : null;
             const linkTo =
               missingId && order?.client_id
                 ? `${createPageUrl("Clients")}?${new URLSearchParams({ client: order.client_id, clientProduct: missingId }).toString()}`
                 : null;
             return (
-              <p key={item.key} className="text-[11px] leading-5 text-amber-800">
-                <span className="font-semibold">{item.label}:</span> {item.detail || "Not yet satisfied"}
+              <p key={item.key} className={`text-[11px] leading-5 ${item.unavailable ? "text-slate-600" : "text-amber-800"}`}>
+                <span className="font-semibold">{item.label}:</span>{" "}
+                {item.detail || (item.unavailable ? "Not verified" : "Not yet satisfied")}
                 {linkTo && (
                   <Link to={linkTo} className="ml-1 underline underline-offset-2">
                     Open

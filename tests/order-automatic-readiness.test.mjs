@@ -6,6 +6,8 @@ import {
   derivePaymentFact,
   deriveClientApprovalFact,
   deriveLineConfigurationFact,
+  groupOrderArtworkByLine,
+  listDistinctOrderArtworkRevisionIds,
   deriveProductionFilesFact,
   buildAutomaticReadinessItems,
 } from "../src/lib/orderAutomaticReadiness.js";
@@ -25,6 +27,25 @@ const DRAWER_PATH = "src/components/orders/OrderDrawer.jsx";
 // strip is additive, separate from the manual checklist, and introduces
 // no new write path - same convention as every other migration/component
 // test in this suite.
+//
+// Fresh-audit finding this revision fixes: admin_get_client_product_
+// artwork_readiness(client_product_id) is NOT order-aware - it only ever
+// reports the CURRENT (is_current=true) revision's status. For order
+// XL-261006-3936 (b4551439-d32e-4a38-ad8e-d146e8a8717a), confirmed live
+// against production: 2 of its 3 JV1 lines are frozen to a historical
+// revision (status='pending', never reviewed) that was later superseded
+// by a now-current, approved revision. The fixture below ("historical
+// frozen artwork...") reproduces exactly that shape.
+//
+// Final-review revision: moved from a product-level UNION of artwork
+// revisions (which could let one line's missing/unconfirmed artwork hide
+// behind a sibling line's own coverage) to a genuinely PER-LINE
+// evaluation, added a defence-in-depth check that a resolved artwork
+// row's own client_product_id/placement actually matches what the
+// order's snapshot claims, and switched the data-fetch strategy from one
+// query per distinct revision id to one batched query per represented
+// product (existing ClientProductArtwork.filter({client_product_id})
+// capability) - fewer requests, no sequential waterfall.
 // ─────────────────────────────────────────────────────────────────────
 
 test("getRepresentedClientProductIds extracts distinct product-line ids, skips non-product lines and lines without a client_product_id", () => {
@@ -47,19 +68,25 @@ test("getRepresentedClientProductIds returns [] for a missing/empty products arr
   assert.deepEqual(getRepresentedClientProductIds(null), []);
 });
 
-test("derivePaymentFact reads balance_due directly - satisfied only when it is not a positive number", () => {
+// ── 2. Partial/unpaid payment ───────────────────────────────────────────
+
+test("derivePaymentFact reads balance_due directly - a PARTIALLY paid order is never equated with a fully paid one", () => {
   assert.equal(derivePaymentFact({ balance_due: 0 }).satisfied, true);
   assert.equal(derivePaymentFact({ balance_due: null }).satisfied, true);
-  const unsatisfied = derivePaymentFact({ balance_due: 2770 });
-  assert.equal(unsatisfied.satisfied, false);
-  assert.match(unsatisfied.detail, /2,?770/);
+  const partiallyPaid = derivePaymentFact({ balance_due: 500.5 });
+  assert.equal(partiallyPaid.satisfied, false);
+  assert.match(partiallyPaid.detail, /500\.50/);
+  const unpaid = derivePaymentFact({ balance_due: 2770 });
+  assert.equal(unpaid.satisfied, false);
+  assert.match(unpaid.detail, /2,?770/);
 });
+
+// ── 3. One represented client product unapproved ───────────────────────
 
 test("deriveClientApprovalFact requires EVERY represented product to have its own approved client_product_concept row - one approval never covers another product", () => {
   const approvals = [
     { related_table: "client_products", related_id: "jv1", approval_type: "client_product_concept", status: "approved" },
   ];
-  // Only JV1 approved, Sweater also represented and NOT approved.
   const result = deriveClientApprovalFact({ representedClientProductIds: ["jv1", "sweater"], approvals });
   assert.equal(result.satisfied, false);
   assert.deepEqual(result.missingProductIds, ["sweater"]);
@@ -89,9 +116,18 @@ test("deriveClientApprovalFact is vacuously satisfied when the order represents 
   assert.equal(deriveClientApprovalFact({ representedClientProductIds: [], approvals: [] }).satisfied, true);
 });
 
-test("deriveLineConfigurationFact reads order_readiness directly from the line-readiness RPC output - never recomputes per-line feasibility", () => {
+// ── 4. Blocked order line ───────────────────────────────────────────────
+
+test("deriveLineConfigurationFact reads order_readiness directly from the line-readiness RPC output - never recomputes per-line feasibility - and surfaces an N/M ready count", () => {
   assert.equal(deriveLineConfigurationFact({ order_readiness: "ready", lines: [] }).satisfied, true);
   assert.equal(deriveLineConfigurationFact({ order_readiness: "ready_with_warnings", lines: [] }).satisfied, true);
+  const allReady = deriveLineConfigurationFact({
+    order_readiness: "ready",
+    lines: [{ status: "ready" }, { status: "ready" }, { status: "ready" }, { status: "ready" }, { status: "ready" }],
+  });
+  assert.equal(allReady.satisfied, true);
+  assert.equal(allReady.detail, "5/5 lines ready");
+
   const blocked = deriveLineConfigurationFact({
     order_readiness: "blocked",
     lines: [{ status: "blocked", blocking_reasons: [{ code: "ARTWORK_MISSING", message: "Front: required artwork is missing." }] }],
@@ -105,35 +141,309 @@ test("deriveLineConfigurationFact returns satisfied=null (unresolved, not a fals
   assert.equal(deriveLineConfigurationFact({}).satisfied, null);
 });
 
-test("deriveProductionFilesFact reads readiness.ready directly from admin_get_client_product_artwork_readiness - satisfied only when EVERY represented product's artwork is ready", () => {
-  const allReady = deriveProductionFilesFact([
-    { clientProductId: "jv1", readiness: { ready: true } },
-    { clientProductId: "sweater", readiness: { ready: true } },
-  ]);
-  assert.equal(allReady.satisfied, true);
+// ── groupOrderArtworkByLine / listDistinctOrderArtworkRevisionIds ──────
 
-  const oneNotReady = deriveProductionFilesFact([
-    { clientProductId: "jv1", readiness: { ready: true } },
-    { clientProductId: "sweater", readiness: { ready: false, blocking_reasons: ["Front (Chest): production file confirmation pending"] } },
-  ]);
-  assert.equal(oneNotReady.satisfied, false);
-  assert.deepEqual(oneNotReady.missingProductIds, ["sweater"]);
+test("groupOrderArtworkByLine keys by LINE, not just placement - two lines of the same product/placement keep their own independent revision lists", () => {
+  const snapshots = [
+    { client_product_id: "jv1", line_id: "line-A", placement: "Front (Chest)", artwork_revision_ids: ["rev-a"] },
+    { client_product_id: "jv1", line_id: "line-A", placement: null, artwork_revision_ids: [] }, // blank garment row for line-A
+    { client_product_id: "jv1", line_id: "line-B", placement: "Front (Chest)", artwork_revision_ids: ["rev-c"] }, // different line, different revision
+    { client_product_id: "not_represented", line_id: "line-X", placement: "Front (Chest)", artwork_revision_ids: ["rev-x"] },
+  ];
+  const grouped = groupOrderArtworkByLine(snapshots, ["jv1"]);
+  assert.deepEqual(grouped, {
+    jv1: {
+      "line-A": { "Front (Chest)": ["rev-a"] },
+      "line-B": { "Front (Chest)": ["rev-c"] },
+    },
+  });
 });
 
-test("deriveProductionFilesFact never uses the stricter requirements-confirmation classification - legacy_fallback=true with ready=true is still satisfied", () => {
-  // This is the real live shape for JV1/Sweater: legacy_fallback is true
-  // (required_placements was never explicitly locked by an admin) but
-  // ready is true (every placement's production file IS confirmed).
-  // deriveReadinessState() from clientProductReadiness.js would call this
-  // "requirements_unconfirmed" - this fact must NOT reuse that
-  // classification, it reads `ready` directly.
-  const result = deriveProductionFilesFact([
-    { clientProductId: "jv1", readiness: { legacy_fallback: true, ready: true, required_placements: ["Front (Chest)", "Back"] } },
-  ]);
+test("groupOrderArtworkByLine registers a line even when it has no placement rows at all (blank-garment-only), so a line with nothing tracked is never simply absent from consideration", () => {
+  const snapshots = [{ client_product_id: "jv1", line_id: "line-A", placement: null, artwork_revision_ids: [] }];
+  const grouped = groupOrderArtworkByLine(snapshots, ["jv1"]);
+  assert.deepEqual(grouped, { jv1: { "line-A": {} } });
+});
+
+test("groupOrderArtworkByLine de-duplicates identical revision ids within the same line/placement - never counts one frozen file as two required artworks", () => {
+  const snapshots = [
+    { client_product_id: "jv1", line_id: "line-A", placement: "Front (Chest)", artwork_revision_ids: ["rev-a", "rev-a"] },
+  ];
+  const grouped = groupOrderArtworkByLine(snapshots, ["jv1"]);
+  assert.deepEqual(grouped.jv1["line-A"]["Front (Chest)"], ["rev-a"]);
+});
+
+test("listDistinctOrderArtworkRevisionIds flattens and de-duplicates every revision id across products/lines/placements", () => {
+  const grouped = {
+    jv1: { "line-A": { "Front (Chest)": ["rev-a", "rev-c"] }, "line-B": { Back: ["rev-b"] } },
+    sweater: { "line-C": { "Front (Chest)": ["rev-a"] } }, // shared id across products
+  };
+  assert.deepEqual(listDistinctOrderArtworkRevisionIds(grouped), ["rev-a", "rev-b", "rev-c"]);
+});
+
+// ── 1. Evaluate every order line independently ──────────────────────────
+
+test("deriveProductionFilesFact: ONE line missing a required placement blocks the product even though a SIBLING line of the same product has it fully confirmed", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: {
+      jv1: {
+        "line-A": { "Front (Chest)": ["rev-approved"] }, // this line is fully confirmed
+        "line-B": {}, // this line has nothing tracked for Front (Chest) at all
+      },
+    },
+    revisionLookup: { "rev-approved": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" } },
+  });
+  assert.equal(result.satisfied, false, "line-B's missing artwork must not be hidden behind line-A's coverage");
+  assert.match(result.detail, /Front \(Chest\): not linked to this order's lines/);
+});
+
+test("deriveProductionFilesFact: ONE line frozen to an unconfirmed revision blocks the product even though a sibling line is confirmed", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: {
+      jv1: {
+        "line-A": { "Front (Chest)": ["rev-approved"] },
+        "line-B": { "Front (Chest)": ["rev-pending"] },
+      },
+    },
+    revisionLookup: {
+      "rev-approved": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" },
+      "rev-pending": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Front (Chest)" },
+    },
+  });
+  assert.equal(result.satisfied, false);
+});
+
+test("deriveProductionFilesFact: all lines independently confirmed is required for satisfied=true", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)", "Back"] } }],
+    orderArtworkByLine: {
+      jv1: {
+        "line-A": { "Front (Chest)": ["rev-1"], Back: ["rev-2"] },
+        "line-B": { "Front (Chest)": ["rev-1"], Back: ["rev-2"] }, // same revisions, shared across lines - fine
+      },
+    },
+    revisionLookup: {
+      "rev-1": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" },
+      "rev-2": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Back" },
+    },
+  });
   assert.equal(result.satisfied, true);
 });
 
-test("buildAutomaticReadinessItems returns exactly 4 items with the required keys/labels, and all satisfied=true for the real XL-261006-3936 fixture", () => {
+// ── 5. Missing artwork/file confirmation ────────────────────────────────
+
+test("deriveProductionFilesFact: a required placement with no order-frozen revision at all on the only line is reported as not linked, not silently satisfied", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)", "Back"] } }],
+    orderArtworkByLine: { jv1: { "line-A": { "Front (Chest)": ["rev-a"] } } }, // Back never linked
+    revisionLookup: { "rev-a": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" } },
+  });
+  assert.equal(result.satisfied, false);
+  assert.match(result.detail, /Back: not linked to this order/);
+  assert.deepEqual(result.missingProductIds, ["jv1"]);
+});
+
+test("deriveProductionFilesFact: a product with zero tracked lines at all (no snapshot rows whatsoever) is not satisfied, not silently skipped", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: {}, // jv1 has no lines registered at all
+    revisionLookup: {},
+  });
+  assert.equal(result.satisfied, false);
+  assert.deepEqual(result.missingProductIds, ["jv1"]);
+});
+
+test("deriveProductionFilesFact: a linked revision whose status is still pending is not satisfied", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: { jv1: { "line-A": { "Front (Chest)": ["rev-a"] } } },
+    revisionLookup: { "rev-a": { status: "pending", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" } },
+  });
+  assert.equal(result.satisfied, false);
+  assert.match(result.detail, /production file is not yet confirmed/);
+});
+
+// ── 6. Historical frozen artwork must never be silently treated as the
+//      current confirmed artwork (the core fix) ────────────────────────
+
+test("deriveProductionFilesFact: this order's lines frozen to a HISTORICAL, never-approved revision are NOT satisfied, even though the product's CURRENT revision is fully approved", () => {
+  // Reproduces the real live shape for order XL-261006-3936 / JV1: Front
+  // (Chest) revision 1 = historical, status 'pending', is_current=false
+  // (confirm_client_product_artwork_production_file refuses non-current
+  // rows outright, so a superseded row can never become 'approved' after
+  // the fact). Front (Chest) revision 2 = current, status 'approved'.
+  // This order's own snapshot lines are frozen to revision 1, NOT 2.
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)", "Back"] } }],
+    orderArtworkByLine: {
+      jv1: {
+        "line-A": { "Front (Chest)": ["rev-1-historical"], Back: ["rev-1-historical-back"] },
+      },
+    },
+    revisionLookup: {
+      "rev-1-historical": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Front (Chest)" }, // Sky Blue, never approved
+      "rev-1-historical-back": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Back" },
+      // the CURRENT revision (approved) exists in the system but this
+      // order was never frozen to it, so it must play no part here:
+      "rev-2-current": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" },
+    },
+  });
+  assert.equal(result.satisfied, false, "a historical, never-approved frozen revision must not read as confirmed");
+  assert.deepEqual(result.missingProductIds, ["jv1"]);
+});
+
+test("deriveProductionFilesFact: a frozen revision that WAS approved before being superseded still counts as confirmed for this order, even though it is no longer current", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: { jv1: { "line-A": { "Front (Chest)": ["rev-old-but-approved"] } } },
+    revisionLookup: { "rev-old-but-approved": { status: "approved", is_current: false, clientProductId: "jv1", placement: "Front (Chest)" } },
+  });
+  assert.equal(result.satisfied, true);
+});
+
+// ── Verify the revision belongs to the expected product/placement ──────
+
+test("deriveProductionFilesFact: a resolved revision whose OWN client_product_id does not match the expected product is rejected as ambiguous, never trusted", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: { jv1: { "line-A": { "Front (Chest)": ["rev-mismatched"] } } },
+    // This revision actually belongs to a DIFFERENT product (data
+    // integrity issue, or a stale/reused id) - its 'approved' status must
+    // never be trusted on jv1's behalf.
+    revisionLookup: { "rev-mismatched": { status: "approved", is_current: true, clientProductId: "some_other_product", placement: "Front (Chest)" } },
+  });
+  assert.equal(result.satisfied, null);
+  assert.equal(result.unavailable, true);
+  assert.notEqual(result.satisfied, true, "a product/placement mismatch must never read as confirmed");
+});
+
+test("deriveProductionFilesFact: a resolved revision whose OWN placement does not match the expected placement is rejected as ambiguous, never trusted", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: { jv1: { "line-A": { "Front (Chest)": ["rev-wrong-placement"] } } },
+    revisionLookup: { "rev-wrong-placement": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Back" } },
+  });
+  assert.equal(result.satisfied, null);
+  assert.equal(result.unavailable, true);
+});
+
+test("deriveProductionFilesFact: a known blocker on this SAME product takes priority over an ambiguous/mismatched reference found on another line of it", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: {
+      jv1: {
+        "line-A": { "Front (Chest)": ["rev-pending"] }, // definite blocker
+        "line-B": { "Front (Chest)": ["rev-mismatched"] }, // ambiguous
+      },
+    },
+    revisionLookup: {
+      "rev-pending": { status: "pending", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" },
+      "rev-mismatched": { status: "approved", is_current: true, clientProductId: "wrong_product", placement: "Front (Chest)" },
+    },
+  });
+  assert.equal(result.satisfied, false, "a definite, already-identified gap is more actionable than an unknown and must win");
+  assert.deepEqual(result.missingProductIds, ["jv1"]);
+});
+
+// ── mixed-revision-per-line scenario (real order shape) ─────────────────
+
+test("deriveProductionFilesFact: order XL-261006-3936's real shape - 2 of 3 JV1 lines frozen to the historical revision, 1 to current - product-level verdict is false", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)", "Back"] } }],
+    orderArtworkByLine: {
+      jv1: {
+        "line-1": { "Front (Chest)": ["rev-historical-front"], Back: ["rev-historical-back"] },
+        "line-2": { "Front (Chest)": ["rev-historical-front"], Back: ["rev-historical-back"] },
+        "line-3": { "Front (Chest)": ["rev-current-front"], Back: ["rev-current-back"] },
+      },
+    },
+    revisionLookup: {
+      "rev-historical-front": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Front (Chest)" },
+      "rev-historical-back": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Back" },
+      "rev-current-front": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" },
+      "rev-current-back": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Back" },
+    },
+  });
+  assert.equal(result.satisfied, false, "2 of 3 lines are unconfirmed - the product-level verdict must not average this away to 'good enough'");
+});
+
+// ── 7. Unknown or unavailable authority ─────────────────────────────────
+
+test("deriveProductionFilesFact: a frozen revision id with no lookup result (fetch failed / row unreadable) is UNAVAILABLE - never a silent green check", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: { jv1: { "line-A": { "Front (Chest)": ["rev-unreadable"] } } },
+    revisionLookup: {}, // rev-unreadable has no entry - query failed or row missing
+  });
+  assert.equal(result.satisfied, null);
+  assert.equal(result.unavailable, true);
+  assert.notEqual(result.satisfied, true, "an unknown fact must never read as satisfied");
+});
+
+test("deriveProductionFilesFact: a product with no resolved required-placements entry at all (the authority itself failed to load) is UNAVAILABLE, never silently satisfied", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [], // admin_get_client_product_artwork_readiness never resolved for jv1
+    orderArtworkByLine: {},
+    revisionLookup: {},
+  });
+  assert.equal(result.satisfied, null);
+  assert.equal(result.unavailable, true);
+});
+
+test("deriveProductionFilesFact: a known blocker takes priority over an UNRELATED product's unavailable fact (more actionable wins)", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1", "sweater"],
+    artworkReadinessEntries: [
+      { clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } },
+      { clientProductId: "sweater", readiness: { required_placements: ["Front (Chest)"] } },
+    ],
+    orderArtworkByLine: {
+      jv1: { "line-A": { "Front (Chest)": ["rev-pending"] } },
+      sweater: { "line-B": { "Front (Chest)": ["rev-unreadable"] } },
+    },
+    revisionLookup: { "rev-pending": { status: "pending", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" } },
+  });
+  assert.equal(result.satisfied, false);
+  assert.deepEqual(result.missingProductIds, ["jv1"]);
+});
+
+test("deriveProductionFilesFact: a product requiring no placements is trivially satisfied, with no network round trip implied", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["blank_label"],
+    artworkReadinessEntries: [{ clientProductId: "blank_label", readiness: { required_placements: [] } }],
+    orderArtworkByLine: {},
+    revisionLookup: {},
+  });
+  assert.equal(result.satisfied, true);
+  assert.equal(result.detail, "1/1 product confirmed");
+});
+
+test("deriveProductionFilesFact is vacuously satisfied when the order represents no client products", () => {
+  assert.equal(
+    deriveProductionFilesFact({ representedClientProductIds: [], artworkReadinessEntries: [], orderArtworkByLine: {}, revisionLookup: {} }).satisfied,
+    true,
+  );
+});
+
+// ── 1. All four automatic indicators satisfied ──────────────────────────
+
+test("buildAutomaticReadinessItems returns exactly 4 items with the required keys/labels, all satisfied=true when every order-frozen revision on every line is actually confirmed", () => {
   const items = buildAutomaticReadinessItems({
     readinessOrder: { balance_due: 0 },
     approvals: [
@@ -141,15 +451,84 @@ test("buildAutomaticReadinessItems returns exactly 4 items with the required key
       { related_table: "client_products", related_id: "sweater", approval_type: "client_product_concept", status: "approved" },
     ],
     representedClientProductIds: ["jv1", "sweater"],
-    lineProductionReadiness: { order_readiness: "ready", lines: [] },
+    lineProductionReadiness: { order_readiness: "ready", lines: [{ status: "ready" }] },
     artworkReadinessEntries: [
-      { clientProductId: "jv1", readiness: { ready: true } },
-      { clientProductId: "sweater", readiness: { ready: true } },
+      { clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)", "Back"] } },
+      { clientProductId: "sweater", readiness: { required_placements: ["Front (Chest)"] } },
     ],
+    orderArtworkByLine: {
+      jv1: { "line-1": { "Front (Chest)": ["jv1-front"], Back: ["jv1-back"] } },
+      sweater: { "line-2": { "Front (Chest)": ["sweater-front"] } },
+    },
+    revisionLookup: {
+      "jv1-front": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" },
+      "jv1-back": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Back" },
+      "sweater-front": { status: "approved", is_current: true, clientProductId: "sweater", placement: "Front (Chest)" },
+    },
   });
   assert.deepEqual(items.map((i) => i.key), ["payment", "client_approval", "line_configuration", "production_files"]);
   assert.deepEqual(items.map((i) => i.label), ["Payment", "Client approval", "Line configuration", "Production files"]);
   assert.ok(items.every((i) => i.satisfied === true));
+});
+
+test("buildAutomaticReadinessItems reproduces the REAL live order XL-261006-3936 shape — production_files correctly reads false despite the product's current artwork being fully approved", () => {
+  const items = buildAutomaticReadinessItems({
+    readinessOrder: { balance_due: 0 }, // fully paid live (2770 paid == 2770 total, confirmed fresh against production)
+    approvals: [
+      { related_table: "client_products", related_id: "jv1", approval_type: "client_product_concept", status: "approved" },
+      { related_table: "client_products", related_id: "sweater", approval_type: "client_product_concept", status: "approved" },
+    ],
+    representedClientProductIds: ["jv1", "sweater"],
+    lineProductionReadiness: { order_readiness: "ready", lines: [{ status: "ready" }, { status: "ready" }, { status: "ready" }, { status: "ready" }, { status: "ready" }] },
+    artworkReadinessEntries: [
+      { clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)", "Back"], ready: true } }, // CURRENT revision fully approved
+      { clientProductId: "sweater", readiness: { required_placements: ["Front (Chest)"], ready: true } },
+    ],
+    orderArtworkByLine: {
+      // 2 of 3 JV1 lines frozen to the historical (pending) revision,
+      // 1 frozen to current (approved) - confirmed live via
+      // order_line_component_snapshots.artwork_revision_ids.
+      jv1: {
+        "line-1": { "Front (Chest)": ["jv1-front-rev1"], Back: ["jv1-back-rev1"] },
+        "line-2": { "Front (Chest)": ["jv1-front-rev1"], Back: ["jv1-back-rev1"] },
+        "line-3": { "Front (Chest)": ["jv1-front-rev2"], Back: ["jv1-back-rev2"] },
+      },
+      sweater: { "line-4": { "Front (Chest)": ["sweater-front-rev2"] }, "line-5": { "Front (Chest)": ["sweater-front-rev2"] } },
+    },
+    revisionLookup: {
+      "jv1-front-rev1": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Front (Chest)" }, // historical, never confirmed
+      "jv1-front-rev2": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Front (Chest)" }, // current
+      "jv1-back-rev1": { status: "pending", is_current: false, clientProductId: "jv1", placement: "Back" },
+      "jv1-back-rev2": { status: "approved", is_current: true, clientProductId: "jv1", placement: "Back" },
+      "sweater-front-rev2": { status: "approved", is_current: true, clientProductId: "sweater", placement: "Front (Chest)" },
+    },
+  });
+  const byKey = Object.fromEntries(items.map((i) => [i.key, i]));
+  assert.equal(byKey.payment.satisfied, true);
+  assert.equal(byKey.client_approval.satisfied, true);
+  assert.equal(byKey.line_configuration.satisfied, true);
+  assert.equal(byKey.production_files.satisfied, false, "must not show a misleading green check for this order");
+  assert.deepEqual(byKey.production_files.missingProductIds, ["jv1"]);
+});
+
+// ── 3. Historical delivery behavior: no mutation anywhere in this module ──
+
+test("orderAutomaticReadiness.js is pure read-only derivation - no status changes, no retrospective confirmations, no edits to any artwork row, no snapshot mutation", () => {
+  return readSource("src/lib/orderAutomaticReadiness.js").then((source) => {
+    assert.doesNotMatch(source, /confirm_client_product_artwork_production_file/);
+    assert.doesNotMatch(source, /revise_order_line_component_snapshot_artwork/);
+    assert.doesNotMatch(source, /\.insert\(|\.update\(|\.delete\(/);
+  });
+});
+
+// ── 8. Legacy checklist unchanged ───────────────────────────────────────
+
+test("the legacy 8 checklist keys / checklist_state formula are untouched by this revision — no references in the automatic-readiness module", () => {
+  return readSource("src/lib/orderAutomaticReadiness.js").then((source) => {
+    assert.doesNotMatch(source, /checklist_state/);
+    assert.doesNotMatch(source, /check_key/);
+    assert.doesNotMatch(source, /tech_pack_checked|special_instructions_checked|contract_terms_accepted|production_notes_reviewed/);
+  });
 });
 
 // ── Static-source assertions on the component itself ───────────────────
@@ -163,10 +542,6 @@ test.before(async () => {
 });
 
 test("the automatic strip is rendered as its own section, visually separated from and before the manual checklist", () => {
-  // Phase B3 renamed the manual-checklist heading from "Manual /
-  // operational checks" to "Production checks" (the relevance-filtered
-  // model) - the ordering invariant this test actually cares about
-  // (automatic strip renders first) still holds under either heading.
   const stripIndex = card.indexOf("<AutomaticReadinessStrip");
   const manualHeadingIndex = card.indexOf("Production checks");
   const checksListIndex = card.indexOf("checks.map((check) =>");
@@ -175,6 +550,8 @@ test("the automatic strip is rendered as its own section, visually separated fro
   assert.ok(stripIndex < manualHeadingIndex, "the automatic strip must render before the manual checklist heading");
   assert.ok(manualHeadingIndex < checksListIndex, "the manual heading must sit directly above the checks list");
 });
+
+// ── 9. No new mutation paths ─────────────────────────────────────────────
 
 test("AutomaticReadinessStrip introduces no .update(), no mutation, no Select — it is read-only", () => {
   const start = card.indexOf("function AutomaticReadinessStrip(");
@@ -187,12 +564,24 @@ test("AutomaticReadinessStrip introduces no .update(), no mutation, no Select �
   assert.doesNotMatch(stripFn, /updateOrderProductionReadinessCheck/);
 });
 
+test("the new order-artwork reads (snapshots, per-product artwork rows) are plain .filter() reads — no .insert/.update/.delete/useMutation anywhere in the card", () => {
+  assert.doesNotMatch(card, /OrderLineComponentSnapshot\.(insert|update|delete)/);
+  assert.doesNotMatch(card, /ClientProductArtwork\.(insert|update|delete)/);
+  assert.match(card, /OrderLineComponentSnapshot\.filter\(/);
+  assert.match(card, /ClientProductArtwork\.filter\(/);
+});
+
+test("the card calls no artwork-mutation RPC (confirm_client_product_artwork_production_file) and no snapshot-mutation RPC", () => {
+  assert.doesNotMatch(card, /confirm_client_product_artwork_production_file/);
+  assert.doesNotMatch(card, /revise_order_line_component_snapshot_artwork/);
+});
+
 test("the automatic items are built from buildAutomaticReadinessItems (the existing-authority derivation), not recomputed inline", () => {
   assert.match(card, /buildAutomaticReadinessItems\(/);
   assert.match(card, /getRepresentedClientProductIds\(/);
 });
 
-test("artwork readiness is fetched via the EXISTING getClientProductArtworkReadiness wrapper, never a new RPC name", () => {
+test("artwork required-placements are fetched via the EXISTING getClientProductArtworkReadiness wrapper, never a new RPC name", () => {
   assert.match(card, /getClientProductArtworkReadiness\(\{ clientProductId \}\)/);
   assert.doesNotMatch(card, /supabase\.rpc\(\s*["'](?!admin_get_client_product_artwork_readiness)/);
 });
@@ -208,10 +597,6 @@ test("OrderDrawer passes its existing lineProductionReadiness data straight thro
 });
 
 test("the manual checklist still writes through the same updateOrderProductionReadinessCheck RPC wrapper", () => {
-  // Phase B3 replaced the flat 8-key dropdown UI with a relevance-filtered,
-  // compact row UI (see order-readiness-checklist-relevance-model.test.mjs
-  // for that phase's own assertions) - this test only confirms the write
-  // path itself wasn't bypassed or duplicated.
   assert.match(card, /updateOrderProductionReadinessCheck/);
   const updateCheckStart = card.indexOf("const updateCheck = (check, status, noteValue)");
   assert.notEqual(updateCheckStart, -1);
@@ -223,4 +608,78 @@ test("the automatic strip never writes into data.summary.ready_state or the chec
   const stripFn = card.slice(start, end);
   assert.doesNotMatch(stripFn, /ready_state/);
   assert.doesNotMatch(stripFn, /setNotes/);
+});
+
+// ── 2. Loading and query efficiency ──────────────────────────────────────
+
+test("the per-product artwork read is ONE batched query per represented product (client_product_id filter), never one query per distinct revision id", () => {
+  assert.match(card, /ClientProductArtwork\.filter\(\{ client_product_id: clientProductId \}, undefined, 200\)/);
+  // the old per-revision-id query pattern must be gone
+  assert.doesNotMatch(card, /ClientProductArtwork\.filter\(\{ id: revisionId \}/);
+});
+
+test("the artwork/snapshot/product-artwork queries are not chained into a waterfall - productArtworkQueries is keyed only on representedClientProductIds, not on snapshotsQuery's result", () => {
+  const snapshotsStart = card.indexOf("const snapshotsQuery = useQuery(");
+  const productArtworkStart = card.indexOf("const productArtworkQueries = useQueries(");
+  assert.notEqual(snapshotsStart, -1);
+  assert.notEqual(productArtworkStart, -1);
+  const productArtworkBlockEnd = card.indexOf("const productArtworkLoading", productArtworkStart);
+  const productArtworkBlock = card.slice(productArtworkStart, productArtworkBlockEnd);
+  // must not reference snapshots/orderArtworkByLine (the snapshot query's
+  // own derived data) anywhere in its own query definition
+  assert.doesNotMatch(productArtworkBlock, /\bsnapshots\b/);
+  assert.doesNotMatch(productArtworkBlock, /orderArtworkByLine/);
+  assert.match(productArtworkBlock, /representedClientProductIds\.map/);
+});
+
+test("every automatic-readiness query sets staleTime (React Query caching avoids unnecessary repeated requests)", () => {
+  const matches = card.match(/staleTime: 30_000/g) || [];
+  assert.ok(matches.length >= 3, `expected at least 3 staleTime: 30_000 query configs, found ${matches.length}`);
+});
+
+test("the order-scoped snapshot query key includes order.id - switching orders cannot read stale cached data for a different order", () => {
+  assert.match(card, /queryKey: \["orderLineComponentSnapshots", "automaticReadiness", order\?\.id\]/);
+});
+
+test("the per-product queries (artwork readiness + artwork rows) are keyed by clientProductId, not by order - correct, since that data is genuinely product-level and safely cacheable/shared across orders that represent the same product", () => {
+  assert.match(card, /queryKey: \["clientProductArtworkReadiness", clientProductId\]/);
+  assert.match(card, /queryKey: \["clientProductArtworkRows", clientProductId\]/);
+});
+
+// ── React hooks / conditional rendering correctness ─────────────────────
+
+test("all hooks (useState/useQuery/useQueries/useMutation/useMemo) are declared before the component's first early return - no conditional hook calls", () => {
+  const componentStart = card.indexOf("export default function ProductionReadinessCard(");
+  const firstEarlyReturn = card.indexOf("if (!canLoadReadiness)", componentStart);
+  const hooksRegion = card.slice(componentStart, firstEarlyReturn);
+  // every hook call used by the component must appear in this region
+  for (const hook of ["useState(", "useQueryClient(", "useQueries(", "useQuery(", "useMutation(", "useMemo("]) {
+    assert.ok(hooksRegion.includes(hook), `expected ${hook} to appear before the first early return`);
+  }
+  assert.ok(firstEarlyReturn > componentStart, "the first early return must come after the hooks region");
+});
+
+// ── 10. Mobile rendering/layout ──────────────────────────────────────────
+
+test("the strip uses a 2-column compact grid below sm: (375/390/414px all fall below the sm: breakpoint)", () => {
+  assert.match(card, /grid grid-cols-2 gap-2 sm:grid-cols-4/);
+});
+
+test("the strip renders 4 distinct visual states (ready/blocked/pending/unavailable) with icons and short labels, never a 5th ad-hoc style", () => {
+  assert.match(card, /AUTOMATIC_READINESS_TONE/);
+  assert.match(card, /ready:\s*\{ className: "bg-emerald-50 text-emerald-700", icon: CheckCircle2, spin: false \}/);
+  assert.match(card, /blocked:\s*\{ className: "bg-amber-50 text-amber-800", icon: AlertTriangle, spin: false \}/);
+  assert.match(card, /pending:\s*\{ className: "bg-secondary\/40 text-muted-foreground", icon: RefreshCw, spin: true \}/);
+  assert.match(card, /unavailable:\s*\{ className: "bg-slate-100 text-slate-600", icon: HelpCircle, spin: false \}/);
+});
+
+test("secondary detail text inside each tile uses a neutral grey, compact (text-[10px]) treatment — no bright/oversized panels", () => {
+  assert.match(card, /text-\[10px\] font-normal text-muted-foreground/);
+});
+
+test("an unavailable item never renders the emerald/green 'ready' tone", () => {
+  const toneFnStart = card.indexOf("function automaticReadinessTone(item)");
+  const toneFnEnd = card.indexOf("\n}", toneFnStart);
+  const toneFn = card.slice(toneFnStart, toneFnEnd);
+  assert.match(toneFn, /if \(item\.unavailable\) return "unavailable";/);
 });
