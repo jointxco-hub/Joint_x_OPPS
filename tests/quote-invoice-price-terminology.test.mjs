@@ -12,18 +12,25 @@ async function src(rel) {
 // untouched — these tests assert on display label text only.
 
 test("QuoteLineItemsEditor: unit-price field is labeled 'Price', not 'Rate'", async () => {
-  const s = await src("src/features/quotes/QuoteLineItemsEditor.jsx");
-  assert.match(s, /<LabeledNumber label="Price" className="md:col-span-2">/);
-  assert.doesNotMatch(s, /label="Rate"/);
+  // Phase B2 moved the Qty/Price/Discount/Total fields into the shared
+  // MoneyRow component — the label now lives there, imported by both editors.
+  const quote = await src("src/features/quotes/QuoteLineItemsEditor.jsx");
+  assert.match(quote, /import MoneyRow from "@\/features\/lineItems\/MoneyRow";/);
+  assert.doesNotMatch(quote, /label="Rate"/);
+  const moneyRow = await src("src/features/lineItems/MoneyRow.jsx");
+  assert.match(moneyRow, /<LabeledNumber label="Price"/);
+  assert.doesNotMatch(moneyRow, /label="Rate"/);
   // the underlying field name is untouched
-  assert.match(s, /value=\{item\.rate \?\? ""\}/);
+  assert.match(moneyRow, /value=\{rate \?\? ""\}/);
 });
 
 test("InvoiceLineItemsEditor: unit-price field is labeled 'Price', not 'Rate'", async () => {
-  const s = await src("src/features/invoices/InvoiceLineItemsEditor.jsx");
-  assert.match(s, /<LabeledNumber label="Price" className="md:col-span-2">/);
-  assert.doesNotMatch(s, /label="Rate"/);
-  assert.match(s, /value=\{item\.rate \?\? ""\}/);
+  const invoice = await src("src/features/invoices/InvoiceLineItemsEditor.jsx");
+  assert.match(invoice, /import MoneyRow from "@\/features\/lineItems\/MoneyRow";/);
+  assert.doesNotMatch(invoice, /label="Rate"/);
+  const moneyRow = await src("src/features/lineItems/MoneyRow.jsx");
+  assert.match(moneyRow, /<LabeledNumber label="Price"/);
+  assert.doesNotMatch(moneyRow, /label="Rate"/);
 });
 
 test("CommercialDocument: line-table unit-price column is labeled 'Price', not 'Unit'", async () => {
@@ -53,11 +60,15 @@ test("shared LabeledNumber preserves the original markup/behavior", async () => 
 });
 
 test("InvoiceLineItemsEditor: remove/save-template buttons use Quote's mobile-first touch-target pattern", async () => {
+  // Phase B2 moved the per-line remove button into the shared LineItemCard;
+  // the invoice's save-as-template button stays inline here (headerActions).
   const s = await src("src/features/invoices/InvoiceLineItemsEditor.jsx");
   assert.match(s, /aria-label="Save line item"[\s\S]{0,40}/);
   assert.match(s, /className="grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-primary sm:h-8 sm:w-8"/);
-  assert.match(s, /className="grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive sm:h-8 sm:w-8"/);
   assert.doesNotMatch(s, /className="grid h-8 w-8 place-items-center/);
+  const card = await src("src/features/lineItems/LineItemCard.jsx");
+  assert.match(card, /className="grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive sm:h-8 sm:w-8"/);
+  assert.doesNotMatch(card, /className="grid h-8 w-8 place-items-center/);
 });
 
 test("no calculation, validation, or API logic was touched by this terminology/dedupe slice", async () => {
