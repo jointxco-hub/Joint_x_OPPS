@@ -157,8 +157,14 @@ test("ManualCheckRow exposes exactly a 'mark reviewed' and a 'needs attention' a
 });
 
 test("the automatic readiness strip is untouched by this phase - still present, still separate", () => {
+  // Order Drawer Operational Summary (Phase C1) extracted the strip's
+  // definition into its own shared file (src/components/orders/
+  // AutomaticReadinessStrip.jsx) so the Details tab and the Readiness tab
+  // render the identical component - the card still renders it via import,
+  // just no longer defines it inline.
+  assert.match(card, /import AutomaticReadinessStrip from "@\/components\/orders\/AutomaticReadinessStrip"/);
   assert.match(card, /<AutomaticReadinessStrip/);
-  assert.match(card, /function AutomaticReadinessStrip\(/);
+  assert.doesNotMatch(card, /function AutomaticReadinessStrip\(/);
 });
 
 test("no .update() is added for checklist state beyond the existing updateOrderProductionReadinessCheck path", () => {

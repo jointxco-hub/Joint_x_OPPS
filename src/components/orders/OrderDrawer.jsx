@@ -92,6 +92,7 @@ import {
 import { listInvoices } from "@/api/invoices";
 import { supabase } from "@/lib/supabaseClient";
 import { createPageUrl } from "@/utils";
+import OrderOperationalSummary from "@/components/orders/drawer/OrderOperationalSummary";
 
 const ProductionReadinessCard = React.lazy(() => import("@/components/orders/ProductionReadinessCard"));
 
@@ -1698,6 +1699,13 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
           <DrawerSectionBoundary label={`${tab === "po" ? "PO" : tab} tab`} resetKey={`${order.id}-${tab}`}>
           {tab === 'details' && (
             <div className="space-y-4">
+              <OrderOperationalSummary
+                order={order}
+                readinessQuery={drawerData.readinessQuery}
+                lineProductionReadiness={drawerData.lineProductionReadiness}
+                shippingGapReason={shippingGapReason}
+                onViewReadiness={() => setTab('readiness')}
+              />
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-secondary/20 p-3">
                 <div>
                   <p className="text-sm font-semibold text-foreground">Order printouts</p>

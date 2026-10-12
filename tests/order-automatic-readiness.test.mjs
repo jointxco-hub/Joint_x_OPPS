@@ -19,6 +19,9 @@ async function readSource(relativePath) {
 
 const CARD_PATH = "src/components/orders/ProductionReadinessCard.jsx";
 const DRAWER_PATH = "src/components/orders/OrderDrawer.jsx";
+const STRIP_PATH = "src/components/orders/AutomaticReadinessStrip.jsx";
+const HOOK_PATH = "src/hooks/useOrderAutomaticReadiness.js";
+const SUMMARY_PATH = "src/components/orders/drawer/OrderOperationalSummary.jsx";
 
 // ─────────────────────────────────────────────────────────────────────
 // Order Operational Readiness, Phase B2 - "Ready automatically" strip.
@@ -535,10 +538,16 @@ test("the legacy 8 checklist keys / checklist_state formula are untouched by thi
 
 let card;
 let drawer;
+let strip;
+let hook;
+let summary;
 
 test.before(async () => {
   card = await readSource(CARD_PATH);
   drawer = await readSource(DRAWER_PATH);
+  strip = await readSource(STRIP_PATH);
+  hook = await readSource(HOOK_PATH);
+  summary = await readSource(SUMMARY_PATH);
 });
 
 test("the automatic strip is rendered as its own section, visually separated from and before the manual checklist", () => {
@@ -553,37 +562,39 @@ test("the automatic strip is rendered as its own section, visually separated fro
 
 // ── 9. No new mutation paths ─────────────────────────────────────────────
 
-test("AutomaticReadinessStrip introduces no .update(), no mutation, no Select — it is read-only", () => {
-  const start = card.indexOf("function AutomaticReadinessStrip(");
-  const end = card.indexOf("function Metric(");
-  assert.notEqual(start, -1);
-  const stripFn = card.slice(start, end);
-  assert.doesNotMatch(stripFn, /\.update\(/);
-  assert.doesNotMatch(stripFn, /useMutation/);
-  assert.doesNotMatch(stripFn, /<Select/);
-  assert.doesNotMatch(stripFn, /updateOrderProductionReadinessCheck/);
+test("AutomaticReadinessStrip (now its own shared file, Phase C1) introduces no .update(), no mutation, no Select — it is read-only", () => {
+  assert.doesNotMatch(strip, /\.update\(/);
+  assert.doesNotMatch(strip, /useMutation/);
+  assert.doesNotMatch(strip, /<Select/);
+  assert.doesNotMatch(strip, /updateOrderProductionReadinessCheck/);
 });
 
-test("the new order-artwork reads (snapshots, per-product artwork rows) are plain .filter() reads — no .insert/.update/.delete/useMutation anywhere in the card", () => {
-  assert.doesNotMatch(card, /OrderLineComponentSnapshot\.(insert|update|delete)/);
-  assert.doesNotMatch(card, /ClientProductArtwork\.(insert|update|delete)/);
-  assert.match(card, /OrderLineComponentSnapshot\.filter\(/);
-  assert.match(card, /ClientProductArtwork\.filter\(/);
+test("the order-artwork reads (snapshots, per-product artwork rows) are plain .filter() reads — no .insert/.update/.delete/useMutation anywhere in the shared hook or the card", () => {
+  for (const source of [hook, card]) {
+    assert.doesNotMatch(source, /OrderLineComponentSnapshot\.(insert|update|delete)/);
+    assert.doesNotMatch(source, /ClientProductArtwork\.(insert|update|delete)/);
+  }
+  assert.match(hook, /OrderLineComponentSnapshot\.filter\(/);
+  assert.match(hook, /ClientProductArtwork\.filter\(/);
 });
 
-test("the card calls no artwork-mutation RPC (confirm_client_product_artwork_production_file) and no snapshot-mutation RPC", () => {
-  assert.doesNotMatch(card, /confirm_client_product_artwork_production_file/);
-  assert.doesNotMatch(card, /revise_order_line_component_snapshot_artwork/);
+test("neither the card, the shared hook, nor the Details-tab summary call any artwork-mutation RPC (confirm_client_product_artwork_production_file) or snapshot-mutation RPC", () => {
+  for (const source of [card, hook, summary]) {
+    assert.doesNotMatch(source, /confirm_client_product_artwork_production_file/);
+    assert.doesNotMatch(source, /revise_order_line_component_snapshot_artwork/);
+  }
 });
 
-test("the automatic items are built from buildAutomaticReadinessItems (the existing-authority derivation), not recomputed inline", () => {
-  assert.match(card, /buildAutomaticReadinessItems\(/);
-  assert.match(card, /getRepresentedClientProductIds\(/);
+test("the automatic items are built from buildAutomaticReadinessItems (the existing-authority derivation) inside the shared hook, not recomputed inline in the card or the summary", () => {
+  assert.match(hook, /buildAutomaticReadinessItems\(/);
+  assert.match(hook, /getRepresentedClientProductIds\(/);
+  assert.doesNotMatch(card, /buildAutomaticReadinessItems\(/);
+  assert.doesNotMatch(summary, /buildAutomaticReadinessItems\(/);
 });
 
 test("artwork required-placements are fetched via the EXISTING getClientProductArtworkReadiness wrapper, never a new RPC name", () => {
-  assert.match(card, /getClientProductArtworkReadiness\(\{ clientProductId \}\)/);
-  assert.doesNotMatch(card, /supabase\.rpc\(\s*["'](?!admin_get_client_product_artwork_readiness)/);
+  assert.match(hook, /getClientProductArtworkReadiness\(\{ clientProductId \}\)/);
+  assert.doesNotMatch(hook, /supabase\.rpc\(\s*["'](?!admin_get_client_product_artwork_readiness)/);
 });
 
 test("line configuration is read from a prop (the order-line readiness this order drawer already fetches), not from a new query inside the card", () => {
@@ -603,28 +614,25 @@ test("the manual checklist still writes through the same updateOrderProductionRe
 });
 
 test("the automatic strip never writes into data.summary.ready_state or the checklist — it has no setter for either", () => {
-  const start = card.indexOf("function AutomaticReadinessStrip(");
-  const end = card.indexOf("function Metric(");
-  const stripFn = card.slice(start, end);
-  assert.doesNotMatch(stripFn, /ready_state/);
-  assert.doesNotMatch(stripFn, /setNotes/);
+  assert.doesNotMatch(strip, /ready_state/);
+  assert.doesNotMatch(strip, /setNotes/);
 });
 
 // ── 2. Loading and query efficiency ──────────────────────────────────────
 
 test("the per-product artwork read is ONE batched query per represented product (client_product_id filter), never one query per distinct revision id", () => {
-  assert.match(card, /ClientProductArtwork\.filter\(\{ client_product_id: clientProductId \}, undefined, 200\)/);
+  assert.match(hook, /ClientProductArtwork\.filter\(\{ client_product_id: clientProductId \}, undefined, 200\)/);
   // the old per-revision-id query pattern must be gone
-  assert.doesNotMatch(card, /ClientProductArtwork\.filter\(\{ id: revisionId \}/);
+  assert.doesNotMatch(hook, /ClientProductArtwork\.filter\(\{ id: revisionId \}/);
 });
 
 test("the artwork/snapshot/product-artwork queries are not chained into a waterfall - productArtworkQueries is keyed only on representedClientProductIds, not on snapshotsQuery's result", () => {
-  const snapshotsStart = card.indexOf("const snapshotsQuery = useQuery(");
-  const productArtworkStart = card.indexOf("const productArtworkQueries = useQueries(");
+  const snapshotsStart = hook.indexOf("const snapshotsQuery = useQuery(");
+  const productArtworkStart = hook.indexOf("const productArtworkQueries = useQueries(");
   assert.notEqual(snapshotsStart, -1);
   assert.notEqual(productArtworkStart, -1);
-  const productArtworkBlockEnd = card.indexOf("const productArtworkLoading", productArtworkStart);
-  const productArtworkBlock = card.slice(productArtworkStart, productArtworkBlockEnd);
+  const productArtworkBlockEnd = hook.indexOf("const productArtworkLoading", productArtworkStart);
+  const productArtworkBlock = hook.slice(productArtworkStart, productArtworkBlockEnd);
   // must not reference snapshots/orderArtworkByLine (the snapshot query's
   // own derived data) anywhere in its own query definition
   assert.doesNotMatch(productArtworkBlock, /\bsnapshots\b/);
@@ -633,53 +641,195 @@ test("the artwork/snapshot/product-artwork queries are not chained into a waterf
 });
 
 test("every automatic-readiness query sets staleTime (React Query caching avoids unnecessary repeated requests)", () => {
-  const matches = card.match(/staleTime: 30_000/g) || [];
+  const matches = hook.match(/staleTime: 30_000/g) || [];
   assert.ok(matches.length >= 3, `expected at least 3 staleTime: 30_000 query configs, found ${matches.length}`);
 });
 
 test("the order-scoped snapshot query key includes order.id - switching orders cannot read stale cached data for a different order", () => {
-  assert.match(card, /queryKey: \["orderLineComponentSnapshots", "automaticReadiness", order\?\.id\]/);
+  assert.match(hook, /queryKey: \["orderLineComponentSnapshots", "automaticReadiness", order\?\.id\]/);
 });
 
 test("the per-product queries (artwork readiness + artwork rows) are keyed by clientProductId, not by order - correct, since that data is genuinely product-level and safely cacheable/shared across orders that represent the same product", () => {
-  assert.match(card, /queryKey: \["clientProductArtworkReadiness", clientProductId\]/);
-  assert.match(card, /queryKey: \["clientProductArtworkRows", clientProductId\]/);
+  assert.match(hook, /queryKey: \["clientProductArtworkReadiness", clientProductId\]/);
+  assert.match(hook, /queryKey: \["clientProductArtworkRows", clientProductId\]/);
+});
+
+test("Phase C1: the shared hook is called with IDENTICAL arguments from both the card and the Details-tab summary, so React Query's cache (same query keys) serves the second mount from cache - no duplicate network request", () => {
+  const callPattern = /useOrderAutomaticReadiness\(\{\s*order,\s*readinessQuery,\s*lineProductionReadiness,?\s*\}\)/;
+  assert.match(card, callPattern);
+  assert.match(summary, callPattern);
+  // neither call site defines its own competing query keys
+  assert.doesNotMatch(card, /queryKey: \["clientProductArtworkReadiness"/);
+  assert.doesNotMatch(summary, /queryKey: \["clientProductArtworkReadiness"/);
+  assert.doesNotMatch(summary, /useQuery\(|useQueries\(/);
 });
 
 // ── React hooks / conditional rendering correctness ─────────────────────
 
-test("all hooks (useState/useQuery/useQueries/useMutation/useMemo) are declared before the component's first early return - no conditional hook calls", () => {
+test("the card's own hooks (useState/useQueryClient/useMutation/the shared useOrderAutomaticReadiness) are declared before its first early return - no conditional hook calls", () => {
   const componentStart = card.indexOf("export default function ProductionReadinessCard(");
   const firstEarlyReturn = card.indexOf("if (!canLoadReadiness)", componentStart);
   const hooksRegion = card.slice(componentStart, firstEarlyReturn);
-  // every hook call used by the component must appear in this region
-  for (const hook of ["useState(", "useQueryClient(", "useQueries(", "useQuery(", "useMutation(", "useMemo("]) {
-    assert.ok(hooksRegion.includes(hook), `expected ${hook} to appear before the first early return`);
+  for (const hookCall of ["useState(", "useQueryClient(", "useOrderAutomaticReadiness(", "useMutation("]) {
+    assert.ok(hooksRegion.includes(hookCall), `expected ${hookCall} to appear before the first early return`);
   }
   assert.ok(firstEarlyReturn > componentStart, "the first early return must come after the hooks region");
+});
+
+test("the shared hook itself calls useQueries/useQuery/useMemo unconditionally - no early return inside it that could violate the Rules of Hooks", () => {
+  assert.doesNotMatch(hook, /\n\s*if \([^)]*\)\s*return/);
+  for (const hookCall of ["useQueries(", "useQuery(", "useMemo("]) {
+    assert.ok(hook.includes(hookCall), `expected ${hookCall} in the shared hook`);
+  }
 });
 
 // ── 10. Mobile rendering/layout ──────────────────────────────────────────
 
 test("the strip uses a 2-column compact grid below sm: (375/390/414px all fall below the sm: breakpoint)", () => {
-  assert.match(card, /grid grid-cols-2 gap-2 sm:grid-cols-4/);
+  assert.match(strip, /grid grid-cols-2 gap-2 sm:grid-cols-4/);
 });
 
 test("the strip renders 4 distinct visual states (ready/blocked/pending/unavailable) with icons and short labels, never a 5th ad-hoc style", () => {
-  assert.match(card, /AUTOMATIC_READINESS_TONE/);
-  assert.match(card, /ready:\s*\{ className: "bg-emerald-50 text-emerald-700", icon: CheckCircle2, spin: false \}/);
-  assert.match(card, /blocked:\s*\{ className: "bg-amber-50 text-amber-800", icon: AlertTriangle, spin: false \}/);
-  assert.match(card, /pending:\s*\{ className: "bg-secondary\/40 text-muted-foreground", icon: RefreshCw, spin: true \}/);
-  assert.match(card, /unavailable:\s*\{ className: "bg-slate-100 text-slate-600", icon: HelpCircle, spin: false \}/);
+  assert.match(strip, /AUTOMATIC_READINESS_TONE/);
+  assert.match(strip, /ready:\s*\{ className: "bg-emerald-50 text-emerald-700", icon: CheckCircle2, spin: false \}/);
+  assert.match(strip, /blocked:\s*\{ className: "bg-amber-50 text-amber-800", icon: AlertTriangle, spin: false \}/);
+  assert.match(strip, /pending:\s*\{ className: "bg-secondary\/40 text-muted-foreground", icon: RefreshCw, spin: true \}/);
+  assert.match(strip, /unavailable:\s*\{ className: "bg-slate-100 text-slate-600", icon: HelpCircle, spin: false \}/);
 });
 
 test("secondary detail text inside each tile uses a neutral grey, compact (text-[10px]) treatment — no bright/oversized panels", () => {
-  assert.match(card, /text-\[10px\] font-normal text-muted-foreground/);
+  assert.match(strip, /text-\[10px\] font-normal text-muted-foreground/);
 });
 
 test("an unavailable item never renders the emerald/green 'ready' tone", () => {
-  const toneFnStart = card.indexOf("function automaticReadinessTone(item)");
-  const toneFnEnd = card.indexOf("\n}", toneFnStart);
-  const toneFn = card.slice(toneFnStart, toneFnEnd);
+  const toneFnStart = strip.indexOf("function automaticReadinessTone(item)");
+  const toneFnEnd = strip.indexOf("\n}", toneFnStart);
+  const toneFn = strip.slice(toneFnStart, toneFnEnd);
   assert.match(toneFn, /if \(item\.unavailable\) return "unavailable";/);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Order Drawer Operational Summary, Phase C1 - surfaces the automatic
+// readiness facts on the default Details tab (previously only visible
+// after tapping into the Readiness tab, per the Phase B3 audit's own
+// "mobile UX" finding). No backend/RPC/migration change, no new
+// readiness calculation, no change to manual checklist logic, order
+// status transitions, or the PAXI gate - static-source checks only.
+// ─────────────────────────────────────────────────────────────────────
+
+test("OrderDrawer renders OrderOperationalSummary at the TOP of the default 'details' tab block, before any other details content", () => {
+  const tabStart = drawer.indexOf("{tab === 'details' && (");
+  assert.notEqual(tabStart, -1, "details tab block not found");
+  const summaryIndex = drawer.indexOf("<OrderOperationalSummary", tabStart);
+  const printoutsIndex = drawer.indexOf("Order printouts", tabStart);
+  assert.notEqual(summaryIndex, -1, "OrderOperationalSummary must be rendered inside the details tab");
+  assert.ok(summaryIndex > tabStart, "must be inside the details tab block, not before it");
+  assert.ok(summaryIndex < printoutsIndex, "must render before the existing 'Order printouts' section - i.e. at the top");
+});
+
+test("OrderDrawer passes the SAME readinessQuery/lineProductionReadiness props to the summary as it already passes to ProductionReadinessCard - no second, independent data source", () => {
+  assert.match(drawer, /readinessQuery=\{drawerData\.readinessQuery\}/);
+  // both the summary and the card reference drawerData.lineProductionReadiness - already asserted once above for the card; confirm it appears at least twice (summary + card)
+  const matches = drawer.match(/lineProductionReadiness=\{drawerData\.lineProductionReadiness\}/g) || [];
+  assert.ok(matches.length >= 2, `expected lineProductionReadiness passed to both the summary and the card, found ${matches.length} occurrences`);
+});
+
+test("the summary's navigation action switches to the existing 'readiness' tab via the existing setTab state setter - no new tab, no new route", () => {
+  assert.match(drawer, /onViewReadiness=\{\(\) => setTab\('readiness'\)\}/);
+});
+
+test("fulfilment completeness is passed in from OrderDrawer's EXISTING getCourierRequirementGap()-derived shippingGapReason - the summary never imports or calls getCourierRequirementGap itself, and never computes its own shipping gap", () => {
+  assert.match(drawer, /shippingGapReason=\{shippingGapReason\}/);
+  // not imported anywhere (a code-level call without the import would be a
+  // ReferenceError, and the build passes, so absence of the import is
+  // sufficient proof nothing in this file calls it) - a mention in a prose
+  // comment explaining where shippingGapReason comes from is fine.
+  assert.doesNotMatch(summary, /import\s*\{[^}]*getCourierRequirementGap/);
+  assert.doesNotMatch(summary, /shippingRequirements/);
+});
+
+test("the summary never reads or writes order.courier/pep_code/fulfillment_type directly - shippingGapReason is the only fulfilment signal it touches, and only for display", () => {
+  assert.doesNotMatch(summary, /order\.courier/);
+  assert.doesNotMatch(summary, /order\.pep_code/);
+  assert.doesNotMatch(summary, /order\.fulfillment_type/);
+});
+
+test("the fulfilment note renders conditionally on shippingGapReason - collection orders (where the existing helper already returns null) show nothing, not an empty/misleading banner", () => {
+  const match = summary.match(/\{shippingGapReason && \(/);
+  assert.ok(match, "fulfilment note must be gated behind a truthy shippingGapReason check");
+});
+
+test("the summary introduces no new status gate - it never calls onUpdate/dataClient.entities.Order.update/any order-status mutation", () => {
+  assert.doesNotMatch(summary, /onUpdate\(/);
+  assert.doesNotMatch(summary, /Order\.update\(/);
+  assert.doesNotMatch(summary, /\.update\(\{\s*status/);
+  assert.doesNotMatch(summary, /useMutation/);
+});
+
+test("the summary respects a delivered/completed order: an unconfirmed historical production file gets an explicit 'historical, not a pending action' caption, never implying the order returns to production", () => {
+  assert.match(summary, /TERMINAL_ORDER_STATUSES\s*=\s*\["delivered", "cancelled"\]/);
+  assert.match(summary, /isTerminalOrder\s*=\s*TERMINAL_ORDER_STATUSES\.includes\(order\?\.status\)/);
+  assert.match(summary, /historical\s+production file from before delivery, not a pending action/);
+  // the caption is additive context only - it must not change the tile's own satisfied/unavailable verdict
+  assert.doesNotMatch(summary, /productionFilesItem\.satisfied\s*=/); // never assigns/mutates the item
+});
+
+test("the historical-artwork caption only shows for a NOT-satisfied Production files fact on a terminal-status order - never implied for an in-progress order", () => {
+  const match = summary.match(/showHistoricalArtworkNote\s*=\s*isTerminalOrder\s*&&\s*productionFilesItem\?\.satisfied\s*===\s*false/);
+  assert.ok(match, "the caption condition must require both isTerminalOrder AND satisfied === false");
+});
+
+test("the summary reuses the shared AutomaticReadinessStrip component - it does not redefine its own tone/color logic", () => {
+  assert.match(summary, /import AutomaticReadinessStrip from "@\/components\/orders\/AutomaticReadinessStrip"/);
+  assert.match(summary, /<AutomaticReadinessStrip items=\{items\} order=\{order\} \/>/);
+  assert.doesNotMatch(summary, /AUTOMATIC_READINESS_TONE/);
+});
+
+test("the summary never writes to order_production_readiness_checks (updateOrderProductionReadinessCheck) - it is read-only, same as the strip", () => {
+  assert.doesNotMatch(summary, /updateOrderProductionReadinessCheck/);
+});
+
+test("Readiness tab still renders ProductionReadinessCard unchanged - same lazy import, same tab gate", () => {
+  assert.match(drawer, /const ProductionReadinessCard = React\.lazy\(\(\) => import\("@\/components\/orders\/ProductionReadinessCard"\)\)/);
+  assert.match(drawer, /\{tab === 'readiness' && \(/);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Pre-commit verification (final review) - traced every failure mode of
+// useOrderAutomaticReadiness's three query groups by hand:
+//   1. Still loading -> the hook's own .map guard forces
+//      satisfied:null/unavailable:false (spinner) - verified below.
+//   2. artworkReadinessQueries errors (the one path that genuinely
+//      throws/propagates - getClientProductArtworkReadiness returns an
+//      error string, the queryFn re-throws it) -> entry.readiness stays
+//      undefined -> deriveProductionFilesFact's own
+//      `!entry || entry.readiness == null` guard -> unavailable:true.
+//      Already covered above ("the authority itself failed to load").
+//   3. snapshotsQuery / productArtworkQueries silently degrade (the
+//      app-wide dataClient.js convention: runSelect logs a warning and
+//      falls back to cached/local data rather than rejecting - NOT
+//      unique to this feature) -> orderArtworkByLine/revisionLookup
+//      resolve empty -> deriveProductionFilesFact's own "zero tracked
+//      lines" guard -> satisfied:false (amber), never satisfied:true.
+// In every traced path the worst outcome is amber or grey - never a
+// false green. This is the explicit, durable proof of that property.
+// ─────────────────────────────────────────────────────────────────────
+
+test("pre-commit verification: total fetch failure for a product (empty entries, empty snapshot grouping, empty revision lookup) NEVER produces satisfied=true for a product that requires placements", () => {
+  const result = deriveProductionFilesFact({
+    representedClientProductIds: ["jv1"],
+    artworkReadinessEntries: [{ clientProductId: "jv1", readiness: { required_placements: ["Front (Chest)"] } }],
+    orderArtworkByLine: {}, // as if snapshotsQuery silently degraded to []
+    revisionLookup: {}, // as if productArtworkQueries silently degraded to []
+  });
+  assert.notEqual(result.satisfied, true, "a total fetch failure must never read as confirmed");
+  assert.equal(result.satisfied, false); // the safe, non-premature direction: "not linked", not "unknown-but-shown-anyway"
+});
+
+test("pre-commit verification: the hook's own loading guard forces production_files to satisfied:null/unavailable:false while ANY of the three query groups is still loading - never satisfied:true mid-flight", () => {
+  assert.match(
+    hook,
+    /productionFilesLoading\s*&&\s*item\.key === "production_files"\s*\n\s*\?\s*\{ \.\.\.item, satisfied: null, detail: null, unavailable: false \}/,
+  );
+  assert.match(hook, /const productionFilesLoading = artworkReadinessLoading \|\| snapshotsLoading \|\| productArtworkLoading;/);
 });
