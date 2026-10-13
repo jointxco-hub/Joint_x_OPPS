@@ -11,3 +11,16 @@ export function documentPageSummary(doc) {
   if (doc.selection === "specific") return `Pages ${doc.pagesSpec || "not specified"}${pages ? ` · ${pages}` : ""}`;
   return `All pages${pages ? ` · ${pages}` : ""}`;
 }
+
+// Resolve only among this order's attached files; never guess another file's folder.
+export function resolveDocumentFolder(document, orderFiles = [], metadata = {}) {
+  const refs = Array.isArray(document?.fileRefs) ? document.fileRefs : [];
+  const matches = refs.filter((file) => file.name === document?.name);
+  const target = matches.length === 1 ? matches[0] : document;
+  const reference = target?.privateUri || target?.file_url || target?.url ||
+    (target?.bucket && target?.path ? `private-upload://${target.bucket}/${target.path}` : "");
+  const urls = (Array.isArray(orderFiles) ? orderFiles : []).map((file) => typeof file === "string" ? file : file.file_url || file.url || "");
+  if (!reference || !urls.includes(reference)) return "";
+  const folderId = metadata.fileFolders?.[reference];
+  return folderId && metadata.folders?.some((folder) => folder.id === folderId) ? folderId : "__unsorted";
+}

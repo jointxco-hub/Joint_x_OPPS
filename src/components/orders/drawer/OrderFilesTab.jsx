@@ -58,11 +58,11 @@ const normalizeInvoiceFile = (invoice, index) => {
   return null;
 };
 
-export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint }) {
+export default function OrderFilesTab({ order, onUpdate, uploadFile, uploading, onPrint, initialFolderId = "" }) {
   const safeOrder = order || {};
   const metadata = normalizeOrderFileFolders(safeOrder.order_file_folders);
   const queryClient = useQueryClient();
-  const [openFolderId, setOpenFolderId] = useState("");
+  const [openFolderId, setOpenFolderId] = useState(initialFolderId);
   const [textDialog, setTextDialog] = useState(null);
   const [linkDialog, setLinkDialog] = useState(null);
   const [copyDialog, setCopyDialog] = useState(null);

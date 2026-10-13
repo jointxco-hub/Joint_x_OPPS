@@ -174,7 +174,7 @@ export default function QuickSolutionServiceItems({ order, onViewFiles }) {
                   <div key={key} className="rounded-xl bg-background/75 p-3">
                     <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{configLabel(key)}</p>
                     {key === "fileName" ? (
-                      <button type="button" onClick={onViewFiles} className="mt-1 break-all text-sm font-medium text-primary hover:underline">{documentDisplayName(value)} · View files</button>
+                      <button type="button" onClick={() => onViewFiles({ name: value, fileRefs: files })} className="mt-1 break-all text-sm font-medium text-primary hover:underline">{documentDisplayName(value)} · View files</button>
                     ) : (
                       <p className="mt-1 break-words text-sm font-medium text-foreground">{configValue(key, value)}</p>
                     )}
@@ -188,7 +188,7 @@ export default function QuickSolutionServiceItems({ order, onViewFiles }) {
                 <p className="text-xs font-semibold text-muted-foreground">Documents to print</p>
                 {documents.map((doc, index) => (
                   <div key={doc.key || index} className="rounded-xl bg-background/75 p-3">
-                    <button type="button" onClick={onViewFiles} className="flex items-center gap-2 text-sm font-medium text-primary hover:underline">
+                    <button type="button" onClick={() => onViewFiles({ ...doc, fileRefs: files })} className="flex items-center gap-2 text-sm font-medium text-primary hover:underline">
                       <FileText className="h-4 w-4 shrink-0" />
                       <span className="break-all">{documentDisplayName(doc.name, index)}</span>
                       <span className="shrink-0 text-xs">View files →</span>
@@ -205,7 +205,7 @@ export default function QuickSolutionServiceItems({ order, onViewFiles }) {
                 {workflowName} workflow
               </span>
               {files.map((file, index) => (
-                <button type="button" onClick={onViewFiles} title={file.name || "View attached file"} key={file.id || file.path || file.name || index} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground">
+                <button type="button" onClick={() => onViewFiles(file)} title={file.name || "View attached file"} key={file.id || file.path || file.name || index} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground">
                   <FileText className="h-3 w-3 shrink-0" />
                   <span className="truncate">{documentDisplayName(file.name, index)}</span>
                 </button>

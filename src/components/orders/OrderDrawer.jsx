@@ -1,3 +1,4 @@
+import { resolveDocumentFolder } from "@/lib/documentDisplay";
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import TenantBadge from "@/components/orders/TenantBadge";
@@ -323,6 +324,12 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     });
   };
   const [tab, setTab] = useState("details");
+  const [documentFolder, setDocumentFolder] = useState(null);
+  const viewDocumentFiles = (document) => {
+    const folder = resolveDocumentFolder(document, order.file_urls, normalizeOrderFileFolders(order.order_file_folders));
+    setDocumentFolder({ orderId: order.id, folderId: folder });
+    setTab("files");
+  };
   const [editingField, setEditingField] = useState(null);
   const [fieldValue, setFieldValue] = useState("");
   const [showPayment, setShowPayment] = useState(false);
@@ -1953,7 +1960,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               <DrawerSectionBoundary label={quickSolutionOrder ? "Service configuration" : "Products"} resetKey={`${order.id}-products`}>
                 {quickSolutionOrder ? (
                   <React.Suspense fallback={<TabSectionFallback label="Service configuration" />}>
-                    <QuickSolutionServiceItems order={order} onViewFiles={() => setTab("files")} />
+                    <QuickSolutionServiceItems order={order} onViewFiles={viewDocumentFiles} />
                   </React.Suspense>
                 ) : (
                   <React.Suspense fallback={<TabSectionFallback label="Products" />}>
@@ -2418,7 +2425,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
           {tab === 'files' && (!quickSolutionOrder || can("files.read")) && (
             <React.Suspense fallback={<TabSectionFallback label="Order files" />}>
-              <OrderFilesTab order={order} onUpdate={onUpdate} uploadFile={uploadFile} uploading={uploading} onPrint={setPrintView} />
+              <OrderFilesTab initialFolderId={documentFolder?.orderId === order.id ? documentFolder.folderId : ""} order={order} onUpdate={onUpdate} uploadFile={uploadFile} uploading={uploading} onPrint={setPrintView} />
             </React.Suspense>
           )}
 

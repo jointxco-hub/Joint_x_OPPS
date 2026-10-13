@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { documentDisplayName, documentPageSummary } from "../src/lib/documentDisplay.js";
+import { documentDisplayName, documentPageSummary, resolveDocumentFolder } from "../src/lib/documentDisplay.js";
 
 test("generated upload names become readable without changing meaningful names", () => {
   assert.equal(documentDisplayName("1791286134068_aqtzdf4a0h.png"), "Document 1");
@@ -18,5 +18,15 @@ test("Details loads shared readiness and document actions navigate to Files", as
   const hook = await readFile(new URL("../src/hooks/useOrderDrawerData.js", import.meta.url), "utf8");
   assert.match(hook, /enabled: \["details", "readiness"\]\.includes\(activeTab\) && canLoadReadiness && !readinessAuthBlocked/);
   const drawer = await readFile(new URL("../src/components/orders/OrderDrawer.jsx", import.meta.url), "utf8");
-  assert.match(drawer, /QuickSolutionServiceItems order=\{order\} onViewFiles=\{\(\) => setTab\("files"\)\}/);
+  assert.match(drawer, /onViewFiles=\{viewDocumentFiles\}/);
+});
+
+test("document links resolve the actual folder using the private file identity", () => {
+  const uri = "private-upload://uploads/order/file.png";
+  const doc = {name:"original.png", fileRefs:[{name:"original.png", privateUri:uri}]};
+  const metadata = {folders:[{id:"production"}], fileFolders:{[uri]:"production"}};
+  assert.equal(resolveDocumentFolder(doc, [uri], metadata), "production");
+  assert.equal(resolveDocumentFolder({privateUri:uri}, [uri], {}), "__unsorted");
+  assert.equal(resolveDocumentFolder(doc, [], metadata), "");
+  assert.equal(resolveDocumentFolder({name:"other.png"}, [uri], metadata), "");
 });
