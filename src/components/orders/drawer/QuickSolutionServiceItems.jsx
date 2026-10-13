@@ -1,8 +1,9 @@
+import { documentDisplayName, documentPageSummary } from "@/lib/documentDisplay";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
 import { FileText, Package, Settings2 } from "lucide-react";
 
-const OMIT_CONFIG_KEYS = new Set(["clientEstimate"]);
+const OMIT_CONFIG_KEYS = new Set(["clientEstimate", "documentInstructions", "documentPlanValid"]);
 
 function configLabel(key) {
   const special = {
@@ -44,7 +45,7 @@ function money(value) {
     : "—";
 }
 
-export default function QuickSolutionServiceItems({ order }) {
+export default function QuickSolutionServiceItems({ order, onViewFiles }) {
   const query = useQuery({
     queryKey: ["quickSolutionOppsItems", order.id, order.updated_at],
     queryFn: async () => {
@@ -146,6 +147,7 @@ export default function QuickSolutionServiceItems({ order }) {
       {items.map((item) => {
         const configEntries = Object.entries(item.configuration || {})
           .filter(([key, value]) => !OMIT_CONFIG_KEYS.has(key) && value !== null && value !== undefined && value !== "");
+        const documents = Array.isArray(item.configuration?.documentInstructions) ? item.configuration.documentInstructions.filter((doc) => doc && typeof doc === "object") : [];
         const files = Array.isArray(item.fileRefs) ? item.fileRefs : [];
         const workflowName = item.operations?.displayName || item.productName || "Quick Solution service";
 
@@ -171,7 +173,27 @@ export default function QuickSolutionServiceItems({ order }) {
                 {configEntries.map(([key, value]) => (
                   <div key={key} className="rounded-xl bg-background/75 p-3">
                     <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{configLabel(key)}</p>
-                    <p className="mt-1 break-words text-sm font-medium text-foreground">{configValue(key, value)}</p>
+                    {key === "fileName" ? (
+                      <button type="button" onClick={onViewFiles} className="mt-1 break-all text-sm font-medium text-primary hover:underline">{documentDisplayName(value)} · View files</button>
+                    ) : (
+                      <p className="mt-1 break-words text-sm font-medium text-foreground">{configValue(key, value)}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {documents.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground">Documents to print</p>
+                {documents.map((doc, index) => (
+                  <div key={doc.key || index} className="rounded-xl bg-background/75 p-3">
+                    <button type="button" onClick={onViewFiles} className="flex items-center gap-2 text-sm font-medium text-primary hover:underline">
+                      <FileText className="h-4 w-4 shrink-0" />
+                      <span className="break-all">{documentDisplayName(doc.name, index)}</span>
+                      <span className="shrink-0 text-xs">View files →</span>
+                    </button>
+                    <p className="mt-1 text-sm text-muted-foreground">{documentPageSummary(doc)}</p>
                   </div>
                 ))}
               </div>
@@ -182,11 +204,11 @@ export default function QuickSolutionServiceItems({ order }) {
                 <Settings2 className="h-3 w-3" />
                 {workflowName} workflow
               </span>
-              {files.map((file) => (
-                <span key={file.id || file.path || file.name} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground">
+              {files.map((file, index) => (
+                <button type="button" onClick={onViewFiles} title={file.name || "View attached file"} key={file.id || file.path || file.name || index} className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-muted-foreground">
                   <FileText className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{file.name || "Attached file"}</span>
-                </span>
+                  <span className="truncate">{documentDisplayName(file.name, index)}</span>
+                </button>
               ))}
             </div>
           </div>
