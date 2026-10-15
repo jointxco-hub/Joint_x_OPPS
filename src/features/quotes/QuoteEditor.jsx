@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import QuoteLineItemsEditor, { newQuoteLine } from "./QuoteLineItemsEditor";
+import ManufacturingCostingPanel from "../manufacturing/ManufacturingCostingPanel";
 import { calculateQuoteTotals } from "./quoteCalculations";
 import { resolveNeedsPriceReviewOnLoad } from "./quoteProductMapping";
 
@@ -126,6 +127,7 @@ function toEditorState(initial = {}) {
 export default function QuoteEditor({ initialQuote = {}, sourceRequest = null, onCancel, onSave, isSaving = false }) {
   const [state, setState] = useState(() => toEditorState(initialQuote));
   const isEdit = Boolean(state.id);
+  const [showManufacturing, setShowManufacturing] = useState(false);
 
   const totals = useMemo(
     () => calculateQuoteTotals({ shipping_charge: state.shipping_charge, currency_code: state.currency_code }, state.items),
@@ -237,7 +239,19 @@ export default function QuoteEditor({ initialQuote = {}, sourceRequest = null, o
 
         <Card className="mb-4 rounded-2xl border-border shadow-apple-sm">
           <CardContent className="p-4">
-            <p className="mb-3 text-sm font-semibold text-foreground">Line items</p>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground">Line items</p>
+              <Button type="button" variant="outline" onClick={() => setShowManufacturing((v) => !v)}>Custom manufacturing</Button>
+            </div>
+            {showManufacturing ? <ManufacturingCostingPanel onApply={(line) => {
+              setState((prev) => ({
+                ...prev,
+                items: [...prev.items.filter((item) => String(item.item_name || "").trim()),
+                  { ...newQuoteLine(), item_name: line.name, item_description: line.description, quantity: line.quantity, rate: line.rate }],
+              }));
+              setShowManufacturing(false);
+              toast.success("Manufacturing line added. Review before saving.");
+            }} /> : null}
             <QuoteLineItemsEditor items={state.items} onChange={(items) => set({ items })} clientId={state.customer_id || null} />
           </CardContent>
         </Card>
