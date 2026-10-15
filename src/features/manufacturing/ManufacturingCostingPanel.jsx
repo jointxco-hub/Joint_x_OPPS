@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { calculateManufacturingQuote } from "./manufacturingCosting";
 
-const INITIAL = { quantity: "2", materialUnit: "215", brandingUnit: "140", labourReferenceUnit: "460", overheadUnit: "75", setup: "250" };
+const INITIAL = { quantity: "2", materialUnit: "", brandingUnit: "", labourReferenceUnit: "", overheadUnit: "", setup: "" };
 const fields = [
   ["quantity", "Quantity"], ["materialUnit", "Materials / garment (R)"],
   ["brandingUnit", "Branding / garment (R)"], ["labourReferenceUnit", "Reference sewing / garment (R)"],
@@ -25,7 +25,7 @@ export default function ManufacturingCostingPanel({ onApply }) {
   return (
     <section className="mb-4 rounded-2xl border border-border bg-card p-4" aria-label="Custom manufacturing calculator">
       <h2 className="text-sm font-semibold">Custom manufacturing · internal calculator</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Pilot rates only. Confirm fabric, construction and branding before applying a quote line. No supplier payment is created.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Enter approved costs before applying a quote line. Reference values are not supplier invoices. No supplier payment is created.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {fields.map(([key, label]) => <label key={key} className="text-xs font-medium">{label}
           <input className="mt-1 block h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" type="number" min={key === "quantity" ? "1" : "0"} step={key === "quantity" ? "1" : "0.01"} value={values[key]} onChange={(e) => { setValues((old) => ({ ...old, [key]: e.target.value })); setConfirmed(false); }} />
