@@ -241,9 +241,9 @@ export default function QuoteEditor({ initialQuote = {}, sourceRequest = null, o
           <CardContent className="p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-foreground">Line items</p>
-              <Button type="button" variant="outline" onClick={() => setShowManufacturing((v) => !v)}>Custom manufacturing</Button>
+              {import.meta.env.VITE_ENABLE_CUSTOM_MANUFACTURING === "true" ? <Button type="button" variant="outline" onClick={() => setShowManufacturing((v) => !v)}>Custom manufacturing</Button> : null}
             </div>
-            {showManufacturing ? <ManufacturingCostingPanel onApply={(line) => {
+            {import.meta.env.VITE_ENABLE_CUSTOM_MANUFACTURING === "true" && showManufacturing ? <ManufacturingCostingPanel onApply={(line) => {
               setState((prev) => ({
                 ...prev,
                 items: [...prev.items.filter((item) => String(item.item_name || "").trim()),
