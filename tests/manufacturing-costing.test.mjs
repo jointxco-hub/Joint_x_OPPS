@@ -33,3 +33,13 @@ test("invalid inputs are rejected", () => {
   assert.throws(() => calculateManufacturingQuote({ ...base, materialUnit: -1 }));
   assert.throws(() => calculateManufacturingQuote({ ...base, brandingUnit: NaN }));
 });
+
+test("quote unit rate reconciles with total for odd quantities", () => {
+  const result = calculateManufacturingQuote({ ...base, quantity: 3, materialUnit: 215.37 });
+  assert.equal(result.sellTotal, Math.round(result.unitSellPrice * result.quantity * 100) / 100);
+  assert.ok(Math.abs(result.roundingAdjustment) <= 0.02);
+});
+test("missing or non-finite amounts cannot produce a quote", () => {
+  assert.throws(() => calculateManufacturingQuote({ ...base, setup: undefined }));
+  assert.throws(() => calculateManufacturingQuote({ ...base, materialUnit: Infinity }));
+});
