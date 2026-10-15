@@ -30,12 +30,17 @@ export function calculateManufacturingQuote(input) {
   const baseCost = money((materialUnit + brandingUnit + labourReferenceUnit + overheadUnit) * quantity + setup);
   const contingency = money(baseCost * contingencyRate);
   const fullCost = money(baseCost + contingency);
-  const sellTotal = money(fullCost * (1 + markupRate));
+  const targetSellTotal = money(fullCost * (1 + markupRate));
+  // OPPS quotes calculate quantity × rounded unit rate. Align the displayed
+  // estimate to the actual quote line rather than silently losing cents.
+  const unitSellPrice = money(targetSellTotal / quantity);
+  const sellTotal = money(unitSellPrice * quantity);
   const cashCost = money((materialUnit + brandingUnit + overheadUnit) * quantity + setup + partnerCashPayable);
   return {
     quantity, arrangement, standardLabour, partnerCashPayable,
     baseCost, contingency, fullCost, sellTotal,
-    unitSellPrice: money(sellTotal / quantity),
+    unitSellPrice,
+    roundingAdjustment: money(sellTotal - targetSellTotal),
     cashCost,
     cashContributionBeforeUnallocatedCosts: money(sellTotal - cashCost),
     fullyCostedContribution: money(sellTotal - fullCost),
