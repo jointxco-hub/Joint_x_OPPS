@@ -303,6 +303,9 @@ export default function Invoices() {
       queryClient.invalidateQueries({ queryKey: ["invoiceActivity", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoicePaymentSummary", selectedInvoice?.id] });
       queryClient.invalidateQueries({ queryKey: ["invoicePayments", selectedInvoice?.id] });
+      for (const key of ["cafeOrderPaymentState", "transactions", "income", "orders", "productionReadiness", "orderLineProductionReadiness"]) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
       // A payment recorded here also moves the linked order's own payments
       // tab / balance and its Invoices-tab card — without this, an
       // already-open order drawer keeps showing pre-payment figures until

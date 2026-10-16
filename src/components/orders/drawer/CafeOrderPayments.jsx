@@ -1,9 +1,15 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getCafeOrderPaymentState, recordCafeOrderPayment } from "@/api/cafePayments";
+import { getCafeOrderPaymentState, recordCafeOrderPayment, reconcileCafeInvoiceReceipts } from "@/api/cafePayments";
 
 const money = value => new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" }).format(Number(value || 0));
+const sharedReaders = ["payments", "transactions", "income", "orders", "productionReadiness", "orderLineProductionReadiness", "invoices", "invoice", "invoicePayments", "invoicePaymentSummary", "invoiceActivity", "orderOppsInvoices"];
 const issues = {
+  finance_receipt_identity_missing: "The older Finance entry needs receipt verification before linking it to this invoice.",
+  invoice_projection_missing: "An existing receipt needs to be linked to the invoice. Sync it below without recording another payment.",
+  multiple_linked_invoices: "More than one invoice is linked to this order. Review the invoice links first.",
+  invoice_total_or_currency_mismatch: "The invoice total or currency differs from the Café order. Review it first.",
+  invoice_not_approved: "Approve the linked invoice before recording payment.",
   invoice_reconciliation_required: "A linked invoice needs reconciliation before another payment can be recorded.",
   payment_balance_mismatch: "Café and OPPS payment records differ. Review the existing receipts first.",
   order_total_mismatch: "Café and OPPS order totals differ. Review the order price first.",
@@ -21,6 +27,18 @@ export default function CafeOrderPayments({ orderId }) {
   const state = query.data;
   const payable = state && !query.error && !state.reviewRequired && !state.closed && Number(state.balanceDue) > 0;
 
+  const canSyncInvoice = !query.error && state?.issues?.length === 1 && state.issues[0] === "invoice_projection_missing";
+  async function syncInvoice() {
+    if (inFlight.current || !canSyncInvoice) return;
+    inFlight.current = true; setSaving(true); setError("");
+    try {
+      const result = await reconcileCafeInvoiceReceipts(state.orderId);
+      queryClient.setQueryData(queryKey, result);
+      await Promise.all(sharedReaders.map(key => queryClient.invalidateQueries({ queryKey: [key] })));
+    } catch (failure) { setError(failure.message || "Could not sync existing invoice receipts."); }
+    finally { inFlight.current = false; setSaving(false); }
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (inFlight.current || !confirmed || !draft || !payable) return;
@@ -33,7 +51,7 @@ export default function CafeOrderPayments({ orderId }) {
       setDraft(null); setConfirmed(false);
       // Refresh every OPPS reader of the same settled amount. Café refetches the
       // original receipts on its next read; no second receipt is created here.
-      await Promise.all(["payments", "transactions", "income", "orders", "productionReadiness", "orderLineProductionReadiness"]
+      await Promise.all(sharedReaders
         .map(key => queryClient.invalidateQueries({ queryKey: [key] })));
     } catch (failure) {
       setError(failure.message || "Could not confirm the receipt. Retry with the same details.");
@@ -48,6 +66,7 @@ export default function CafeOrderPayments({ orderId }) {
     {state && !query.error && <>
       {state.reviewRequired ? <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><strong>Payment review required</strong><p className="mt-1">{state.issues?.map(issue => issues[issue]).filter(Boolean).join(" ") || "Review the linked payment records before recording another receipt."}</p></div> :
         <div className="grid grid-cols-2 gap-3"><div className="rounded-xl bg-secondary/40 p-3"><p className="text-xs text-muted-foreground">Received</p><p className="mt-1 text-lg font-semibold">{money(state.cafePaid)}</p></div><div className={`rounded-xl p-3 ${payable ? "bg-amber-50" : "bg-emerald-50"}`}><p className="text-xs text-muted-foreground">Outstanding</p><p className="mt-1 text-lg font-semibold">{money(state.balanceDue)}</p></div></div>}
+      {canSyncInvoice && <button type="button" disabled={saving || query.isFetching} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold" onClick={syncInvoice}>{saving ? "Syncing…" : "Sync existing invoice receipts"}</button>}
       {(state.receipts || []).length > 0 && <ul className="divide-y divide-border">{state.receipts.map(receipt => <li key={receipt.id} className="py-3 text-sm"><strong>{money(receipt.amount)}</strong><span className="ml-2 text-muted-foreground">{receipt.method === "payfast" ? "PayFast" : receipt.method?.toUpperCase()}{receipt.receivedAt ? ` · ${new Date(receipt.receivedAt).toLocaleString("en-ZA")}` : ""}</span></li>)}</ul>}
       {payable && !draft && <button type="button" className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground" onClick={() => { setError(""); setConfirmed(false); setDraft({ method: "cash", reference: "", amount: state.balanceDue, operationKey: crypto.randomUUID() }); }}>Record payment</button>}
       {payable && draft && <form onSubmit={submit} className="space-y-3 rounded-xl border border-border p-4">

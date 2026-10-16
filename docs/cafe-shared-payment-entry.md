@@ -24,3 +24,25 @@ The database changes live in quick-solution-cafe PR24, following its shared-paym
 ## Remaining release gates
 
 This slice handles the full outstanding balance. Linked invoices and legacy discrepancies stay blocked for reconciliation; partial receipts, audited corrections/reversals, gateway concurrency integration and customer accounts remain separate milestones. Device acceptance is pending. Do not promote the broader OPPS feature branch as part of this slice.
+
+## Invoice-linked receipts — 16 October 2026
+
+Requires the three Café staging migrations named `cafe_invoice_shared_receipts`,
+`cafe_invoice_receipt_context_guards`, and `cafe_invoice_legacy_identity_guard`.
+Shared payment entry now refreshes invoice readers as well as orders/Finance. Invoice
+entry refreshes the shared order payment reader. A missing invoice projection offers
+**Sync existing invoice receipts** only when no other reconciliation issue exists.
+This links existing money; it never records a new receipt.
+
+Device checks: create an unpaid staging Café order, send it to OPPS and create/approve
+one linked ZAR invoice with the exact same total. Record full Cash/EFT through either
+payment entry point; Café, OPPS and invoice must show zero outstanding, with one Finance
+income. EFT needs a verified bank reference. For receipt-before-invoice, record first,
+then create/approve the invoice and use Sync existing invoice receipts from the order's
+Payments tab. Repeat sync: no second income or receipt should appear. Do not make a real
+transfer for staging tests. Invoice entry currently records money received today; historical
+Café receipt entry requires review. Ordinary invoice partials are unchanged.
+
+Backend rollback checks cover identity, balances, replay, missing EFT reference, conflicts,
+legacy identity, unauthorized synchronization and ordinary invoice regression. Customer device
+and multi-session concurrency acceptance are pending; this remains a draft staging change.

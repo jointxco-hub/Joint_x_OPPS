@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 
 const hooks = `export function useState(initial){const h=globalThis.__cafeHooks,i=h.index++;if(!(i in h.values))h.values[i]=initial;return[h.values[i],v=>h.values[i]=typeof v==='function'?v(h.values[i]):v]} export function useRef(initial){const h=globalThis.__cafeHooks,i=h.index++;return h.values[i]??=( {current:initial} )}`;
 const query = `export const useQuery=()=>globalThis.__cafeQuery;export const useQueryClient=()=>({setQueryData:(key,value)=>{globalThis.__cafeQuery.data=value},invalidateQueries:async(key)=>{globalThis.__invalidated.push(key.queryKey[0])}})`;
-const api = `export const getCafeOrderPaymentState=async()=>({});export const recordCafeOrderPayment=(payload)=>globalThis.__saveCafeReceipt(payload)`;
+const api = `export const reconcileCafeInvoiceReceipts=(orderId)=>globalThis.__syncCafeInvoice(orderId);export const getCafeOrderPaymentState=async()=>({});export const recordCafeOrderPayment=(payload)=>globalThis.__saveCafeReceipt(payload)`;
 const bundled = await build({ entryPoints:["src/components/orders/drawer/CafeOrderPayments.jsx"], bundle:true,write:false,format:"cjs",platform:"node",jsx:"transform",jsxFactory:"h",tsconfigRaw:{compilerOptions:{jsx:"react",jsxFactory:"h"}},plugins:[{name:"mock",setup(b){b.onResolve({filter:/^(react|@tanstack\/react-query|@\/api\/cafePayments)$/},a=>({path:a.path,namespace:"mock"}));b.onLoad({filter:/.*/,namespace:"mock"},a=>({contents:a.path==="react"?hooks:a.path.includes("react-query")?query:api,loader:"js"}))}}] });
 const m={exports:{}};const h=(type,props,...children)=>({type,props:{...props,children}});
 new Function("module","exports","require","h","React",bundled.outputFiles[0].text)(m,m.exports,createRequire(import.meta.url),h,{createElement:h,Fragment:Symbol.for("react.fragment")});
@@ -39,4 +39,13 @@ test("closed, review, fully paid and failed reads cannot record payments",()=>{
  assert.equal(button(setup({},Error('unavailable'))(),"Record payment"),undefined);
  const tree=setup({reviewRequired:true,issues:['invoice_reconciliation_required']})();assert.match(txt(tree),/linked invoice needs reconciliation/);
  assert.equal(button(tree,"Edit payment"),undefined);assert.equal(button(tree,"Remove payment"),undefined);
+});
+
+test("existing receipts sync to invoices without collecting money",async()=>{
+ const render=setup({orderId:"cafe-test",reviewRequired:true,balanceDue:null,issues:["invoice_projection_missing"]});let calls=0;
+ globalThis.__syncCafeInvoice=async id=>{assert.equal(id,"cafe-test");calls++;return{balanceDue:0,cafePaid:5,receipts:[],issues:[]}};
+ assert.equal(button(render(),"Record payment"),undefined);
+ await button(render(),"Sync existing invoice receipts").props.onClick();assert.equal(calls,1);
+ for(const key of ['invoices','invoicePayments','invoicePaymentSummary'])assert.ok(globalThis.__invalidated.includes(key));
+ for(const issues of [["invoice_reconciliation_required"],["invoice_projection_missing","order_total_mismatch"]])assert.equal(button(setup({reviewRequired:true,issues})(),"Sync existing invoice receipts"),undefined);
 });

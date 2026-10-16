@@ -17,3 +17,9 @@ export async function recordCafeOrderPayment({ oppsOrderId, method, amount, refe
   if (error) throw error;
   return data;
 }
+
+export async function reconcileCafeInvoiceReceipts(serviceOrderId) {
+  const { data, error } = await supabase.rpc("qs_reconcile_invoice_receipts", { p_order_id: serviceOrderId });
+  if (error) throw error;
+  return data;
+}
