@@ -1,3 +1,4 @@
+import CafeOrderPayments from "@/components/orders/drawer/CafeOrderPayments";
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import TenantBadge from "@/components/orders/TenantBadge";
@@ -531,7 +532,6 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     clientDisplay,
     totalPaid,
     balance,
-    payableTotal,
     paymentCount,
     linkedTaskCount,
     linkedPOCount,
@@ -543,39 +543,6 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
     tasksError,
     liveOrder,
   } = drawerData;
-
-  // Keep the OPPS order payment projection aligned with the authoritative
-  // completed transaction rows. This mirrors the existing Quick Solution
-  // PayFast projection: deposit_paid + payment_status.
-  const syncQuickSolutionPaymentProjection = (nextPayments) => {
-    if (!quickSolutionOrder) return;
-
-    const completedTotal = (Array.isArray(nextPayments)
-      ? nextPayments
-      : []
-    )
-      .filter(
-        (payment) =>
-          (payment?.status || payment?.payment_status) ===
-          "completed"
-      )
-      .reduce(
-        (sum, payment) =>
-          sum + Number(payment?.amount || 0),
-        0
-      );
-
-    const outstanding = Math.max(
-      Number(payableTotal || 0) - completedTotal,
-      0
-    );
-
-    onUpdate(order.id, {
-      deposit_paid: completedTotal,
-      payment_status:
-        outstanding <= 0.0049 ? "paid" : "pending",
-    });
-  };
 
   // Resync the three fields mirrored into local state below (pipeline
   // stage, is_test, excluded_from_reports) when the shared ["orders"]
@@ -597,25 +564,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
   const addPaymentMutation = useMutation({
     mutationFn: (data) => dataClient.entities.Payment.create(data),
-    onSuccess: (created, variables) => {
-      const createdPayment =
-        created || {
-          ...variables,
-          status: variables?.payment_status,
-          method: variables?.payment_method,
-        };
-
-      const nextPayments = created?.id
-        ? [
-            ...safePayments.filter(
-              (payment) => payment.id !== created.id
-            ),
-            createdPayment,
-          ]
-        : [...safePayments, createdPayment];
-
-      syncQuickSolutionPaymentProjection(nextPayments);
-
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -630,26 +579,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   const updatePaymentMutation = useMutation({
     mutationFn: ({ id, data }) =>
       dataClient.entities.Payment.update(id, data),
-    onSuccess: (updated, variables) => {
-      const nextPayments = safePayments.map((payment) => {
-        if (payment.id !== variables.id) return payment;
-
-        if (updated) return updated;
-
-        return {
-          ...payment,
-          ...variables.data,
-          status:
-            variables.data?.payment_status ??
-            payment.status,
-          method:
-            variables.data?.payment_method ??
-            payment.method,
-        };
-      });
-
-      syncQuickSolutionPaymentProjection(nextPayments);
-
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -681,13 +611,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
 
   const deletePaymentMutation = useMutation({
     mutationFn: (id) => dataClient.entities.Payment.delete(id),
-    onSuccess: (_deleted, paymentId) => {
-      const nextPayments = safePayments.filter(
-        (payment) => payment.id !== paymentId
-      );
-
-      syncQuickSolutionPaymentProjection(nextPayments);
-
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payments', order.id] });
       queryClient.invalidateQueries({ queryKey: ['payments'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
@@ -771,7 +695,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   };
 
   const addPayment = () => {
-    if (!paymentForm.amount) return;
+    if (quickSolutionOrder || !paymentForm.amount) return;
     const payload = {
       order_id: order.id,
       order_number: order.order_number,
@@ -803,6 +727,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   };
 
   const startPaymentEdit = (payment) => {
+    if (quickSolutionOrder) return;
     setEditingPaymentId(payment.id);
     setPaymentForm({
       amount: payment.amount != null ? String(payment.amount) : '',
@@ -815,7 +740,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
   };
 
   const removePayment = (payment) => {
-    if (!payment?.id) return;
+    if (quickSolutionOrder || !payment?.id) return;
     const confirmed = window.confirm(`Remove payment of R${Number(payment.amount || 0).toLocaleString()} from this order?`);
     if (!confirmed) return;
     deletePaymentMutation.mutate(payment.id);
@@ -1572,6 +1497,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
               {canManageQuickSolutionPayments && (
                 <button
                   onClick={() => {
+                    if (quickSolutionOrder) { setTab("payments"); return; }
                     setEditingPaymentId(null);
                   if (!showPayment && balance > 0) {
                     setPaymentForm(pf => ({
@@ -1609,7 +1535,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
         )}
 
         {/* Add Payment Form */}
-        {canManageQuickSolutionPayments && showPayment && (
+        {!quickSolutionOrder && canManageQuickSolutionPayments && showPayment && (
           <div className="px-5 py-3 bg-green-50/50 border-b border-border">
             <div className="flex items-center gap-2 mb-2">
               <h4 className="text-xs font-semibold text-green-800">{editingPaymentId ? 'Edit Payment' : 'Add Payment'}</h4>
@@ -2038,7 +1964,9 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
             </React.Suspense>
           )}
 
-          {tab === 'payments' && (!quickSolutionOrder || can("payments.manage")) && (
+          {tab === 'payments' && (!quickSolutionOrder || can("payments.manage")) && (quickSolutionOrder ? (
+            <CafeOrderPayments key={order.id} orderId={order.id} />
+          ) : (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-green-50 rounded-xl p-3 border border-green-100">
@@ -2107,7 +2035,7 @@ export default function OrderDrawer({ order, couriers, stages, tenantsById, onCl
                 ))
               ) : null}
             </div>
-          )}
+          ))}
 
           {tab === 'tasks' && (!quickSolutionOrder || can("tasks.read")) && (
             <div className="space-y-3">
