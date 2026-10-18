@@ -28,15 +28,20 @@ export default function OrderOperationalSummary({
   shippingGapReason,
   onViewReadiness,
 }) {
-  const { data, isLoading, error } = readinessQuery || {};
+  const { data, isLoading, error, isAuthorizationBlocked, canLoad, refetch } = readinessQuery || {};
   const { items } = useOrderAutomaticReadiness({ order, readinessQuery, lineProductionReadiness });
 
   if (!order?.id) return null;
-  // The Readiness tab already renders a full, detailed error/auth state -
-  // this compact summary stays silent rather than duplicating that UI;
-  // "Full readiness" is still one tap away via the order-level badge
-  // already shown in the drawer header.
-  if (error) return null;
+  if (error || isAuthorizationBlocked || canLoad === false) {
+    return (
+      <div className="rounded-2xl border border-border bg-card p-3 text-sm text-muted-foreground">
+        <p>{isAuthorizationBlocked ? "You do not have access to readiness information." : "Readiness information is unavailable."}</p>
+        {canLoad !== false && !isAuthorizationBlocked && (
+          <button type="button" onClick={() => refetch?.()} className="mt-2 font-medium text-primary hover:underline">Retry readiness</button>
+        )}
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (
