@@ -165,7 +165,7 @@ export function useOrderDrawerData(order, activeTab = "details") {
   const readinessQuery = useQuery({
     queryKey: ["productionReadiness", orderId],
     queryFn: () => fetchOrderProductionReadiness(orderId),
-    enabled: activeTab === "readiness" && canLoadReadiness && !readinessAuthBlocked,
+    enabled: ["details", "readiness"].includes(activeTab) && canLoadReadiness && !readinessAuthBlocked,
     staleTime: READINESS_STALE_TIME,
     gcTime: READINESS_GC_TIME,
     retry: false,
