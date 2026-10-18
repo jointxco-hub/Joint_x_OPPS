@@ -1,3 +1,7 @@
+// Relative import (not the "@/" alias) - this file must stay importable
+// from plain `node --test`, which has no alias resolution.
+import { normalizeOrderLineMoney } from "../../lib/orderLineMoney.js";
+
 // PHASE 11 lifecycle rule for invoice -> order sync, confirmed not
 // assumed: draft invoice -> allowed; approved invoice -> allowed (this
 // direction never mutates the invoice itself, so reopen_invoice is not
@@ -88,18 +92,35 @@ export function orderProductKey(product = {}) {
   return product.line_id || uuidOrEmpty(product.id) || uuidOrEmpty(product.catalog_item_id) || uuidOrEmpty(product.inventory_item_id) || null;
 }
 
-export function itemFromProduct(product = {}, index = 0) {
+// HOTFIX A — `rate` here is always a PER-UNIT rate, matching what every
+// invoice-side consumer (calculateInvoiceLine, buildInvoiceDocumentModel)
+// already assumes. Deriving it used to mean "whichever of price/rate/
+// unit_price exists first", which silently took a legacy X LAB line's
+// already-multiplied `price` (a line TOTAL) as if it were per-unit. See
+// src/lib/orderLineMoney.js for the one shared normalizer that now decides
+// this instead.
+// AUDIT FOLLOW-UP — an untrusted line (normalizeOrderLineMoney could not
+// confirm whether `price` means unit or total) must never be invoiced at a
+// quietly-guessed rate. `rate: 0` alone would still be a SILENT wrong
+// value (a real line billed for free with no visible sign anything is
+// off) - this is the one place both invoiceFromOrder and
+// buildOrderInvoiceSyncPlan funnel through, so flagging it here covers
+// both create and sync.
+const PRICE_REVIEW_WARNING = "Needs price review before sending - could not confirm unit price.";
+
+export function itemFromProduct(product = {}, index = 0, order) {
   const name = product.name || product.product_name || product.title || "Custom item";
-  const quantity = numberOrZero(product.quantity) > 0 ? numberOrZero(product.quantity) : 1;
-  const unitRate = product.price ?? product.rate ?? product.unit_price;
-  const rate = unitRate !== undefined && unitRate !== null && unitRate !== ""
-    ? numberOrZero(unitRate)
-    : numberOrZero(product.line_total) / quantity;
+  const normalized = normalizeOrderLineMoney(product, order);
+  const quantity = normalized.quantity;
+  const rate = normalized.unitPrice == null ? 0 : normalized.unitPrice;
+  const baseDescription = product.notes || product.description || product.size || product.color || "";
 
   return {
     line_number: index + 1,
     item_name: name,
-    item_description: product.notes || product.description || product.size || product.color || "",
+    item_description: normalized.trusted
+      ? baseDescription
+      : [PRICE_REVIEW_WARNING, baseDescription].filter(Boolean).join(" "),
     item_type: "goods",
     quantity,
     unit: product.unit || "",
@@ -119,6 +140,7 @@ export function itemFromProduct(product = {}, index = 0) {
       color: product.color || product.colour || product.variant_color || "",
       selected_print_options: Array.isArray(product.selected_print_options) ? product.selected_print_options : [],
       selected_addons: Array.isArray(product.selected_addons) ? product.selected_addons : [],
+      needs_price_review: !normalized.trusted,
     },
   };
 }
@@ -127,7 +149,7 @@ export function invoiceFromOrder(order = {}, totalPaid = 0, defaults = {}) {
   const products = Array.isArray(order.products) && order.products.length
     ? order.products
     : [{ name: order.blank_type || order.product_name || "Custom item", quantity: order.quantity || 1, price: order.total_amount || 0 }];
-  const items = products.map(itemFromProduct);
+  const items = products.map((product, index) => itemFromProduct(product, index, order));
   const shippingCharge = orderShippingAmount(order);
   const amountPaid = resolveOrderAmountPaid(order, totalPaid);
   const invoiceDate = new Date().toISOString().slice(0, 10);
@@ -186,7 +208,7 @@ export function buildShippingDiff({ orderApplyShippingFee, orderShippingFee, inv
 // counterpart are added; invoice lines whose order product no longer exists
 // are dropped, reported in diff.removedFromOrder so the caller can warn
 // before applying.
-export function buildOrderInvoiceSyncPlan(orderProducts = [], currentItems = [], shipping) {
+export function buildOrderInvoiceSyncPlan(orderProducts = [], currentItems = [], shipping, order) {
   const products = Array.isArray(orderProducts) ? orderProducts : [];
   const items = Array.isArray(currentItems) ? currentItems : [];
 
@@ -201,7 +223,7 @@ export function buildOrderInvoiceSyncPlan(orderProducts = [], currentItems = [],
 
   products.forEach((product, index) => {
     const key = orderProductKey(product);
-    const mapped = itemFromProduct(product, index);
+    const mapped = itemFromProduct(product, index, order);
     const existing = key ? itemsByKey.get(key) : undefined;
 
     if (existing) {

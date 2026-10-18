@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -15,18 +15,12 @@ import {
   isValidReadinessOrderId,
   updateOrderProductionReadinessCheck,
 } from "@/api/productionReadiness";
+import { useOrderAutomaticReadiness } from "@/hooks/useOrderAutomaticReadiness";
+import AutomaticReadinessStrip from "@/components/orders/AutomaticReadinessStrip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import SignedFileLink from "@/components/common/SignedFileLink";
-
-const STATUS_OPTIONS = [
-  { value: "pending", label: "Pending" },
-  { value: "checked", label: "Checked" },
-  { value: "not_required", label: "Not required" },
-  { value: "needs_attention", label: "Needs attention" },
-];
 
 function readable(value = "") {
   return String(value || "").replace(/_/g, " ");
@@ -39,10 +33,13 @@ function statusClass(status = "") {
   return "bg-amber-100 text-amber-800";
 }
 
-function stateCopy(state) {
+// Phase B3 - the checklist's own 4-state aggregate (summary.
+// checklist_state), strictly separate from automatic-readiness warnings.
+function checklistStateCopy(state) {
   if (state === "ready") return { label: "Ready", className: "bg-emerald-100 text-emerald-700" };
   if (state === "needs_attention") return { label: "Needs attention", className: "bg-red-100 text-red-700" };
-  return { label: "Pending review", className: "bg-amber-100 text-amber-800" };
+  if (state === "in_progress") return { label: "In progress", className: "bg-amber-100 text-amber-800" };
+  return { label: "Not started", className: "bg-slate-100 text-slate-600" };
 }
 
 function isReadinessAuthError(message = "") {
@@ -53,14 +50,25 @@ function isReadinessAuthError(message = "") {
     || lower.includes("row-level security");
 }
 
-export default function ProductionReadinessCard({ order, readinessQuery }) {
-  const [notes, setNotes] = useState({});
+export default function ProductionReadinessCard({ order, readinessQuery, lineProductionReadiness }) {
   const [showPrintSheet, setShowPrintSheet] = useState(false);
   const queryClient = useQueryClient();
   const queryKey = ["productionReadiness", order?.id];
   const canLoadReadiness = isValidReadinessOrderId(order?.id);
   const { data, isLoading, error, refetch, isAuthorizationBlocked } = readinessQuery || {};
   const authError = isAuthorizationBlocked || isReadinessAuthError(error?.message);
+
+  // Phase B2 - "Ready automatically" strip. Every fact is read from an
+  // EXISTING authority's own output via the shared useOrderAutomaticReadiness
+  // hook (Order Drawer Operational Summary, Phase C1) - the Details tab's
+  // compact summary uses the exact same hook/query keys, so React Query
+  // dedupes the requests regardless of which one mounts first. This never
+  // feeds back into `data.summary.ready_state` or the manual checklist.
+  const { items: automaticReadinessItems } = useOrderAutomaticReadiness({
+    order,
+    readinessQuery,
+    lineProductionReadiness,
+  });
 
   const updateMutation = useMutation({
     mutationFn: updateOrderProductionReadinessCheck,
@@ -119,7 +127,7 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
   if (!data) return null;
 
   const summary = data.summary || {};
-  const state = stateCopy(summary.ready_state);
+  const state = checklistStateCopy(summary.checklist_state);
   const checks = data.checks || [];
   const warnings = data.warnings || [];
   const techPacks = data.tech_packs || [];
@@ -127,12 +135,12 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
   const approvals = data.approvals || [];
   const contracts = data.contracts || [];
 
-  const updateCheck = (check, status) => {
+  const updateCheck = (check, status, noteValue) => {
     updateMutation.mutate({
       orderId: order.id,
       checkKey: check.check_key,
       status,
-      notes: notes[check.check_key] ?? check.notes ?? "",
+      notes: noteValue ?? check.notes ?? "",
     });
   };
 
@@ -145,7 +153,7 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
             <h3 className="font-semibold text-foreground">Production Readiness</h3>
           </div>
           <p className="text-xs leading-5 text-muted-foreground">
-            Check the production facts before this order moves forward.
+            What's automatic, and what still needs a person.
           </p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
@@ -172,6 +180,8 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
         </div>
       </div>
 
+      <AutomaticReadinessStrip items={automaticReadinessItems} order={order} />
+
       <div className="grid grid-cols-3 gap-2">
         <Metric label="Checked" value={`${summary.checked_count || 0}/${summary.total_checks || checks.length}`} />
         <Metric label="Warnings" value={summary.warning_count || warnings.length} tone="warn" />
@@ -195,41 +205,24 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
         </div>
       )}
 
-      <div className="space-y-2">
-        {checks.map((check) => (
-          <div key={check.check_key} className="rounded-xl border border-border bg-secondary/20 p-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-foreground">{check.label}</p>
-                {check.notes && <p className="mt-1 text-xs leading-5 text-muted-foreground">{check.notes}</p>}
-              </div>
-              <Select
-                value={check.status || "pending"}
-                onValueChange={(status) => updateCheck(check, status)}
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Production checks</p>
+        {checks.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border bg-secondary/10 p-3 text-xs text-muted-foreground">
+            No outstanding operational checks
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {checks.map((check) => (
+              <ManualCheckRow
+                key={check.check_key}
+                check={check}
                 disabled={updateMutation.isPending}
-              >
-                <SelectTrigger className="h-8 rounded-xl sm:w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="mt-2 flex items-center gap-2">
-              <Badge className={statusClass(check.status)}>{readable(check.status || "pending")}</Badge>
-              {check.checked_at && <span className="text-xs text-muted-foreground">{new Date(check.checked_at).toLocaleString()}</span>}
-            </div>
-            <Textarea
-              value={notes[check.check_key] ?? check.notes ?? ""}
-              onChange={(event) => setNotes((current) => ({ ...current, [check.check_key]: event.target.value }))}
-              placeholder="Internal note for this check"
-              className="mt-2 min-h-16 text-sm"
-            />
+                onMark={updateCheck}
+              />
+            ))}
           </div>
-        ))}
+        )}
       </div>
 
       {(techPacks.length > 0 || instructions.length > 0) && (
@@ -284,6 +277,79 @@ export default function ProductionReadinessCard({ order, readinessQuery }) {
         />
       )}
     </section>
+  );
+}
+
+// Phase B3 - compact operator row replacing the old dropdown+always-open
+// textarea. Two actions only: mark reviewed, or flag needs attention.
+// The note input stays hidden unless a note already exists or the row is
+// flagged - mirrors the "only show notes input when needed" requirement.
+function ManualCheckRow({ check, disabled, onMark }) {
+  const [noteOpen, setNoteOpen] = useState(Boolean(check.notes) || check.status === "needs_attention");
+  const [note, setNote] = useState(check.notes || "");
+
+  const commitNote = () => {
+    if (note !== (check.notes || "")) onMark(check, check.status || "pending", note);
+  };
+
+  return (
+    <div className="rounded-xl border border-border bg-secondary/20 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">{check.label}</p>
+          {check.context && (
+            <p className="mt-0.5 truncate text-xs leading-5 text-muted-foreground">&ldquo;{check.context}&rdquo;</p>
+          )}
+          {check.checked_at && (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{new Date(check.checked_at).toLocaleString()}</p>
+          )}
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onMark(check, check.status === "checked" ? "pending" : "checked", note)}
+            title={check.status === "checked" ? "Reviewed - tap to undo" : "Mark reviewed"}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+              check.status === "checked" ? "bg-emerald-100 text-emerald-700" : "bg-secondary text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              setNoteOpen(true);
+              onMark(check, check.status === "needs_attention" ? "pending" : "needs_attention", note);
+            }}
+            title="Needs attention"
+            className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+              check.status === "needs_attention" ? "bg-red-100 text-red-700" : "bg-secondary text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <AlertTriangle className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      {noteOpen ? (
+        <Textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          onBlur={commitNote}
+          placeholder="Add a note"
+          className="mt-2 min-h-14 text-sm"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setNoteOpen(true)}
+          className="mt-1 text-[11px] text-muted-foreground underline underline-offset-2"
+        >
+          Add note
+        </button>
+      )}
+    </div>
   );
 }
 

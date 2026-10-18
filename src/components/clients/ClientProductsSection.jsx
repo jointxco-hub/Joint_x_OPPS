@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
@@ -9,12 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import { Package, Plus, X, ExternalLink, Image as ImageIcon, Eye } from "lucide-react";
 import SecureImage from "@/components/common/SecureImage";
 import QuickImagePreview from "@/components/common/QuickImagePreview";
 import ClientAssetPickerModal from "@/components/files/ClientAssetPickerModal";
 import { PLACEMENT_PRESETS } from "@/lib/productionStages";
-import { findOrCreateClientProductArtworkFromAsset } from "@/api/artworkLinking";
+import { findOrCreateClientProductArtworkFromAsset, confirmClientProductArtworkProductionFile, ARTWORK_REVIEW_DECISIONS } from "@/api/artworkLinking";
 import {
   getClientProductArtworkReadiness,
   setClientProductRequiredArtworkPlacements,
@@ -35,7 +37,18 @@ import ScopedComponentsEditor from "@/components/composition/ScopedComponentsEdi
 import GarmentVariantsSection from "@/components/composition/GarmentVariantsSection";
 import TreatmentsSection from "@/components/composition/TreatmentsSection";
 import { getClientProductPriceComposition } from "@/api/xosClientProduct";
-import { ChevronDown, ChevronRight, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Lock, UserCheck } from "lucide-react";
+import ProductConfigurationReview from "@/components/clients/ProductConfigurationReview";
+import {
+  getClientProductApprovals,
+  deriveClientProductApprovalState,
+  approvalStateLabel,
+  currentRevisionApprovalRecord,
+  canRecordClientProductApprovalOnBehalf,
+  CLIENT_PRODUCT_APPROVAL_STATES,
+  CLIENT_PRODUCT_APPROVAL_SOURCE_OPTIONS,
+  recordClientProductApprovalOnBehalf,
+} from "@/api/clientProductApprovals";
 
 const XLAB_ADMIN_BASE = "https://xlab.jointx.co.za/admin/client-products";
 
@@ -44,6 +57,21 @@ const TONE_CLASS = {
   amber: "bg-amber-50 text-amber-700 border-amber-200",
   red: "bg-red-50 text-red-700 border-red-200",
   slate: "bg-slate-100 text-slate-600 border-slate-200",
+};
+
+// Artwork Approval Phase B - production-FILE confirmation state (never
+// "Approve" - that word is reserved for the separate client concept/
+// design approval surfaced elsewhere in this workspace). Keyed by the
+// artwork row's own `status`.
+const PRODUCTION_FILE_STATE_LABEL = {
+  pending: "Pending production confirmation",
+  approved: "Production file confirmed",
+  rejected: "Changes requested",
+};
+const PRODUCTION_FILE_STATE_TONE = {
+  pending: "amber",
+  approved: "emerald",
+  rejected: "red",
 };
 
 function StatusBadge({ status }) {
@@ -64,7 +92,7 @@ function ReadinessBadge({ state }) {
 // Production configuration (composition / variants / treatments / mapping)
 // is Phase 1F-B and is intentionally NOT here.
 // ─────────────────────────────────────────────────────────────────────
-export function ClientProductsSection({ clientId }) {
+export function ClientProductsSection({ clientId, requestedProductId = "", onRequestedProductIdHandled }) {
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [openProductId, setOpenProductId] = useState("");
@@ -84,10 +112,25 @@ export function ClientProductsSection({ clientId }) {
   );
   const openProduct = scopedProducts.find((p) => p.id === openProductId) || null;
 
+  // Order-line deep-link target (UX Slice: Order -> OPPS Product
+  // Configuration -> optional X LAB Admin). Only opens once this client's
+  // own product list has resolved, and only when the requested id is
+  // actually found among THIS client's scopedProducts - a cross-client id
+  // (stale param, tampered URL, wrong client resolved first) is silently
+  // ignored, never opened. Consumed exactly once either way, via the
+  // parent-owned callback, so it can never re-fire on a later unrelated
+  // render and clobber a manual open.
+  useEffect(() => {
+    if (!requestedProductId || isLoading) return;
+    const match = scopedProducts.find((p) => p.id === requestedProductId);
+    if (match) setOpenProductId(match.id);
+    onRequestedProductIdHandled?.();
+  }, [requestedProductId, isLoading, scopedProducts, onRequestedProductIdHandled]);
+
   const invalidateProducts = () => queryClient.invalidateQueries({ queryKey: productsQueryKey });
 
   return (
-    <section className="rounded-lg border border-slate-200 p-4">
+    <section className="min-w-0 rounded-lg border border-slate-200 p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Package className="h-4 w-4 text-primary" />
@@ -109,7 +152,7 @@ export function ClientProductsSection({ clientId }) {
               key={product.id}
               type="button"
               onClick={() => setOpenProductId(product.id)}
-              className="flex w-full items-center gap-3 rounded-md bg-slate-50 p-2.5 text-left hover:bg-slate-100"
+              className="flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-md bg-slate-50 p-2.5 text-left hover:bg-slate-100"
             >
               <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded bg-white">
                 <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-4 w-4" /></div>} />
@@ -216,6 +259,17 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
     enabled: Boolean(product.id),
   });
 
+  // Client Product Approval (Phase B) - the CONCEPT/revision approval
+  // state, entirely independent of artwork readiness above. Never reads
+  // or writes client_product_artwork / order_line_component_snapshots.
+  const approvalsQueryKey = ["clientProductApprovals", product.id];
+  const { data: approvalsRes } = useQuery({
+    queryKey: approvalsQueryKey,
+    queryFn: () => getClientProductApprovals(product.id),
+    enabled: Boolean(product.id),
+  });
+  const approvalRows = approvalsRes?.data || [];
+
   // Phase 1F-B - proactive read-only UX for the Production tab. This is
   // the EXACT RLS write-gate (inventory_can_review_tenant) for the
   // production-configuration tables, so the tab renders full editors only
@@ -232,73 +286,139 @@ function ClientProductWorkspace({ product, clientId, onClose, onChanged }) {
   const refetchAll = () => {
     queryClient.invalidateQueries({ queryKey: readinessQueryKey });
     queryClient.invalidateQueries({ queryKey: artworkQueryKey });
+    queryClient.invalidateQueries({ queryKey: approvalsQueryKey });
     onChanged?.();
   };
 
+  // Registered as a nested Radix modal Dialog instead of a raw
+  // createPortal(..., document.body) div. The parent ClientAccountDialog
+  // is itself a modal Radix Dialog, which sets document.body's
+  // pointer-events to "none" for as long as it's open and only restores
+  // "auto" on DOM nodes it has registered as a DismissableLayer (see
+  // @radix-ui/react-dismissable-layer). A plain portaled <div> is
+  // invisible to that bookkeeping, so it silently inherited "none" and
+  // became untappable while still rendering correctly - this is what
+  // made the workspace visible but non-interactive. Using Dialog.Content
+  // here registers this exact node as its own layer in the SAME shared
+  // layer stack, so it gets its own "auto" override (and correctly
+  // suppresses the parent's, protecting it underneath) while still
+  // using Radix's own Portal to document.body - preserving the viewport-
+  // stable sizing the original portal fix was for, since DialogContent
+  // (src/components/ui/dialog.jsx) applies a CSS transform for its
+  // centering trick, and this node is never a descendant of that
+  // transformed box either way.
+  // Always "open" while this component is mounted - ClientProductsSection
+  // only renders it when a product is selected, so the mount itself IS
+  // the open state. The only way Radix itself asks to close it is Escape
+  // (there is no Radix Trigger/Close wired up here); forwarded to the
+  // same onClose the header button and backdrop click already use.
+  // A nested Dialog.Overlay IS required here, even though this panel's
+  // own div already supplies its own bg-black/50 backdrop and the parent
+  // dialog is already dimmed. In this installed Radix version,
+  // react-remove-scroll (the library behind Radix's modal scroll lock)
+  // is mounted ONLY by DialogOverlayImpl, never by Content - skipping
+  // Overlay meant this nested Dialog never registered its own scroll
+  // lock, leaving the PARENT's lock as the only one active. That lock's
+  // "shard" (the one region it still allows real scrolling in) is the
+  // parent's own content node - it has no idea this nested workspace
+  // exists, so it cancelled every wheel/touchmove event inside it,
+  // breaking scrolling even after tap/click interaction was fixed.
+  // Rendering Overlay here mounts this Dialog's OWN scroll lock, whose
+  // shard is THIS Dialog's own content node - react-remove-scroll keeps
+  // a stack of every mounted lock and only the most-recently-mounted one
+  // is ever active, so this correctly supersedes the parent's lock for
+  // as long as this workspace is open, and the parent's lock silently
+  // resumes the moment this one unmounts. Uses the raw Radix primitive
+  // directly (not the shared, styled DialogOverlay export) so it can be
+  // fully transparent - no second dark layer - without touching
+  // dialog.jsx. It carries none of Content's DismissableLayer/pointer-
+  // events logic, and this nested Content already covers the entire
+  // viewport itself, so Overlay is fully covered and intercepts nothing.
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start gap-3 border-b border-slate-200 p-4">
-          <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
-            <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-semibold">{product.client_facing_name}</p>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <StatusBadge status={product.status} />
-              <ReadinessBadge state={readinessState} />
-              {product.visible_in_account && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>}
+    <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <DialogPortal>
+        {/* z-[91] on both Overlay and Content, same convention dialog.jsx
+            itself uses for the parent pair (both z-[90]) - Content still
+            paints on top because it's the later DOM sibling. Together
+            they must still outrank the parent's DialogContent (z-[90]).
+            Stays below the z-[95] StatusTab confirm modal and the z-[110]
+            Reconfiguration Draft workflow nested inside this same
+            subtree - both are plain descendants of Content, so they
+            inherit its pointer-events:auto override and fall inside this
+            Dialog's own scroll-lock shard, needing no changes of their
+            own. */}
+        <DialogPrimitive.Overlay className="fixed inset-0 z-[91] bg-transparent" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          onClick={onClose}
+          className="fixed inset-0 z-[91] flex items-stretch justify-end bg-black/50 backdrop-blur-sm outline-none"
+        >
+          <div className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3 border-b border-slate-200 p-4">
+              <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                <SecureImage value={product.primary_mockup_url} alt="" className="h-full w-full object-cover" fallback={<div className="flex h-full w-full items-center justify-center text-slate-300"><ImageIcon className="h-5 w-5" /></div>} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <DialogPrimitive.Title asChild>
+                  <p className="truncate text-base font-semibold">{product.client_facing_name}</p>
+                </DialogPrimitive.Title>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={product.status} />
+                  <ReadinessBadge state={readinessState} />
+                  {product.visible_in_account && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Customer-visible</span>}
+                </div>
+                <a
+                  href={`${XLAB_ADMIN_BASE}/${product.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
+                >
+                  <ExternalLink className="h-3 w-3" /> Advanced · open in X LAB Admin
+                </a>
+              </div>
+              <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
             </div>
-            <a
-              href={`${XLAB_ADMIN_BASE}/${product.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600"
-            >
-              <ExternalLink className="h-3 w-3" /> Advanced · open in X LAB Admin
-            </a>
+
+            <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
+              <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
+                <TabsTrigger value="details">Details</TabsTrigger>
+                <TabsTrigger value="artwork">Artwork</TabsTrigger>
+                <TabsTrigger value="production">Production</TabsTrigger>
+                <TabsTrigger value="status">Status</TabsTrigger>
+              </TabsList>
+
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+                <TabsContent value="details" className="mt-0">
+                  <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
+                </TabsContent>
+                <TabsContent value="artwork" className="mt-0">
+                  <ArtworkTab
+                    product={product}
+                    clientId={clientId}
+                    readiness={readiness}
+                    artworkRows={Array.isArray(artworkRows) ? artworkRows : []}
+                    onChanged={refetchAll}
+                    onPreview={setPreview}
+                  />
+                </TabsContent>
+                <TabsContent value="production" className="mt-0">
+                  <ProductionTab
+                    product={product}
+                    readinessState={readinessState}
+                    canConfigure={canConfigureProduction}
+                  />
+                </TabsContent>
+                <TabsContent value="status" className="mt-0">
+                  <StatusTab product={product} onSaved={refetchAll} readinessState={readinessState} approvalRows={approvalRows} />
+                </TabsContent>
+              </div>
+            </Tabs>
           </div>
-          <Button variant="ghost" size="icon" onClick={onClose}><X className="h-5 w-5" /></Button>
-        </div>
 
-        <Tabs defaultValue="details" className="flex min-h-0 flex-1 flex-col">
-          <TabsList className="mx-4 mt-3 grid w-auto grid-cols-4">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="artwork">Artwork</TabsTrigger>
-            <TabsTrigger value="production">Production</TabsTrigger>
-            <TabsTrigger value="status">Status</TabsTrigger>
-          </TabsList>
-
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <TabsContent value="details" className="mt-0">
-              <DetailsTab product={product} clientId={clientId} onSaved={onChanged} onPreview={setPreview} />
-            </TabsContent>
-            <TabsContent value="artwork" className="mt-0">
-              <ArtworkTab
-                product={product}
-                clientId={clientId}
-                readiness={readiness}
-                artworkRows={Array.isArray(artworkRows) ? artworkRows : []}
-                onChanged={refetchAll}
-                onPreview={setPreview}
-              />
-            </TabsContent>
-            <TabsContent value="production" className="mt-0">
-              <ProductionTab
-                product={product}
-                readinessState={readinessState}
-                canConfigure={canConfigureProduction}
-              />
-            </TabsContent>
-            <TabsContent value="status" className="mt-0">
-              <StatusTab product={product} onSaved={onChanged} readinessState={readinessState} />
-            </TabsContent>
-          </div>
-        </Tabs>
-      </div>
-
-      <QuickImagePreview open={Boolean(preview)} onClose={() => setPreview(null)} value={preview?.value} title={preview?.title} />
-    </div>
+          <QuickImagePreview open={Boolean(preview)} onClose={() => setPreview(null)} value={preview?.value} title={preview?.title} />
+        </DialogPrimitive.Content>
+      </DialogPortal>
+    </Dialog>
   );
 }
 
@@ -458,6 +578,8 @@ function DetailsTab({ product, clientId, onSaved, onPreview }) {
 function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPreview }) {
   const [pickerPlacement, setPickerPlacement] = useState("");
   const [editingRequirements, setEditingRequirements] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState(null); // { artwork, decision }
+  const [reviewNote, setReviewNote] = useState("");
 
   const requiredFromRpc = Array.isArray(readiness?.required_placements) ? readiness.required_placements : [];
   const legacyFallback = readiness?.legacy_fallback === true;
@@ -493,6 +615,22 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
       onChanged?.();
     },
     onError: (error) => toast.error(error?.message || "Could not link artwork"),
+  });
+
+  const closeReviewDialog = () => { setReviewTarget(null); setReviewNote(""); };
+  const reviewMutation = useMutation({
+    mutationFn: () => confirmClientProductArtworkProductionFile({
+      artworkId: reviewTarget.artwork.id,
+      expectedRevision: reviewTarget.artwork.revision,
+      decision: reviewTarget.decision,
+      note: reviewNote.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success(reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "Production file confirmed" : "Changes requested");
+      closeReviewDialog();
+      onChanged?.();
+    },
+    onError: (error) => toast.error(error?.message || "Could not record the review decision"),
   });
 
   return (
@@ -545,8 +683,8 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
                   {current ? (
                     <p className="truncate text-xs text-slate-500">
                       {current.file_name || "linked file"}
-                      <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${current.status === "approved" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                        {current.status}
+                      <span className={`ml-1.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${TONE_CLASS[PRODUCTION_FILE_STATE_TONE[current.status] || "slate"]}`}>
+                        {PRODUCTION_FILE_STATE_LABEL[current.status] || current.status}
                       </span>
                       {historyCount > 1 && <span className="ml-1.5 text-[10px] text-slate-400">Rev {current.revision} · {historyCount} revisions</span>}
                     </p>
@@ -563,6 +701,33 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
                   {current ? "Change" : "Link"}
                 </Button>
               </div>
+              {/* Production-file review actions - the CURRENT revision only.
+                  Never rendered for a historical/non-current row - this block
+                  only exists inside the `current` placement row to begin with. */}
+              {current && (
+                <div className="mt-2 flex gap-2 border-t border-slate-100 pt-2">
+                  {current.status !== ARTWORK_REVIEW_DECISIONS.APPROVED && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setReviewTarget({ artwork: current, decision: ARTWORK_REVIEW_DECISIONS.APPROVED })}
+                    >
+                      Confirm production file
+                    </Button>
+                  )}
+                  {current.status !== ARTWORK_REVIEW_DECISIONS.REJECTED && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setReviewTarget({ artwork: current, decision: ARTWORK_REVIEW_DECISIONS.REJECTED })}
+                    >
+                      Request changes
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
@@ -590,6 +755,39 @@ function ArtworkTab({ product, clientId, readiness, artworkRows, onChanged, onPr
           onClose={() => setPickerPlacement("")}
           onConfirm={([asset]) => asset && linkMutation.mutate({ placement: pickerPlacement, asset })}
         />
+      )}
+
+      {reviewTarget && (
+        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/50 p-4" onClick={closeReviewDialog}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold">
+              {reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "Confirm production file" : "Request changes"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {reviewTarget.artwork.placement} · revision {reviewTarget.artwork.revision}
+            </p>
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-slate-500">Note (optional)</Label>
+                <Textarea
+                  rows={2}
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                  placeholder={reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "e.g. File checked, colours and bleed correct" : "e.g. Logo needs to move 1cm left"}
+                />
+              </div>
+              <p className="rounded-lg bg-slate-50 p-2.5 text-[11px] text-slate-500">
+                This confirms the production FILE only - it does not change whether the client has approved the design.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={closeReviewDialog}>Cancel</Button>
+                <Button className="flex-1" disabled={reviewMutation.isPending} onClick={() => reviewMutation.mutate()}>
+                  {reviewMutation.isPending ? "Saving…" : (reviewTarget.decision === ARTWORK_REVIEW_DECISIONS.APPROVED ? "Confirm production file" : "Request changes")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -642,7 +840,135 @@ function RequiredPlacementsEditor({ product, initial, onSaved }) {
 }
 
 // ── Status tab ────────────────────────────────────────────────────────
-function StatusTab({ product, onSaved, readinessState }) {
+// ── Client Product Approval (Phase B) ──────────────────────────────────
+// Concept/revision approval, kept entirely independent of artwork
+// readiness (ReadinessBadge above) and of the lifecycle status Select -
+// clearing CUSTOMER_APPROVAL_MISSING here never touches
+// client_product_artwork.status or any order_line_component_snapshots
+// row. Deliberately never labelled a plain "Approve" button - it records
+// that approval was ALREADY received elsewhere, it does not solicit one.
+// Full class strings per key, never interpolated into a template literal -
+// same safe convention TONE_CLASS already uses above for ReadinessBadge,
+// required so Tailwind's static scanner can see every class it must emit.
+const APPROVAL_STATE_TEXT_CLASS = {
+  [CLIENT_PRODUCT_APPROVAL_STATES.AWAITING]: "text-amber-700",
+  [CLIENT_PRODUCT_APPROVAL_STATES.APPROVED_BY_CLIENT]: "text-emerald-700",
+  [CLIENT_PRODUCT_APPROVAL_STATES.APPROVED_BY_STAFF]: "text-emerald-700",
+};
+
+function ClientProductApprovalCard({ product, approvalRows, onRecorded }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [source, setSource] = useState("");
+  const [note, setNote] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  const state = deriveClientProductApprovalState(approvalRows, product.revision);
+  const record = currentRevisionApprovalRecord(approvalRows, product.revision);
+  const canRecord = canRecordClientProductApprovalOnBehalf(product, approvalRows);
+  const isDraft = String(product.status || "draft") === "draft";
+
+  const closeDialog = () => { setDialogOpen(false); setSource(""); setNote(""); setConfirmed(false); };
+
+  const recordMutation = useMutation({
+    mutationFn: () => recordClientProductApprovalOnBehalf({
+      clientProductId: product.id,
+      expectedRevision: product.revision,
+      approvalSource: source,
+      note: note.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success("Client approval recorded");
+      closeDialog();
+      onRecorded?.();
+    },
+    onError: (error) => toast.error(error?.message || "Could not record the approval"),
+  });
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <Label className="text-[11px] text-slate-500">Client approval (revision {product.revision ?? 1})</Label>
+          <p className={`mt-0.5 text-sm font-medium ${APPROVAL_STATE_TEXT_CLASS[state]}`}>
+            {approvalStateLabel(state)}
+          </p>
+          {record && (
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {state === CLIENT_PRODUCT_APPROVAL_STATES.APPROVED_BY_STAFF
+                ? `Recorded by ${record.recorded_by_label || "staff"}${record.approval_source ? ` · ${record.approval_source.replace(/_/g, " ")}` : ""}`
+                : (record.approved_by_email || record.approved_by_name || "")}
+              {record.approved_at ? ` · ${new Date(record.approved_at).toLocaleString()}` : ""}
+            </p>
+          )}
+        </div>
+        {canRecord && (
+          <Button variant="outline" size="sm" onClick={() => setDialogOpen(true)}>
+            <UserCheck className="mr-1.5 h-4 w-4" /> Record client approval
+          </Button>
+        )}
+      </div>
+      {isDraft && state === CLIENT_PRODUCT_APPROVAL_STATES.AWAITING && (
+        <p className="mt-1.5 rounded-md bg-slate-50 px-2 py-1 text-[11px] text-slate-500">
+          Move this product to &quot;Ready for client review&quot; above before a client approval can be recorded.
+        </p>
+      )}
+
+      {dialogOpen && (
+        <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/50 p-4" onClick={closeDialog}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm font-semibold">Record client approval</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Approving on behalf of: <span className="font-medium text-slate-700">{product.client_facing_name || "this product"}</span>
+            </p>
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-slate-500">Approval channel *</Label>
+                <Select value={source} onValueChange={setSource}>
+                  <SelectTrigger><SelectValue placeholder="How did the client approve?" /></SelectTrigger>
+                  <SelectContent>
+                    {CLIENT_PRODUCT_APPROVAL_SOURCE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-slate-500">Note / reference (optional)</Label>
+                <Textarea
+                  rows={2}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="e.g. Confirmed by client on WhatsApp, 11 Oct 2026"
+                />
+              </div>
+              <label className="flex items-start gap-2 rounded-lg bg-amber-50 p-2.5 text-xs text-amber-800">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                />
+                <span>I am recording approval already received from the client.</span>
+              </label>
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" onClick={closeDialog}>Cancel</Button>
+                <Button
+                  className="flex-1"
+                  disabled={!source || !confirmed || recordMutation.isPending}
+                  onClick={() => recordMutation.mutate()}
+                >
+                  {recordMutation.isPending ? "Recording…" : "Record approval"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusTab({ product, onSaved, readinessState, approvalRows = [] }) {
   const queryClient = useQueryClient();
   const [pendingChange, setPendingChange] = useState(null); // { kind, label, apply }
   const readyForCustomer = ["ready_for_client_review", "client_changes_requested", "client_approved", "ready_to_order", "active"].includes(product.status || "");
@@ -698,6 +1024,8 @@ function StatusTab({ product, onSaved, readinessState }) {
           </p>
         )}
       </div>
+
+      <ClientProductApprovalCard product={product} approvalRows={approvalRows} onRecorded={onSaved} />
 
       <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Storefront-sensitive — changes what customers can do</p>
@@ -989,6 +1317,10 @@ function ProductionTab({ product, readinessState, canConfigure }) {
           </ul>
         )}
       </div>
+
+      {/* Read-only pricing & configuration review - visible regardless of
+          production write access, unlike the editable sections below. */}
+      <ProductConfigurationReview product={product} components={safe.components} />
 
       {!canConfigure ? (
         <>

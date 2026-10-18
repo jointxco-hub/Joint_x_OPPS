@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, Factory, ImagePlus, Lock, Minus, Package, Pencil, Plus, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { dataClient } from "@/api/dataClient";
+import { createPageUrl } from "@/utils";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +22,7 @@ import { buildComponentPayload, buildSetupFeeCompanionPayload, resolveOrderPrice
 import { xosAddComposedClientProductToOrder, mapXosComposedAddError } from "@/api/xosClientProduct";
 import ComponentFieldsForm, { emptyPrintOptionForm } from "@/components/composition/ComponentFieldsForm";
 import { computeOrderTotal } from "@/lib/orderTotal";
+import { normalizeOrderLineMoney } from "@/lib/orderLineMoney";
 import { needsConfiguration, needsConfigurationBannerText, applyMatchExistingProduct, applyKeepCommercialOnly, resolveLineThumbnail, isProductionCapableLine } from "@/features/orders/lineConfiguration";
 import { selectableClientProductsForOrder, clientProductToPickerItem, applyClientProductPickToNewRow, clientProductStatusLabel } from "@/features/orders/clientProductPicker";
 import { getClientProductApprovals, hasCurrentRevisionApproval, currentRevisionApprovalRecord } from "@/api/clientProductApprovals";
@@ -36,6 +39,7 @@ function newLineId() {
 }
 
 export default function ProductsEditor({ order = {}, onUpdate, locked = false, lockReason = "", lineProductionReadiness = null }) {
+  const navigate = useNavigate();
   const [editingIdx, setEditingIdx] = useState(/** @type {number|null} */ (null));
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
@@ -807,16 +811,23 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     onError: (err) => toast.error(err?.message || "Could not add print option"),
   });
 
-  // "Review for My Products" (Phase 5): resolves/creates the client_product
-  // for this line via the exact same shared path as "+ Add print option" -
-  // never a second identity model. Persists client_product_id back onto
-  // the order line only if it isn't already set (never touches price/
-  // quantity/any other commercial field). The client_product itself stays
-  // on its column defaults (status: draft, visible_in_account: false) -
-  // this action never publishes anything. X LAB Admin
-  // (AdminClientProductDetail.jsx) is the one authoritative review/
-  // publish surface - this deep-links to it rather than rebuilding any
-  // part of that UI inside OPPS.
+  // "Review for My Products" / "Open product configuration": resolves/
+  // creates the client_product for this line via the exact same shared
+  // path as "+ Add print option" - never a second identity model.
+  // Persists client_product_id back onto the order line only if it isn't
+  // already set (never touches price/quantity/any other commercial
+  // field). The client_product itself stays on its column defaults
+  // (status: draft, visible_in_account: false) - this action never
+  // publishes anything.
+  // UX Slice (Order -> OPPS Product Configuration -> optional X LAB
+  // Admin): the primary destination is now the existing OPPS
+  // ClientProductWorkspace (src/components/clients/ClientProductsSection.jsx),
+  // reached via the SAME deep-link convention Orders.jsx/Quotes.jsx/
+  // Invoices.jsx already use for cross-page open-by-id (?open=.../
+  // ?invoice=...) - never name matching, always order.client_id +
+  // clientProduct.id. X LAB Admin is still one click away from inside
+  // that workspace ("Advanced - open in X LAB Admin"), it is just no
+  // longer the destination this action jumps to directly.
   const reviewForMyProductsMutation = useMutation({
     mutationFn: async ({ lineId, orderLine }) => {
       const { clientProduct } = await resolveOrCreateClientProductForLine(orderLine);
@@ -830,8 +841,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         applyToLine(lineId, (item) => ({ ...item, client_product_id: clientProduct.id }));
       }
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
-      window.open(`https://xlab.jointx.co.za/admin/client-products/${clientProduct.id}`, "_blank", "noopener,noreferrer");
-      toast.success("Opening in X LAB Admin for review");
+      const params = new URLSearchParams({ client: order.client_id, clientProduct: clientProduct.id });
+      navigate(`${createPageUrl("Clients")}?${params.toString()}`);
+      toast.success("Opening product configuration");
     },
     onError: (err) => toast.error(err?.message || "Could not prepare this product for review"),
   });
@@ -1277,10 +1289,22 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // but it is NOT a unit - excluded from the unit count so "N units"
   // stays honest. A reserved "breakdown" line (schema-legal, not emitted
   // by anything yet) is informational only and is never billed.
+  // HOTFIX A — `price`/`unit_price`/`line_total` mean different things on
+  // different lines (native OPPS, Commerce storefront, legacy X LAB); see
+  // src/lib/orderLineMoney.js. A line whose money fields can't be
+  // confidently interpreted contributes nothing to productLineTotal and
+  // flags hasUntrustedLineMoney, which gates the "Apply total" action
+  // below - a wrong recomputed total must never be offered for write.
+  let hasUntrustedLineMoney = false;
   const productLineTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
     if (product.line_role === "breakdown") return sum;
-    return sum + (Number(product.price || 0) * Number(product.quantity || 1));
+    const normalized = normalizeOrderLineMoney(product, order);
+    if (!normalized.trusted) {
+      hasUntrustedLineMoney = true;
+      return sum;
+    }
+    return sum + (normalized.lineTotal || 0);
   }, 0);
   const productQuantityTotal = products.reduce((sum, raw) => {
     const product = cleanProduct(raw);
@@ -1293,7 +1317,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
     applyShippingFee: order.apply_shipping_fee,
     shippingFee: order.shipping_fee,
   });
-  const canApplyProductTotal = orderTotalWithShipping.total > 0 && Math.abs(orderTotalWithShipping.total - orderTotal) > 0.009;
+  const canApplyProductTotal = !hasUntrustedLineMoney
+    && orderTotalWithShipping.total > 0
+    && Math.abs(orderTotalWithShipping.total - orderTotal) > 0.009;
 
   const updateQuantity = (idx, delta) => {
     if (locked) return;
@@ -1461,6 +1487,14 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
               Apply total
             </button>
           )}
+          {!canApplyProductTotal && hasUntrustedLineMoney && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800"
+              title="One or more lines have a price field OPPS can't confidently interpret as a unit price or a line total - review them before the order total can be recalculated."
+            >
+              <AlertTriangle className="h-3 w-3" /> Line pricing needs review
+            </span>
+          )}
           {!addMode && (
             <button type="button" onClick={() => setAddMode(true)} className="flex items-center gap-1 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">
               <Plus className="w-3 h-3" /> Add
@@ -1477,6 +1511,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         )}
         {products.map((/** @type {any} */ rawProduct, /** @type {number} */ i) => {
           const p = cleanProduct(rawProduct);
+          const lineMoney = normalizeOrderLineMoney(p, order);
           return editingIdx === i ? (
             <div key={i} className="grid gap-2 bg-card rounded-lg px-2 py-2 border border-border sm:grid-cols-[1fr_56px_84px]">
               <Input value={editRow.name} onChange={(/** @type {any} */ e) => setEditRow(r => ({ ...r, name: e.target.value }))}
@@ -1678,9 +1713,17 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                     </button>
                   </>
                 )}
-                {p.price && (
+                {lineMoney.trusted && lineMoney.lineTotal > 0 && (
                   <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-semibold text-primary">
-                    {formatMoney(Number(p.price) * Number(p.quantity || 1))}
+                    {formatMoney(lineMoney.lineTotal)}
+                  </span>
+                )}
+                {!lineMoney.trusted && (
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800"
+                    title="This line's price field can't be confidently interpreted as a unit price or a line total."
+                  >
+                    Price unclear
                   </span>
                 )}
                 {!locked && (
@@ -2405,7 +2448,7 @@ function LineProduction({
             onClick={onReviewForMyProducts}
             disabled={reviewingForMyProducts}
           >
-            {reviewingForMyProducts ? "Preparing…" : (clientProduct ? "Open in X LAB Admin" : "Review for My Products")}
+            {reviewingForMyProducts ? "Preparing…" : (clientProduct ? "Open product configuration" : "Review for My Products")}
           </Button>
         </div>
       )}

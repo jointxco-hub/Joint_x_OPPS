@@ -644,7 +644,7 @@ export async function updateInvoice(id, input = {}, options = {}) {
 // draft-only lock, so this fails the same way a normal edit would once the
 // invoice is no longer a draft.
 export async function linkInvoiceToOrder(invoice, order) {
-  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || []);
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], undefined, order);
   const saved = await updateInvoice(invoice.id, {
     ...invoice,
     source_order_id: order.id,
@@ -915,7 +915,7 @@ export async function syncInvoiceItemsFromOrder(invoice, order) {
     orderShippingFee: order?.shipping_fee,
     invoiceShippingCharge: invoice?.shipping_charge,
   };
-  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], shippingContext);
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], shippingContext, order);
   const saved = await updateInvoice(invoice.id, {
     ...invoice,
     items: plan.items,
@@ -1144,6 +1144,10 @@ export async function duplicateInvoiceAsDraft(id) {
 // only job afterwards is to refresh what it displays. See
 // supabase/migrations/20260907120000_record_manual_invoice_payment.sql.
 const MANUAL_PAYMENT_ERROR_MESSAGES = {
+  INVOICE_PAYMENT_CAFE_CURRENT_DATE_REQUIRED: "Café shared payments record money received today. Ask for a payment review to record a historical receipt.",
+  "Verified EFT reference required": "Enter the bank reference after verifying that the EFT arrived.",
+  "Record the full current outstanding balance": "Café-linked invoices currently accept the full outstanding balance. Partial payment support is still being prepared.",
+  "Payment records need reconciliation first": "Open the linked order’s Payments tab and review or sync its existing receipts before recording another payment.",
   INVOICE_PAYMENT_AUTH_REQUIRED: "Sign in again to record this payment.",
   INVOICE_NOT_FOUND: "This invoice could not be found.",
   INVOICE_PAYMENT_ACCESS_DENIED: "You do not have permission to record payments on this invoice.",
