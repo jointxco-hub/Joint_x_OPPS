@@ -644,7 +644,7 @@ export async function updateInvoice(id, input = {}, options = {}) {
 // draft-only lock, so this fails the same way a normal edit would once the
 // invoice is no longer a draft.
 export async function linkInvoiceToOrder(invoice, order) {
-  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || []);
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], undefined, order);
   const saved = await updateInvoice(invoice.id, {
     ...invoice,
     source_order_id: order.id,
@@ -915,7 +915,7 @@ export async function syncInvoiceItemsFromOrder(invoice, order) {
     orderShippingFee: order?.shipping_fee,
     invoiceShippingCharge: invoice?.shipping_charge,
   };
-  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], shippingContext);
+  const plan = buildOrderInvoiceSyncPlan(order?.products, invoice?.items || [], shippingContext, order);
   const saved = await updateInvoice(invoice.id, {
     ...invoice,
     items: plan.items,

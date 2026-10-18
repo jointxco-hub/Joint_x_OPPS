@@ -197,7 +197,7 @@ export default function CommercialDocument({ kind = "invoice", document: model, 
             <div className="commercial-doc__tablehead" data-doc-block="true" aria-hidden="true">
               <span>Item</span><span>Description</span>
               <span className="commercial-doc__num">Qty</span>
-              <span className="commercial-doc__num">Unit</span>
+              <span className="commercial-doc__num">Price</span>
               <span className="commercial-doc__num">Total</span>
             </div>
             <div className="commercial-doc__tablebody">
@@ -223,7 +223,7 @@ export default function CommercialDocument({ kind = "invoice", document: model, 
                     {line.priceBreakdown ? <PriceBreakdown breakdown={line.priceBreakdown} currency={c} /> : null}
                   </div>
                   <RowAmount label="Qty" value={`${line.quantity}${line.unit ? ` ${line.unit}` : ""}`} />
-                  <RowAmount label="Unit" value={money(line.rate, c)} />
+                  <RowAmount label="Price" value={money(line.rate, c)} />
                   <RowAmount label="Total" value={money(line.lineTotal, c)} strong />
                 </div>
               ))}

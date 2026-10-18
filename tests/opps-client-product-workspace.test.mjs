@@ -159,7 +159,33 @@ test("create uses buildClientProductCreatePayload then ClientProduct.create, and
 test("Clients.jsx mounts ClientProductsSection inside the client account dialog, client-scoped", async () => {
   const src = await readSource(CLIENTS_PAGE_PATH);
   assert.match(src, /import \{ ClientProductsSection \} from "@\/components\/clients\/ClientProductsSection"/);
-  assert.match(src, /\{clientId && <ClientProductsSection clientId=\{clientId\} \/>\}/);
+  assert.match(src, /<ClientProductsSection\s*\n\s*clientId=\{clientId\}/);
+});
+
+// ── Order line -> OPPS Client Product Workspace deep-link ──────────
+// Mirrors Orders.jsx's established `?open=`/`?orderId=` auto-open
+// convention (same useSearchParams + immediate strip-after-read pattern)
+// for `?client=`/`?clientProduct=`, so refresh/back never re-opens a
+// stale target.
+test("Clients.jsx reads ?client=/?clientProduct= via useSearchParams, the same convention Orders.jsx uses for ?open=/?orderId=, and strips both immediately once resolved", async () => {
+  const src = await readSource(CLIENTS_PAGE_PATH);
+  assert.match(src, /import \{ useSearchParams \} from "react-router-dom"/);
+  assert.match(src, /searchParams\.get\("client"\)/);
+  assert.match(src, /searchParams\.get\("clientProduct"\)/);
+  assert.match(src, /next\.delete\("client"\)/);
+  assert.match(src, /next\.delete\("clientProduct"\)/);
+  assert.match(src, /setSearchParams\(next, \{ replace: true \}\)/);
+});
+
+test("ClientProductsSection only opens the requested product after its own client-scoped query resolves, and only if that product belongs to the active client - a cross-client id is silently ignored, never opened", async () => {
+  const src = await readSource(SECTION_PATH);
+  assert.match(src, /export function ClientProductsSection\(\{ clientId, requestedProductId = "", onRequestedProductIdHandled \}\)/);
+  const effectStart = src.indexOf("useEffect(() => {\n    if (!requestedProductId || isLoading) return;");
+  assert.notEqual(effectStart, -1, "the requested-id effect must exist and bail out while the client-scoped product list is still loading");
+  const effectBody = src.slice(effectStart, effectStart + 400);
+  assert.match(effectBody, /scopedProducts\.find\(\(p\) => p\.id === requestedProductId\)/, "must look the id up against scopedProducts (already filtered to this client), never the raw unscoped clientProducts list");
+  assert.match(effectBody, /if \(match\) setOpenProductId\(match\.id\)/, "must only open when found in scopedProducts - an id for another client is never found there, so it is never opened");
+  assert.match(effectBody, /onRequestedProductIdHandled\?\.\(\)/, "must consume the request exactly once (found or not) so a later unrelated render can never re-trigger it");
 });
 
 // ── Thumbnail contract ─────────────────────────────────────────────

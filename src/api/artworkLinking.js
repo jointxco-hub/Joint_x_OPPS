@@ -58,3 +58,55 @@ export async function reviseOrderLineComponentSnapshotArtwork({ snapshotId, artw
     return { data: null, error: error?.message || "Could not relink artwork." };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Artwork Approval Phase B - production-file confirmation. A SEPARATE
+// concept from client concept/design approval (client_approvals /
+// approval_type='client_product_concept') - this is Joint X confirming
+// the exact CURRENT revision's file is fit for production, never a
+// customer-facing action. Mirrors recordClientProductApprovalOnBehalf's
+// error-mapping convention exactly. The RPC
+// (confirm_client_product_artwork_production_file, see
+// supabase/migrations/20261011120000_artwork_production_file_confirmation.sql)
+// does every check - auth, owner/admin tenant derived from the artwork's
+// own product, expected-revision match, is_current, no-op protection.
+// This wrapper adds no logic of its own.
+// ─────────────────────────────────────────────────────────────────────
+
+export const ARTWORK_REVIEW_DECISIONS = {
+  APPROVED: "approved",
+  REJECTED: "rejected",
+};
+
+const ARTWORK_REVIEW_ERROR_MESSAGES = {
+  ARTWORK_REVIEW_AUTH_REQUIRED: "You must be signed in to review artwork.",
+  ARTWORK_REVIEW_DECISION_INVALID: "Choose either Confirm production file or Request changes.",
+  ARTWORK_REVIEW_NOT_FOUND: "That artwork revision could not be found.",
+  ARTWORK_REVIEW_DENIED: "You don't have permission to review this product's artwork.",
+  ARTWORK_REVIEW_REVISION_CHANGED: "This artwork changed since it was loaded — reopen it and try again.",
+  ARTWORK_REVIEW_NOT_CURRENT: "Only the current revision for this placement can be reviewed here.",
+  ARTWORK_REVIEW_NOT_REVIEWABLE: "This artwork revision is not in a reviewable state.",
+  ARTWORK_REVIEW_NO_CHANGE: "This revision is already in that state.",
+};
+
+export async function confirmClientProductArtworkProductionFile({ artworkId, expectedRevision, decision, note = null }) {
+  if (!supabase) return { data: null, error: "Supabase not configured" };
+  const { data, error } = await supabase.rpc("confirm_client_product_artwork_production_file", {
+    p_artwork_id: artworkId,
+    p_expected_revision: expectedRevision,
+    p_decision: decision,
+    p_note: note,
+  });
+  if (error) {
+    const raw = String(error.message || "");
+    const code = Object.keys(ARTWORK_REVIEW_ERROR_MESSAGES).find((k) => raw.includes(k));
+    throw Object.assign(
+      new Error(code ? ARTWORK_REVIEW_ERROR_MESSAGES[code] : raw || "Could not record the review decision."),
+      { code: code || error.code || "ARTWORK_REVIEW_FAILED", cause: error },
+    );
+  }
+  if (!data?.ok) {
+    throw Object.assign(new Error("The review returned an incomplete result."), { code: "ARTWORK_REVIEW_RESULT_INVALID" });
+  }
+  return data;
+}

@@ -246,7 +246,12 @@ test("Quotes page is registered and reachable from the finance-gated nav", async
 // ── mobile / tap targets ───────────────────────────────────────────────
 test("quote editor + line editor + drawer use >=44px (h-11) mobile tap targets", async () => {
   for (const [file, needles] of [
-    ["src/features/quotes/QuoteLineItemsEditor.jsx", ["h-11 w-11", "h-11 rounded-xl"]],
+    // Phase B2: the per-line remove button moved into the shared
+    // LineItemCard shell (src/features/lineItems/) that both
+    // QuoteLineItemsEditor and InvoiceLineItemsEditor now render through —
+    // it still exists, just no longer inline in this file.
+    ["src/features/quotes/QuoteLineItemsEditor.jsx", ["h-11 rounded-xl"]],
+    ["src/features/lineItems/LineItemCard.jsx", ["h-11 w-11"]],
     ["src/features/quotes/QuoteEditor.jsx", ["h-11 rounded-xl"]],
     ["src/features/quotes/QuoteDetailDrawer.jsx", ["h-11 rounded-xl", "h-11 w-11 rounded-xl"]],
   ]) {

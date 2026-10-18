@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Package, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Package, Plus, Save, Search } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,10 @@ import {
 import { calculateInvoiceLine } from "./invoiceCalculations";
 import InvoiceItemMediaEditor from "./InvoiceItemMediaEditor";
 import { calculateDtfClientPrice, DTF_CLIENT_RATE_PER_METER } from "@/lib/pricing/dtf";
+import LabeledNumber from "@/features/lineItems/LabeledNumber";
+import MoneyRow from "@/features/lineItems/MoneyRow";
+import LineItemCard from "@/features/lineItems/LineItemCard";
+import StickyAddBar from "@/features/lineItems/StickyAddBar";
 
 
 
@@ -52,6 +56,12 @@ function newLineItem() {
   return { ...emptyItem, line_key: uniqueLineKey(), specifications: {}, proofs: [] };
 }
 
+// Local-only collapse-state key. Keyed by the item's own stable line_key
+// (not its array index) so removing one line never corrupts another
+// line's expanded/collapsed state.
+function lineKeyFor(item, index) {
+  return item?.line_key || `idx-${index}`;
+}
 
 function numberOrZero(value) {
   const parsed = Number(value);
@@ -144,6 +154,12 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
   const [pickerOpenIndex, setPickerOpenIndex] = useState(null);
   const [pickerMode, setPickerMode] = useState("all");
   const [savedSearch, setSavedSearch] = useState("");
+  // Keys present here are COLLAPSED; everything else is expanded. Nothing
+  // starts in this set, so every existing line opens expanded (unchanged
+  // from today) and every newly added line is expanded by construction —
+  // collapsing only ever happens via an explicit user toggle below. Never
+  // persisted onto the item or sent through onChange.
+  const [collapsedKeys, setCollapsedKeys] = useState(() => new Set());
 
   const { data: templates = [] } = useQuery({
     queryKey: ["invoiceItemTemplates", customerId],
@@ -257,8 +273,24 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
 
   const addItem = () => onChange([...safeItems, newLineItem()]);
   const removeItem = (index) => {
+    const removedKey = lineKeyFor(safeItems[index], index);
     const next = safeItems.filter((_, itemIndex) => itemIndex !== index);
+    setCollapsedKeys((prev) => {
+      if (!prev.has(removedKey)) return prev;
+      const nextSet = new Set(prev);
+      nextSet.delete(removedKey);
+      return nextSet;
+    });
     onChange(next.length ? next : [newLineItem()]);
+  };
+  const toggleExpand = (item, index) => {
+    const key = lineKeyFor(item, index);
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   const appendTemplate = (template) => {
@@ -337,215 +369,181 @@ export default function InvoiceLineItemsEditor({ items = [], onChange, customerI
             ...(nextDtf.valid ? { rate: nextDtf.total, quantity: 1, unit: "job" } : {}),
           });
         };
+        const key = lineKeyFor(item, index);
+        const expanded = !collapsedKeys.has(key);
+        const badges = (item.catalog_item_id || item.inventory_item_id || item.invoice_item_template_id) ? (
+          <span className="text-xs text-primary">Linked source item</span>
+        ) : null;
         return (
-          <div key={index} className="rounded-xl border border-border bg-card p-2.5 shadow-apple-sm md:p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Line {index + 1}</p>
-                {(item.catalog_item_id || item.inventory_item_id || item.invoice_item_template_id) && (
-                  <p className="mt-0.5 truncate text-xs text-primary">Linked source item</p>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => saveLineAsTemplate(item)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-primary"
-                  aria-label="Save line item"
-                  title="Save line item"
-                >
-                  <Save className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeItem(index)}
-                  className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-destructive"
-                  aria-label="Remove line item"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <div className="grid gap-3 md:grid-cols-12">
-              <div className="relative md:col-span-5">
-                <Input
-                  value={item.item_name || ""}
-                  onChange={(event) => {
-                    updateItem(index, {
-                      item_name: event.target.value,
-                      catalog_item_id: "",
-                      inventory_item_id: "",
-                      invoice_item_template_id: "",
-                      source_metadata: {},
-                    });
-                    setPickerOpenIndex(index);
-                  }}
-                  onFocus={() => setPickerOpenIndex(index)}
-                  onBlur={() => setTimeout(() => setPickerOpenIndex(null), 150)}
-                  placeholder="Search shop, stock, or type item"
-                  className="h-10 rounded-xl"
-                />
-                {pickerOpenIndex === index && (
-                  <div className="absolute left-0 right-0 top-11 z-30 overflow-hidden rounded-xl border border-border bg-card shadow-apple-lg">
-                    <div className="flex gap-1 overflow-x-auto border-b border-border p-2">
-                      {pickerModes.map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => setPickerMode(value)}
-                          className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${pickerMode === value ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground"}`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="max-h-64 overflow-y-auto py-1">
-                      {pickerItems.map((pickerItem) => (
-                        <button
-                          key={`${pickerItem.source}-${pickerItem.id}`}
-                          type="button"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => {
-                            updateItem(index, lineFromPickerItem(pickerItem, item));
-                            setPickerOpenIndex(null);
-                          }}
-                          className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-secondary/60"
-                        >
-                          <span className="grid h-9 w-9 flex-shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-secondary/60">
-                            {pickerItem.image_url ? <img src={pickerItem.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="h-4 w-4 text-muted-foreground" />}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-semibold text-foreground">{pickerItem.name}</span>
-                            <span className="block truncate text-xs text-muted-foreground">{[pickerItem.category, pickerItem.sourceLabel || pickerItem.source].filter(Boolean).join(" / ")}</span>
-                          </span>
-                          {pickerItem.price !== "" && <span className="text-xs font-semibold text-primary">R{Number(pickerItem.price || 0).toLocaleString()}</span>}
-                        </button>
-                      ))}
-                      {item.item_name?.trim() && (
-                        <button
-                          type="button"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => setPickerOpenIndex(null)}
-                          className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm font-semibold text-primary hover:bg-primary/5"
-                        >
-                          <Plus className="h-3.5 w-3.5" /> Use custom item
-                        </button>
-                      )}
-                      {!pickerItems.length && !item.item_name?.trim() && (
-                        <p className="px-3 py-3 text-sm text-muted-foreground">Type an item name to search or add a custom line.</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <LabeledNumber label="Qty" className="md:col-span-2">
-                <Input
-                  value={item.quantity ?? ""}
-                  onChange={(event) => updateItem(index, { quantity: event.target.value })}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="1"
-                  className="h-8 rounded-lg text-sm"
-                />
-              </LabeledNumber>
-              <LabeledNumber label="Rate" className="md:col-span-2">
-                <Input
-                  value={item.rate ?? ""}
-                  onChange={(event) => updateItem(index, { rate: event.target.value })}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  className="h-8 rounded-lg text-sm"
-                />
-              </LabeledNumber>
-              <LabeledNumber label="Discount" className="md:col-span-2">
-                <Input
-                  value={item.discount ?? ""}
-                  onChange={(event) => updateItem(index, { discount: event.target.value })}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  className="h-8 rounded-lg text-sm"
-                />
-              </LabeledNumber>
-              <div className="rounded-lg bg-secondary/50 px-2 py-1 md:col-span-1">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Total</p>
-                <p className="text-sm font-semibold text-foreground">R{Number(calculated.item_total || 0).toLocaleString()}</p>
-              </div>
-              <Textarea
-                value={item.item_description || ""}
-                onChange={(event) => updateItem(index, { item_description: event.target.value })}
-                placeholder="Full item description"
-                rows={3}
-                className="min-h-20 resize-y rounded-xl md:col-span-5"
-              />
-              {isDtfLine && (
-                <details className="rounded-xl border border-blue-200 bg-blue-50 p-3 md:col-span-12">
-                  <summary className="cursor-pointer text-sm font-semibold text-blue-950">DTF custom size calculator</summary>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m - 580mm x 1000mm roll</p></div>
-                    {dtf.valid && <Button type="button" size="sm" onClick={() => updateItem(index, { rate: dtf.total, quantity: 1, unit: "job", item_description: `${item.item_description || "DTF transfer production"} | ${dtfFields.widthMm} x ${dtfFields.heightMm} mm x ${dtfFields.quantity} | ${dtf.chargeableMeters.toFixed(2)} m` })}>Apply calculated rate R{dtf.total.toFixed(2)}</Button>}
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-                    <LabeledNumber label="Width (mm)"><Input value={dtfFields.widthMm} onChange={(event) => updateDtf("widthMm", event.target.value)} type="number" min="1" placeholder="300" className="h-8 rounded-lg text-sm" /></LabeledNumber>
-                    <LabeledNumber label="Height (mm)"><Input value={dtfFields.heightMm} onChange={(event) => updateDtf("heightMm", event.target.value)} type="number" min="1" placeholder="400" className="h-8 rounded-lg text-sm" /></LabeledNumber>
-                    <LabeledNumber label="Print quantity"><Input value={dtfFields.quantity} onChange={(event) => updateDtf("quantity", event.target.value)} type="number" min="1" step="1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
-                  </div>
-                  {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} - {dtf.lanes} across - {dtf.rows} rows - {dtf.chargeableMeters.toFixed(2)} chargeable metres - R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
-                </details>
-              )}
-              <select
-                value={item.item_type || "goods"}
-                onChange={(event) => updateItem(index, { item_type: event.target.value })}
-                className="h-9 rounded-xl border border-input bg-background px-3 text-sm md:col-span-2"
+          <LineItemCard
+            key={key}
+            index={index}
+            itemName={item.item_name}
+            quantity={item.quantity}
+            rate={item.rate}
+            total={calculated.item_total}
+            expanded={expanded}
+            onToggleExpand={() => toggleExpand(item, index)}
+            onRemove={() => removeItem(index)}
+            removeLabel="Remove line item"
+            badges={badges}
+            headerActions={
+              <button
+                type="button"
+                onClick={() => saveLineAsTemplate(item)}
+                className="grid h-11 w-11 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-primary sm:h-8 sm:w-8"
+                aria-label="Save line item"
+                title="Save line item"
               >
-                <option value="goods">Goods</option>
-                <option value="services">Services</option>
-              </select>
+                <Save className="h-4 w-4" />
+              </button>
+            }
+          >
+            <div className="relative md:col-span-5">
               <Input
-                value={item.unit || ""}
-                onChange={(event) => updateItem(index, { unit: event.target.value })}
-                placeholder="Unit"
-                className="h-9 rounded-xl md:col-span-1"
+                value={item.item_name || ""}
+                onChange={(event) => {
+                  updateItem(index, {
+                    item_name: event.target.value,
+                    catalog_item_id: "",
+                    inventory_item_id: "",
+                    invoice_item_template_id: "",
+                    source_metadata: {},
+                  });
+                  setPickerOpenIndex(index);
+                }}
+                onFocus={() => setPickerOpenIndex(index)}
+                onBlur={() => setTimeout(() => setPickerOpenIndex(null), 150)}
+                placeholder="Search shop, stock, or type item"
+                className="h-10 rounded-xl"
               />
-              <Input
-                value={item.tax_name || ""}
-                onChange={(event) => updateItem(index, { tax_name: event.target.value })}
-                placeholder="Tax name"
-                className="h-9 rounded-xl md:col-span-2"
-              />
-              <Input
-                value={item.tax_percentage ?? ""}
-                onChange={(event) => updateItem(index, { tax_percentage: event.target.value })}
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="Tax %"
-                className="h-9 rounded-xl md:col-span-2"
-              />
-              <InvoiceItemMediaEditor
-                item={item}
-                onChange={(patch) => updateItem(index, patch)}
-              />
+              {pickerOpenIndex === index && (
+                <div className="absolute left-0 right-0 top-11 z-30 overflow-hidden rounded-xl border border-border bg-card shadow-apple-lg">
+                  <div className="flex gap-1 overflow-x-auto border-b border-border p-2">
+                    {pickerModes.map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => setPickerMode(value)}
+                        className={`rounded-lg px-2.5 py-1 text-[11px] font-semibold ${pickerMode === value ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-muted-foreground"}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto py-1">
+                    {pickerItems.map((pickerItem) => (
+                      <button
+                        key={`${pickerItem.source}-${pickerItem.id}`}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          updateItem(index, lineFromPickerItem(pickerItem, item));
+                          setPickerOpenIndex(null);
+                        }}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-secondary/60"
+                      >
+                        <span className="grid h-9 w-9 flex-shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-secondary/60">
+                          {pickerItem.image_url ? <img src={pickerItem.image_url} alt="" className="h-full w-full object-cover" /> : <Package className="h-4 w-4 text-muted-foreground" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-foreground">{pickerItem.name}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{[pickerItem.category, pickerItem.sourceLabel || pickerItem.source].filter(Boolean).join(" / ")}</span>
+                        </span>
+                        {pickerItem.price !== "" && <span className="text-xs font-semibold text-primary">R{Number(pickerItem.price || 0).toLocaleString()}</span>}
+                      </button>
+                    ))}
+                    {item.item_name?.trim() && (
+                      <button
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => setPickerOpenIndex(null)}
+                        className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-sm font-semibold text-primary hover:bg-primary/5"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Use custom item
+                      </button>
+                    )}
+                    {!pickerItems.length && !item.item_name?.trim() && (
+                      <p className="px-3 py-3 text-sm text-muted-foreground">Type an item name to search or add a custom line.</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+            <MoneyRow
+              quantity={item.quantity}
+              onQuantityChange={(event) => updateItem(index, { quantity: event.target.value })}
+              rate={item.rate}
+              onRateChange={(event) => updateItem(index, { rate: event.target.value })}
+              discount={item.discount}
+              onDiscountChange={(event) => updateItem(index, { discount: event.target.value })}
+              total={calculated.item_total}
+              totalColSpan="md:col-span-1"
+            />
+            <Textarea
+              value={item.item_description || ""}
+              onChange={(event) => updateItem(index, { item_description: event.target.value })}
+              placeholder="Full item description"
+              rows={3}
+              className="min-h-20 resize-y rounded-xl md:col-span-5"
+            />
+            {isDtfLine && (
+              <details className="rounded-xl border border-blue-200 bg-blue-50 p-3 md:col-span-12">
+                <summary className="cursor-pointer text-sm font-semibold text-blue-950">DTF custom size calculator</summary>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><p className="text-sm font-semibold text-blue-950">DTF custom size calculator</p><p className="text-xs text-blue-800">R{DTF_CLIENT_RATE_PER_METER}/m - 580mm x 1000mm roll</p></div>
+                  {dtf.valid && <Button type="button" size="sm" onClick={() => updateItem(index, { rate: dtf.total, quantity: 1, unit: "job", item_description: `${item.item_description || "DTF transfer production"} | ${dtfFields.widthMm} x ${dtfFields.heightMm} mm x ${dtfFields.quantity} | ${dtf.chargeableMeters.toFixed(2)} m` })}>Apply calculated rate R{dtf.total.toFixed(2)}</Button>}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+                  <LabeledNumber label="Width (mm)"><Input value={dtfFields.widthMm} onChange={(event) => updateDtf("widthMm", event.target.value)} type="number" min="1" placeholder="300" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                  <LabeledNumber label="Height (mm)"><Input value={dtfFields.heightMm} onChange={(event) => updateDtf("heightMm", event.target.value)} type="number" min="1" placeholder="400" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                  <LabeledNumber label="Print quantity"><Input value={dtfFields.quantity} onChange={(event) => updateDtf("quantity", event.target.value)} type="number" min="1" step="1" className="h-8 rounded-lg text-sm" /></LabeledNumber>
+                </div>
+                {dtf.valid ? <p className="mt-2 text-xs font-medium text-blue-900">Layout: {dtf.orientation} - {dtf.lanes} across - {dtf.rows} rows - {dtf.chargeableMeters.toFixed(2)} chargeable metres - R{dtf.total.toFixed(2)}</p> : <p className="mt-2 text-xs text-blue-800">Enter artwork width and height to calculate the client price.</p>}
+              </details>
+            )}
+            <select
+              value={item.item_type || "goods"}
+              onChange={(event) => updateItem(index, { item_type: event.target.value })}
+              className="h-9 rounded-xl border border-input bg-background px-3 text-sm md:col-span-2"
+            >
+              <option value="goods">Goods</option>
+              <option value="services">Services</option>
+            </select>
+            <Input
+              value={item.unit || ""}
+              onChange={(event) => updateItem(index, { unit: event.target.value })}
+              placeholder="Unit"
+              className="h-9 rounded-xl md:col-span-1"
+            />
+            <Input
+              value={item.tax_name || ""}
+              onChange={(event) => updateItem(index, { tax_name: event.target.value })}
+              placeholder="Tax name"
+              className="h-9 rounded-xl md:col-span-2"
+            />
+            <Input
+              value={item.tax_percentage ?? ""}
+              onChange={(event) => updateItem(index, { tax_percentage: event.target.value })}
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Tax %"
+              className="h-9 rounded-xl md:col-span-2"
+            />
+            <InvoiceItemMediaEditor
+              item={item}
+              onChange={(patch) => updateItem(index, patch)}
+            />
+          </LineItemCard>
         );
       })}
-      <Button type="button" variant="outline" onClick={addItem} className="h-10 rounded-xl">
-        <Plus className="h-4 w-4" /> Add line
-      </Button>
+      <StickyAddBar>
+        <Button type="button" variant="outline" onClick={addItem} className="h-11 rounded-xl flex-1 sm:h-10 sm:flex-none">
+          <Plus className="h-4 w-4" /> Add line
+        </Button>
+      </StickyAddBar>
     </div>
-  );
-}
-function LabeledNumber({ label, className = "", children }) {
-  return (
-    <label className={`block rounded-lg bg-secondary/25 px-2 py-1 ${className}`}>
-      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
-      {children}
-    </label>
   );
 }

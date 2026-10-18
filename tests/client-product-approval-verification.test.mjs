@@ -65,11 +65,18 @@ test('getClientProductApprovals: guards missing client / supabase', async () => 
   assert.deepEqual(await getClientProductApprovals('cp-1'), { data: null, error: 'Supabase not configured' });
 });
 
-test('wrapper calls ONLY the existing admin_get_client_product_approvals RPC (read); never writes / never customer fn', async () => {
+test('wrapper reads via the existing admin_get_client_product_approvals RPC; the only write RPC it may call is the staff on-behalf one; it never calls the customer-only fn or writes a table directly', async () => {
   const src = await readSource('src/api/clientProductApprovals.js');
   assert.ok(src.includes('supabase.rpc("admin_get_client_product_approvals"'), 'uses the existing shared RPC');
   assert.ok(!/\.rpc\(\s*["'`]approve_client_product_concept/.test(src), 'never calls the customer-only approval function');
-  assert.ok(!/\.rpc\(\s*["'`](record|create|set|approve|update|revise)_/.test(src), 'no approval-writing RPC');
+  // Client Product Approval Phase B (20261011090000_client_product_approval_on_behalf.sql)
+  // adds exactly one controlled, staff-only, SECURITY DEFINER write RPC to
+  // this file by design - record_client_product_approval_on_behalf. Strip
+  // that one known-good call before asserting no OTHER write-shaped RPC
+  // exists, so this guard still catches a second, uncontrolled write path
+  // being added later without becoming permanently stale itself.
+  const withoutOnBehalfCall = src.replace(/\.rpc\(\s*["'`]record_client_product_approval_on_behalf["'`]/g, '');
+  assert.ok(!/\.rpc\(\s*["'`](record|create|set|approve|update|revise)_/.test(withoutOnBehalfCall), 'no approval-writing RPC other than the one Phase B RPC');
   assert.ok(!/\.insert\(|\.update\(|\.upsert\(|\.delete\(/.test(src), 'no direct table writes');
 });
 

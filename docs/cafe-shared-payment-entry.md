@@ -64,3 +64,17 @@ and 92 manual-payment/proof/gateway tests passed. Linked-invoice mobile acceptan
 is not claimed. Production deployment remains blocked by Vercel team access (403);
 no production schema, payments or aliases were changed. Do not promote a staging
 build that uses staging database configuration.
+
+## Production baseline verified, 18 October 2026
+
+The active OPPS deployment dpl_FUvWXMpo2qHhEYyqp3XTm1mWFnJB was created by CLI,
+without Git metadata. Its archived source matches commit 94f8ef7026db844425b5bcd160e09f199e4a11b6:
+159 available application/configuration digests match after Windows line-ending
+normalization, and the archived OrderDrawer content identity matches separately.
+The payment release now preserves this live baseline. Main 079c1b03 is older than
+production; deploying the initial main-based release would have removed existing
+pricing and readiness UI. The seven payment changes were applied cleanly on the
+verified live baseline. 217 payment, invoice, readiness and money tests passed.
+Vercel build/deploy access succeeds in the authenticated default account scope;
+explicit team scope causes the misleading 403. Both apps' production settings use
+Supabase slhcvyeuqsduaglddqdb. Only the nine Cafe payment migrations are in scope.

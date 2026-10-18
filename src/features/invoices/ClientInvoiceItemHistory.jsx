@@ -15,7 +15,7 @@ function dateTime(value) {
 
 export default function ClientInvoiceItemHistory({ items = [], history = [] }) {
   return (
-    <section className="rounded-lg border border-slate-200 p-4">
+    <section className="min-w-0 rounded-lg border border-slate-200 p-4">
       <div className="mb-3 flex items-center gap-2">
         <FileClock className="h-4 w-4 text-primary" />
         <h3 className="font-semibold">Products, proofs & change history</h3>
