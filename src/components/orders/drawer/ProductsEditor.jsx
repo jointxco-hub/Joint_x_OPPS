@@ -1390,6 +1390,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       const lineNow = products.map(cleanProduct).find((item) => item.line_id === lineId);
       if (!lineNow) throw new Error("Order line not found");
       const finalName = (name || lineNow.name || "Untitled product").trim() || "Untitled product";
+      if (!order.client_id) {
+        throw new Error("This order isn’t linked to a client yet. Open the order’s client details, select the correct existing client, save, then try creating the product again. Your product details have not been changed.");
+      }
       if (pickedItem && pickedItem.source === "catalog") {
         let clientProduct = clientProductByCatalogItemId.get(pickedItem.id);
         if (!clientProduct) {
@@ -1434,7 +1437,13 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       toast.success("Client product created");
       closeConfigureDialog();
     },
-    onError: (err) => toast.error(err?.message || "Could not create client product"),
+    onError: (err) => {
+      const raw = String(err?.message || "");
+      const message = /client_id.*(null|not-null)|null value in column "client_id"/i.test(raw)
+        ? "This order has no linked client. Select the correct client in the order details, save, and try again. Nothing was created."
+        : raw || "We couldn’t create this product. Please try again, or ask an administrator for help.";
+      toast.error(message, { duration: 8000 });
+    },
   });
 
   // --- Set/Change thumbnail (Phase 4-6) ------------------------------
