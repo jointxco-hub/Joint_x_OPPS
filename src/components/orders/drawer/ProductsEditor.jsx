@@ -60,6 +60,39 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [configurePickedItem, setConfigurePickedItem] = useState(null);
   const [configureCreateName, setConfigureCreateName] = useState("");
   const [configureCreatePickedItem, setConfigureCreatePickedItem] = useState(null);
+  const [repairClientId, setRepairClientId] = useState("");
+  const [repairClientPending, setRepairClientPending] = useState(false);
+  const { data: repairClients = [], isLoading: repairClientsLoading } = useQuery({
+    queryKey: ["order-client-repair", order.tenant_id],
+    enabled: Boolean(configureLineId && !order.client_id && order.tenant_id),
+    queryFn: async () => {
+      const { data, error } = await supabase.from("clients").select("id,name,tenant_id").eq("tenant_id", order.tenant_id).order("name").limit(200);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+  const saveRepairClient = async () => {
+    const selected = repairClients.find((client) => client.id === repairClientId && client.tenant_id === order.tenant_id);
+    if (!selected || !order.id) return;
+    setRepairClientPending(true);
+    try {
+      // Use the order's normal write path: never bypass workspace permissions.
+      await onUpdate(order.id, { client_id: selected.id });
+      const { data: refreshed, error } = await supabase.from("orders").select("client_id").eq("id", order.id).single();
+      if (error || refreshed?.client_id !== selected.id) {
+        throw new Error("The order client link could not be verified. Refresh the order or ask an administrator for help.");
+      }
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder"] });
+      toast.success("Client linked. You can now continue configuring this product.");
+    } catch (error) {
+      toast.error(/workspace role|permission|not allowed|denied/i.test(String(error?.message || ""))
+        ? "Your account cannot change this order's client. Ask a workspace administrator to link the client, then try again."
+        : error?.message || "Could not link the client. No product was created.");
+    } finally {
+      setRepairClientPending(false);
+    }
+  };
+
 
   // "Set/Change thumbnail" (Phase 4-6): line_id currently choosing an
   // explicit thumbnail via ClientAssetPickerModal - this is the one and
@@ -2145,11 +2178,16 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
                     <p className="font-semibold">This order needs a linked client</p>
                     <p className="mt-1">The product cannot be saved until a client is linked to this order. Your product name and selection will stay here while this dialog is open.</p>
-                    <p className="mt-2">Close this window, open the order's client details and select the correct existing client. If the order won't allow changes, ask a workspace administrator to fix the link. Then reopen Configure product.</p>
-                    <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => {
-                      navigator.clipboard?.writeText(order.order_number || order.id || "");
-                      toast.success("Order reference copied");
-                    }}>Copy order reference for support</Button>
+                    <p className="mt-2">Select the correct client from this workspace. Only an authorized order update can save the link.</p>
+                    <select aria-label="Select order client" className="mt-2 w-full rounded-lg border p-2 text-sm" value={repairClientId} onChange={(event) => setRepairClientId(event.target.value)}>
+                      <option value="">Select client…</option>
+                      {repairClients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+                    </select>
+                    {repairClientsLoading && <p className="mt-1">Loading clients…</p>}
+                    <Button type="button" size="sm" className="mt-2" disabled={!repairClientId || repairClientPending} onClick={saveRepairClient}>
+                      {repairClientPending ? "Checking client link…" : "Fix client link"}
+                    </Button>
+                    <p className="mt-2 text-xs">After the link is confirmed, keep your product details and continue. If the order still shows no client, refresh it first.</p>
                   </div>
                 )}
 
