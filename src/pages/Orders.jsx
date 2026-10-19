@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, useState, useEffect, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { dataClient } from "@/api/dataClient";
+import { supabase } from "@/lib/supabaseClient";
 import { listOppsTeamDirectory } from "@/lib/teamDirectory";
 import { teamUserIdentity, resolveAssignedTeamUser } from "@/lib/teamUsers";
 import { describeCheckedUpdateError } from "@/lib/checkedUpdate";
@@ -310,6 +311,28 @@ export default function Orders() {
     queryFn: () => dataClient.entities.Order.list("-created_date", 200),
   });
 
+  // Exact-reference lookup runs against the database, not the capped recent-orders list.
+  // Supabase RLS and tenant filtering both apply; never search other workspaces.
+  const exactOrderReference = /^ORD-[A-Z0-9-]+$/i.test(search.trim()) ? search.trim() : "";
+  const { data: searchedOrder = null, isFetching: isSearchingOrder, isError: orderSearchFailed } = useQuery({
+    queryKey: ["orders", "exact-reference", currentWorkspace?.tenantId, exactOrderReference],
+    enabled: Boolean(exactOrderReference && currentWorkspace?.tenantId),
+    queryFn: async () => {
+      const { data, error } = await supabase.from("orders")
+        .select("*")
+        .eq("tenant_id", currentWorkspace.tenantId)
+        .ilike("order_number", exactOrderReference)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
+  const visibleOrders = useMemo(() => {
+    if (!searchedOrder || orders.some((item) => item.id === searchedOrder.id)) return orders;
+    return [...orders, searchedOrder];
+  }, [orders, searchedOrder]);
+
   // QS-10 keep open drawer synced with canonical server row.
   // Server triggers may update status/pipeline together, so the drawer must
   // adopt the refetched row instead of keeping an older selectedOrder snapshot.
@@ -471,7 +494,7 @@ export default function Orders() {
     if (selectedOrder?.id) archiveOrder(selectedOrder.id);
   }, [archiveOrder, selectedOrder?.id]);
 
-  const filtered = useMemo(() => orders.filter(o => {
+  const filtered = useMemo(() => visibleOrders.filter(o => {
     if (o.is_archived) return false;
     if (statusFilter === "active" && ["delivered", "cancelled"].includes(o.status)) return false;
     if (statusFilter === "delivered" && o.status !== "delivered") return false;
@@ -491,7 +514,7 @@ export default function Orders() {
       return orderSearchText(o).includes(q);
     }
     return true;
-  }), [orders, statusFilter, assigneeFilter, search, users]);
+  }), [visibleOrders, statusFilter, assigneeFilter, search, users]);
 
   const counts = useMemo(() => ({
     active:    orders.filter(o => !o.is_archived && !o.excluded_from_reports && !["delivered","cancelled"].includes(o.status)).length,
@@ -687,6 +710,9 @@ export default function Orders() {
             <div className="text-center py-20">
               <Package className="w-12 h-12 text-muted-foreground/20 mx-auto mb-3" />
               <p className="text-muted-foreground">No orders found</p>
+              {isSearchingOrder && <p className="mt-2 text-sm text-muted-foreground">Checking this order reference…</p>}
+              {orderSearchFailed && <p className="mt-2 text-sm text-amber-700">Could not check the full order history. Try again or contact an administrator.</p>}
+              {!isSearchingOrder && !orderSearchFailed && exactOrderReference && <p className="mt-2 text-xs text-muted-foreground">No matching order is visible in this workspace. Check the reference or switch workspace.</p>}
             </div>
           ) : (
             <div className="bg-card rounded-2xl border border-border shadow-apple-sm overflow-hidden">
