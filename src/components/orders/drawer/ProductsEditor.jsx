@@ -2141,6 +2141,18 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
 
             {configureStep === "create" && (
               <div className="space-y-3">
+                {!order.client_id && (
+                  <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p className="font-semibold">This order needs a linked client</p>
+                    <p className="mt-1">The product cannot be saved until a client is linked to this order. Your product name and selection will stay here while this dialog is open.</p>
+                    <p className="mt-2">Close this window, open the order's client details and select the correct existing client. If the order won't allow changes, ask a workspace administrator to fix the link. Then reopen Configure product.</p>
+                    <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => {
+                      navigator.clipboard?.writeText(order.order_number || order.id || "");
+                      toast.success("Order reference copied");
+                    }}>Copy order reference for support</Button>
+                  </div>
+                )}
+
                 <Input
                   value={configureCreateName}
                   onChange={(e) => setConfigureCreateName(e.target.value)}
@@ -2162,7 +2174,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   <Button variant="ghost" size="sm" onClick={() => setConfigureStep("menu")}>Back</Button>
                   <Button
                     className="flex-1"
-                    disabled={!configureCreateName.trim() || createClientProductMutation.isPending}
+                    disabled={!order.client_id || !configureCreateName.trim() || createClientProductMutation.isPending}
                     onClick={() => createClientProductMutation.mutate({ lineId: configureLineId, name: configureCreateName, pickedItem: configureCreatePickedItem })}
                   >
                     {createClientProductMutation.isPending ? "Creating…" : "Confirm & create client product"}
