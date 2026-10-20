@@ -547,7 +547,7 @@ export default function Clients() {
           }}
         />
         <ClientAccountDialog
-          client={selectedClient}
+          client={selectedClient ? (clientsWithStats.find((c) => c.id === selectedClient.id) || selectedClient) : null}
           open={!!selectedClient}
           requestedProductId={requestedProductId}
           onRequestedProductIdHandled={() => setRequestedProductId("")}
