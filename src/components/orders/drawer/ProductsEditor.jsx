@@ -45,6 +45,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
   const [duplicateLineConfirmed, setDuplicateLineConfirmed] = useState(false);
+  const [checkingDraftComponents, setCheckingDraftComponents] = useState(false);
   const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerSource, setPickerSource] = useState("all");
@@ -1121,23 +1122,51 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   });
   const hasMatchingExistingLine = matchingExistingLineIndex >= 0;
 
-  const handleAddRowClick = () => {
+  const handleAddRowClick = async () => {
+    if (locked || checkingDraftComponents || addComposedClientProductMutation.isPending) return;
     if (hasMatchingExistingLine && !duplicateLineConfirmed) {
       toast.info("This product is already on the order. Edit its line or choose Add another line.");
       return;
     }
-    setDuplicateLineConfirmed(false);
-    if (locked) return;
     if (newRow.source === "client_product" && newRow.client_product_id) {
-      addComposedClientProductMutation.mutate({
-        clientProductId: newRow.client_product_id,
-        quantity: Number(newRow.quantity) || 1,
-        unitPrice: newRow.price === "" ? null : newRow.price,
-        size: newRow.size,
-        color: newRow.color,
-      });
+      setCheckingDraftComponents(true);
+      try {
+        const { data: activeComponents, error } = await supabase
+          .from("product_components")
+          .select("id")
+          .eq("client_product_id", newRow.client_product_id)
+          .eq("is_active", true)
+          .limit(1);
+        if (error) throw error;
+        if (!activeComponents?.length) {
+          // Preparation-only line. No snapshot or implicit approval is created.
+          // A composed line still uses the canonical idempotent RPC below.
+          const explicitPrice = Number(newRow.price);
+          if (newRow.price === "" || !Number.isFinite(explicitPrice) || explicitPrice <= 0) {
+            toast.error("Enter a price greater than R0 to add this Draft product. Production setup and client approval can follow later.");
+            return;
+          }
+          addRow();
+          setDuplicateLineConfirmed(false);
+          toast.success("Draft product added for preparation. Production remains blocked until composition and approval are complete.");
+          return;
+        }
+        setDuplicateLineConfirmed(false);
+        addComposedClientProductMutation.mutate({
+          clientProductId: newRow.client_product_id,
+          quantity: Number(newRow.quantity) || 1,
+          unitPrice: newRow.price === "" ? null : newRow.price,
+          size: newRow.size,
+          color: newRow.color,
+        });
+      } catch (error) {
+        toast.error("Could not check production components. Nothing was added; please try again.");
+      } finally {
+        setCheckingDraftComponents(false);
+      }
       return;
     }
+    setDuplicateLineConfirmed(false);
     addRow();
   };
 
@@ -2157,8 +2186,8 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                 </div>
               </div>
             )}
-            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || addComposedClientProductMutation.isPending || (hasMatchingExistingLine && !duplicateLineConfirmed)}>
-              {addComposedClientProductMutation.isPending ? "Adding…" : "Add"}
+            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || checkingDraftComponents || addComposedClientProductMutation.isPending || (hasMatchingExistingLine && !duplicateLineConfirmed)}>
+              {checkingDraftComponents || addComposedClientProductMutation.isPending ? "Checking…" : "Add"}
             </Button>
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { composedAddIdempotencyKeyRef.current = ""; setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
           </div>
