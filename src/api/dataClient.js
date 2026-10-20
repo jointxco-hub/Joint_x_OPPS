@@ -2161,7 +2161,7 @@ async function runSelect(entityName, filter = {}, sort, limit) {
 // cross-tenant staff reads into it (or serving stale tenant-scoped reads
 // out of it as if they were staff-visible) risks a confusing data leak
 // via localStorage. Offline/error simply returns an empty array.
-async function runStaffSelect(entityName, filter = {}, sort, limit) {
+async function runStaffSelect(entityName, filter = {}, sort, limit, options = {}) {
   if (!supabase) {
     return [];
   }
@@ -2194,6 +2194,7 @@ async function runStaffSelect(entityName, filter = {}, sort, limit) {
 
   if (error) {
     console.warn(`[dataClient] staff ${entityName} query failed:`, error.message);
+    if (options.throwOnError) throw new Error(error.message || 'Could not load staff-visible records.');
     return [];
   }
 
@@ -2601,8 +2602,8 @@ export const dataClient = {
     async listVisibleClients(sort, limit = 200) {
       return runStaffSelect('Client', {}, sort, limit);
     },
-    async listVisibleOrders(sort, limit = 2000) {
-      return runStaffSelect('Order', {}, sort, limit);
+    async listVisibleOrders(sort, limit = 2000, options = {}) {
+      return runStaffSelect('Order', {}, sort, limit, options);
     },
     async updateVisibleClient(id, payload = {}) {
       return runStaffUpdate('Client', id, payload);
