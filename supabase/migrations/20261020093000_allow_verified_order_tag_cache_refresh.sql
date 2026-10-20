@@ -136,8 +136,7 @@ begin
 
   -- Allow only a verified cache refresh of derived order tags.
   -- Never grant permission to modify any other order field.
-  if new.current_tags is distinct from old.current_tags
-     and (to_jsonb(new) - 'current_tags') = (to_jsonb(old) - 'current_tags')
+  if (to_jsonb(new) - 'current_tags') = (to_jsonb(old) - 'current_tags')
      and new.current_tags = (
        select coalesce(jsonb_agg(distinct role_key), '[]'::jsonb)
        from public.order_tags
