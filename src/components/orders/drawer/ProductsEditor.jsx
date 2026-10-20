@@ -1452,22 +1452,41 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         }
         return { clientProduct, matchedItem: pickedItem };
       }
+      // Reuse the product already attached to this line. Also recover safely
+      // from a previous create that succeeded before the order line was saved.
+      const linkedId = lineNow.client_product_id;
+      if (linkedId) {
+        const { data: linked, error: linkedError } = await supabase.from("client_products")
+          .select("*").eq("id", linkedId).eq("client_id", order.client_id)
+          .eq("tenant_id", order.tenant_id).maybeSingle();
+        if (linkedError) throw linkedError;
+        if (linked) return { clientProduct: linked, matchedItem: null, reused: true };
+      }
+      const { data: existing, error: lookupError } = await supabase.from("client_products")
+        .select("*").eq("client_id", order.client_id)
+        .eq("tenant_id", order.tenant_id)
+        .eq("created_from_order_id", order.id)
+        .is("opps_product_id", null).is("inventory_item_id", null)
+        .eq("client_facing_name", finalName).order("created_at", { ascending: true })
+        .limit(1).maybeSingle();
+      if (lookupError) throw lookupError;
+      if (existing) return { clientProduct: existing, matchedItem: null, reused: true };
       const clientProduct = await dataClient.entities.ClientProduct.create({
         client_id: order.client_id,
         opps_product_id: null,
         client_facing_name: finalName,
         created_from_order_id: order.id,
       });
-      return { clientProduct, matchedItem: null };
+      return { clientProduct, matchedItem: null, reused: false };
     },
-    onSuccess: ({ clientProduct, matchedItem }, variables) => {
+    onSuccess: ({ clientProduct, matchedItem, reused }, variables) => {
       applyToLine(variables.lineId, (item) => (
         matchedItem
           ? applyMatchExistingProduct(item, matchedItem)
           : { ...item, client_product_id: clientProduct.id }
       ));
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
-      toast.success("Client product created");
+      toast.success(reused ? "Existing client product linked to this line" : "Client product created");
       closeConfigureDialog();
     },
     onError: (err) => {
