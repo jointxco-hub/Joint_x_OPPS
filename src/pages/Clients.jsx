@@ -154,9 +154,10 @@ export default function Clients() {
     queryFn: () => dataClient.staff.listVisibleClients('-created_date', 200)
   });
 
-  const { data: orders = [], isLoading: ordersLoading } = useQuery({
+  const { data: orders = [], isLoading: ordersLoading, isError: ordersError, error: ordersErrorDetail } = useQuery({
     queryKey: ['orders', 'client-rollups', 'staff-visible'],
-    queryFn: () => dataClient.staff.listVisibleOrders('-updated_date', 2000),
+    queryFn: () => dataClient.staff.listVisibleOrders('-updated_date', 2000, { throwOnError: true }),
+    retry: 1,
     staleTime: 30000,
   });
 
@@ -360,6 +361,13 @@ export default function Clients() {
           </div>
         </div>
 
+        {ordersError && (
+          <div role="alert" className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <p className="font-semibold">Client order history could not be loaded.</p>
+            <p>Client order counts and linked orders may be incomplete. Refresh to try again, or ask an administrator to check access.</p>
+            {ordersErrorDetail?.message && <p className="mt-1 text-xs text-amber-800">Details: {ordersErrorDetail.message}</p>}
+          </div>
+        )}
         {/* Filters */}
         <div className="bg-white rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-4">
           <div className="relative flex-1">
@@ -539,7 +547,7 @@ export default function Clients() {
           }}
         />
         <ClientAccountDialog
-          client={selectedClient}
+          client={selectedClient ? (clientsWithStats.find((c) => c.id === selectedClient.id) || selectedClient) : null}
           open={!!selectedClient}
           requestedProductId={requestedProductId}
           onRequestedProductIdHandled={() => setRequestedProductId("")}

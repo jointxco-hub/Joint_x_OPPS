@@ -44,6 +44,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
+  const [duplicateLineConfirmed, setDuplicateLineConfirmed] = useState(false);
+  const [checkingDraftComponents, setCheckingDraftComponents] = useState(false);
+  const draftAddLineIdRef = useRef("");
   const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerSource, setPickerSource] = useState("all");
@@ -60,6 +63,39 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [configurePickedItem, setConfigurePickedItem] = useState(null);
   const [configureCreateName, setConfigureCreateName] = useState("");
   const [configureCreatePickedItem, setConfigureCreatePickedItem] = useState(null);
+  const [repairClientId, setRepairClientId] = useState("");
+  const [repairClientPending, setRepairClientPending] = useState(false);
+  const { data: repairClients = [], isLoading: repairClientsLoading } = useQuery({
+    queryKey: ["order-client-repair", order.tenant_id],
+    enabled: Boolean(configureLineId && !order.client_id && order.tenant_id),
+    queryFn: async () => {
+      const { data, error } = await supabase.from("clients").select("id,name,tenant_id").eq("tenant_id", order.tenant_id).order("name").limit(200);
+      if (error) throw error;
+      return data || [];
+    },
+  });
+  const saveRepairClient = async () => {
+    const selected = repairClients.find((client) => client.id === repairClientId && client.tenant_id === order.tenant_id);
+    if (!selected || !order.id) return;
+    setRepairClientPending(true);
+    try {
+      // Use the order's normal write path: never bypass workspace permissions.
+      await onUpdate(order.id, { client_id: selected.id });
+      const { data: refreshed, error } = await supabase.from("orders").select("client_id").eq("id", order.id).single();
+      if (error || refreshed?.client_id !== selected.id) {
+        throw new Error("The order client link could not be verified. Refresh the order or ask an administrator for help.");
+      }
+      queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder"] });
+      toast.success("Client linked. You can now continue configuring this product.");
+    } catch (error) {
+      toast.error(/workspace role|permission|not allowed|denied/i.test(String(error?.message || ""))
+        ? "Your account cannot change this order's client. Ask a workspace administrator to link the client, then try again."
+        : error?.message || "Could not link the client. No product was created.");
+    } finally {
+      setRepairClientPending(false);
+    }
+  };
+
 
   // "Set/Change thumbnail" (Phase 4-6): line_id currently choosing an
   // explicit thumbnail via ClientAssetPickerModal - this is the one and
@@ -1076,18 +1112,90 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // composed-add action (commercial lines + production snapshot, one
   // flow); every other source (catalog/stock/custom) keeps using the
   // plain addRow path unchanged.
-  const handleAddRowClick = () => {
-    if (locked) return;
-    if (newRow.source === "client_product" && newRow.client_product_id) {
-      addComposedClientProductMutation.mutate({
-        clientProductId: newRow.client_product_id,
-        quantity: Number(newRow.quantity) || 1,
-        unitPrice: newRow.price === "" ? null : newRow.price,
-        size: newRow.size,
-        color: newRow.color,
-      });
+  const matchingExistingLineIndex = products.findIndex((raw) => {
+    const line = cleanProduct(raw);
+    if (newRow.client_product_id) return line.client_product_id === newRow.client_product_id;
+    return !newRow.catalog_item_id && !newRow.inventory_item_id &&
+      !line.catalog_item_id && !line.inventory_item_id &&
+      !line.client_product_id &&
+      line.name?.trim().toLowerCase() === newRow.name?.trim().toLowerCase() &&
+      Boolean(newRow.name?.trim());
+  });
+  const hasMatchingExistingLine = matchingExistingLineIndex >= 0;
+
+  const handleAddRowClick = async () => {
+    if (locked || checkingDraftComponents || addComposedClientProductMutation.isPending) return;
+    if (hasMatchingExistingLine && !duplicateLineConfirmed) {
+      toast.info("This product is already on the order. Edit its line or choose Add another line.");
       return;
     }
+    if (newRow.source === "client_product" && newRow.client_product_id) {
+      setCheckingDraftComponents(true);
+      try {
+        const { data: activeComponents, error } = await supabase
+          .from("product_components")
+          .select("id")
+          .eq("client_product_id", newRow.client_product_id)
+          .eq("is_active", true)
+          .limit(1);
+        if (error) throw error;
+        if (!activeComponents?.length) {
+          // Preparation-only line. No snapshot or implicit approval is created.
+          // A composed line still uses the canonical idempotent RPC below.
+          const explicitPrice = Number(newRow.price);
+          if (newRow.price === "" || !Number.isFinite(explicitPrice) || explicitPrice <= 0) {
+            toast.error("Enter a price greater than R0 to add this Draft product. Production setup and client approval can follow later.");
+            return;
+          }
+          // Use a stable line ID across retries and atomically append under an
+          // order-row lock. Never rebuild orders.products from a stale drawer.
+          if (!draftAddLineIdRef.current) draftAddLineIdRef.current = newLineId();
+          const { data: draftResult, error: draftError } = await supabase.rpc("opps_add_draft_client_product_line", {
+            p_order_id: order.id,
+            p_client_product_id: newRow.client_product_id,
+            p_line_id: draftAddLineIdRef.current,
+            p_quantity: Number(newRow.quantity) || 1,
+            p_unit_price: explicitPrice,
+            p_size: newRow.size || "",
+            p_color: newRow.color || "",
+          });
+          if (draftError) throw draftError;
+          const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+          const freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+          if (!Array.isArray(freshOrder?.products)) {
+            throw new Error("The product may have been added, but the order could not refresh. Reopen the order before trying again.");
+          }
+          onUpdate(order.id, { products: freshOrder.products, updated_at: freshOrder.updated_at }, { skipServerWrite: true });
+          draftAddLineIdRef.current = "";
+          setNewRow(emptyRow);
+          setSizeRun({});
+          setAddMode(false);
+          setDuplicateLineConfirmed(false);
+          setPickerSearch("");
+          setPickerSource("all");
+          setPickerCategory("all");
+          setShowPicker(false);
+          toast.success(draftResult?.replayed
+            ? "Already added - showing the existing preparation line"
+            : "Draft product added for preparation. Production remains blocked until composition and approval are complete.");
+          return;
+        }
+        setDuplicateLineConfirmed(false);
+        addComposedClientProductMutation.mutate({
+          clientProductId: newRow.client_product_id,
+          quantity: Number(newRow.quantity) || 1,
+          unitPrice: newRow.price === "" ? null : newRow.price,
+          size: newRow.size,
+          color: newRow.color,
+        });
+      } catch (error) {
+        toast.error(error?.message || "Could not add this draft product. Reopen the order before retrying.");
+      } finally {
+        setCheckingDraftComponents(false);
+      }
+      return;
+    }
+    setDuplicateLineConfirmed(false);
     addRow();
   };
 
@@ -1390,6 +1498,9 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
       const lineNow = products.map(cleanProduct).find((item) => item.line_id === lineId);
       if (!lineNow) throw new Error("Order line not found");
       const finalName = (name || lineNow.name || "Untitled product").trim() || "Untitled product";
+      if (!order.client_id) {
+        throw new Error("This order isn’t linked to a client yet. Open the order’s client details, select the correct existing client, save, then try creating the product again. Your product details have not been changed.");
+      }
       if (pickedItem && pickedItem.source === "catalog") {
         let clientProduct = clientProductByCatalogItemId.get(pickedItem.id);
         if (!clientProduct) {
@@ -1416,25 +1527,50 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
         }
         return { clientProduct, matchedItem: pickedItem };
       }
+      // Reuse the product already attached to this line. Also recover safely
+      // from a previous create that succeeded before the order line was saved.
+      const linkedId = lineNow.client_product_id;
+      if (linkedId) {
+        const { data: linked, error: linkedError } = await supabase.from("client_products")
+          .select("*").eq("id", linkedId).eq("client_id", order.client_id)
+          .eq("tenant_id", order.tenant_id).maybeSingle();
+        if (linkedError) throw linkedError;
+        if (linked) return { clientProduct: linked, matchedItem: null, reused: true };
+      }
+      const { data: existing, error: lookupError } = await supabase.from("client_products")
+        .select("*").eq("client_id", order.client_id)
+        .eq("tenant_id", order.tenant_id)
+        .eq("created_from_order_id", order.id)
+        .is("opps_product_id", null).is("inventory_item_id", null)
+        .eq("client_facing_name", finalName).order("created_at", { ascending: true })
+        .limit(1).maybeSingle();
+      if (lookupError) throw lookupError;
+      if (existing) return { clientProduct: existing, matchedItem: null, reused: true };
       const clientProduct = await dataClient.entities.ClientProduct.create({
         client_id: order.client_id,
         opps_product_id: null,
         client_facing_name: finalName,
         created_from_order_id: order.id,
       });
-      return { clientProduct, matchedItem: null };
+      return { clientProduct, matchedItem: null, reused: false };
     },
-    onSuccess: ({ clientProduct, matchedItem }, variables) => {
+    onSuccess: ({ clientProduct, matchedItem, reused }, variables) => {
       applyToLine(variables.lineId, (item) => (
         matchedItem
           ? applyMatchExistingProduct(item, matchedItem)
           : { ...item, client_product_id: clientProduct.id }
       ));
       queryClient.invalidateQueries({ queryKey: ["clientProductsForOrder", order.client_id] });
-      toast.success("Client product created");
+      toast.success(reused ? "Existing client product linked to this line" : "Client product created");
       closeConfigureDialog();
     },
-    onError: (err) => toast.error(err?.message || "Could not create client product"),
+    onError: (err) => {
+      const raw = String(err?.message || "");
+      const message = /client_id.*(null|not-null)|null value in column "client_id"/i.test(raw)
+        ? "This order has no linked client. Select the correct client in the order details, save, and try again. Nothing was created."
+        : raw || "We couldn’t create this product. Please try again, or ask an administrator for help.";
+      toast.error(message, { duration: 8000 });
+    },
   });
 
   // --- Set/Change thumbnail (Phase 4-6) ------------------------------
@@ -2062,8 +2198,25 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <Input value={newRow.notes} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, notes: e.target.value }))}
             placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || addComposedClientProductMutation.isPending}>
-              {addComposedClientProductMutation.isPending ? "Adding…" : "Add"}
+            {hasMatchingExistingLine && (
+              <div className="w-full rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                <p className="font-semibold">This product is already on the order.</p>
+                <p>Choose Edit existing line to change it, or explicitly allow another line if it is a separate item.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => {
+                    setEditingIdx(matchingExistingLineIndex);
+                    setEditRow(cleanProduct(products[matchingExistingLineIndex]));
+                    setAddMode(false);
+                    setDuplicateLineConfirmed(false);
+                  }}>Edit existing line</Button>
+                  <Button type="button" size="sm" variant={duplicateLineConfirmed ? "default" : "outline"} onClick={() => setDuplicateLineConfirmed(true)}>
+                    {duplicateLineConfirmed ? "Another line confirmed" : "Add another line"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || checkingDraftComponents || addComposedClientProductMutation.isPending || (hasMatchingExistingLine && !duplicateLineConfirmed)}>
+              {checkingDraftComponents || addComposedClientProductMutation.isPending ? "Checking…" : "Add"}
             </Button>
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { composedAddIdempotencyKeyRef.current = ""; setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
           </div>
@@ -2132,6 +2285,23 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
 
             {configureStep === "create" && (
               <div className="space-y-3">
+                {!order.client_id && (
+                  <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p className="font-semibold">This order needs a linked client</p>
+                    <p className="mt-1">The product cannot be saved until a client is linked to this order. Your product name and selection will stay here while this dialog is open.</p>
+                    <p className="mt-2">Select the correct client from this workspace. Only an authorized order update can save the link.</p>
+                    <select aria-label="Select order client" className="mt-2 w-full rounded-lg border p-2 text-sm" value={repairClientId} onChange={(event) => setRepairClientId(event.target.value)}>
+                      <option value="">Select client…</option>
+                      {repairClients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+                    </select>
+                    {repairClientsLoading && <p className="mt-1">Loading clients…</p>}
+                    <Button type="button" size="sm" className="mt-2" disabled={!repairClientId || repairClientPending} onClick={saveRepairClient}>
+                      {repairClientPending ? "Checking client link…" : "Fix client link"}
+                    </Button>
+                    <p className="mt-2 text-xs">After the link is confirmed, keep your product details and continue. If the order still shows no client, refresh it first.</p>
+                  </div>
+                )}
+
                 <Input
                   value={configureCreateName}
                   onChange={(e) => setConfigureCreateName(e.target.value)}
@@ -2153,7 +2323,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
                   <Button variant="ghost" size="sm" onClick={() => setConfigureStep("menu")}>Back</Button>
                   <Button
                     className="flex-1"
-                    disabled={!configureCreateName.trim() || createClientProductMutation.isPending}
+                    disabled={!order.client_id || !configureCreateName.trim() || createClientProductMutation.isPending}
                     onClick={() => createClientProductMutation.mutate({ lineId: configureLineId, name: configureCreateName, pickedItem: configureCreatePickedItem })}
                   >
                     {createClientProductMutation.isPending ? "Creating…" : "Confirm & create client product"}
