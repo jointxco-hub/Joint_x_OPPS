@@ -44,6 +44,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const emptyRow = { name: "", quantity: 1, price: "", size: "", color: "", notes: "", catalog_item_id: "", inventory_item_id: "", client_product_id: "", image_url: "", category: "", source: "", selected_print_options: [], selected_addons: [] };
   const [editRow, setEditRow] = useState(emptyRow);
   const [addMode, setAddMode] = useState(false);
+  const [duplicateLineConfirmed, setDuplicateLineConfirmed] = useState(false);
   const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerSource, setPickerSource] = useState("all");
@@ -1109,7 +1110,23 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   // composed-add action (commercial lines + production snapshot, one
   // flow); every other source (catalog/stock/custom) keeps using the
   // plain addRow path unchanged.
+  const matchingExistingLineIndex = products.findIndex((raw) => {
+    const line = cleanProduct(raw);
+    if (newRow.client_product_id) return line.client_product_id === newRow.client_product_id;
+    return !newRow.catalog_item_id && !newRow.inventory_item_id &&
+      !line.catalog_item_id && !line.inventory_item_id &&
+      !line.client_product_id &&
+      line.name?.trim().toLowerCase() === newRow.name?.trim().toLowerCase() &&
+      Boolean(newRow.name?.trim());
+  });
+  const hasMatchingExistingLine = matchingExistingLineIndex >= 0;
+
   const handleAddRowClick = () => {
+    if (hasMatchingExistingLine && !duplicateLineConfirmed) {
+      toast.info("This product is already on the order. Edit its line or choose Add another line.");
+      return;
+    }
+    setDuplicateLineConfirmed(false);
     if (locked) return;
     if (newRow.source === "client_product" && newRow.client_product_id) {
       addComposedClientProductMutation.mutate({
@@ -2123,7 +2140,24 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           <Input value={newRow.notes} onChange={(/** @type {any} */ e) => setNewRow(r => ({ ...r, notes: e.target.value }))}
             placeholder="Item notes / print placement" className="h-8 text-sm rounded-xl" />
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || addComposedClientProductMutation.isPending}>
+            {hasMatchingExistingLine && (
+              <div className="w-full rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                <p className="font-semibold">This product is already on the order.</p>
+                <p>Choose Edit existing line to change it, or explicitly allow another line if it is a separate item.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => {
+                    setEditingIdx(matchingExistingLineIndex);
+                    setEditRow(cleanProduct(products[matchingExistingLineIndex]));
+                    setAddMode(false);
+                    setDuplicateLineConfirmed(false);
+                  }}>Edit existing line</Button>
+                  <Button type="button" size="sm" variant={duplicateLineConfirmed ? "default" : "outline"} onClick={() => setDuplicateLineConfirmed(true)}>
+                    {duplicateLineConfirmed ? "Another line confirmed" : "Add another line"}
+                  </Button>
+                </div>
+              </div>
+            )}
+            <Button size="sm" className="flex-1 h-8 rounded-xl text-xs" onClick={handleAddRowClick} disabled={!newRow.name.trim() || addComposedClientProductMutation.isPending || (hasMatchingExistingLine && !duplicateLineConfirmed)}>
               {addComposedClientProductMutation.isPending ? "Adding…" : "Add"}
             </Button>
             <Button size="sm" variant="outline" className="h-8 rounded-xl text-xs" onClick={() => { composedAddIdempotencyKeyRef.current = ""; setAddMode(false); setPickerSearch(""); setPickerSource("all"); setPickerCategory("all"); setShowPicker(false); }}>Cancel</Button>
