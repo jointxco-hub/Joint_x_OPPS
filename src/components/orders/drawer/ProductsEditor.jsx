@@ -46,6 +46,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
   const [addMode, setAddMode] = useState(false);
   const [duplicateLineConfirmed, setDuplicateLineConfirmed] = useState(false);
   const [checkingDraftComponents, setCheckingDraftComponents] = useState(false);
+  const draftAddLineIdRef = useRef("");
   const [newRow, setNewRow] = useState(emptyRow);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerSource, setPickerSource] = useState("all");
@@ -1146,9 +1147,37 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
             toast.error("Enter a price greater than R0 to add this Draft product. Production setup and client approval can follow later.");
             return;
           }
-          addRow();
+          // Use a stable line ID across retries and atomically append under an
+          // order-row lock. Never rebuild orders.products from a stale drawer.
+          if (!draftAddLineIdRef.current) draftAddLineIdRef.current = newLineId();
+          const { data: draftResult, error: draftError } = await supabase.rpc("opps_add_draft_client_product_line", {
+            p_order_id: order.id,
+            p_client_product_id: newRow.client_product_id,
+            p_line_id: draftAddLineIdRef.current,
+            p_quantity: Number(newRow.quantity) || 1,
+            p_unit_price: explicitPrice,
+            p_size: newRow.size || "",
+            p_color: newRow.color || "",
+          });
+          if (draftError) throw draftError;
+          const fresh = await dataClient.entities.Order.filter({ id: order.id }, undefined, 1);
+          const freshOrder = Array.isArray(fresh) ? fresh[0] : null;
+          if (!Array.isArray(freshOrder?.products)) {
+            throw new Error("The product may have been added, but the order could not refresh. Reopen the order before trying again.");
+          }
+          onUpdate(order.id, { products: freshOrder.products, updated_at: freshOrder.updated_at }, { skipServerWrite: true });
+          draftAddLineIdRef.current = "";
+          setNewRow(emptyRow);
+          setSizeRun({});
+          setAddMode(false);
           setDuplicateLineConfirmed(false);
-          toast.success("Draft product added for preparation. Production remains blocked until composition and approval are complete.");
+          setPickerSearch("");
+          setPickerSource("all");
+          setPickerCategory("all");
+          setShowPicker(false);
+          toast.success(draftResult?.replayed
+            ? "Already added - showing the existing preparation line"
+            : "Draft product added for preparation. Production remains blocked until composition and approval are complete.");
           return;
         }
         setDuplicateLineConfirmed(false);
@@ -1160,7 +1189,7 @@ export default function ProductsEditor({ order = {}, onUpdate, locked = false, l
           color: newRow.color,
         });
       } catch (error) {
-        toast.error("Could not check production components. Nothing was added; please try again.");
+        toast.error(error?.message || "Could not add this draft product. Reopen the order before retrying.");
       } finally {
         setCheckingDraftComponents(false);
       }
