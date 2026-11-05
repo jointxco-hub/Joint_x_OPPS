@@ -48,3 +48,18 @@ test('preserves server-provided invoice linkage through normalization for safe d
   assert.equal(items[1].balanceDue,0);
   assert.equal(items[2].sourceOrderId,null);
 });
+
+test('server-grouped order retains its paid invoice without a second card', () => {
+  const {items} = normalizeWorkQueue({items:[
+    {type:'order',id:'o1',number:'ORD-1',balanceDue:null,invoices:[
+      {id:'i1',number:'INV-1',status:'paid',balanceDue:0,sourceOrderId:'o1'},
+      {id:'other',number:'NO',status:'paid',balanceDue:0,sourceOrderId:'o2'},
+    ]},
+    {type:'invoice',id:'standalone',number:'INV-2',sourceOrderId:null,reviewRequired:true},
+  ]});
+  assert.deepEqual(items.map(item=>item.key),['order:o1','invoice:standalone']);
+  assert.equal(items[0].balanceDue,null);
+  assert.deepEqual(items[0].invoices.map(invoice=>invoice.id),['i1']);
+  assert.equal(items[0].invoices[0].balanceDue,0);
+  assert.equal(items[1].reviewRequired,true);
+});
