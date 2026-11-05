@@ -44,7 +44,7 @@ create or replace function public.has_tenant_capability(
        and m.status='active'
        and case p_capability
          when 'cafe.operations.manage' then m.tenant_role in ('owner','admin')
-         when 'cafe.counter.operate' then m.tenant_role in ('owner','admin','member')
+         when 'cafe.counter.operate' then m.tenant_role in ('owner','admin','member','counter_staff')
          else false end
    ), false)
 $$;
@@ -57,7 +57,7 @@ insert into public.tenants values
 insert into public.tenant_capabilities values
  ('11111111-1111-4111-8111-111111111111','quick_solution',true);
 insert into public.tenant_memberships values
- ('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','member','active'),
+ ('11111111-1111-4111-8111-111111111111','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','counter_staff','active'),
  ('22222222-2222-4222-8222-222222222222','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','admin','active'),
  ('11111111-1111-4111-8111-111111111111','cccccccc-cccc-4ccc-8ccc-cccccccccccc','member','suspended');
 
