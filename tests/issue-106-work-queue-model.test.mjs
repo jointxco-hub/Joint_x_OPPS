@@ -35,3 +35,16 @@ test('drops unsupported work types and retains review-required state', () => {
   assert.equal(items[0].reviewRequired,true);
   assert.equal(nextCursor,'next');
 });
+
+test('preserves server-provided invoice linkage through normalization for safe display grouping', () => {
+  const {items} = normalizeWorkQueue({items:[
+    {type:'order',id:'order-a',number:'QS-A',customerName:'Client A'},
+    {type:'invoice',id:'invoice-a',number:'INV-A',sourceOrderId:'order-a',balanceDue:0},
+    {type:'invoice',id:'invoice-b',sourceOrderId:null},
+  ]});
+  assert.equal(items[0].sourceOrderId,null);
+  assert.equal(items[0].customerName,'Client A');
+  assert.equal(items[1].sourceOrderId,'order-a');
+  assert.equal(items[1].balanceDue,0);
+  assert.equal(items[2].sourceOrderId,null);
+});
