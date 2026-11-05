@@ -41,3 +41,26 @@ Scope: design and tests only until the deployed Café RPC, existing invoice auth
 
 ## Release constraints
 No staging/production mutation or payment traffic during discovery. Do not deploy this branch or merge into main until bounded tests, reconciliation and operator/device acceptance pass.
+
+
+## Staging database schema discovery — 5 November 2026 (read-only)
+Project: `tijiamrfnxrbitafiflj`. The **actual** `public.list_quick_solution_counter_orders_today()` is `STABLE SECURITY DEFINER`, with `search_path = ''`, and EXECUTE granted to `authenticated` (not `anon`). It:
+1. Requires `auth.uid()`, resolves active tenant by slug `quick-solution`.
+2. Requires `has_tenant_capability(tenant_id, 'cafe.counter.operate')` and enabled `tenant_capabilities.quick_solution`.
+3. Computes the Johannesburg business-day interval with `commerce._qs_counter_business_day(now())`.
+4. Returns only `commerce.service_orders` rows in that day whose `channel = 'counter'` **or** have a pending counter-provider payment, ordered newest first. Includes items via `commerce.service_order_items`.
+5. Returns `businessDate`, `timezone`, `orders` JSON. Do not change this RPC for the Work Queue.
+
+Existing staging payment RPC signatures were also confirmed:
+- `qs_opps_staff_payment_state(p_opps_order_id uuid)`
+- `qs_opps_record_staff_payment(p_opps_order_id uuid, p_method text, p_amount numeric, p_reference text, p_operation_key uuid)`
+- `qs_reconcile_invoice_receipts(p_order_id uuid)`
+
+Linkable source columns were verified via `information_schema.columns` (metadata only):
+- `commerce.service_orders.opps_order_id uuid` links Café service orders to OPPS work.
+- `public.opps_invoices.source_order_id uuid` links invoices to OPPS orders; standalone invoices can have no source order.
+- `public.orders.tenant_id uuid` and `public.opps_invoices.tenant_id uuid` exist.
+- `commerce.service_orders.tenant_id uuid` exists, but this table must not be used as an independent OPPS order identity.
+- `commerce.service_order_payments` contains original receipt/payment columns; do not duplicate or surface raw ITN or payment tokens in the queue.
+
+**Next design gate:** examine existing tenant membership/capability semantics and invoice visibility status before writing any database RPC. A new RPC must validate authentication and tenant-specific permission server-side, expose a bounded/paginated minimal projection, reject cross-tenant records, and preserve the current Counter screen unchanged.
