@@ -14,6 +14,18 @@ begin
   end if;
   if exists (
     select 1 from jsonb_array_elements(v->'items') item
+    where item->>'number'='QS-LINKED-PAID-1'
+  ) then raise exception 'linked invoice duplicated as independent work card'; end if;
+  if not exists (
+    select 1 from jsonb_array_elements(v->'items') item
+    cross join lateral jsonb_array_elements(item->'invoices') invoice
+    where item->>'number'='QS-ORDER-1'
+      and invoice->>'number'='QS-LINKED-PAID-1'
+      and invoice->>'balanceDue'='0'
+      and invoice->>'sourceOrderId'=item->>'id'
+  ) then raise exception 'linked invoice missing from order card'; end if;
+  if exists (
+    select 1 from jsonb_array_elements(v->'items') item
     where (item->>'number') like 'OTHER-%'
   ) then raise exception 'cross-tenant data leaked'; end if;
   if not exists (
