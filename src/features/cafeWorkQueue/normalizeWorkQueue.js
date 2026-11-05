@@ -24,6 +24,22 @@ export function normalizeWorkQueue(response) {
       customerName: typeof item.customerName === 'string' ? item.customerName : '',
       balanceDue: balance !== null && Number.isFinite(balance) && balance >= 0 ? balance : null,
       reviewRequired: item.reviewRequired === true,
+      invoices: item.type === 'order' && Array.isArray(item.invoices)
+        ? item.invoices.filter(invoice => invoice && typeof invoice.id === 'string'
+            && invoice.sourceOrderId === item.id)
+          .map(invoice => {
+            const invoiceBalance = invoice.balanceDue == null ? null : Number(invoice.balanceDue);
+            return {
+              id: invoice.id,
+              number: String(invoice.number || ''),
+              status: String(invoice.status || 'unknown'),
+              sourceOrderId: invoice.sourceOrderId,
+              balanceDue: invoiceBalance !== null && Number.isFinite(invoiceBalance) && invoiceBalance >= 0
+                ? invoiceBalance : null,
+              reviewRequired: invoice.reviewRequired === true,
+            };
+          })
+        : [],
     });
   }
   return {items, nextCursor: typeof response.nextCursor === 'string' ? response.nextCursor : null};
