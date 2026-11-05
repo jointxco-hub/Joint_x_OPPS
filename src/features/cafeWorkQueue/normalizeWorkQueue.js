@@ -17,6 +17,11 @@ export function normalizeWorkQueue(response) {
       type: item.type,
       number: String(item.number || ''),
       status: String(item.status || 'unknown'),
+      // Preserve the server-authorized linkage so display grouping can work.
+      // Do not infer links from invoice/order numbers or browser data.
+      sourceOrderId: typeof item.sourceOrderId === 'string' && item.sourceOrderId.length > 0
+        ? item.sourceOrderId : null,
+      customerName: typeof item.customerName === 'string' ? item.customerName : '',
       balanceDue: balance !== null && Number.isFinite(balance) && balance >= 0 ? balance : null,
       reviewRequired: item.reviewRequired === true,
     });
