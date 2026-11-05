@@ -21,6 +21,7 @@ const primaryNav = [
   { name: "My Hub", page: "UserDashboard", icon: UserCircle },
   { name: "My Profile", page: "MyProfile", icon: UserCircle },
   { name: "Orders", page: "Orders", icon: Package },
+  { name: "Café Work Queue", page: "CafeWorkQueue", icon: ClipboardList },
   { name: "Tasks", page: "Tasks", icon: ClipboardList },
   { name: "Team Updates", page: "TeamUpdates", icon: ClipboardList },
   { name: "Directory", page: "Directory", icon: UserCircle },
@@ -93,6 +94,7 @@ export default function Layout({ children, currentPageName }) {
 
   const workspaceAllows = (item) => {
     if (!currentWorkspace) return false;
+    if (item.page === "CafeWorkQueue") return currentWorkspace.slug === "quick-solution";
     if (currentWorkspace.slug === "joint-x") return true;
 
     const permission = workspacePermissionByPage[item.page];
