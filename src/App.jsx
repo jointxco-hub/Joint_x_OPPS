@@ -10,7 +10,8 @@ import AppLoader from '@/components/common/AppLoader'
 import GlobalRefreshControl from '@/components/common/GlobalRefreshControl'
 import RouteErrorBoundary from '@/components/common/RouteErrorBoundary'
 import { pagesConfig } from './pages.config'
-import { Suspense } from 'react';
+import { Suspense, lazy } from 'react';
+const CafeWorkQueue = lazy(() => import('./pages/CafeWorkQueue'));
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -81,6 +82,13 @@ const AuthenticatedApp = () => {
           <LayoutWrapper currentPageName={mainPageKey}>
             <RouteErrorBoundary pageName={mainPageKey} resetKey={location.pathname}>
               <MainPage />
+            </RouteErrorBoundary>
+          </LayoutWrapper>
+        } />
+        <Route path="/CafeWorkQueue" element={
+          <LayoutWrapper currentPageName="CafeWorkQueue">
+            <RouteErrorBoundary pageName="CafeWorkQueue" resetKey={location.pathname}>
+              <CafeWorkQueue />
             </RouteErrorBoundary>
           </LayoutWrapper>
         } />
