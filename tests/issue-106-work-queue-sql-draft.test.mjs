@@ -32,3 +32,13 @@ test("server uses bounded keyset pagination and a restricted function ACL", () =
   assert.match(sql, /revoke all on function public\.qs_cafe_list_work_queue\(text,integer\)/);
   assert.match(sql, /grant execute on function public\.qs_cafe_list_work_queue\(text,integer\)\s+to authenticated/);
 });
+
+test("server groups linked invoices before page slicing", () => {
+  assert.match(sql, /'invoices', \(/);
+  assert.match(sql, /i\.source_order_id = o\.id/);
+  assert.match(sql, /not exists \(\s*select 1 from public\.orders linked_order/);
+  assert.match(sql, /linked_order\.tenant_id = v_tenant_id/);
+  const aggregation = sql.indexOf("'invoices', (");
+  const pagination = sql.indexOf("), slice as (");
+  assert.ok(aggregation >= 0 && pagination > aggregation, "linked invoices must be grouped before pagination");
+});
