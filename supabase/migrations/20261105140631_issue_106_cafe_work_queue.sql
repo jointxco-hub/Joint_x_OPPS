@@ -1,6 +1,8 @@
--- ISSUE #106 REVIEW DRAFT ONLY. Do NOT execute against staging/production.
--- Copy to a CLI-created migration after isolated database testing.
+-- ISSUE #106: reviewed locally only; do not deploy to staging/production until authorized.
+-- This migration has not been applied to remote Supabase projects.
 -- This RPC only reads existing OPPS orders/invoices; it creates no payments.
+-- Pages over unique work cards: one order card nests its invoices; invoices
+-- without a matching same-tenant order remain independent read-only cards.
 create or replace function public.qs_cafe_list_work_queue(
   p_cursor text default null,
   p_limit integer default 25
@@ -86,7 +88,26 @@ begin
         'number', o.order_number, 'customerName', o.client_name,
         'status', o.status, 'total', o.total_amount,
         'balanceDue', null, 'reviewRequired', true,
-        'sourceOrderId', o.id, 'updatedAt', o.updated_at
+        'sourceOrderId', o.id, 'updatedAt', o.updated_at,
+        'invoices', (
+          select coalesce(
+            jsonb_agg(
+              jsonb_build_object(
+                'id', i.id, 'number', i.invoice_number,
+                'status', i.status, 'total', i.total,
+                'balanceDue',
+                  case when i.status in ('draft','void') or i.balance_due is null or i.balance_due < 0
+                    then null else i.balance_due end,
+                'reviewRequired',
+                  i.status in ('draft','void') or i.status is null or i.balance_due is null or i.balance_due < 0,
+                'sourceOrderId', i.source_order_id, 'updatedAt', i.updated_at
+              ) order by i.updated_at desc nulls last, i.id desc
+            ), '[]'::jsonb
+          )
+          from public.opps_invoices i
+          where i.tenant_id = v_tenant_id
+            and i.source_order_id = o.id
+        )
       ) as data
     from public.orders o
     where o.tenant_id = v_tenant_id
@@ -110,6 +131,11 @@ begin
       ) as data
     from public.opps_invoices i
     where i.tenant_id = v_tenant_id
+      and not exists (
+        select 1 from public.orders linked_order
+        where linked_order.id = i.source_order_id
+          and linked_order.tenant_id = v_tenant_id
+      )
   ), slice as (
     select r.kind, r.id, r.sort_at, r.data
     from records r
