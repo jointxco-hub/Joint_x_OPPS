@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, ChevronLeft, ChevronRight, ClipboardList, RefreshCw, ShieldCheck } from "lucide-react";
 import { getCafeWorkQueue } from "@/api/cafeWorkQueue";
+import { getDemoCafeWorkQueue } from "@/features/cafeWorkQueue/demoWorkQueue";
 import { useWorkspace } from "@/lib/WorkspaceContext";
 
 const PAGE_SIZE = 15;
+
+// Local visual review only: no demo mode in deployed builds or non-localhost hosts.
+const localDemoMode = import.meta.env.DEV &&
+  ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname) &&
+  new URLSearchParams(window.location.search).get("demo") === "1";
 
 function rand(value) {
   if (value === null || value === undefined || value === "") return "Not available";
@@ -91,7 +97,9 @@ export default function CafeWorkQueue() {
     setLoading(true);
     setError("");
     setResult(null);
-    getCafeWorkQueue({ cursor, limit: PAGE_SIZE })
+    (localDemoMode
+      ? Promise.resolve().then(() => getDemoCafeWorkQueue({ cursor, limit: PAGE_SIZE }))
+      : getCafeWorkQueue({ cursor, limit: PAGE_SIZE }))
       .then((response) => {
         if (!cancelled) setResult(response);
       })
@@ -138,6 +146,12 @@ export default function CafeWorkQueue() {
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
         </button>
       </div>
+
+      {localDemoMode && (
+        <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
+          DEMO DATA · Local preview only · Synthetic records · No Supabase requests · Not real customer orders
+        </div>
+      )}
 
       <div className="rounded-xl border border-[#c0a4e0]/30 bg-[#c0a4e0]/10 px-4 py-3 text-sm text-foreground">
         View only · No payment requests, status changes, or fulfilment actions are available here.
