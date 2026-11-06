@@ -1,6 +1,6 @@
 // Synthetic sample data for local UI review only. No Supabase requests or writes.
 // Use exclusively behind the localhost + Vite DEV guard in CafeWorkQueue.jsx.
-import { normalizeWorkQueue } from "./normalizeWorkQueue";
+import { normalizeWorkQueue } from "./normalizeWorkQueue.js";
 
 const demoCards = [
   {
