@@ -48,7 +48,7 @@ export function getDemoCafeWorkQueue({ cursor = null, limit = 15 } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid demo page size.");
   let start = 0;
   if (cursor !== null) {
-    if (typeof cursor !== "string" || !/^demo:\\d+$/.test(cursor)) throw new Error("Invalid demo cursor.");
+    if (typeof cursor !== "string" || !/^demo:\d+$/.test(cursor)) throw new Error("Invalid demo cursor.");
     start = Number(cursor.slice(5));
     if (!Number.isSafeInteger(start) || start < 0 || start > demoCards.length) throw new Error("Invalid demo cursor.");
   }
