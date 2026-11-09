@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createNotificationCollectorRunner} from '../src/server/notifications/notificationCollectorRunner.js';
 const id='11111111-1111-4111-8111-111111111111';
-function setup({busy=false,fail=false,existing=null,next={createdAt:'2026-11-09T08:00:00.000Z',id}}={}) {
+function setup({busy=false,fail=false,existing={createdAt:'2026-11-08T07:00:00.000Z',id},next={createdAt:'2026-11-09T08:00:00.000Z',id}}={}) {
  const calls=[],processed=[];let released=0;
  const pool={connect:async()=>({
   query:async(sql,params=[])=>{
@@ -16,7 +16,7 @@ function setup({busy=false,fail=false,existing=null,next={createdAt:'2026-11-09T
  const collector={collect:async params=>{processed.push(params);if(fail)throw Error('fanout failed');return {processed:1,hasMore:false,cursor:next}}};
  return {runner:createNotificationCollectorRunner({pool,collector}),calls,processed,releases:()=>released};
 }
-test('initial collection persists cursor only after downstream fanout',async()=>{
+test('initialized collection persists cursor only after downstream fanout',async()=>{
  const h=setup(),result=await h.runner.runOnce();
  assert.equal(result.status,'collected');
  assert.equal(h.calls[0].sql,'BEGIN');
@@ -56,5 +56,12 @@ test('no events does not overwrite existing cursor',async()=>{
  const h=setup({next:null});
  await h.runner.runOnce();
  assert.equal(h.calls.some(c=>c.sql.includes('update opps_private.notification_collectors')),false);
+ assert.equal(h.calls.at(-1).sql,'COMMIT');
+});
+
+test('missing bootstrap watermark never sends old invoice or quote alerts',async()=>{
+ const h=setup({existing:null}),result=await h.runner.runOnce();
+ assert.equal(result.status,'needs_bootstrap');
+ assert.equal(h.processed.length,0);
  assert.equal(h.calls.at(-1).sql,'COMMIT');
 });
