@@ -85,12 +85,24 @@ export function createPaymentRequestService({ store, authorize, issueCheckout, n
     return store.withTargetLock(type, targetId, async tx => {
       const r = await tx.getRequest(paymentRequestId);
       requireTrue(r && r.type === type && r.targetId === targetId, "NOT_FOUND_OR_FORBIDDEN");
+      // Must be populated by the verified gateway adapter from the signed
+      // notification correlation, never accepted as a client claim.
+      requireTrue(
+        verifiedPayment.requestId === r.id &&
+        verifiedPayment.tenantId === r.tenantId &&
+        verifiedPayment.type === r.type &&
+        verifiedPayment.targetId === r.targetId,
+        "PAYMENT_IDENTITY_MISMATCH"
+      );
       if (r.status === "settled") {
         if (r.gatewayPaymentId === verifiedPayment.id) return { status: "settled", replayed: true };
         await tx.recordException({ requestId: r.id, gatewayPaymentId: verifiedPayment.id, reason: "ADDITIONAL_CAPTURE" });
         return { status: "review_required", replayed: false };
       }
-      const payable = await tx.getPayable(type, targetId, null);
+      // Gateway settlement uses a separate, trusted canonical resolver.
+      // Never bypass staff authorization by passing null to a staff resolver.
+      requireTrue(typeof tx.getSettlementPayable === "function", "SETTLEMENT_AUTHORITY_UNAVAILABLE");
+      const payable = await tx.getSettlementPayable(type, targetId, r.tenantId);
       if (r.status !== "active" || r.expiresAt <= now() || !payable || payable.tenantId !== r.tenantId ||
         !payable.eligible || payable.reviewRequired || !money(payable.balanceCents) ||
         payable.balanceCents !== verifiedPayment.amountCents || r.amountCents !== verifiedPayment.amountCents) {
