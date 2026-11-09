@@ -23,6 +23,13 @@ export function createNotificationCollectorRunner({pool,collector}){
           await db.query('ROLLBACK');
           return {status:'busy'};
         }
+        // No checkpoint means no historical push backlog should be sent.
+        // The operator must explicitly initialize the start watermark
+        // at deployment. This prevents hundreds of old invoice/quote alerts.
+        if (!rows[0].cursor_created_at || !rows[0].cursor_id) {
+          await db.query('COMMIT');
+          return {status:'needs_bootstrap'};
+        }
         const cursor=rows[0].cursor_created_at && rows[0].cursor_id ?
           {createdAt:new Date(rows[0].cursor_created_at).toISOString(),id:rows[0].cursor_id}:null;
         // This call commits durable outbox inserts before returning.
