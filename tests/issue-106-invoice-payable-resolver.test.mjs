@@ -6,13 +6,13 @@ const invoiceId = "11111111-1111-4111-8111-111111111111";
 const tenantId = "22222222-2222-4222-8222-222222222222";
 const userId = "33333333-3333-4333-8333-333333333333";
 function setup({ status = "approved", currency = "ZAR", cents = "14500",
-  role = true, tenantSlug = "quick-solution", exists = true, tenantStatus = "active" } = {}) {
+  role = true, tenantSlug = "quick-solution", exists = true, tenantStatus = "active", linked = false } = {}) {
   const calls = [];
   const db = { query: async (sql, params) => {
     calls.push({ sql, params });
     if (sql.includes("from public.opps_invoices"))
       return { rows: exists ? [{ tenant_id: tenantId, status, currency_code: currency,
-        tenant_slug: tenantSlug, tenant_status: tenantStatus }] : [] };
+        tenant_slug: tenantSlug, tenant_status: tenantStatus, cafe_service_order_linked: linked }] : [] };
     if (sql.includes("from public.tenant_memberships"))
       return { rows: role ? [{ allowed: 1 }] : [] };
     if (sql.includes("invoice_balance_due"))
@@ -51,7 +51,7 @@ test("rejects records from other/inactive tenants and unauthorized Café staff",
 test("disables QR for paid, draft, void, foreign-currency and malformed balances", async () => {
   for (const options of [
     { status: "paid" }, { status: "draft" }, { status: "void" },
-    { currency: "USD" }, { cents: "0" }, { cents: "-5" },
+    { currency: "USD" }, { linked: true }, { cents: "0" }, { cents: "-5" },
     { cents: null }, { cents: "999999999999999999999" },
   ]) {
     const result = await setup(options).resolve();
