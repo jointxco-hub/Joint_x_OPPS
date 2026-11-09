@@ -3,7 +3,7 @@
 // The caller MUST persist the returned cursor only after enqueue completes.
 // Outbox deduplication uses stable original event UUIDs for restart/replay.
 const MAX_BATCH=100;
-const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const events={
   invoice_approved: 'INVOICE_APPROVED',
   invoice_paid: 'INVOICE_PAID',
