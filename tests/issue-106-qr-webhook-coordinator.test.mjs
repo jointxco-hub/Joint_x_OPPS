@@ -112,7 +112,9 @@ function poolWith(rowsForRequest=[]) {
   const calls=[],db={
     query:async(sql,params)=>{
       calls.push({sql,params});
-      if(sql.includes("from qr_payments.payment_requests")) return {rows:rowsForRequest};
+      if(sql.includes("from qr_payments.payment_requests where id=")) return {rows:rowsForRequest};
+      if(sql.includes("as reference_conflict")) return {rows:[{reference_conflict:false}]};
+      if(sql.includes("insert into qr_payments.")) return {rows:[{id:1}]};
       return {rows:[]};
     }, release:()=>calls.push({sql:"RELEASE"})
   };
@@ -140,4 +142,46 @@ test("matching saved QR capture uses linked exception ledger",async()=>{
   });
   assert.ok(p.calls.some(x=>x.sql.includes("qr_payments.payment_exceptions")));
   assert.ok(!p.calls.some(x=>x.sql.includes("qr_payments.unmatched_captures")));
+});
+
+test("quarantine fails closed on a reused provider reference with a different claim", async () => {
+  const queries=[];
+  const db={
+    query:async(sql,params)=>{
+      queries.push({sql,params});
+      if(sql.includes("from qr_payments.payment_requests where id=")) return {rows:[]};
+      if(sql.includes("as reference_conflict")) return {rows:[{reference_conflict:true}]};
+      throw Error("No insert allowed after provider reference conflict");
+    },
+    release:()=>{},
+  };
+  const storage=createPgQrWebhookStorage({pool:{connect:async()=>db}});
+  const out=await storage.quarantineVerifiedCapture({
+    requestId:request.id,tenantId:request.tenantId,targetId:request.targetId,
+    type:request.type,gatewayPaymentId:"pf-collision",amountCents:14500,
+    reason:"CORRELATION_MISMATCH",
+  });
+  assert.deepEqual(out,{persisted:false,reason:"GATEWAY_REFERENCE_CONFLICT"});
+  assert.equal(queries.at(-1).sql,"ROLLBACK");
+  assert.ok(!queries.some(q=>q.sql.includes("insert into")));
+});
+
+test("quarantine does not acknowledge an unsuccessful conflicting insert",async()=>{
+  const calls=[];
+  const db={
+    query:async(sql,params)=>{
+      calls.push(sql);
+      if(sql.includes("from qr_payments.payment_requests where id=")) return {rows:[]};
+      if(sql.includes("as reference_conflict")) return {rows:[{reference_conflict:false}]};
+      if(sql.includes("insert into qr_payments.unmatched_captures")) return {rows:[]};
+      return {rows:[]};
+    },release:()=>{}
+  };
+  const storage=createPgQrWebhookStorage({pool:{connect:async()=>db}});
+  const out=await storage.quarantineVerifiedCapture({
+    requestId:request.id,tenantId:request.tenantId,targetId:request.targetId,
+    type:request.type,gatewayPaymentId:"pf-conflict",amountCents:14500,reason:"MISSING",
+  });
+  assert.equal(out.persisted,false);
+  assert.equal(calls.at(-1),"ROLLBACK");
 });
