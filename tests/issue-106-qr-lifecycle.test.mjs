@@ -15,6 +15,7 @@ function harness() {
     try {
       return await action({
         getPayable: async () => ({ ...target }),
+        getSettlementPayable: async () => ({ ...target }),
         findByKey: async (type, targetId, key) => [...requests.values()].find(r =>
           r.type === type && r.targetId === targetId && r.operationKey === key),
         listActive: async (type, targetId) => [...requests.values()].filter(r =>
@@ -42,7 +43,8 @@ function harness() {
   });
   const settlement = (id, gatewayId, amountCents = 14500, verified = true) =>
     service.recordVerifiedSettlement({ type: TYPE, targetId: ID, paymentRequestId: id,
-      verifiedPayment: { verified, id: gatewayId, amountCents },
+      verifiedPayment: { verified, id: gatewayId, amountCents,
+        requestId: id, tenantId: "cafe-tenant", type: TYPE, targetId: ID },
       applyCanonicalReceipt: async ({ verifiedPayment }) => {
         receipts.push(verifiedPayment.id);
         target.balanceCents -= verifiedPayment.amountCents;
