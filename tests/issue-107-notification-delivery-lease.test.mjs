@@ -34,3 +34,11 @@ test('invalid claim identity and freeform errors rejected before SQL',async()=>{
  await assert.rejects(x.svc.fail({deliveryId:id,claimToken:token,errorCode:'password=secret'}),/CLAIM_INVALID/);
  assert.equal(x.calls.length,0);
 });
+
+test('no-device cancellation requires current lease and allowlisted reason',async()=>{
+ const h=harness();
+ assert.equal(await h.svc.cancel({deliveryId:id,claimToken:token,reasonCode:'NO_SUBSCRIBED_DEVICE'}),true);
+ assert.match(h.calls[0].sql,/status='cancelled'/);
+ assert.match(h.calls[0].sql,/claimed_until>now\(\)/);
+ assert.deepEqual(h.calls[0].params,[id,token,'NO_SUBSCRIBED_DEVICE']);
+});
