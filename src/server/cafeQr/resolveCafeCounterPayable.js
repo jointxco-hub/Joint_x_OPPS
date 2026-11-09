@@ -48,6 +48,8 @@ export async function resolveCafeCounterPayable({ db, type, targetId, actor }) {
     return { tenantId: order.tenant_id, eligible: false, reviewRequired: true, balanceCents: null };
   }
   // One statement AFTER the canonical row lock: never trust a client paid flag.
+  // The existing PayFast initiation path charges total_amount, so partial
+  // payments are deliberately blocked until the gateway path is adapted.
   const { rows: totals } = await db.query(
     `select coalesce(sum(amount) filter (where status='completed'),0) as paid,
             count(*) filter (where status='pending')::integer as pending_count
@@ -83,7 +85,7 @@ export async function resolveCafeCounterPayable({ db, type, targetId, actor }) {
   const ready = moneyValid && Number.isSafeInteger(totalCents) &&
     Number.isSafeInteger(paidCents) && Number.isSafeInteger(minCents) &&
     Number.isSafeInteger(balanceCents) && totalCents > 0 &&
-    paidCents >= 0 && balanceCents > 0 && minCents >= 0 &&
+    paidCents === 0 && balanceCents > 0 && minCents >= 0 &&
     balanceCents >= minCents &&
     (order.payment_status === "unpaid" || order.payment_status === "pending") &&
     !["draft","cancelled","completed"].includes(order.status) &&
