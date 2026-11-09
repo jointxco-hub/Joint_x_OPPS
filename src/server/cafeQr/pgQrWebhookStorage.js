@@ -34,36 +34,90 @@ export function createPgQrWebhookStorage({ pool }) {
       const db = await pool.connect();
       try {
         await db.query("BEGIN");
-        const { rows } = await db.query(
+        // Serialize ALL quarantine attempts for one gateway reference.
+        // A PayFast reference must never silently mutate its original
+        // claimed request/tenant/amount on duplicate delivery.
+        await db.query("select pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [`qr106:gateway:${capture.gatewayPaymentId}`]);
+        const { rows: requestRows } = await db.query(
           `select id,tenant_id,target_id,target_type
              from qr_payments.payment_requests where id=$1 for update`,
           [capture.requestId]
         );
-        const existing = rows?.[0];
-        // Never insert an exception into someone else's request record if
-        // a validated PayFast claim and a stored request disagree.
+        const existing = requestRows?.[0];
         const linked = existing &&
           existing.tenant_id === capture.tenantId &&
           existing.target_id === capture.targetId &&
           existing.target_type === capture.type;
+
+        // Check cross-table uses of the provider reference, not just the
+        // unique constraint within a single exception table.
+        const { rows: conflicts } = await db.query(
+          `select
+             exists(
+               select 1 from qr_payments.payment_requests r
+               where r.gateway_payment_id=$1
+                 and (r.id::text is distinct from $2 or r.tenant_id::text is distinct from $3
+                      or r.target_id::text is distinct from $4 or r.target_type is distinct from $5
+                      or r.amount_cents is distinct from $6::bigint)
+             ) or exists(
+               select 1 from qr_payments.unmatched_captures u
+               where u.gateway_payment_id=$1
+                 and (u.claimed_request_id is distinct from $2
+                   or u.claimed_tenant_id is distinct from $3
+                   or u.claimed_target_id is distinct from $4
+                   or u.claimed_type is distinct from $5
+                   or u.amount_cents is distinct from $6::bigint)
+             ) or exists(
+               select 1 from qr_payments.payment_exceptions e
+               join qr_payments.payment_requests r on r.id=e.payment_request_id
+               where e.gateway_payment_id=$1
+                 and (r.id::text is distinct from $2 or r.tenant_id::text is distinct from $3
+                      or r.target_id::text is distinct from $4 or r.target_type is distinct from $5
+                      or e.amount_cents is distinct from $6::bigint)
+             ) as reference_conflict`,
+          [capture.gatewayPaymentId,capture.requestId,capture.tenantId,
+            capture.targetId,capture.type,capture.amountCents]
+        );
+        if (conflicts?.[0]?.reference_conflict !== false) {
+          // Fail closed on a collision or an unexpected database result.
+          await db.query("ROLLBACK");
+          return { persisted: false, reason: "GATEWAY_REFERENCE_CONFLICT" };
+        }
+        let result;
         if (linked) {
-          await db.query(
+          result = await db.query(
             `insert into qr_payments.payment_exceptions
                (payment_request_id,gateway_payment_id,reason,amount_cents)
              values ($1,$2,'CAPTURE_REQUIRES_RECONCILIATION',$3)
-             on conflict (payment_request_id,gateway_payment_id,reason) do nothing`,
+             on conflict (payment_request_id,gateway_payment_id,reason)
+             do update set amount_cents = qr_payments.payment_exceptions.amount_cents
+               where qr_payments.payment_exceptions.amount_cents
+                     is not distinct from excluded.amount_cents
+             returning id`,
             [capture.requestId,capture.gatewayPaymentId,capture.amountCents]
           );
         } else {
-          await db.query(
+          result = await db.query(
             `insert into qr_payments.unmatched_captures
                (gateway_payment_id,claimed_request_id,claimed_tenant_id,
                 claimed_target_id,claimed_type,amount_cents,reason)
              values ($1,$2,$3,$4,$5,$6,$7)
-             on conflict (gateway_payment_id) do nothing`,
+             on conflict (gateway_payment_id) do update
+               set reason=qr_payments.unmatched_captures.reason
+             where qr_payments.unmatched_captures.claimed_request_id is not distinct from excluded.claimed_request_id
+               and qr_payments.unmatched_captures.claimed_tenant_id is not distinct from excluded.claimed_tenant_id
+               and qr_payments.unmatched_captures.claimed_target_id is not distinct from excluded.claimed_target_id
+               and qr_payments.unmatched_captures.claimed_type is not distinct from excluded.claimed_type
+               and qr_payments.unmatched_captures.amount_cents is not distinct from excluded.amount_cents
+             returning id`,
             [capture.gatewayPaymentId,capture.requestId,capture.tenantId,
               capture.targetId,capture.type,capture.amountCents,capture.reason]
           );
+        }
+        if (!result?.rows?.[0]?.id) {
+          await db.query("ROLLBACK");
+          return { persisted: false, reason: "GATEWAY_REFERENCE_CONFLICT" };
         }
         await db.query("COMMIT");
         return { persisted: true };
