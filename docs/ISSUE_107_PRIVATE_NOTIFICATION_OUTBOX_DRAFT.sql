@@ -25,6 +25,7 @@ create table if not exists opps_private.notification_deliveries (
   attempt_count integer not null default 0 check (attempt_count >= 0),
   next_attempt_at timestamptz not null default now(),
   claimed_until timestamptz,
+  claim_token uuid,
   sent_at timestamptz,
   last_error_code text,
   created_at timestamptz not null default now(),
