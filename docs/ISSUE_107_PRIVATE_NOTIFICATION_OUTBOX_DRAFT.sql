@@ -34,6 +34,46 @@ create table if not exists opps_private.notification_deliveries (
     references opps_private.notification_events(id,tenant_id) on delete restrict,
   unique (event_id,recipient_auth_user_id)
 );
+-- Private checkpoint serializes collector cycles across multiple workers.
+-- Its transaction commits only AFTER downstream event fan-out succeeds.
+create table if not exists opps_private.notification_collectors (
+  name text primary key check (name ~ '^[a-z_]{4,48}
+  on opps_private.notification_deliveries(next_attempt_at,id)
+  where status in ('pending','failed','processing');
+create index if not exists notification_events_tenant_time
+  on opps_private.notification_events(tenant_id,occurred_at desc);
+
+alter table opps_private.notification_events enable row level security;
+alter table opps_private.notification_events force row level security;
+alter table opps_private.notification_deliveries enable row level security;
+alter table opps_private.notification_deliveries force row level security;
+alter table opps_private.notification_collectors enable row level security;
+alter table opps_private.notification_collectors force row level security;
+revoke all on opps_private.notification_events from public,anon,authenticated;
+revoke all on opps_private.notification_deliveries from public,anon,authenticated;
+revoke all on opps_private.notification_collectors from public,anon,authenticated;
+
+-- This is not a browser-facing API; only the reviewed backend can enqueue.
+do $$
+begin
+  if exists(select 1 from pg_roles where rolname='service_role') then
+    grant usage on schema opps_private to service_role;
+    grant select,insert,update on opps_private.notification_events to service_role;
+    grant select,insert,update on opps_private.notification_deliveries to service_role;
+    grant select,insert,update on opps_private.notification_collectors to service_role;
+  end if;
+end $$;
+commit;
+),
+  cursor_created_at timestamptz,
+  cursor_id uuid,
+  updated_at timestamptz not null default now(),
+  constraint notification_cursor_pair check (
+    (cursor_created_at is null and cursor_id is null)
+    or (cursor_created_at is not null and cursor_id is not null)
+  )
+);
+
 create index if not exists notification_deliveries_due
   on opps_private.notification_deliveries(next_attempt_at,id)
   where status in ('pending','failed','processing');
