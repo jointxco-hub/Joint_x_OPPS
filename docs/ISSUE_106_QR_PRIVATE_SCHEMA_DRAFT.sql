@@ -68,4 +68,17 @@ alter table qr_payments.unmatched_captures enable row level security;
 alter table qr_payments.unmatched_captures force row level security;
 revoke all on qr_payments.unmatched_captures from public,anon,authenticated;
 
+-- Explicit service_role grants for this private schema. A production
+-- service-role key must never be exposed in a browser or mobile client.
+-- No schema may be added to Supabase Data API exposed schemas.
+do $
+begin
+  if exists (select 1 from pg_roles where rolname='service_role') then
+    grant usage on schema qr_payments to service_role;
+    grant select,insert,update on qr_payments.payment_requests to service_role;
+    grant select,insert on qr_payments.payment_exceptions to service_role;
+    grant select,insert on qr_payments.unmatched_captures to service_role;
+    grant usage,select on all sequences in schema qr_payments to service_role;
+  end if;
+end $;
 commit;
