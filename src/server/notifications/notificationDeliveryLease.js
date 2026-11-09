@@ -1,6 +1,6 @@
 // Issue #107 - isolated trusted delivery worker DB leasing. No push calls.
 // Rows may only be acknowledged by the worker holding their current token.
-const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function createNotificationDeliveryLease({pool}){
  if(typeof pool?.connect!=='function')throw new TypeError('POSTGRES_POOL_REQUIRED');
  async function withClient(fn){const db=await pool.connect();try{return await fn(db)}finally{db.release()}}
