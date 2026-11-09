@@ -5,13 +5,13 @@ import { resolveTrustedQrSettlementPayable } from "../src/server/cafeQr/resolveT
 const invoice = "11111111-1111-4111-8111-111111111111";
 const tenant = "22222222-2222-4222-8222-222222222222";
 function setup({ exists=true, slug="quick-solution", tenantStatus="active", status="approved",
-    currency="ZAR", cents="14500" }={}) {
+    currency="ZAR", cents="14500", linked=false }={}) {
   const statements=[];
   const db={async query(sql,params) {
     statements.push({sql,params});
     if(sql.includes("from public.opps_invoices i")) return {rows:exists?[{
       id:invoice,tenant_id:tenant,status,currency_code:currency,tenant_slug:slug,
-      tenant_status:tenantStatus
+      tenant_status:tenantStatus,cafe_service_order_linked:linked
     }]:[]};
     if(sql.includes("invoice_balance_due")) return {rows:[{cents}]};
     throw Error("Unexpected SQL");
@@ -43,7 +43,7 @@ test("invalid identifiers and cross-tenant invoices fail without reading balance
 });
 test("paid or invalid invoice states never authorize a second gateway settlement",async()=>{
   for(const options of [{status:"paid",cents:"0"},{status:"draft"},{status:"void"},
-    {status:"exported"},{currency:"USD"},{cents:null},{cents:"-1"},
+    {status:"exported"},{currency:"USD"},{linked:true},{cents:null},{cents:"-1"},
     {cents:"999999999999999999999"}]){
     const result=await setup(options).run();
     assert.equal(result.eligible,false,JSON.stringify(options));
