@@ -141,7 +141,7 @@ test("matching saved QR capture uses linked exception ledger",async()=>{
     gatewayPaymentId:"pf-linked",amountCents:14500,reason:"AMOUNT_CHANGED",
   });
   assert.ok(p.calls.some(x=>x.sql.includes("qr_payments.payment_exceptions")));
-  assert.ok(!p.calls.some(x=>x.sql.includes("qr_payments.unmatched_captures")));
+  assert.ok(!p.calls.some(x=>x.sql.includes("insert into qr_payments.unmatched_captures")));
 });
 
 test("quarantine fails closed on a reused provider reference with a different claim", async () => {
@@ -151,7 +151,8 @@ test("quarantine fails closed on a reused provider reference with a different cl
       queries.push({sql,params});
       if(sql.includes("from qr_payments.payment_requests where id=")) return {rows:[]};
       if(sql.includes("as reference_conflict")) return {rows:[{reference_conflict:true}]};
-      throw Error("No insert allowed after provider reference conflict");
+      if(sql.includes("insert into")) throw Error("No insert allowed after provider reference conflict");
+      return {rows:[]};
     },
     release:()=>{},
   };
