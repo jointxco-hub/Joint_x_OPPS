@@ -127,3 +127,45 @@ test("amount mismatch, late capture and second capture require reconciliation", 
   assert.deepEqual(c.receipts, ["pf-first"]);
   assert.equal(c.exceptions.length, 1);
 });
+
+test("verified settlement identity must match request and tenant before receipt", async () => {
+  const h = harness(), request = await h.create();
+  for (const difference of [
+    { requestId: "other-request" }, { tenantId: "other-tenant" },
+    { type: "opps_invoice" }, { targetId: "other-order" },
+  ]) {
+    await assert.rejects(h.service.recordVerifiedSettlement({
+      type: TYPE, targetId: ID, paymentRequestId: request.paymentRequestId,
+      verifiedPayment: {
+        verified: true, id: "pf-identity-check", amountCents: 14500,
+        requestId: request.paymentRequestId, tenantId: "cafe-tenant",
+        type: TYPE, targetId: ID, ...difference,
+      },
+      applyCanonicalReceipt: async () => { throw Error("must not write a receipt"); },
+    }), code("PAYMENT_IDENTITY_MISMATCH"));
+  }
+  assert.equal(h.receipts.length, 0);
+  assert.equal(h.requests.get(request.paymentRequestId).status, "active");
+});
+
+test("settlement fails closed if a trusted gateway payable resolver is unavailable", async () => {
+  const h = harness(), request = await h.create();
+  // Deliberately simulate an adapter with no settlement authority.
+  const store = {
+    withTargetLock: async (_type, _id, fn) => fn({
+      getRequest: async () => h.requests.get(request.paymentRequestId),
+    }),
+  };
+  const service = createPaymentRequestService({
+    store, authorize: async () => {},
+    issueCheckout: async () => "https://sandbox.payfast.co.za/eng/process",
+    newId: () => "other-req",
+  });
+  await assert.rejects(service.recordVerifiedSettlement({
+    type: TYPE, targetId: ID, paymentRequestId: request.paymentRequestId,
+    verifiedPayment: { verified: true, id: "pf-no-authority", amountCents: 14500,
+      requestId: request.paymentRequestId, tenantId: "cafe-tenant",
+      type: TYPE, targetId: ID },
+    applyCanonicalReceipt: async () => { throw Error("must not write a receipt"); },
+  }), code("SETTLEMENT_AUTHORITY_UNAVAILABLE"));
+});
