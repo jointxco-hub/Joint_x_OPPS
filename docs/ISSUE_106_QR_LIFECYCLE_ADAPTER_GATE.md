@@ -36,3 +36,14 @@ A local in-memory transactional harness exercised these transitions and passed 9
 - No payment operations or schema writes were performed during this implementation.
 
 **Next action:** design and implement the durable Postgres adapter in a local disposable database with strict auth and ledger boundaries, before any Edge Function or UI wiring. Do not deploy this module as a payment service by itself.
+
+## 9 November follow-up — private PostgreSQL adapter added
+
+Committed:
+- `docs/ISSUE_106_QR_PRIVATE_SCHEMA_DRAFT.sql` — private tables for requests and reconciliation exceptions; unique indexes for one active request and provider payment reference; no direct public/authenticated table access.
+- `src/server/cafeQr/pgPaymentRequestStore.js` — injected PostgreSQL client transaction wrapper using advisory transaction locks, bound SQL parameters, commit/rollback, and pluggable canonical payable lookup.
+- `tests/issue-106-pg-qr-store.test.mjs` — committed mock-DB regression cases.
+
+**Verification actually performed:** 9 JavaScript adapter smoke/textual-schema checks were executed using the exact GitHub source. Verified BEGIN/advisory lock, parameter binding, COMMIT, ROLLBACK, connection release, exception insert conflict behavior, private schema/RLS and unique-active index declaration. **These do NOT constitute a PostgreSQL SQL migration run or a successful PayFast sandbox payment.** The committed Node test suite remains to be run in a checked-out build/CI.
+
+**Blockers before deployment:** validate SQL against disposable Postgres and refine any schema permissions or dependencies; implement canonical resolver (including locked source record and tenant staff auth) and same-transaction ledger reconciliation; verify PayFast callback merchant/signature/request-id verification and request issuance; resolve the already-open PayFast checkout expiry caveat. No staging/production DDL executed. Do not expose or wire payment creation until these gates pass.
