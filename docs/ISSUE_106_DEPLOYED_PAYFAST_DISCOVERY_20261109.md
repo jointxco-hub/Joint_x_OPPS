@@ -33,3 +33,14 @@ No Edge Function was deployed, no database migration applied, and no payment tra
 2. Implement and test a single authoritative server-side request identity, expiry/revocation, final outstanding-balance check and same-request retry. Cross-target invoice/Café reconciliation needs explicit separate adapters.
 3. Only then wire a QR component to the counter payment surface, initially behind an explicit staging feature flag.
 4. Validate callbacks, duplicate/late ITNs, amount changes, concurrent Cash/EFT, and iMin D4/customer phone scanning on staging before any production work.
+
+## Read-only database function verification (9 Nov 2026)
+
+A `pg_proc` metadata query on **both** projects confirmed the actual function names and execute permissions (no user/order/payment rows queried).
+
+- **Production:** `qs_begin_quick_solution_payment(uuid,text)`, `qs_apply_quick_solution_payment(uuid,numeric,text,jsonb)`, `begin_invoice_payment(text)`, and `apply_invoice_payfast_payment(uuid,numeric,text,jsonb)` exist. All deny direct `anon` and `authenticated` EXECUTE. Production `qs_cafe_list_work_queue` does **not** exist.
+- **Staging:** all four above exist, along with `qs_apply_quick_solution_payfast_payment(uuid,numeric,text,jsonb)` and `qs_record_quick_solution_payfast_noncomplete(uuid,text,jsonb)`, with direct `anon` and `authenticated` EXECUTE denied.
+- **Important correction to earlier branch comments:** staging **already has** `qs_cafe_list_work_queue(text,integer)` at the time of this live check, with `authenticated` EXECUTE and no `anon` EXECUTE. Exact migration provenance, body parity and staff end-to-end behaviour remain unverified; do not reapply blindly.
+- Production's missing dedicated Café notification function is consistent with its shared `payfast-notify` route and available `qs_apply_quick_solution_payment` RPC, but **configured notify destination is still unverified**.
+
+No deployment or data mutation was performed.
