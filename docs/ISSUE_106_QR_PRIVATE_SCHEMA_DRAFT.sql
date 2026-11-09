@@ -50,4 +50,22 @@ revoke all on qr_payments.payment_exceptions from public,anon,authenticated;
 -- (or specifically granted dedicated DB role) can manipulate these rows.
 -- FORCE RLS also applies to the owner; provisioning a BYPASSRLS backend role
 -- must be reviewed explicitly rather than assumed.
+
+-- Verified PayFast captures that cannot be related to an existing request
+-- MUST still be retained for finance. This table intentionally has no FK.
+create table if not exists qr_payments.unmatched_captures (
+  id bigint generated always as identity primary key,
+  gateway_payment_id text not null unique,
+  claimed_request_id text,
+  claimed_tenant_id text,
+  claimed_target_id text,
+  claimed_type text,
+  amount_cents bigint not null check (amount_cents > 0),
+  reason text not null,
+  created_at timestamptz not null default now()
+);
+alter table qr_payments.unmatched_captures enable row level security;
+alter table qr_payments.unmatched_captures force row level security;
+revoke all on qr_payments.unmatched_captures from public,anon,authenticated;
+
 commit;
