@@ -19,7 +19,7 @@ function mockPool({ failAt = null } = {}) {
 test("Postgres store begins transaction, advisory-locks target and commits", async () => {
   const m = mockPool();
   const store = createPgQrPaymentStore({
-    pool: m.pool, resolvePayable: async ({ db, type, targetId }) => {
+    pool: m.pool, resolveSettlementPayable: async () => null, resolvePayable: async ({ db, type, targetId }) => {
       assert.ok(db); assert.equal(type, "cafe_order"); assert.equal(targetId, "order-1");
       return { eligible: true, balanceCents: 100, tenantId: "tenant-1" };
     },
@@ -44,7 +44,7 @@ test("Postgres store begins transaction, advisory-locks target and commits", asy
 
 test("Postgres store rolls back on callback failure and releases client", async () => {
   const m = mockPool();
-  const store = createPgQrPaymentStore({ pool: m.pool, resolvePayable: async () => null });
+  const store = createPgQrPaymentStore({ pool: m.pool, resolvePayable: async () => null, resolveSettlementPayable: async () => null });
   await assert.rejects(store.withTargetLock("opps_invoice", "invoice-1", async () => {
     throw Error("receipt adapter rejected");
   }), /receipt adapter rejected/);
@@ -55,7 +55,7 @@ test("Postgres store rolls back on callback failure and releases client", async 
 
 test("Postgres persistence uses bound parameters for all request identities and amounts", async () => {
   const m = mockPool();
-  const store = createPgQrPaymentStore({ pool: m.pool, resolvePayable: async () => null });
+  const store = createPgQrPaymentStore({ pool: m.pool, resolvePayable: async () => null, resolveSettlementPayable: async () => null });
   await store.withTargetLock("cafe_order", "order-1", tx => tx.saveRequest({
     id: "uuid-1", tenantId: "tenant-1", type: "cafe_order", targetId: "order-1",
     operationKey: "key-123456", amountCents: 14500, status: "active",
@@ -73,7 +73,7 @@ test("Postgres persistence uses bound parameters for all request identities and 
 
 test("SQL client error rolls back rather than acknowledging a payment", async () => {
   const m = mockPool({ failAt: "INSERT INTO qr_payments.payment_requests" });
-  const store = createPgQrPaymentStore({ pool: m.pool, resolvePayable: async () => null });
+  const store = createPgQrPaymentStore({ pool: m.pool, resolvePayable: async () => null, resolveSettlementPayable: async () => null });
   await assert.rejects(store.withTargetLock("cafe_order", "order-1", tx => tx.saveRequest({
     id: "uuid-1", tenantId: "tenant-1", type: "cafe_order", targetId: "order-1",
     operationKey: "key-123456", amountCents: 1, status: "active",
