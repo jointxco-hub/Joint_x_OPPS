@@ -43,7 +43,8 @@ alter table opps_private.notification_events enable row level security;
 alter table opps_private.notification_events force row level security;
 alter table opps_private.notification_deliveries enable row level security;
 alter table opps_private.notification_deliveries force row level security;
-revoke all on all tables in schema opps_private from public,anon,authenticated;
+revoke all on opps_private.notification_events from public,anon,authenticated;
+revoke all on opps_private.notification_deliveries from public,anon,authenticated;
 
 -- This is not a browser-facing API; only the reviewed backend can enqueue.
 do $$
