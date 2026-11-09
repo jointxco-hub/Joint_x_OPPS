@@ -47,3 +47,23 @@ Committed:
 **Verification actually performed:** 9 JavaScript adapter smoke/textual-schema checks were executed using the exact GitHub source. Verified BEGIN/advisory lock, parameter binding, COMMIT, ROLLBACK, connection release, exception insert conflict behavior, private schema/RLS and unique-active index declaration. **These do NOT constitute a PostgreSQL SQL migration run or a successful PayFast sandbox payment.** The committed Node test suite remains to be run in a checked-out build/CI.
 
 **Blockers before deployment:** validate SQL against disposable Postgres and refine any schema permissions or dependencies; implement canonical resolver (including locked source record and tenant staff auth) and same-transaction ledger reconciliation; verify PayFast callback merchant/signature/request-id verification and request issuance; resolve the already-open PayFast checkout expiry caveat. No staging/production DDL executed. Do not expose or wire payment creation until these gates pass.
+
+## 9 November continuation — gateway settlement boundary hardened
+
+The original settlement routine invoked `tx.getPayable(type,targetId,null)`, which cannot work with either new staff resolver because they require server-authenticated staff identity. It also did not correlate the verified notification to the saved request's tenant and target fields.
+
+**Changes committed:**
+- `paymentRequestLifecycle.js` now calls `tx.getSettlementPayable(type,targetId,tenantId)`, a separate privileged settlement authority path, and refuses to settle if it is unavailable.
+- The gateway event must supply matching server-validated `requestId`, `tenantId`, `type` and `targetId` in addition to gateway payment ID and exact cents; a mismatch throws `PAYMENT_IDENTITY_MISMATCH` without writing receipts.
+- `pgPaymentRequestStore.js` requires a distinct `resolveSettlementPayable` injection and exposes it on the transaction object; staff `resolvePayable` is unchanged.
+- The lifecycle and adapter tests were updated; new tests exercise mismatched gateway identity and missing settlement authority.
+
+**Verification actually run:** 14/14 committed lifecycle and adapter test bodies passed in an isolated JavaScript runtime with mocked database calls. This was not the Node test runner or a running PostgreSQL instance. No database migrations or PayFast calls executed.
+
+**Still required before integration:**
+1. Implement `resolveSettlementPayable` as a trusted server-only, transaction-locked balance resolver, with explicit same-tenant service-order/invoice scopes. Never expose a browser path that allows callers to set `verified: true` or choose tenant identity.
+2. Implement a PayFast notification verifier that derives request ID, order ID, amount and merchant from the signature-checked gateway payload, with a durable correlation from request ID to existing payment intent. Current deployed PayFast functions do not support this new request identity.
+3. Use canonical payment writer and request record in an **actually atomic** database transaction, or design a safe idempotent reconciliation/outbox saga. The current callback adapter is unimplemented.
+4. Execute disposable PostgreSQL schema/lock/concurrency tests and sandbox gateway payments before enabling any QR UI.
+
+**Live staging and production remain unchanged.**
