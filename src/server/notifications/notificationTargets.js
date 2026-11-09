@@ -1,7 +1,7 @@
 // Issue #107. Server-only recipient resolution; no caller-supplied email.
 // Compatible with current push_subscriptions(user_email) until a reviewed
 // migration introduces auth_user_id. Never return the email or auth keys to a client.
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export function createNotificationTargets({pool}) {
   if (typeof pool?.connect !== 'function') throw new TypeError('POSTGRES_POOL_REQUIRED');
   return {
