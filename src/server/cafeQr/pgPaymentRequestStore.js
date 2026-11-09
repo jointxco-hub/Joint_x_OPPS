@@ -11,9 +11,10 @@ const mapRow = row => row && ({
   checkoutUrl: row.checkout_url, gatewayPaymentId: row.gateway_payment_id,
 });
 
-export function createPgQrPaymentStore({ pool, resolvePayable }) {
-  if (!pool || typeof pool.connect !== "function" || typeof resolvePayable !== "function")
-    throw new TypeError("A PostgreSQL pool and canonical payable resolver are required.");
+export function createPgQrPaymentStore({ pool, resolvePayable, resolveSettlementPayable }) {
+  if (!pool || typeof pool.connect !== "function" || typeof resolvePayable !== "function" ||
+      typeof resolveSettlementPayable !== "function")
+    throw new TypeError("A PostgreSQL pool, staff payable resolver and trusted settlement resolver are required.");
   return {
     async withTargetLock(type, targetId, action) {
       const db = await pool.connect();
@@ -25,6 +26,8 @@ export function createPgQrPaymentStore({ pool, resolvePayable }) {
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`qr106:${type}:${targetId}`]);
         const tx = {
           getPayable: (t, id, actor) => resolvePayable({ db, type: t, targetId: id, actor }),
+          getSettlementPayable: (t, id, tenantId) =>
+            resolveSettlementPayable({ db, type: t, targetId: id, tenantId }),
           async findByKey(t, id, key) {
             const { rows } = await db.query(
               `SELECT * FROM qr_payments.payment_requests
