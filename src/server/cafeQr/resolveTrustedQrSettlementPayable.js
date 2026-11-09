@@ -26,7 +26,11 @@ export async function resolveTrustedQrSettlementPayable({ db, type, targetId, te
   const { rows } = await db.query(
     `select i.id,i.tenant_id,i.status,i.currency_code,
             t.slug as tenant_slug,t.status as tenant_status,
-            i.public_visible,i.share_revoked_at
+            i.public_visible,i.share_revoked_at,
+            exists (
+              select 1 from commerce.service_orders so
+              where so.tenant_id=i.tenant_id and so.opps_order_id=i.source_order_id
+            ) as cafe_service_order_linked
        from public.opps_invoices i
        join public.tenants t on t.id=i.tenant_id
       where i.id=$1 and i.tenant_id=$2
@@ -49,7 +53,7 @@ export async function resolveTrustedQrSettlementPayable({ db, type, targetId, te
   const raw = balances[0]?.cents;
   const cents = raw == null ? null : Number(raw);
   const valid = Number.isSafeInteger(cents) && cents > 0;
-  const eligible = valid && invoice.currency_code === "ZAR" &&
+  const eligible = valid && invoice.cafe_service_order_linked === false && invoice.currency_code === "ZAR" &&
     INVOICE_STATES.has(invoice.status);
 
   return {
