@@ -17,7 +17,11 @@ export async function resolveCafeInvoicePayable({ db, type, targetId, actor }) {
   // balance/ledger decisions; the request table lock alone is insufficient.
   const { rows: invoices } = await db.query(
     `select i.id, i.tenant_id, i.status, i.currency_code,
-            t.slug as tenant_slug, t.status as tenant_status
+            t.slug as tenant_slug, t.status as tenant_status,
+            exists (
+              select 1 from commerce.service_orders so
+              where so.tenant_id=i.tenant_id and so.opps_order_id=i.source_order_id
+            ) as cafe_service_order_linked
        from public.opps_invoices i
        join public.tenants t on t.id = i.tenant_id
       where i.id = $1
@@ -50,7 +54,7 @@ export async function resolveCafeInvoicePayable({ db, type, targetId, actor }) {
   const rawCents = balances[0]?.cents;
   const balanceCents = rawCents == null ? null : Number(rawCents);
   const validBalance = Number.isSafeInteger(balanceCents) && balanceCents > 0;
-  const reviewRequired = !validBalance || invoice.currency_code !== "ZAR" ||
+  const reviewRequired = invoice.cafe_service_order_linked !== false || !validBalance || invoice.currency_code !== "ZAR" ||
     !VALID_STATES.has(invoice.status);
 
   return {
