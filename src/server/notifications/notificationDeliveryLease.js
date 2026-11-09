@@ -35,6 +35,19 @@ export function createNotificationDeliveryLease({pool}){
     return rows?.length===1;
    });
   },
+  async cancel({deliveryId,claimToken,reasonCode}) {
+   if (!UUID.test(deliveryId||'') || !UUID.test(claimToken||'') ||
+       !['NO_SUBSCRIBED_DEVICE','RECIPIENT_NO_LONGER_AUTHORIZED'].includes(reasonCode))
+     throw new Error('CLAIM_INVALID');
+   return withClient(async db=>{
+     const {rows}=await db.query(`update opps_private.notification_deliveries
+       set status='cancelled',claimed_until=null,claim_token=null,
+           last_error_code=$3,updated_at=now()
+       where id=$1 and claim_token=$2 and status='processing' and claimed_until>now()
+       returning id`,[deliveryId,claimToken,reasonCode]);
+     return rows?.length===1;
+   });
+  },
   async fail({deliveryId,claimToken,errorCode}){
    if(!UUID.test(deliveryId||'')||!UUID.test(claimToken||'')||
        typeof errorCode!=='string'||!/^[A-Z0-9_]{2,64}$/.test(errorCode))throw new Error('CLAIM_INVALID');
