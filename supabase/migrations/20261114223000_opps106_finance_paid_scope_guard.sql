@@ -29,8 +29,7 @@ begin
   if v_def is null then raise exception 'Missing order update scope guard'; end if;
   if position('_order_ledger_fully_covers_total' in v_def)>0 then return; end if;
   if position('_opps106_ledger_covers_order' in v_def)>0 then return; end if;
-  if position('if public.has_tenant_permission(old.tenant_id,''production.update'') then' in v_def)=0
-     or position('if public.has_tenant_permission(old.tenant_id,''orders.write'') then' in v_def)=0 then
+  if md5(v_def) <> 'cc2acde8cb7fb58f2dfbcfb07a813611' then
     raise exception 'OPPS106_GUARD_DRIFT: review current production guard';
   end if;
   execute $replacement$
