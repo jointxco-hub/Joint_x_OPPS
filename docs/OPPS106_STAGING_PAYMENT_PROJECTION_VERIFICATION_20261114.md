@@ -88,3 +88,9 @@ Tests executed in the staging database inside explicit rollback transactions:
 the transaction trigger (not just the paid-status update), confirm expected
 audit/authorization behavior under the deployed role model, review deploy
 diff, and test PayFast QR sandbox + public tracking. Production not altered.
+
+- PASS: under the simulated production guard/trigger layout, a finance-only
+  actor's completed Finance transaction UPDATE fired the new projection,
+  advanced the covered order to paid, and replay left transaction count
+  unchanged. This exercises the trigger path but is not a signed client
+  JWT / live PayFast checkout test.
