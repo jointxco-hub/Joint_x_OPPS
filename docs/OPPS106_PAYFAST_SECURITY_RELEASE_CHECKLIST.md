@@ -148,3 +148,27 @@ Official source IP docs:
 https://developers.payfast.co.za/documentation/
 Supabase hosted header contract discussion:
 https://github.com/orgs/supabase/discussions/52040
+
+## 14 November 2026 — ingress test function / Trinity script
+
+- Staging-only function `opps106-staging-ingress-check` v1 deployed and
+  confirmed ACTIVE. It reports no IP address or secret values; only a
+  literal-header equality test and boolean configuration readiness flags.
+  It is a temporary public diagnostic and should be disabled after testing.
+- GitHub script:
+  `scripts/opps106-check-staging-ingress.ps1`.
+- Run on Trinity in PowerShell:
+  `powershell -ExecutionPolicy Bypass -File .\\scripts\\opps106-check-staging-ingress.ps1`
+  from the checked-out feature branch, or manually execute:
+  `curl.exe -sS -H "CF-Connecting-IP: 203.0.113.9" https://tijiamrfnxrbitafiflj.supabase.co/functions/v1/opps106-staging-ingress-check`.
+- Required interpretation: `ingress_header_present=true` and
+  `forged_header_survived=false` indicate the forged value was overwritten
+  on that single request path. A true spoof result is a HARD STOP. This is
+  not proof of every alternative ingress route, so the gateway contract
+  remains a prerequisite for production.
+- The diagnostic reports `PAYFAST_SANDBOX`, merchant ID/key/passphrase
+  presence, origin validity, source-IP flag/header, and sandbox allowlist
+  as booleans. It never reveals values.
+- Direct HTTPS access from our execution environment remains unavailable
+  (DNS resolution failure); **no actual HTTP spoof test has been executed**
+  by the assistant as part of this change.
