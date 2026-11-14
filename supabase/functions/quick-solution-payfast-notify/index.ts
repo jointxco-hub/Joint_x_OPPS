@@ -93,25 +93,20 @@ Deno.serve(async (req: Request) => {
   })
   // Correlate ITN with the exact checkout intent, never just a client-supplied
   // order UUID. Repeated notifications may reference a completed intent.
-  const { data: order, error: orderError } = await supabase
-    .schema('commerce').from('service_orders')
-    .select('id,order_number,total_amount,payment_status')
-    .eq('id',p.custom_str1).maybeSingle()
-  if (orderError) { console.error('[qs-itn] Order lookup failed'); return response(503) }
-  if (!order || (p.m_payment_id !== order.order_number && p.m_payment_id !== order.id)
-      || Math.abs(Number(order.total_amount) - gross) > 0.0049) {
-    console.error('[qs-itn] Order reference or amount mismatch')
-    return response(403)
+  const { data: binding, error: bindingError } = await supabase.rpc(
+    'qs_verify_payfast_notification_intent',{
+      p_order_id: p.custom_str1,
+      p_intent_id: p.custom_str3,
+      p_merchant_reference: p.m_payment_id,
+      p_amount: gross
+    }
+  )
+  if (bindingError) {
+    console.error('[qs-itn] Payment intent verification unavailable',bindingError.code)
+    return response(503)
   }
-  const { data: intent, error: intentError } = await supabase
-    .schema('commerce').from('service_order_payments')
-    .select('id,status,provider,service_order_id,amount')
-    .eq('id',p.custom_str3).maybeSingle()
-  if (intentError) { console.error('[qs-itn] Intent lookup failed'); return response(503) }
-  if (!intent || intent.service_order_id !== order.id || intent.provider !== 'payfast'
-      || !['pending','completed'].includes(intent.status)
-      || Math.abs(Number(intent.amount) - gross) > 0.0049) {
-    console.error('[qs-itn] Payment intent mismatch')
+  if (binding !== true) {
+    console.error('[qs-itn] Order / amount / intent mismatch')
     return response(403)
   }
 
@@ -137,7 +132,7 @@ Deno.serve(async (req: Request) => {
 
   if (p.payment_status === 'COMPLETE') {
     const { data, error } = await supabase.rpc('qs_apply_quick_solution_payfast_payment',{
-      p_order_id: order.id, p_amount: gross, p_pf_payment_id: p.pf_payment_id,
+      p_order_id: p.custom_str1, p_amount: gross, p_pf_payment_id: p.pf_payment_id,
       p_raw_itn: p
     })
     if (error || !data?.ok) {
@@ -147,7 +142,7 @@ Deno.serve(async (req: Request) => {
     return response(200)
   }
   const { error } = await supabase.rpc('qs_record_quick_solution_payfast_noncomplete',{
-    p_order_id:order.id,
+    p_order_id:p.custom_str1,
     p_status:p.payment_status==='CANCELLED'?'cancelled':'failed',
     p_raw_itn:p
   })
