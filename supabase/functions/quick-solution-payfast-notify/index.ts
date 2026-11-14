@@ -10,6 +10,21 @@ const isIPv4 = (ip: string) => {
   const a = ip.split('.')
   return a.length === 4 && a.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
 }
+const ipNumber = (ip: string) => {
+  if (!isIPv4(ip)) return null
+  return ip.split('.').reduce((n,octet) => ((n << 8) | Number(octet)) >>> 0,0)
+}
+function inSourceRange(ip: string, range: string) {
+  const [base,prefix,...extra] = range.split('/')
+  if (extra.length > 0 || !isIPv4(base)) return false
+  const bits = prefix === undefined ? 32 : Number(prefix)
+  if (!Number.isInteger(bits) || bits < 0 || bits > 32 ||
+      (prefix !== undefined && !/^\\d{1,2}$/.test(prefix))) return false
+  const value=ipNumber(ip), network=ipNumber(base)
+  if (value === null || network === null) return false
+  const mask = bits === 0 ? 0 : (0xffffffff << (32-bits)) >>> 0
+  return (value & mask) === (network & mask)
+}
 const same = (a: string, b: string) => {
   // Equal-length comparison without early exit; signature is not a password
   // but this avoids an unnecessary timing oracle on the verification check.
@@ -47,8 +62,8 @@ function trustedSource(req: Request, sandbox: boolean) {
   const ip = (req.headers.get(header) || '').trim()
   if (!isIPv4(ip)) return false
   const allow = (Deno.env.get(sandbox ? 'PAYFAST_SANDBOX_SOURCE_IPS' : 'PAYFAST_LIVE_SOURCE_IPS') || '')
-    .split(',').map(x => x.trim()).filter(isIPv4)
-  return allow.length > 0 && allow.includes(ip)
+    .split(',').map(x => x.trim()).filter(Boolean)
+  return allow.length > 0 && allow.some(range => inSourceRange(ip,range))
 }
 
 Deno.serve(async (req: Request) => {
