@@ -13,11 +13,11 @@ const intentSQL = readFileSync('supabase/migrations/20261114224000_opps106_payfa
 const helpers = 'const encode =' + notify.split('const encode =')[1]?.split('function trustedSource')[0];
 assert.ok(helpers.length > 100,'signature helpers must exist');
 const helperScript = transformSync(
-  helpers + '\nreturn {signedPayload,same,encode};',
+  helpers,
   {loader:'ts',format:'cjs',target:'es2022'}
 ).code;
-const {signedPayload,same,encode} = new Function('md5','URLSearchParams',
-  helperScript.replace(/"use strict";?/g,'')
+const {signedPayload,same,encode,inSourceRange} = new Function('md5','URLSearchParams',
+  helperScript + '\nreturn {signedPayload,same,encode,inSourceRange};'
 )(
   (s) => createHash('md5').update(s).digest('hex'), URLSearchParams
 );
@@ -73,4 +73,12 @@ test('private checkout binding is service-role-only and checks order plus intent
   assert.match(intentSQL,/intent\.tenant_id = o\.tenant_id/);
   assert.match(intentSQL,/round\(intent\.amount,2\) = round\(p_amount,2\)/);
   assert.match(intentSQL,/round\(o\.total_amount,2\) = round\(p_amount,2\)/);
+});
+
+test('PayFast source IP matching supports exact IPs and official CIDR ranges',()=>{
+  assert.equal(inSourceRange('197.97.145.150','197.97.145.144/28'),true);
+  assert.equal(inSourceRange('197.97.145.160','197.97.145.144/28'),false);
+  assert.equal(inSourceRange('144.126.193.139','144.126.193.139'),true);
+  assert.equal(inSourceRange('144.126.193.140','144.126.193.139'),false);
+  assert.equal(inSourceRange('1.1.1.1','1.1.1.1/33'),false);
 });
