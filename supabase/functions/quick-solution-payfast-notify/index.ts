@@ -113,7 +113,8 @@ Deno.serve(async (req: Request) => {
       p_order_id: p.custom_str1,
       p_intent_id: p.custom_str3,
       p_merchant_reference: p.m_payment_id,
-      p_amount: gross
+      p_amount: gross,
+      p_pf_payment_id: p.pf_payment_id
     }
   )
   if (bindingError) {
