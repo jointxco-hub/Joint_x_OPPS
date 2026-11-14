@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
       return json(data)
     }
 
-    if (!merchantId || !merchantKey) {
+    if (!merchantId || !merchantKey || !passphrase) {
       return json({ error: 'PayFast is not configured for Quick Solution yet.' }, 503)
     }
 
