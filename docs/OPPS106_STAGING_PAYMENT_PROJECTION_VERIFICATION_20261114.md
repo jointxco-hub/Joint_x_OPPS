@@ -55,3 +55,36 @@ Before merge:
 4. Exercise PayFast sandbox / QR checkout and public tracking separately.
 
 **Status: staging function tests passed; NOT cleared for merge or deployment.**
+
+## Follow-up: finance-only permission compatibility — 2026-11-14
+
+Added migration `20261114223000_opps106_finance_paid_scope_guard.sql`,
+ordered before the payment projection migration. It pins the reviewed
+production guard definition and refuses to overwrite a drifted guard. On
+staging's newer audited guard, it leaves the function unchanged. The narrow
+exception requires a finance permission AND a completed, same-tenant Finance
+ledger that covers the positive order total; no other order field can change.
+
+Tests executed in the staging database inside explicit rollback transactions:
+
+- PASS: both migrations apply together with existing canonical staging
+  projection trigger; no duplicate trigger is installed.
+- PASS: temporarily replace staging's guard with the reviewed production
+  version, then install the compatibility migration. New narrow guard present.
+- PASS: simulate a finance-only actor (no orders.write) and update a fully
+  covered pending order to paid.
+- PASS: finance-only actor is denied when completed income does not cover
+  order total (SQLSTATE 42501).
+- PASS: actor without finance.write or orders.write is denied paid transition.
+- PASS: simulate production's missing canonical projection trigger: new
+  OPPS-106 trigger is installed.
+- PASS: all rollback tests restore staging's original canonical trigger,
+  staff membership, and helper state.
+- PASS: one-time backfill now uses service-role claims scoped to the migration
+  block, restoring the previous claim afterward; ordinary staff never inherit
+  the privilege.
+
+**Remaining release checks:** exercise a real finance payment write through
+the transaction trigger (not just the paid-status update), confirm expected
+audit/authorization behavior under the deployed role model, review deploy
+diff, and test PayFast QR sandbox + public tracking. Production not altered.
