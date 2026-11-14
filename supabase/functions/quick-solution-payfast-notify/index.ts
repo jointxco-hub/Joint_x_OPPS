@@ -19,7 +19,7 @@ function inSourceRange(ip: string, range: string) {
   if (extra.length > 0 || !isIPv4(base)) return false
   const bits = prefix === undefined ? 32 : Number(prefix)
   if (!Number.isInteger(bits) || bits < 0 || bits > 32 ||
-      (prefix !== undefined && !/^\\d{1,2}$/.test(prefix))) return false
+      (prefix !== undefined && !/^\d{1,2}$/.test(prefix))) return false
   const value=ipNumber(ip), network=ipNumber(base)
   if (value === null || network === null) return false
   const mask = bits === 0 ? 0 : (0xffffffff << (32-bits)) >>> 0
