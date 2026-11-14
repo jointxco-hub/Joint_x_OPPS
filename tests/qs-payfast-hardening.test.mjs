@@ -82,3 +82,11 @@ test('PayFast source IP matching supports exact IPs and official CIDR ranges',()
   assert.equal(inSourceRange('144.126.193.140','144.126.193.139'),false);
   assert.equal(inSourceRange('1.1.1.1','1.1.1.1/33'),false);
 });
+
+test('PayFast notification includes gateway payment ID in restricted intent check',()=>{
+  assert.match(notify,/p_pf_payment_id:\s*p\.pf_payment_id/);
+  const replaySql=readFileSync('supabase/migrations/20261114225000_opps106_payfast_intent_replay.sql','utf8');
+  assert.match(replaySql,/receipt\.pf_payment_id\s*=\s*btrim\(p_pf_payment_id\)/);
+  assert.match(replaySql,/intent\.status\s+in\s*\('cancelled','completed'\)/);
+  assert.match(replaySql,/receipt\.status='completed'/);
+});
