@@ -115,3 +115,36 @@ Use only the canary URLs when ready for negative and positive sandbox testing:
 `https://tijiamrfnxrbitafiflj.supabase.co/functions/v1/quick-solution-payfast-notify-opps106-test`
 
 Do not send real money through these testing functions.
+
+## Follow-up staging verification — 14 November 2026 (canary v2)
+
+- The staging URL was probed from the execution container; outgoing DNS
+  resolution failed. External webpage retrieval also could not reach the
+  canary endpoint. Neither result proves the function itself is down.
+- PayFast's published source range list was consulted. An October 2026
+  Supabase public community discussion says `cf-connecting-ip` should be
+  overwritten at Cloudflare, but a maintainer explicitly asked for an
+  authoritative gateway contract; the security assumption remains **unverified**
+  until a controlled spoofed-header test and/or provider confirmation.
+- Fixed a second security/correctness issue: after the successful PayFast
+  projection, the original pending intent may become `cancelled` and a
+  separate completed gateway payment record is created. A genuine replay
+  must be matched by the **same PayFast provider payment ID**, not merely by
+  the old intent ID and amount.
+- Added `20261114225000_opps106_payfast_intent_replay.sql` and applied
+  the migration **to staging only**.
+- Live database assertions passed:
+  `valid_replay=true`, `wrong_payment_id=false`,
+  `valid_pending=true`, `wrong_amount=false`;
+  anon=false, authenticated=false, service_role=true for execute privilege.
+- Deployed the updated staging notification canary, version **2**, active.
+  Existing original staging checkout/notify functions and all production
+  functions were unchanged.
+- No successful PayFast sandbox transaction can be claimed. Staging environment
+  variable values, actual inbound client-IP header, and the hosted checkout
+  still require verification.
+
+Official source IP docs:
+https://developers.payfast.co.za/documentation/
+Supabase hosted header contract discussion:
+https://github.com/orgs/supabase/discussions/52040
