@@ -82,3 +82,36 @@ any `cf-connecting-ip` value received by an untrusted proxy is safe.
 
 **Open release gate:** test the source-IP trust boundary and actual incoming
 PayFast ITN in a controlled sandbox before saying this is production-ready.
+
+## 14 November 2026 — staging canary deployment update
+
+Completed:
+- Applied `opps106_payfast_intent_binding` to **staging only**, with success
+  reported by Supabase.
+- Ran persisted-function checks: matching intent=true, wrong amount=false,
+  wrong intent=false; anon and authenticated cannot execute; service_role can.
+- Deployed two **separate** staging Edge Function endpoints, leaving existing
+  checkout and notify versions unchanged:
+  - `quick-solution-payfast-opps106-test` (v1, active).
+  - `quick-solution-payfast-notify-opps106-test` (v1, active).
+- Canary checkout has its notify_url pointed at the canary notify function.
+- Confirmed both deployments' source and active status via Supabase tools.
+- Security advisors consulted; existing findings are not an approval of this
+  feature or its gateway setup.
+
+Still blocked:
+- Need actual proof that Supabase's inbound `cf-connecting-ip` value cannot
+  be spoofed on the Edge Function URL, including forged-header request.
+- No supported access to inspect staging secret **names/values** here; do not
+  infer `PAYFAST_SANDBOX`, return origin or trusted-IP settings are present.
+- This execution environment cannot resolve the staging HTTPS URL via curl,
+  so HTTP-level canary calls and PayFast sandbox payment are **not yet tested**.
+- Canary webhook deliberately fails closed if the source-IP trust/configuration
+  gate is absent.
+- The two original staging payment functions and production are unchanged.
+
+Use only the canary URLs when ready for negative and positive sandbox testing:
+`https://tijiamrfnxrbitafiflj.supabase.co/functions/v1/quick-solution-payfast-opps106-test`
+`https://tijiamrfnxrbitafiflj.supabase.co/functions/v1/quick-solution-payfast-notify-opps106-test`
+
+Do not send real money through these testing functions.
