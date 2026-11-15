@@ -170,3 +170,84 @@ QR is exposed.
   ONLY approved intermediate scan host/path once settlement is reviewed.
 - Run realistic 2-device concurrency, real JWT HTTP, replay, expired scan,
   finance ledger and phone/iMin tests before enabling switch.
+
+## 15 November 2026 — QR sandbox gateway binding implemented (gate still OFF)
+
+Staging-only SQL migrations applied:
+- `20261115171500_opps106_qr_scan_payfast_intent.sql`: adds unique QR
+  checkout-intent FK and checkout-start timestamp, plus service-role-only
+  `qs_opps106_start_counter_qr_checkout`. Locks canonical Café order then
+  QR request; verifies actual amount, no completed receipt, no unrelated
+  pending intent, eligible products, tenant, mode and two-minute QR expiry;
+  creates or reuses precisely one canonical pending PayFast intent. No
+  browser-supplied amount or order identity.
+- `20261115173000_opps106_qr_verified_settlement.sql`: service-role-only
+  `qs_opps106_settle_counter_qr`. Following the *externally verified*
+  signed PayFast ITN, it locks the order/QR, checks QR identity, cents and
+  its canonical pending intent, calls the existing Café
+  `commerce.qs_apply_payfast_payment` in the same transaction, and marks
+  the QR settled only after receipt verification. Same provider reference
+  is replayed without a second receipt; different provider reference,
+  late/altered or mismatched capture goes to Finance exception/quarantine.
+  A checkout initiated before QR expiry can finish within a bounded
+  60-minute window; the expired QR itself cannot be scanned again.
+- `20261115174500_opps106_qr_scanner_intent_reuse.sql`: fixes scanner status
+  so an already-started QR accepts only its **own** pending PayFast intent
+  during QR lifetime, but refuses any unrelated pending/complete payment.
+
+These were tested via **rollback SQL fixtures**, not real PayFast callbacks:
+- sandbox-only gate disabled => no checkout;
+- temporarily enable in transaction => first R350 QR scan creates one
+  pending intent; repeat scan reuses the exact intent; expired scan refused;
+- a simulated service-role capture credits one R350 receipt in rollback,
+  same reference returns replay, a second reference goes to review;
+- scanned QR status accepts its own pending intent but no other payment.
+All test fixtures were ROLLED BACK and never represented actual money.
+
+Staging-only Edge Functions:
+- `quick-solution-qr-opps106-notify` **v1 ACTIVE**, verify_jwt=false:
+  separate QR-only PayFast callback. Reuses the proven signed-ITN
+  validation pattern: explicit sandbox mode, Cloudflare source-IP allowlist,
+  PHP URL-encoded MD5 signature, merchant/m_payment_id/QR identity,
+  remote PayFast VALID. On COMPLETE invokes the canonical QR settlement
+  RPC. No changes to the already-working Café checkout/webhook.
+- `quick-solution-qr-opps106-scan` **v3 ACTIVE**, verify_jwt=false:
+  public bearer-UUID scan URL. Rejects invalid/expired/revoked QR;
+  sandbox-only checkout signing takes PayFast merchant credentials from
+  Edge secrets and request/amount/intent from server-locked SQL. Never
+  derives amount, origin or PayFast host from the caller. Browser return
+  message expressly does not claim a payment; ITN is authoritative.
+- Existing `quick-solution-qr-opps106-preflight` **v2 ACTIVE**, verify_jwt=true:
+  staff QR check/issue API remains behind OFF issuance switch.
+
+Post-install database audit:
+- `qr_payments.issuance_controls`: `cafe_order=false`,
+  `opps_invoice=false`.
+- `qr_payments.payment_requests`: 0 total / 0 active / 0 checkout intents.
+- Anonymous/authenticated roles cannot directly execute the
+  QR start/settlement RPCs; service_role can.
+
+### Outstanding gates — do NOT enable issuance yet
+
+- Real authenticated staff HTTP request through staging Edge Function,
+  then actual phone/iMin D4 QR scan, PayFast **sandbox** wallet payment,
+  signed ITN 200 and exactly one R350 ledger receipt have NOT happened.
+- Noncomplete (FAILED/CANCELLED) QR ITNs currently receive a safe no-ledger
+  acknowledgement; reconcile their pending intent cleanup before release.
+- Scan link expiry is checked before issuing the PayFast hosted URL.
+  PayFast's already-issued hosted URL may remain reusable independently;
+  verified additional captures go to Finance review but this does not
+  itself prevent a second wallet/card debit. Test and design checkout
+  cancellation/expiry at the provider or an appropriate compensating flow.
+- Frontend QR renderer still needs an explicitly reviewed
+  staging scan URL host/path allowance and UI; no counter QR button
+  has been enabled.
+- Real signed-JWT HTTP, HTTP webhook replay/negative cases, cross-tenant,
+  concurrent Cash/EFT, cancel/failure, late capture, security advisors,
+  regression suite, full release review before any production migration.
+- HTTP GET to public staging scan URL was not independently reachable from
+  the assistant's browsing environment; deployment ACTIVE is confirmed,
+  not an HTTP acceptance-test result.
+
+The QR payment system is **integrated in staging code but intentionally
+not enabled for users**. Production systems are untouched.
