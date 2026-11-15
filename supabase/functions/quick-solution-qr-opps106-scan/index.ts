@@ -77,12 +77,15 @@ Deno.serve(async req => {
         Number(intent.amountCents) <= 0 || intent.currency !== 'ZAR') {
       return result(503,'Unavailable','QR payment is unavailable.','Please ask Café staff for assistance.')
     }
-    const returnBase = url + '/functions/v1/quick-solution-qr-opps106-scan'
+    // Browser return is deliberately separate from settlement. These
+    // static staging pages cannot mark an order paid or read internal data.
+    // The signed QR-only ITN remains the sole automatic payment trigger.
+    const stagingReturnBase = 'https://joint-x-opps-git-feature-106-cafe-visibility-qr-joint-x.vercel.app'
     const name = String(intent.customerName || '').trim().split(/\s+/)
     const fields: Record<string,string> = {
       merchant_id:merchantId,merchant_key:merchantKey,
-      return_url:returnBase + '?rid=' + rid + '&return=1',
-      cancel_url:returnBase + '?rid=' + rid + '&cancel=1',
+      return_url:stagingReturnBase + '/opps106-qr-return.html',
+      cancel_url:stagingReturnBase + '/opps106-qr-cancel.html',
       notify_url:url + '/functions/v1/quick-solution-qr-opps106-notify',
       name_first:name[0] || 'Customer',
       name_last:name.slice(1).join(' ') || '',
