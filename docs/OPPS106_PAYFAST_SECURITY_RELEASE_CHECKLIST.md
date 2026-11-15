@@ -576,3 +576,33 @@ JSON error from `/rest/v1/rpc/get_quick_solution_tracking`
 (redact credential headers and any session tokens).
 Do not release production until direct contact lookup cause is
 resolved, not merely masked by the saved-token fallback.
+
+## 15 Nov 2026 — tracking timeline layout fix and remaining QR sequence
+
+The customer screenshot verified real staging tracking at stage 'Preparing your order',
+paid R350, correct product and Café collection; five-step collection timeline
+rendered the 'Complete' step on a wrapped second row because
+`src/styles/qs09.css` hard-coded `repeat(4,1fr)`.
+
+Fixed in isolated Quick Solution Café branch
+`feature/opps106-sandbox-browser-check`:
+- `TrackOrder.jsx` sets `--tracking-step-count` to the actual backend
+  timeline length.
+- `qs09.css` uses `repeat(var(--tracking-step-count, 4),minmax(0,1fr))`
+  and aligns progress rail to step centres; mobile inherits the same count.
+- Added static test `tests/opps106-tracking-layout.test.mjs`.
+- Vercel staging preview deployment from commit
+  `e8ca8002b207cdb9d6787b039dae4897594aecd4` is READY on
+  `https://quick-solution-cafe-staging-git-feature-opps106-d3a1f2-joint-x.vercel.app`.
+- Responsive visual QA and full Node test suite not yet completed.
+
+**Next staged workflow:** (1) verify invoice-origin quote → approved/paid
+invoice → OPPS order projection (prior SQL migration rollback tests passed,
+but this full customer path has not); (2) QR-specific customer/counter
+payment-request generation, scanned QR, token expiry, settlement
+correlation and replay, and notifications/work queue; (3) staging safety,
+role/RLS, security regression and production review.
+
+The prior PayFast storefront test already verifies gateway wallet checkout,
+signed ITN, staging ledger, staff handoff, and tracking. This is NOT yet proof
+the QR-specific payment request adapter and scanner path work.
