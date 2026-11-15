@@ -108,3 +108,65 @@ production remain untouched.
 redirect, map the scan to an order-specific canonical PayFast intent, and
 complete gateway callback identity/settlement regression before any payable
 QR is exposed.
+
+## 15 Nov 2026 — atomic counter QR issuance and scan validity gate
+
+**Staging migrations permanently applied (production unchanged):**
+- `20261115163500_opps106_counter_qr_issuance_disabled.sql`:
+  private `qr_payments.issuance_controls` with `cafe_order=false` and
+  `opps_invoice=false` defaults, no anonymous/user write access; authenticated
+  staff `qs_opps106_issue_counter_qr(uuid,text)` RPC.
+  It takes a `FOR UPDATE` lock on the canonical Café service order, invokes
+  the existing staff-scoped `qs_opps106_counter_qr_preflight` after lock,
+  checks the private issuance switch, uses a server-derived ZAR-cent total,
+  reuses an identical active operation or a concurrent staff request,
+  revokes/marks expired stale requests, and creates a 2-minute intermediate
+  scan URL with an unpredictable server-generated UUID. Browser never
+  supplies an amount.
+- `20261115165200_opps106_scanned_qr_readonly_status.sql`:
+  `qs_opps106_scan_counter_qr_status(uuid)` grants EXECUTE to
+  `service_role` only; returns invalid, revoked, expired, settled or
+  awaiting_gateway without customer information. It rejects paid, pending
+  gateway intents, or changed order totals, even while a QR row is active.
+
+**Staging Edge Functions:**
+- `quick-solution-qr-opps106-preflight` v2, ACTIVE,
+  `verify_jwt=true`: staff token verified with Supabase Auth, supports
+  `{"action":"check","orderId":"..."}` and
+  `{"action":"issue","orderId":"...","operationKey":"..."}`.
+  Issue currently returns QR_ISSUANCE_DISABLED for authorized eligible
+  orders because the server switch is **off**.
+- `quick-solution-qr-opps106-scan` v1, ACTIVE,
+  `verify_jwt=false` as a public scan landing: validates random UUID
+  using a service-role-only read RPC; 404 for unknown, 410 for
+  expired/revoked/settled, 503 for otherwise active requests.
+  **It never redirects to PayFast and never accepts payment.**
+
+**SQL rollback tests passed:**
+- Staff simulated with the `authenticated` DB role + JWT subject;
+  eligible new synthetic unpaid R350 counter order rejected with switch off.
+- Within the same ROLLED BACK transaction, temporarily enabled the switch:
+  first request generated R350/35,000 cents; same operation key reused
+  request, second device's different operation key reused exactly same
+  active ID and URL; unrelated user denied by preflight.
+- Independently tested scanner state valid→awaiting_gateway and
+  correctly constructed older expired request→expired; paid-order
+  reference→revoked, unknown→invalid.
+- Direct anon execute privileges on issuer/scanner false; scan only service
+  role, issuance only authenticated staff. No test rows persisted.
+- Post-apply verified both private switches false, QR request count **0**.
+
+**Limitations / next release checks:**
+- No real signed-user HTTP request has yet verified the v2 issue action.
+- The scanner public HTTP page has been deployed, but an external GET
+  could not be verified from this tool environment.
+- **No PayFast checkout link and no payable QR** is available.
+- Next implementation must atomically bind PayFast issuance to the QR
+  request, verify the user's scan before initiating checkout and enforce
+  expiration/revocation immediately before issuing a gateway URL, correlate
+  signed PayFast ITN to one saved request and canonical receipt, handle
+  late captures/quarantine. QR presentation module presently accepts only
+  PayFast checkout hosts; it must be intentionally updated to recognize
+  ONLY approved intermediate scan host/path once settlement is reviewed.
+- Run realistic 2-device concurrency, real JWT HTTP, replay, expired scan,
+  finance ledger and phone/iMin tests before enabling switch.
