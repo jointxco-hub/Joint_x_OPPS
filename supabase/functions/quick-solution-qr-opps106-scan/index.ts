@@ -1,8 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4'
+import md5 from 'https://esm.sh/js-md5@0.8.3'
 
-// OPPS-106 staging QR scanner: public landing is intentionally NOT payable.
-// The service role is only used inside this function to check a random UUID;
-// no customer name, amount, signed PayFast URL or secrets are returned.
+// OPPS-106 staging scanner. Checkout is sandbox-only, and the trusted
+// SQL issuer switch must be explicitly enabled (currently DISABLED).
+// Signed PayFast URL is derived ONLY from the server-locked QR payment intent.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i
 const htmlEscape = (value: string) => value.replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c))
@@ -18,9 +19,30 @@ main{width:min(100%,480px);padding:40px 32px;border:1px solid #dae6e1;border-rad
     'x-frame-options':'DENY','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   }})
 }
+const phpEncode = (v: string) => encodeURIComponent(v.trim())
+  .replace(/[!'()*~]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+  .replace(/%20/g, '+')
+function payfastUrl(fields: Record<string,string>, passphrase: string) {
+  const valid = Object.entries(fields).filter(([,v]) => v !== '')
+  const params = valid.map(([key,v]) => key + '=' + phpEncode(v)).join('&')
+  const signature = md5(params + '&passphrase=' + phpEncode(passphrase))
+  return 'https://sandbox.payfast.co.za/eng/process?' + params + '&signature=' + signature
+}
+const safeRedirect = (location: string) =>
+  new Response(null,{status:303,headers:{
+    location,'cache-control':'no-store','referrer-policy':'no-referrer',
+    'x-content-type-options':'nosniff'
+  }})
 Deno.serve(async req => {
   if (req.method !== 'GET') return new Response('Method not allowed',{status:405})
-  const rid = new URL(req.url).searchParams.get('rid') || ''
+  const params = new URL(req.url).searchParams
+  const rid = params.get('rid') || ''
+  if (params.has('return') || params.has('cancel')) {
+    if (!UUID.test(rid)) return result(404,'Invalid request','This QR code is not available.','Please ask Café staff.')
+    // Browser return is NEVER proof of payment. The signed webhook and
+    // canonical ledger determine paid status.
+    return result(200,'Processing','Payment verification in progress.','Please ask Café staff to confirm your payment before leaving.')
+  }
   if (!UUID.test(rid)) return result(404,'Invalid request','This QR code is not available.','Please ask Café staff for a valid payment request.')
   const url = Deno.env.get('SUPABASE_URL') || ''
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
@@ -32,8 +54,49 @@ Deno.serve(async req => {
     if (data === 'expired') return result(410,'Expired','This QR code has expired.','Ask Café staff for a new request. Do not retry an expired code.')
     if (data === 'revoked' || data === 'settled') return result(410,'Unavailable','This QR code is no longer valid.','Ask Café staff to confirm the payment status.')
     if (data !== 'awaiting_gateway') return result(404,'Invalid request','This QR code is not available.','Please ask Café staff for a valid payment request.')
-    // An otherwise eligible request is STILL BLOCKED: no PayFast redirection.
-    return result(503,'Testing','QR payments are not enabled yet.','This staging scan validates the QR only. No PayFast checkout is available.')
+    // Never fall through to LIVE PayFast, regardless of project secrets.
+    if (Deno.env.get('PAYFAST_SANDBOX') !== 'true') {
+      return result(503,'Disabled','QR sandbox checkout unavailable.','No payment has been initiated.')
+    }
+    const merchantId = Deno.env.get('PAYFAST_MERCHANT_ID') || ''
+    const merchantKey = Deno.env.get('PAYFAST_MERCHANT_KEY') || ''
+    const passphrase = Deno.env.get('PAYFAST_PASSPHRASE') || ''
+    if (!merchantId || !merchantKey || !passphrase)
+      return result(503,'Disabled','QR sandbox checkout unavailable.','No payment has been initiated.')
+
+    // Atomic server-side check: row lock + live amount + one QR intent.
+    // This is fail-closed while qr_payments.issuance_controls is OFF.
+    const { data: intent, error: intentError } = await client.rpc(
+      'qs_opps106_start_counter_qr_checkout',{p_request_id:rid})
+    if (intentError || intent?.ok !== true) {
+      return result(503,'Not available','QR payment is not available yet.','Ask Café staff for another payment method.')
+    }
+    if (intent.requestId !== rid || !UUID.test(intent.paymentIntentId || '') ||
+        !UUID.test(intent.tenantId || '') || !UUID.test(intent.orderId || '') ||
+        !Number.isSafeInteger(Number(intent.amountCents)) ||
+        Number(intent.amountCents) <= 0 || intent.currency !== 'ZAR') {
+      return result(503,'Unavailable','QR payment is unavailable.','Please ask Café staff for assistance.')
+    }
+    const returnBase = url + '/functions/v1/quick-solution-qr-opps106-scan'
+    const name = String(intent.customerName || '').trim().split(/\s+/)
+    const fields: Record<string,string> = {
+      merchant_id:merchantId,merchant_key:merchantKey,
+      return_url:returnBase + '?rid=' + rid + '&return=1',
+      cancel_url:returnBase + '?rid=' + rid + '&cancel=1',
+      notify_url:url + '/functions/v1/quick-solution-qr-opps106-notify',
+      name_first:name[0] || 'Customer',
+      name_last:name.slice(1).join(' ') || '',
+      email_address:String(intent.customerEmail || ''),
+      m_payment_id:'JXQR-' + rid,
+      amount:(Number(intent.amountCents)/100).toFixed(2),
+      item_name:'Quick Solution QR ' + String(intent.orderNumber || ''),
+      custom_str1:intent.orderId,
+      custom_str2:'jointx_qr_v1',
+      custom_str3:rid,
+      custom_str4:'cafe_order',
+      custom_str5:intent.tenantId
+    }
+    return safeRedirect(payfastUrl(fields,passphrase))
   } catch {
     return result(503,'Unavailable','Payment unavailable.','Please ask Café staff for another payment method.')
   }
