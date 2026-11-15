@@ -271,3 +271,37 @@ that the R350 payment was captured exactly once.
 The configured return origin is the **public Café website**. A staging-only
 order may not appear there after redirect; rely on staging ledger verification,
 not the browser redirect alone. Never mark paid from a return URL.
+
+## 15 November 2026 — first real PayFast sandbox payment and failed ITN
+
+The operator completed a R350 wallet-funded PayFast sandbox payment
+successfully for order `QS-SBX-OPPS106-20261115104927`. PayFast returned
+the customer to `https://cafe.jointx.co.za/?qs_payment=return&order=...`.
+As expected, public Café cannot restore the session for the synthetic
+staging-only order. The browser return is **not evidence of payment reconciliation**.
+
+**Authoritative staging read:** `commerce.service_orders.payment_status=unpaid`,
+one `commerce.service_order_payments` row `pending`, no `pf_payment_id`,
+and no linked OPPS order. Do not mark this paid manually.
+
+At 2026-11-15 11:02:23 UTC, real PayFast ITN reached the staging canary,
+HTTP 403. Cloudflare/Supabase logs showed the actual client IP
+`144.126.193.139` (inside the published PayFast allowlist).
+Function log exact rejection: `[qs-itn] Invalid ITN signature`.
+Therefore gateway/IP checks passed; signature check rejected the callback
+before merchant/intent/PF postback checks.
+
+PayFast docs specify PHP `urlencode` semantics in received parameter
+order, with appended passphrase, not generic JS `encodeURIComponent`.
+Source updated to escape `! ' ( ) * ~`, which JS ordinarily leaves bare,
+and deployed to staging notification canary v7. Added non-secret
+signature-mismatch diagnostics that log **only field names and duplicate count**.
+This is a candidate compatibility fix, **not yet proven to resolve the rejected
+ITN**, which arrived under v6. Never accept invalid signatures, spoof an ITN,
+or manually create receipts to force a pass.
+
+Next: request PayFast sandbox ITN resend for the same test transaction if
+the dashboard provides it, or conduct a **new isolated sandbox checkout**.
+Inspect v7 function logs and DB status to determine whether signature,
+merchant, intent, PayFast server validation and ledger reconciliation all
+pass. No production deployment until resolved.
