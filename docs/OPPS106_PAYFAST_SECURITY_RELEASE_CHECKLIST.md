@@ -172,3 +172,30 @@ https://github.com/orgs/supabase/discussions/52040
 - Direct HTTPS access from our execution environment remains unavailable
   (DNS resolution failure); **no actual HTTP spoof test has been executed**
   by the assistant as part of this change.
+
+## 15 November 2026 — Trinity gateway evidence and diagnostic retirement
+
+Trinity PowerShell observations supplied by operator:
+- Normal GET to staging ingress diagnostic: HTTP 200, JSON showed
+  `ingress_header_present=true`, `forged_header_survived=false`.
+- Same URL with a caller-forged `CF-Connecting-IP: 203.0.113.9`:
+  HTTP 403 Cloudflare error 1000, without Supabase function response.
+- DNS resolved against 1.1.1.1 after intermittent timeout.
+- Staging presence booleans: `PAYFAST_SANDBOX=true`,
+  merchant ID/key/passphrase configured; return origin NOT configured;
+  source-gateway flag NOT configured; trusted source header NOT configured;
+  sandbox IP allowlist NOT configured.
+
+Scope: This tests one public Cloudflare ingress route, NOT an official guarantee
+about every possible path. No sandbox checkout was performed.
+
+After collecting the evidence, the temporary public diagnostic was replaced
+with a static HTTP 410 function (`opps106-staging-ingress-check` v2), so
+it no longer discloses even configuration presence booleans.
+
+Outstanding: confirm genuine Quick Solution Café HTTPS return origin; safely
+set `QUICK_SOLUTION_RETURN_ORIGIN`. After validating ingress contract,
+configure `PAYFAST_TRUSTED_CLIENT_IP_HEADER`,
+`PAYFAST_SOURCE_IP_GATEWAY_VERIFIED` and a verified PayFast sandbox IP
+allowlist (do not blindly copy guessed ranges). Complete actual sandbox
+checkout, ITN and payment ledger/invoice/OPPS visibility checks.
