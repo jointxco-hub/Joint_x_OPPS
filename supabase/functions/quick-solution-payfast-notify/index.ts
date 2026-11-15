@@ -4,7 +4,11 @@ import md5 from 'https://esm.sh/js-md5@0.8.3'
 // PayFast ITN: reject before any privileged database mutation unless the
 // merchant, signature, trusted source, transaction intent and PayFast's
 // server-to-server validation all match.
-const encode = (value: string) => encodeURIComponent(value.trim()).replace(/%20/g, '+')
+// PHP urlencode semantics used for PayFast's signed form fields.
+// encodeURIComponent alone leaves ! ' ( ) * and ~ unescaped.
+const encode = (value: string) => encodeURIComponent(value.trim())
+  .replace(/[!'()*~]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase())
+  .replace(/%20/g, '+')
 const response = (status = 200) => new Response('OK', { status })
 const isIPv4 = (ip: string) => {
   const a = ip.split('.')
@@ -88,6 +92,16 @@ Deno.serve(async (req: Request) => {
   if (body.length > 8192) return response(413)
   const verified = signedPayload(body, passphrase)
   if (!verified || !same(verified.signature, verified.expected)) {
+    // Only non-secret signature diagnostics: no raw payload, hash, passphrase or PII.
+    // This helps distinguish key ordering/encoding from merchant passphrase drift.
+    const pairs = new URLSearchParams(body)
+    const signedFieldNames = [...pairs.keys()].filter(k => k !== 'signature')
+    console.error('[qs-itn] Signature diagnostic', {
+      count: signedFieldNames.length,
+      keys: signedFieldNames.join(','),
+      hasSignature: pairs.has('signature'),
+      duplicateCount: signedFieldNames.length - new Set(signedFieldNames).size
+    })
     console.error('[qs-itn] Invalid ITN signature')
     return response(403)
   }
