@@ -77,9 +77,11 @@ test('local signature and trusted IP gateway gate must pass before remote verifi
   assert.equal(called,1);
 });
 test('empty PayFast signed fields are included, and trailing fields after signature fail closed',()=>{
-  const empty={...data(),extra_field:''};
+  const { signature: _ignored, ...unsigned } = data();
+  const empty={...unsigned,extra_field:''};
   const signed=computeQrItnSignature(form(empty),'test-passphrase');
   assert.match(signed,/^[a-f0-9]{32}$/);
   assert.notEqual(signed,computeQrItnSignature(form({...empty,extra_field:'X'}),'test-passphrase'));
-  assert.equal(computeQrItnSignature(form({...empty,signature:'a'})+'&foo=bar','test-passphrase'),null);
+  const withSignature=form({...empty,signature:signed});
+  assert.equal(computeQrItnSignature(withSignature+'&foo=bar','test-passphrase'),null);
 });
