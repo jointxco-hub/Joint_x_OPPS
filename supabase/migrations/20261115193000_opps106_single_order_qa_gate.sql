@@ -98,6 +98,18 @@ begin
       where id=v_existing.id;
   end if;
 
+  -- Single-order QA gate: one QR request lifetime per permitted test order.
+  -- An expired QR cannot mint another checkout while its old hosted PayFast
+  -- page might still be open. A fresh test requires a separate controlled
+  -- operator-reviewed order.
+  if exists (
+    select 1 from qr_payments.payment_requests r
+    where r.tenant_id=v_tenant and r.target_type='cafe_order'
+      and r.target_id=p_order_id
+  ) then
+    return jsonb_build_object('ok',false,'reason','QA_ORDER_ALREADY_USED');
+  end if;
+
   v_new := gen_random_uuid();
   v_expiry := v_now + interval '2 minutes';
   -- This is an intermediate URL, NOT a PayFast checkout URL.
