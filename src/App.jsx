@@ -12,6 +12,7 @@ import RouteErrorBoundary from '@/components/common/RouteErrorBoundary'
 import { pagesConfig } from './pages.config'
 import { Suspense, lazy } from 'react';
 const CafeWorkQueue = lazy(() => import('./pages/CafeWorkQueue'));
+const CafeQrSandbox = lazy(() => import('./pages/CafeQrSandbox'));
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -82,6 +83,13 @@ const AuthenticatedApp = () => {
           <LayoutWrapper currentPageName={mainPageKey}>
             <RouteErrorBoundary pageName={mainPageKey} resetKey={location.pathname}>
               <MainPage />
+            </RouteErrorBoundary>
+          </LayoutWrapper>
+        } />
+        <Route path="/CafeQrSandbox" element={
+          <LayoutWrapper currentPageName="CafeQrSandbox">
+            <RouteErrorBoundary pageName="CafeQrSandbox" resetKey={location.pathname}>
+              <CafeQrSandbox />
             </RouteErrorBoundary>
           </LayoutWrapper>
         } />
