@@ -246,3 +246,28 @@ was also confirmed set. Do not put `PAYFAST_SOURCE_IP_GATEWAY_VERIFIED=true`
 into production based on one staging ingress test. If a real sandbox
 notification's origin falls outside the published set, hold rather than
 removing the gate or widening the list without PayFast confirmation.
+
+## 15 November 2026 — dedicated sandbox checkout fixture
+
+Created a staging-only service order (no customer email or phone):
+- Order number: `QS-SBX-OPPS106-20261115104927`
+- Order ID: `2847e6d5-d625-4c88-9b8f-fdc9926b287e`
+- Amount: R350, one valid PayFast-eligible product item
+- Customer: `OPPS106 Sandbox Test`
+- Marked `source_metadata.opps106Sandbox=true`.
+- Checkout-token value was **not** committed anywhere in GitHub.
+- Token validity is three hours from creation (expiry 2026-11-15 13:49:27 UTC).
+- The `commerce.qs_begin_payfast_payment` RPC returned `ok=true`
+  and `alreadyPaid=false` for the fixture inside a rolled-back transaction.
+- Canary checkout `quick-solution-payfast-opps106-test` updated to v6 to
+  **refuse all non-sandbox payment URLs** regardless of environment changes.
+
+Next: use the authenticated token in a client-side PowerShell POST to the
+canary checkout, insist response `sandbox=true`, and open hosted PayFast.
+Do not print or commit the token or signed payment URL. Once PayFast sandbox
+reports success, read-only inspect this order's ledger and ITN logs to verify
+that the R350 payment was captured exactly once.
+
+The configured return origin is the **public Café website**. A staging-only
+order may not appear there after redirect; rely on staging ledger verification,
+not the browser redirect alone. Never mark paid from a return URL.
