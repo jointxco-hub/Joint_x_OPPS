@@ -112,7 +112,7 @@ Deno.serve(async (req: Request) => {
     return response(403)
   }
   const p = verified.fields
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
   if (p.merchant_id !== merchantId || p.custom_str2 !== 'jointx_qr_v1'
       || p.custom_str4 !== 'cafe_order'
       || !uuid.test(p.custom_str1 || '') || !uuid.test(p.custom_str3 || '')
