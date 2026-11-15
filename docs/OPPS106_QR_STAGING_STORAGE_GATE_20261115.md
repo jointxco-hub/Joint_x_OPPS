@@ -585,3 +585,50 @@ Fixed isolated staging QR notification handler:
   receipt.
 
 Production remains untouched.
+
+## 15 Nov 2026 — R72 settled, staff-confirmed OPPS handoff workflow
+
+Verified staging service-order `QS-261115-9641`,
+`f89b7e69-e642-46ef-8d3b-85fa25b473cf`:
+- Order payment_status `paid`, amount R72.00.
+- Exactly 2 `commerce.service_order_payments` rows: one
+  `cancelled` original PayFast pending intent and one `completed`
+  R72.00 payment, provider ref `3520172`. **Only one actual completed
+  payment: no duplicate receipt.**
+- `commerce.service_order_handoffs.status='ready'`,
+  no blockers; one informational `COUNTER_GUEST_NO_CONTACT` warning
+  because the walk-in supplied no email/phone.
+- Existing preview payload `ready=true`,
+  proposed OPPS `payment_status='paid'`, `deposit_paid='72.00'`.
+- `service_orders.opps_order_id IS NULL`, and no OPPS order matching
+  this source UUID or order number exists. **Not sent to OPPS.**
+- Existing staff-only RPC
+  `admin_send_quick_solution_order_to_opps(uuid)` checks
+  signed-in Café staff `cafe.operations.manage`, locks original
+  service order, applies deterministic handoff idempotency and calls
+  canonical finance ledger synchronization. Do NOT execute through
+  unauthenticated/superuser bypass.
+
+Added isolated OPPS feature-branch code:
+- `src/api/cafeQrHandoff.js`: signed-in staff preview/send RPC client.
+- `src/pages/CafeQrSandbox.jsx`: separate "Send paid order to
+  OPPS" panel, **Preview OPPS handoff**, payment/deposit/warning/blocker
+  display, explicit checkbox approval and "Confirm Send to OPPS".
+  QR payment remains disabled; this is an operations handoff, not
+  a charge or payment replay.
+- `tests/issue-106-qr-handoff-ui.test.mjs`, now included in QR
+  CI workflow. [Run 43733109774](https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/43733109774)
+  passed **31/31** Node safety tests.
+
+**Deployment blocker:** Latest handoff UI could not be deployed through
+Vercel. `create_deployment` returned **HTTP 402
+`api-deployments-free-per-day`**, with suggested cooldown 24 hours.
+Existing READY preview is at an OLDER commit and DOES NOT yet contain
+this handoff panel. Vercel project quota/billing is user controlled;
+do not alter production, upgrade a plan or claim the feature is live.
+Once deploy allowance returns, publish an isolated preview from commit
+`49ababec596d9077b803d0530f2b04850f226c0a` or later, check
+staging env configuration, then ask signed-in staff to preview and send.
+
+Post-work database check: R72 order remains paid, submitted,
+`opps_order_id=NULL`, handoff **ready**; no staff send occurred.
