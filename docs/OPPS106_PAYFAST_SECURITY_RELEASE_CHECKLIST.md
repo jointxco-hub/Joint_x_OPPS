@@ -530,3 +530,49 @@ all reconciled.
 **Still NOT fully certified:** customer-visible tracking transitions;
 invoice-origin quote → invoice → order path; PayFast HTTP replay, negative
 cases and production release review. Keep prod unchanged, PR draft.
+
+## 15 November 2026 — customer tracking UI verification and browser fallback
+
+Customer screenshot: staging public tracking form for `QS-261115-1E4A`
+with the matching checkout phone displayed
+`+27671176230` returned
+`We could not verify that order` (frontend received null/falsy
+tracking response; exact HTTP response was not captured).
+
+Read-only staging diagnosis:
+- SQL `public.qs_normalize_sa_phone('+27671176230')` equals the
+  normalized phone on the order (`0671176230`).
+- `public.get_quick_solution_tracking('QS-261115-1E4A',null,
+  '+27671176230')` returns the order.
+- Same RPC in a `SET LOCAL ROLE anon` transaction returns order
+  `QS-261115-1E4A`, current stage `Preparing your order`.
+- `anon` and `authenticated` both have execute privilege.
+- This is **not a proven database contact-matching bug**. The
+  browser API/response path remains an unresolved discrepancy.
+- No corresponding request log could be located with available log
+  queries; do not speculate about its HTTP status.
+- The earlier synthetic PayFast staging payment and OPPS handoff
+  remain paid and reconciled.
+
+Staging-only UX safeguard in
+`jointxco-hub/quick-solution-cafe:feature/opps106-sandbox-browser-check`:
+- Added `findQuickSolutionTrackingSessionByOrderNumber` in
+  `src/lib/trackingSession.js` to read *existing* first-party localStorage
+  token for matching order, rejecting expired/malformed sessions.
+- When a manually entered tracking contact lookup returns no order,
+  `TrackOrder.jsx` attempts a second RPC only when the same browser
+  already holds a valid saved tracking token. Database token hash
+  verification is still mandatory; no public authorization was weakened.
+- Added `tests/opps106-tracking-session-fallback.test.mjs`.
+- Branch commit `51dc975643102e1ddd2df619f4a03a7b6a022caf`
+  preview deployment `dpl_9EqCiYtPHUEBy6B9YZ9M86o7yV6q`
+  shows **READY**. Full Node test suite not executed by assistant.
+- Stable preview URL remains
+  `https://quick-solution-cafe-staging-git-feature-opps106-d3a1f2-joint-x.vercel.app`.
+
+Retest on original staging checkout browser; if manual contact
+lookup still fails, collect browser DevTools Network status and
+JSON error from `/rest/v1/rpc/get_quick_solution_tracking`
+(redact credential headers and any session tokens).
+Do not release production until direct contact lookup cause is
+resolved, not merely masked by the saved-token fallback.
