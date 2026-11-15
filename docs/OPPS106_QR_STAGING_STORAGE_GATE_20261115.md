@@ -251,3 +251,71 @@ Post-install database audit:
 
 The QR payment system is **integrated in staging code but intentionally
 not enabled for users**. Production systems are untouched.
+
+## 15 November 2026 — QR FAILED/CANCELLED callback reconciliation
+
+Migration `20261115181500_opps106_qr_noncomplete_events.sql`
+was applied **only to staging**:
+- Private RLS-enabled `qr_payments.noncomplete_events`, denied to
+  `anon` and `authenticated`, with limited `service_role` grants.
+  Retains verified noncomplete provider events with request/order/tenant
+  identity, amount cents, handling and unique provider/status/request key.
+- New service-only
+  `public.qs_opps106_record_counter_qr_noncomplete(uuid,uuid,uuid,bigint,text,text)`
+  locks the order then request, matches tenant, amount, saved checkout intent
+  and pending status; closes only that matching `pending` intent to
+  `cancelled`/`failed`, revokes the associated QR, and writes an
+  auditable noncomplete event. Mismatch, already-settled and stale cases are
+  logged without claiming a payment. No client-selected payment status.
+- Dedicated `quick-solution-qr-opps106-notify` **v2 ACTIVE** now calls that
+  function for only source-allowlisted, locally signed,
+  merchant-identity matched, remotely PayFast-validated
+  `FAILED`/`CANCELLED` ITNs. Database failure returns 503
+  (retry), not a false 200 success. Complete captures still route
+  exclusively through the atomic QR settlement RPC.
+
+**Rollback-tested in staging:** synthetic R350 QR initiated one pending
+intent; a verified-simulation cancelled event changed that exact intent
+to cancelled, created one noncomplete ledger record, repeated event did
+not duplicate it; subsequent simulated COMPLETE went to
+`CAPTURE_REQUIRES_RECONCILIATION`, with ZERO completed order receipts.
+All fixture rows rolled back. This does not simulate an actual PayFast
+signed HTTP callback or bank debit.
+
+Post-deploy verification: `cafe_order=false`,
+`opps_invoice=false`, zero QR requests, zero noncomplete events,
+no direct anon RPC execution or private table read.
+Supabase callback deployment v2 ACTIVE.
+
+**Browser HTTP test blocker:** container-side curl to the Supabase
+staging hostname failed DNS resolution (`Could not resolve host`).
+We cannot assert real HTTP GET/POST/PayFast callback behavior from this
+environment. Validate staging project URL and actual route using a
+trusted client/browser before permitting QR issuance.
+
+**Unresolved risk:** a customer can abandon a PayFast hosted checkout
+without a usable signed FAILED/CANCELLED callback. Its pending intent
+must be treated as `review_required` after a defined age, not
+automatically cleaned and retried without validating provider status.
+PayFast-hosted URL reuse after QR expiry can still debit a customer;
+an expired local QR alone is NOT proof of provider-side cancellation.
+Keep the QR gate OFF until provider-side URL/retry behavior, operator
+reconciliation and duplicate-capture remediation are verified.
+
+**Read-only stale intent review (safe for service-privileged SQL):**
+```sql
+select r.id as qr_request_id,
+       r.target_id as cafe_order_id,
+       r.expires_at,
+       r.checkout_started_at,
+       p.status as payfast_intent_status,
+       extract(epoch from now()-r.checkout_started_at)/60 as age_minutes
+from qr_payments.payment_requests r
+join commerce.service_order_payments p on p.id=r.checkout_intent_id
+where r.target_type='cafe_order'
+  and p.status='pending'
+  and r.checkout_started_at < now()-interval '30 minutes'
+order by r.checkout_started_at;
+```
+Never automatically mark these paid or cancelled based only on elapsed
+time. Escalate to manual PayFast-side status checking.
