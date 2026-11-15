@@ -154,15 +154,32 @@ Deno.serve(async (req: Request) => {
     return response(503)
   }
 
-  if (p.payment_status !== 'COMPLETE') {
-    // No funds are claimed for a FAILED/CANCELLED ITN.
-    // Separate trusted cancellation handling is a prerequisite to rollout.
-    console.log('[qr-itn] Noncomplete gateway status received, no ledger mutation')
-    return response(200)
-  }
   const amountCents = Math.round(gross * 100)
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 ||
       Math.abs(amountCents / 100 - gross) > 0.000001) return response(403)
+
+  if (p.payment_status !== 'COMPLETE') {
+    // Only a signed, merchant-matched, source-allowlisted and remotely
+    // validated noncomplete gateway event may close the matching intent.
+    // A late COMPLETE must be quarantined, never silently credited.
+    const { data: closed, error: closeError } = await supabase.rpc(
+      'qs_opps106_record_counter_qr_noncomplete',{
+        p_request_id: p.custom_str3,
+        p_order_id: p.custom_str1,
+        p_tenant_id: p.custom_str5,
+        p_amount_cents: amountCents,
+        p_pf_payment_id: p.pf_payment_id,
+        p_status: p.payment_status === 'CANCELLED' ? 'cancelled' : 'failed'
+      })
+    if (closeError || closed?.ok !== true) {
+      console.error('[qr-itn] Failed/cancelled event not durably recorded',closeError?.code || 'unknown')
+      return response(503)
+    }
+    if (closed.status === 'mismatched') {
+      console.warn('[qr-itn] Noncomplete event identity mismatch logged')
+    }
+    return response(200)
+  }
 
   const { data, error } = await supabase.rpc('qs_opps106_settle_counter_qr',{
     p_request_id: p.custom_str3,
