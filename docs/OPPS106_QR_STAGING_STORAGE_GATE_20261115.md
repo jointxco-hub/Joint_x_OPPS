@@ -543,3 +543,45 @@ checks showed:
   proof. No second charge/retry until provider-side status is confirmed.
 
 Production unchanged; PR remains DRAFT.
+
+## 15 Nov 2026 — PayFast dashboard resend multipart ITN (QR v4)
+
+Following the R72 checkout, the user attempted a PayFast dashboard
+`Resend ITN`. PayFast displayed "ITN resend failed".
+Authoritative Supabase function logs showed **two real resend POSTs**:
+- 15:52:56 UTC: POST QR notify HTTP 403.
+- 15:53:36 UTC: POST QR notify HTTP 403.
+- Signature diagnostics showed a MIME multipart boundary and
+  `Content-Disposition: form-data; name` as ONE bogus URL-encoded
+  key, with no `signature` field. Root cause: dashboard resend
+  payload `multipart/form-data`, whereas QR handler called
+  `URLSearchParams(await req.text())` for every request.
+- Other safeguards (IP, source, merchant, signature, remote PayFast VALID,
+  canonical receipt) were intentionally NOT bypassed.
+
+Fixed isolated staging QR notification handler:
+- Accepts `application/x-www-form-urlencoded` and
+  `multipart/form-data`, validates multipart with `req.formData()`,
+  rejects file values, duplicate keys, invalid field names, unsupported
+  media types, and oversized normalized bodies.
+- Re-serializes decoded multipart fields as a URL-encoded form, preserving
+  order; then runs the **same** local signature/merchant/trusted source
+  and PayFast server-side validation before any SQL settlement.
+- GitHub Actions QR safety run
+  [43732533278](https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/43732533278)
+  passed **28/28** tests; the multipart test currently covers source
+  integration guards, not a true PayFast-signed multipart fixture.
+- Staging `quick-solution-qr-opps106-notify` **v4 ACTIVE**.
+- No new transaction, receipt or QR was created. Existing R72 order
+  remains unpaid, its PayFast intent pending, both issuance gates OFF.
+- **Still unverified:** actual dashboard resend with v4, remote PayFast
+  VALID acceptance, and database settlement. Before a controlled
+  resend, verify the sandbox transaction is COMPLETE and exactly R72,
+  using merchant reference
+  `JXQR-0fd9376f-2b3d-4df3-97d8-d46e04df37fe`.
+  Resend the EXISTING notification only, never start another checkout.
+  If PayFast reports another failure, capture ITN response and inspect
+  backend log; do not loosen signature/IP checks or fake a completed
+  receipt.
+
+Production remains untouched.
