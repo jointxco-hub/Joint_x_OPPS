@@ -490,3 +490,56 @@ Actual signed-in staff trial of R60 counter order
   scanner GET and HTML rendering tests.
 
 No production changes.
+
+## 15 November 2026 — R72 sandbox completion but rejected ITN; return-page fix
+
+User confirmed PayFast sandbox completion for R72 Café counter order
+`QS-261115-9641`, order UUID
+`f89b7e69-e642-46ef-8d3b-85fa25b473cf`.
+This is NOT YET a completed OPPS payment. Authoritative staging
+checks showed:
+- QR `0fd9376f-2b3d-4df3-97d8-d46e04df37fe` amount 7200 cents,
+  checkout intent `9397a087-d81e-4c6b-a72a-2fd0371a7502`,
+  started 15:42:25 UTC, still pending and without provider reference.
+- Public scanner GET at 15:42:25 UTC returned HTTP **303** (redirect).
+- QR-specific PayFast ITN POST at **15:43:04 UTC returned 403**;
+  function log: `[qr-itn] Invalid merchant/order/intent identity`.
+- Browser GET return to scan function
+  `...?rid=...&return=1` returned **HTTP 200** at 15:43:21 UTC.
+  The staff OPPS page did not auto-refresh/confirm payment. Browser
+  return is NOT settlement evidence.
+- Root cause of ITN rejection: same malformed UUID regex previously
+  fixed in the QR scanner was still present in QR notifier. This rejects
+  valid custom_str1/order, custom_str3/request and custom_str5/tenant
+  before the remote PayFast validation and canonical settlement.
+- Fixed `quick-solution-qr-opps106-notify` and deployed **v3 ACTIVE**
+  with the correct five-part UUID regex. Added
+  `tests/issue-106-qr-notify-uuid.test.mjs`; GitHub QR CI
+  [run 43731612660](https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/43731612660)
+  passed **23/23**.
+- New static neutral no-PayFast-claim pages:
+  `public/opps106-qr-return.html` and
+  `public/opps106-qr-cancel.html`. QR scanner **v5 ACTIVE** now signs
+  URLs to isolated feature-branch preview static pages instead of
+  the prior Supabase function HTML. This is effective for FUTURE
+  checkouts only; old PayFast return URLs cannot be altered.
+  CI [run 43731767428](https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/43731767428)
+  **25/25 passed**. HTML page route Vercel deployment readiness and
+  real-browser rendering still require an independent acceptance check.
+- Immediately switched both QR issuance controls OFF. Order remains
+  `unpaid`, original pending intent/QR not mutated or mis-credited.
+- PayFast official docs (developers.payfast.co.za) explicitly state
+  **Sandbox payment notifications are sent only once**, notwithstanding
+  generic live ITN retry guidance. Do not assume failed initial sandbox
+  notification will retry after callback fix.
+- **Finance reconciliation required**: look up transaction in PayFast
+  Sandbox dashboard, ITN and transaction detail, by merchant reference
+  `JXQR-0fd9376f-2b3d-4df3-97d8-d46e04df37fe`. Confirm amount,
+  status, provider payment ID and ITN failure, without exposing
+  credentials. Do NOT replay a fabricated signed ITN or set the order
+  paid from a browser return. Test a legitimate provider-native
+  redelivery if offered and if the signed source passes all validation,
+  otherwise use reviewed sandbox reconciliation with independent provider
+  proof. No second charge/retry until provider-side status is confirmed.
+
+Production unchanged; PR remains DRAFT.
