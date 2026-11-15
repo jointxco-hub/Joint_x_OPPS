@@ -11,7 +11,7 @@ declare
 begin
   if p_request_id is null then return 'invalid'; end if;
   select r.id,r.tenant_id,r.target_id,r.status,r.expires_at,
-         r.amount_cents,r.checkout_url
+         r.amount_cents,r.checkout_url,r.checkout_intent_id
     into v_req
     from qr_payments.payment_requests r
     where r.id=p_request_id and r.target_type='cafe_order';
