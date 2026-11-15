@@ -488,3 +488,45 @@ After handoff check `commerce.service_orders.opps_order_id`,
 `public.orders.payment_status='paid'`,
 and exactly one synced `public.transactions` completed receipt.
 Do not reuse an existing order number, invent payment rows or move to prod.
+
+## 15 November 2026 — real browser test: authenticated Café → OPPS handoff PASS
+
+Operator confirmed using the Café staging staff action to send normal
+customer-browser order `QS-261115-1E4A` to OPPS.
+
+**Authoritative staging query evidence:**
+- Café service order `2adcec55-997f-487b-afd5-f1d09a469567`:
+  `status=accepted`, `payment_status=paid`, `total_amount=350`.
+- `commerce.service_order_handoffs`: `status=sent`,
+  `sent_at=2026-11-15 13:25:27.451242+00`,
+  `opps_order_id=2e142934-7fb8-4929-82b1-575dc6d7292e`,
+  `blockers=[]`, `warnings=[]`.
+- Linked `public.orders` row has same order number, source
+  `quick_solution`, status `confirmed`, payment_status `paid`,
+  `total_amount=350`, `deposit_paid=350`,
+  fulfillment `collection`, and correct service-order backlink.
+- Exactly **one** OPPS order exists for this number and tenant.
+- Exactly **one** completed Café PayFast receipt R350, plus one cancelled
+  pending intent. The cancelled intent is NOT a completed receipt.
+- Exactly **one** completed OPPS `public.transactions` income row for R350,
+  linked to the service order and OPPS order. No duplicate completed
+  finance transaction. Important: staging finance row presently
+  `is_test=false` and `excluded_from_reports=false`; **do not
+  use this staging transaction in real reporting**.
+- `commerce.qs_customer_payment_snapshot` returned:
+  `cafePaid=350`, `oppsPaid=350`, `balanceDue=0`,
+  `issues=[]`, `reviewRequired=false`.
+- One service-order tracking token exists (expires
+  2027-05-14 13:21:39 UTC), but the customer-visible tracking page
+  has **not yet been explicitly tested**.
+- `public.opps_invoices`: zero linked nonvoid invoices for this
+  storefront order. Invoice-origin order projection remains a separate
+  outstanding workflow.
+
+**PASS:** Normal staging browser → signed PayFast ITN → Café paid
+→ authorized staff handoff → one OPPS order + one finance ledger entry,
+all reconciled.
+
+**Still NOT fully certified:** customer-visible tracking transitions;
+invoice-origin quote → invoice → order path; PayFast HTTP replay, negative
+cases and production release review. Keep prod unchanged, PR draft.
