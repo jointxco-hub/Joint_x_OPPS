@@ -460,3 +460,31 @@ set the payment session itself, unlike the earlier PowerShell test.
 Then sign into the staging Café admin to PREVIEW and SEND the order to
 OPPS; verify exactly one OPPS order and matching finance ledger with
 read-only queries. Do not reuse the contactless synthetic orders.
+
+## 15 November 2026 — genuine staging browser return and handoff readiness PASS
+
+Operator provided payment-confirmed screenshot for normal staging storefront
+order `QS-261115-1E4A` (not PowerShell).
+Staging database read validated:
+- order ID `2adcec55-997f-487b-afd5-f1d09a469567`, storefront channel;
+- `payment_status=paid`, total R350, one completed R350 PayFast receipt
+  provider ref `3520004`, prior pending intent cancelled;
+- browser return showed the same order number, R350, Paid;
+- legitimate contact exists on the order;
+- `commerce.qs_build_opps_handoff_preview` returned `ready=true`,
+  **no blockers, no warnings**. Its proposed OPPS order maps R350
+  total and deposit paid, item specification, and Café collection;
+- one service-order tracking token exists (its actual use via
+  public tracking page is not yet verified);
+- as of verification, **no OPPS order** exists for this storefront
+  reference and **no staff handoff row** exists. This is expected
+  while the authenticated staff send action has not been performed.
+
+The next controlled test is a staff sign-in to staging Café admin,
+preview the order, then explicitly send it to OPPS. Never call the staff
+function from the privileged database connection to bypass staff auth.
+After handoff check `commerce.service_orders.opps_order_id`,
+`commerce.service_order_handoffs.status='sent'`,
+`public.orders.payment_status='paid'`,
+and exactly one synced `public.transactions` completed receipt.
+Do not reuse an existing order number, invent payment rows or move to prod.
