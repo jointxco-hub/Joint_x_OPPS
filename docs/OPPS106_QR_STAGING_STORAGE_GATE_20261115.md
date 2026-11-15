@@ -394,3 +394,61 @@ customer-facing acceptance.
 
 Both QR issuance switches remain OFF and no QR requests/charges
 were created.
+
+## 15 Nov 2026 — ONE-order PayFast sandbox trial enabled (expires automatically)
+
+Verified PayFast's official custom payment documentation confirms merchant
+`m_payment_id` correlation and sandbox wallet testing; no official
+guarantee established that a signed, already-issued hosted checkout URL
+cannot be revisited/paid again. The 14-day PayFast Request Money expiry
+does not apply to the custom PayFast checkout used here. Safeguards in
+our QR ledger, callback and Finance review remain necessary.
+
+Staging migration `20261115193000_opps106_single_order_qa_gate.sql`
+was compiled/tested inside a rolled-back transaction and applied to
+staging. It adds `allowed_order_id` and `active_until` to the
+private QR issuance control, and alters both staff issuer and public
+scan-to-checkout RPC to require **exact allowed order ID and
+unexpired window**, not merely global `enabled=true`.
+The staff issuer additionally blocks ANY fresh issuance after a first
+QR request for that exact test order; different staff attempts may only
+reuse that same active request. No unrestricted tenant-wide
+activation is possible via this gate.
+
+Rollback tests verified a staff-issued scoped R60 QR, idempotent second
+request, refusal of re-issue after old QR expiry, and missing-request
+rejection without mutating durable rows.
+
+**Time-limited activation** in staging:
+- tenant Quick Solution Café; `cafe_order` only,
+- order `QS-261115-33EC`,
+  `76cfdcca-2447-4f5e-9d57-360da7a2fb1d`, R60 unpaid,
+- `qr_payments.issuance_controls.cafe_order.enabled=true`,
+  `allowed_order_id` exact UUID,
+  `active_until=2026-11-15 16:07:47.092754+00` (18:07:47 SAST).
+- `opps_invoice.enabled=false`.
+- At initial readback 2026-11-15 15:23:05 UTC, scope active,
+  0 QR request rows, 0 started checkouts, order still unpaid.
+- After `active_until`, both the staff issue RPC and public QR
+  scan-to-PayFast RPC reject use even if the row's `enabled` bit
+  remains true. No scheduler automatically toggles the bit.
+- This is a PayFast **sandbox** wallet test; never submit live card
+  details or treat browser return as settlement.
+
+**Next manual acceptance:** staff opens isolated OPPS preview
+`/CafeQrSandbox`, enters the R60 UUID, checks eligibility and
+requests QR; screen currently displays a validated **scan link**
+rather than an encoded QR image. Open that link on a separate
+phone/browser while the two-minute QR itself is valid; verify
+redirect reaches `sandbox.payfast.co.za` only. Complete a single
+sandbox wallet transaction and inspect signed QR-specific ITN,
+one completed Café receipt, order paid, QR settled and any linked
+OPPS projections. STOP on provider error and do not attempt
+a second payment without review.
+
+**Unresolved release blocker:** custom hosted PayFast URL can possibly
+be replayed after QR expiry. Any additional capture is quarantined
+for Finance rather than double-posted; this does not guarantee
+a second payer debit could not occur. Live release requires
+provider-side confirmation and remediation/refund workflow.
+Production remains unchanged.
