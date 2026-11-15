@@ -47,7 +47,11 @@ function signedPayload(body: string, passphrase: string) {
     seen.add(key)
     if (key === 'signature') {
       signature = value
-    } else if (value !== '') {
+      // PayFast's reference PHP code ends the signed field sequence here.
+      // A signature followed by more fields is ambiguous: fail closed.
+      if ([...pairs.keys()].at(-1) !== 'signature') return null
+    } else {
+      // Empty values are signed too. Omitting them changes the hash.
       fields.push([key, value])
     }
   }
