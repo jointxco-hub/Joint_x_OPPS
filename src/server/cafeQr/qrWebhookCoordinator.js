@@ -16,8 +16,8 @@ const permanentInvalid = new Set([
 
 export function createQrWebhookCoordinator({
   verify = verifyQrPayfastItn, loadSavedRequest, paymentService,
-  quarantineVerifiedCapture, expectedMerchantId, sandbox,
-  fetchImpl,
+  quarantineVerifiedCapture, expectedMerchantId, sandbox, passphrase,
+  trustedSourceVerified = false, fetchImpl,
 }) {
   if (typeof verify !== "function" || typeof loadSavedRequest !== "function" ||
       typeof paymentService?.recordVerifiedSettlement !== "function" ||
@@ -27,7 +27,8 @@ export function createQrWebhookCoordinator({
   return async function handleQrWebhook(rawBody) {
     let verified;
     try {
-      verified = await verify(rawBody, { expectedMerchantId, sandbox, fetchImpl });
+      verified = await verify(rawBody, { expectedMerchantId, sandbox, passphrase,
+        trustedSourceVerified, fetchImpl });
     } catch {
       return retry("VALIDATOR_ERROR");
     }
