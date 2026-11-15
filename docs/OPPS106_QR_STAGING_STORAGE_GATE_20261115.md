@@ -361,3 +361,36 @@ PayFast sandbox scan after the hosted checkout re-use risk is reviewed.
 
 Verification after these commits: both issuance controls false,
 `qr_payments.payment_requests` count 0, stale pending QR count 0.
+
+## 15 Nov 2026 — real CI tests and ready OPPS preview
+
+- Vercel linked OPPS project `joint-x-opps` on team `joint-x`
+  published **READY** preview for commit
+  `e64d0de42573302dc8f5df87413308a36de473ae`, containing the
+  isolated `/CafeQrSandbox` route:
+  `https://joint-x-opps-git-feature-106-cafe-visibility-qr-joint-x.vercel.app/CafeQrSandbox`.
+- Read-only inspection of Vercel Preview `VITE_SUPABASE_URL` confirmed
+  it targets `https://tijiamrfnxrbitafiflj.supabase.co` (staging),
+  NOT production; do not echo or expose the separate anon key.
+- Added branch-scoped GitHub Actions
+  `.github/workflows/opps106-qr-safety.yml`, with
+  read-only repository permission and no deployment secrets, to run
+  the QR presentation, staff UI security and PayFast correlation
+  Node test files.
+- Initial CI run caught one **invalid test fixture**: a signature
+  placeholder was followed by a signed field, which the signer
+  correctly rejects. Fixed the test to sign all unsigned fields
+  first, then separately assert that appending a field after
+  `signature` is forbidden.
+- Re-run GitHub Actions run `43727517121`, job `132852576325`
+  passed **18/18 tests**, zero failures on Node 24.
+  See https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/43727517121.
+
+**Remaining:** browser navigation/login/real authenticated RPC
+request not yet validated; full application test suite and actual
+PayFast sandbox phone scan not yet performed. CI runs pure Node
+security tests; Vercel READY reports successful app build, not
+customer-facing acceptance.
+
+Both QR issuance switches remain OFF and no QR requests/charges
+were created.
