@@ -64,3 +64,47 @@ gateway behavior; the full QR code test suite has not run yet.
 
 Until the above gates pass, keep all QR payment issuance endpoints disabled
 and keep production unchanged.
+
+## 15 November 2026 — authenticated Café counter QR preflight deployed
+
+New staging migration `20261115150500_opps106_counter_qr_preflight.sql`
+created `public.qs_opps106_counter_qr_preflight(uuid)`, a tightly
+scoped read-only `SECURITY DEFINER` RPC. It:
+- Derives user identity from `auth.uid()`, not caller-provided user ID.
+- Checks active Quick Solution Café tenant membership and explicit
+  `quick_solution` capability; anon has no execute grant.
+- Rejects any other tenant, storefront channel, OPPS-linked order,
+  paid/partial order, incomplete product configuration, pending gateway
+  intent, blocked/review-required order and unconfirmed delivery fee.
+- Derives amount in integer cents from the stored total and verified
+  completed service-order receipts; no browser-provided amount.
+- Returns a minimal eligible/not-payable outcome and notes this is
+  **only a preflight**. It does not lock the order or grant charge authority.
+
+The migration was compiled inside a rollback transaction and tested using
+a rollback-only R350 counter fixture with one valid product and an authenticated
+Café staff-role simulation. Assertions passed for authorized unpaid counter,
+paid counter, storefront order, and unrelated user. Role/claim simulation is
+**not** a full real signed-JWT HTTP acceptance test.
+
+Staging migration permanently installed. Post-install SQL checks confirmed:
+- function executable for `authenticated` but NOT `anon`;
+- null/absent user identity returns `NOT_AUTHORIZED`;
+- `qr_payments.payment_requests` remains empty.
+
+New Edge Function `quick-solution-qr-opps106-preflight` v1 ACTIVE,
+`verify_jwt=true`, read-only POST
+`{"action":"check","orderId":"uuid"}`. It verifies the actual Supabase
+Auth user token via `auth.getUser(jwt)`, then invokes the staff-scoped
+RPC using that JWT. Browser CORS is pinned to the isolated staging Café
+Vercel branch-preview hostname; CORS is NOT authorization.
+
+**Not yet tested:** an authenticated real browser POST to this new
+function. It cannot generate, issue, render or settle a QR. The normal
+Café checkout, original payment functions, existing OPPS order state and
+production remain untouched.
+
+**Next:** build the durable short-lived QR issuance + guarded intermediate
+redirect, map the scan to an order-specific canonical PayFast intent, and
+complete gateway callback identity/settlement regression before any payable
+QR is exposed.
