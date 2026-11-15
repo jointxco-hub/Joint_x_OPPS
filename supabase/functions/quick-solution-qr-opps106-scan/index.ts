@@ -4,7 +4,7 @@ import md5 from 'https://esm.sh/js-md5@0.8.3'
 // OPPS-106 staging scanner. Checkout is sandbox-only, and the trusted
 // SQL issuer switch must be explicitly enabled (currently DISABLED).
 // Signed PayFast URL is derived ONLY from the server-locked QR payment intent.
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const htmlEscape = (value: string) => value.replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c))
 function result(status: number, label: string, title: string, message: string) {
