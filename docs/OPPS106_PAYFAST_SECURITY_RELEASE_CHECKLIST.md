@@ -327,3 +327,38 @@ pass. No production deployment until resolved.
 - Next: initiate hosted PayFast sandbox checkout on Trinity, then verify
   function_logs for canary v8, gateway ITN HTTP status, service order
   ledger and order status. Do not infer payment from return URL alone.
+
+## 15 November 2026 — SECOND SANDBOX PAYMENT VERIFIED SUCCESSFULLY
+
+Operator completed wallet-funded R350 sandbox payment for isolated staging
+fixture `QS-SBX-OPPS106-B-20261115110737`, order ID
+`06e4bc70-ea4b-4ae0-83d6-44623fed9d5f`.
+
+**Authoritative read-only staging verification**
+- PayFast ITN posted at `2026-11-15T11:09:12.461Z` to
+  `quick-solution-payfast-notify-opps106-test` **v8**, HTTP **200**.
+- The inbound `cf-connecting-ip` was `144.126.193.139`, an officially
+  allowlisted PayFast IPv4 source.
+- `commerce.service_orders.payment_status = paid`.
+- Exactly **one** `commerce.service_order_payments` row `completed`:
+  R350.00, provider PayFast, gateway reference `3519868`.
+- No pending intent remains; prior session intent was `cancelled`.
+- No duplicate completed receipt, completed amount sums to R350.00.
+- The synthetic order has `opps_order_id = null`; no
+  `commerce.service_order_handoffs` entry exists. The **OPPS order handoff
+  has NOT been verified** and should not be claimed as working.
+- Public Café return page could not restore the browser payment session
+  because synthetic staging order was created outside the real public
+  storefront. This is an expected cross-environment session mismatch, but
+  **normal customer-flow return UX has NOT been tested**.
+
+**Proven:** Hosted PayFast sandbox checkout → notification source/signature
+verification → PayFast server validation/intent binding → one completed
+staging receipt → order payment status paid. HTTP 200 is supported by the
+database receipt; individual intermediate validations are inferred from
+the fail-closed deployed handler rather than independently exposed.
+
+**Not proven:** replay of an identical ITN via HTTP, normal-site session
+restoration, Café-to-OPPS handoff / tracking, invoice-origin orders,
+production readiness. Original staging functions and production remain
+unchanged. Keep draft PR and do not claim end-to-end launch readiness.
