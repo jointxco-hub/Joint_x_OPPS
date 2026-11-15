@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { qrPayfastRequestFields, verifyQrPayfastItn, correlateQrPayment } from '../src/server/cafeQr/qrPayfastCorrelation.js';
+import { qrPayfastRequestFields, verifyQrPayfastItn, correlateQrPayment, computeQrItnSignature } from '../src/server/cafeQr/qrPayfastCorrelation.js';
 
 const request = {id:'11111111-1111-4111-8111-111111111111',targetId:'22222222-2222-4222-8222-222222222222',tenantId:'33333333-3333-4333-8333-333333333333',type:'opps_invoice',amountCents:14500};
-const data = () => ({...qrPayfastRequestFields(request),merchant_id:'merchant-123',pf_payment_id:'pf-1',payment_status:'COMPLETE',amount_gross:'145.00',signature:'dummy'});
+const data = () => ({...qrPayfastRequestFields(request),merchant_id:'merchant-123',pf_payment_id:'pf-1',payment_status:'COMPLETE',amount_gross:'145.00',signature:'pending'});
 const form = values => new URLSearchParams(values).toString();
 const validFetch = async (url, options) => {assert.match(url,/^https:\/\/(sandbox\.)?payfast\.co\.za\/eng\/query\/validate$/);assert.equal(options.method,'POST');return {ok:true,text:async()=> 'VALID'};};
-const run = (values=data(),opts={}) => verifyQrPayfastItn(form(values),{expectedMerchantId:'merchant-123',sandbox:true,fetchImpl:validFetch,...opts});
+const run = (values=data(),opts={}) => {
+  const entry = { ...values };
+  if (entry.signature) entry.signature = computeQrItnSignature(form(entry),'test-passphrase');
+  return verifyQrPayfastItn(form(entry),{expectedMerchantId:'merchant-123',sandbox:true,
+    passphrase:'test-passphrase',trustedSourceVerified:true,fetchImpl:validFetch,...opts});
+};
 test('issuer creates distinctive immutable request correlation fields',()=>{
   const fields=qrPayfastRequestFields(request);
   assert.equal(fields.m_payment_id,`JXQR-${request.id}`);
@@ -54,4 +59,27 @@ test('refuses mismatched private request identity or amount after verification',
   for(const change of [{tenantId:'another'},{targetId:'other'},{type:'cafe_order'},{id:'other'},{amountCents:14400}]){
     assert.equal(correlateQrPayment(verified,{...request,...change}).reason,'CORRELATION_MISMATCH');
   }
+});
+
+test('local signature and trusted IP gateway gate must pass before remote verification',async()=>{
+  const entry=data();
+  entry.signature=computeQrItnSignature(form(entry),'test-passphrase');
+  let called=0;
+  const fakeFetch=async()=>{called++;return {ok:true,text:async()=> 'VALID'}};
+  const safeOpts={expectedMerchantId:'merchant-123',sandbox:true,passphrase:'test-passphrase',fetchImpl:fakeFetch};
+  assert.equal((await verifyQrPayfastItn(form(entry),safeOpts)).reason,'SECURITY_GATE_UNAVAILABLE');
+  assert.equal((await verifyQrPayfastItn(form(entry),{...safeOpts,trustedSourceVerified:true,passphrase:''})).reason,'SECURITY_GATE_UNAVAILABLE');
+  assert.equal(called,0);
+  const bad={...entry,amount_gross:'145.50'};
+  assert.equal((await verifyQrPayfastItn(form(bad),{...safeOpts,trustedSourceVerified:true})).reason,'SIGNATURE_INVALID');
+  assert.equal(called,0);
+  assert.equal((await verifyQrPayfastItn(form(entry),{...safeOpts,trustedSourceVerified:true})).ok,true);
+  assert.equal(called,1);
+});
+test('empty PayFast signed fields are included, and trailing fields after signature fail closed',()=>{
+  const empty={...data(),extra_field:''};
+  const signed=computeQrItnSignature(form(empty),'test-passphrase');
+  assert.match(signed,/^[a-f0-9]{32}$/);
+  assert.notEqual(signed,computeQrItnSignature(form({...empty,extra_field:'X'}),'test-passphrase'));
+  assert.equal(computeQrItnSignature(form({...empty,signature:'a'})+'&foo=bar','test-passphrase'),null);
 });
