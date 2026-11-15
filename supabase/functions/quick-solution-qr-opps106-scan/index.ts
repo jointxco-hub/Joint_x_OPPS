@@ -12,7 +12,7 @@ function result(status: number, label: string, title: string, message: string) {
 *{box-sizing:border-box}body{margin:0;background:#f7f8f7;color:#10191a;font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:grid;place-items:center;padding:24px}
 main{width:min(100%,480px);padding:40px 32px;border:1px solid #dae6e1;border-radius:24px;background:#fff;box-shadow:0 20px 55px #012d2511}
 .eyebrow{letter-spacing:.14em;font-weight:800;text-transform:uppercase;color:#0f7766;font-size:11px}h1{font-size:clamp(26px,6vw,38px);line-height:1.15;letter-spacing:-.035em;margin:16px 0}p{color:#526263}small{color:#73817e}a{color:#076d60}
-</style></head><body><main><div class="eyebrow">Quick Solution · Staging</div><h1>${htmlEscape(title)}</h1><p>${htmlEscape(message)}</p><small>${htmlEscape(label)} · No payment has been started from this page.</small></main></body></html>`
+</style></head><body><main><div class="eyebrow">Quick Solution · Staging</div><h1>${htmlEscape(title)}</h1><p>${htmlEscape(message)}</p><small>${htmlEscape(label)} · Payment is confirmed only after verified PayFast notification.</small></main></body></html>`
   return new Response(page,{status,headers:{
     'content-type':'text/html; charset=utf-8','cache-control':'no-store',
     'x-content-type-options':'nosniff','referrer-policy':'no-referrer',
