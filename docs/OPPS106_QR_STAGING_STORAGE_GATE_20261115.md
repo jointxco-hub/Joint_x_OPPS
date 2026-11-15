@@ -452,3 +452,41 @@ for Finance rather than double-posted; this does not guarantee
 a second payer debit could not occur. Live release requires
 provider-side confirmation and remediation/refund workflow.
 Production remains unchanged.
+
+## 15 November 2026 — first live QR scan bug and fix
+
+Actual signed-in staff trial of R60 counter order
+`QS-261115-33EC` / `76cfdcca-2447-4f5e-9d57-360da7a2fb1d`:
+- Staff issuance at 15:27:59 UTC created QR
+  `7705b342-1323-4b54-89d1-30990b9d91ea`, amount 6,000 cents,
+  expires 15:29:59 UTC. No PayFast checkout intent ever created.
+- Public scan GET at 15:28:09 UTC returned HTTP 404 according to
+  Supabase function_edge_logs, **before expiry**. The browser displayed
+  raw HTML containing "invalid request" rather than a rendered page.
+- ROOT CAUSE of 404: `quick-solution-qr-opps106-scan/index.ts`
+  used a malformed UUID regex that omitted the fourth UUID segment:
+  `[89ab][0-9a-f]{12}` instead of
+  `[89ab][0-9a-f]{3}-[0-9a-f]{12}`. Even valid server-issued UUIDs
+  failed validation before database lookup.
+- Database scanner status simulated before expiry inside a ROLLED BACK
+  transaction returned `awaiting_gateway`, confirming the underlying
+  QR/order state was eligible; its current status naturally returns expired.
+- Fixed and deployed Edge scanner **v4 ACTIVE**, commit
+  `d3b52a0f2d99b14ad14e0cfbd707284d1350fe34`.
+- Added regression `tests/issue-106-qr-scan-uuid.test.mjs`
+  for real issued UUID, malformed/truncated inputs; QR CI run
+  `43730375910` passed **20/20**, zero failures.
+- Immediately disabled Café issuance again; invoice issuance stayed
+  disabled. Original unused QR was marked `expired` with NULL URL
+  after its deadline, with checkout_intent_id NULL.
+  R60 order remains unpaid; no charge or receipt generated.
+- **Unresolved**: user's browser showed response HTML literally (MIME
+  / response rendering). The Edge source sets `text/html`,
+  but actual HTTP response headers have not been captured.
+  Need a fresh browser test and inspect Headers/Content-Type.
+- One-use order rule means **do not re-enable and issue another QR
+  for this same R60 order**. A future genuine sandbox run requires a
+  NEW unpaid counter order and new narrowly scoped activation after
+  scanner GET and HTML rendering tests.
+
+No production changes.
