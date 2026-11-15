@@ -362,3 +362,55 @@ the fail-closed deployed handler rather than independently exposed.
 restoration, Café-to-OPPS handoff / tracking, invoice-origin orders,
 production readiness. Original staging functions and production remain
 unchanged. Keep draft PR and do not claim end-to-end launch readiness.
+
+## 15 November 2026 — follow-up: OPPS handoff and browser return architecture
+
+Read-only live staging preview for paid synthetic order
+`06e4bc70-ea4b-4ae0-83d6-44623fed9d5f`:
+- `commerce.qs_build_opps_handoff_preview` returned
+  `ready=false` with one blocker `NO_CUSTOMER_CONTACT`;
+  its proposed OPPS order correctly has R350 total, R350 deposit paid,
+  payment_status paid, item and Café collection shipping method.
+- The test fixture intentionally has no real customer contact, so don't
+  bypass the storefront customer contact requirement.
+- `public.admin_send_quick_solution_order_to_opps` is a **staff-controlled**
+  action; it creates a public.orders record, sends a handoff record and
+  synchronizes the OPPS payment ledger only when preview is ready.
+  The fact that no `opps_order_id` exists on our synthetic fixture is
+  therefore consistent with intended manual handoff, not evidence that
+  gateway capture failed.
+- No staff send performed; no synthetic OPPS order created.
+
+Connected GitHub repo `jointxco-hub/quick-solution-cafe` source inspection:
+- `src/components/OrderBasket.jsx` and `GuidedOrder.jsx` save
+  a payment session in browser localStorage **before** redirecting to PayFast.
+- `src/components/PaymentReturn.jsx` reads that session by order ID,
+  polls `getQuickSolutionPaymentStatus` and never marks paid itself.
+- PowerShell canary initiation bypasses session storage entirely.
+  Consequently the warning `We can't verify this browser session` in
+  the synthetic test is expected, not a demonstrated normal-store bug.
+- The current frontend `src/lib/supabaseApi.js` calls the **standard**
+  `quick-solution-payfast` function slug, not our
+  `quick-solution-payfast-opps106-test` canary.
+  Do NOT use the staging storefront browser to declare the hardened
+  canary flow tested until it points to the canary.
+
+Vercel project discovered:
+- Project `quick-solution-cafe-staging`,
+  ID `prj_3VFMOuqcIm0tgwZKNfuk1q0ZBlds`.
+- Its preview `VITE_SUPABASE_URL` targets staging
+  `tijiamrfnxrbitafiflj` (checked project settings).
+- Recent preview is `https://quick-solution-cafe-staging-k4gtl55sb-joint-x.vercel.app`
+  (READY), but the project enforces SSO on preview URLs.
+- **Critical environment mismatch:** staging PayFast checkout return origin
+  is `https://cafe.jointx.co.za`. Starting a checkout on any
+  `vercel.app` staging preview while returning to the public Cafe host
+  will NOT restore the same origin-scoped localStorage session.
+- Before a valid normal-browser sandbox test, pin a stable staging preview
+  URL that the tester can access, point the staging Edge Function return
+  origin to its exact HTTPS origin, and route the staging UI's payment API
+  to the hardened canary checkout. Ensure both changes cannot affect
+  the real Café site. Then place an ordinary *staging-only* customer order
+  with standard contact and test staff handoff from an authenticated
+  staging Café admin.
+- Production remains untouched; this step was research/read-only.
