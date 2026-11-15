@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 // Issue #106 — standalone QR PayFast ITN verification and correlation.
 // NOT DEPLOYED. Does not write receipts or change an existing notifier.
 // Only a trusted server should supply the expected merchant and call this.
@@ -12,6 +13,36 @@ const cents = value => {
   return Number.isSafeInteger(result) && result > 0 ? result : null;
 };
 const bad = reason => ({ ok: false, reason });
+const phpEncode = value => encodeURIComponent(String(value).trim())
+  .replace(/[!'()*~]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+  .replace(/%20/g, '+');
+
+// Match the reference PayFast ITN signature algorithm. This only validates
+// incoming *signed* notifications; it is not a gateway signing endpoint.
+export function computeQrItnSignature(rawBody, passphrase) {
+  if (typeof rawBody !== 'string' || !passphrase || typeof passphrase !== 'string') return null;
+  const params = new URLSearchParams(rawBody);
+  const seen = new Set();
+  const fields = [];
+  let signatureIndex = -1, i = 0;
+  for (const [key, value] of params) {
+    if (seen.has(key)) return null;
+    seen.add(key);
+    if (key === 'signature') signatureIndex = i;
+    else fields.push(key + '=' + phpEncode(value));
+    i++;
+  }
+  // No ambiguity about fields appended after the signature.
+  if (signatureIndex !== -1 && signatureIndex !== i - 1) return null;
+  const source = fields.join('&') + '&passphrase=' + phpEncode(passphrase);
+  return createHash('md5').update(source,'utf8').digest('hex');
+}
+const safeMd5Equals = (a,b) => {
+  if (typeof a !== 'string' || typeof b !== 'string' ||
+      !/^[0-9a-f]{32}$/i.test(a) || !/^[0-9a-f]{32}$/i.test(b)) return false;
+  return timingSafeEqual(Buffer.from(a.toLowerCase(),'hex'),Buffer.from(b.toLowerCase(),'hex'));
+};
+
 
 export function qrPayfastRequestFields(request) {
   if (!request || !UUID.test(request.id) || !UUID.test(request.targetId) ||
@@ -43,10 +74,12 @@ function parseStrictForm(body) {
 // Send the original raw body to PayFast's official validation endpoint.
 // This must be invoked inside a trusted server handler, NEVER by browser code.
 export async function verifyQrPayfastItn(rawBody, {
-  expectedMerchantId, sandbox, fetchImpl = fetch, timeoutMs = 10000,
+  expectedMerchantId, sandbox, passphrase, trustedSourceVerified = false,
+  fetchImpl = fetch, timeoutMs = 10000,
 } = {}) {
   const fields = parseStrictForm(rawBody);
   if (!fields) return bad('MALFORMED_ITN');
+  if (trustedSourceVerified !== true || !passphrase || (sandbox !== true && sandbox !== false)) return bad('SECURITY_GATE_UNAVAILABLE');
   if (fields.custom_str2 !== MARKER) return bad('NOT_QR_NOTIFICATION');
   if (!expectedMerchantId || fields.merchant_id !== expectedMerchantId) return bad('MERCHANT_MISMATCH');
   if (!fields.signature || !fields.pf_payment_id) return bad('IDENTITY_MISSING');
@@ -56,6 +89,7 @@ export async function verifyQrPayfastItn(rawBody, {
       fields.m_payment_id !== `JXQR-${fields.custom_str3}`) return bad('REQUEST_IDENTITY_MISMATCH');
   const amountCents = cents(fields.amount_gross);
   if (amountCents === null) return bad('AMOUNT_INVALID');
+  if (!safeMd5Equals(fields.signature, computeQrItnSignature(rawBody, passphrase))) return bad('SIGNATURE_INVALID');
   if (typeof fetchImpl !== 'function') return bad('VALIDATOR_UNAVAILABLE');
   const endpoint = sandbox === true
     ? 'https://sandbox.payfast.co.za/eng/query/validate'
