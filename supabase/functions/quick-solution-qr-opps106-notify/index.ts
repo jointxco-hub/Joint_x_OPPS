@@ -94,7 +94,30 @@ Deno.serve(async (req: Request) => {
     return response(403)
   }
 
-  const body = await req.text()
+  // PayFast's dashboard resend uses multipart/form-data; the original
+  // sandbox ITN uses application/x-www-form-urlencoded. Parse both into the
+  // SAME canonical form representation before signature and remote VALID.
+  // Reject files, duplicate keys, and unsupported media types.
+  const contentType = (req.headers.get('content-type') || '').toLowerCase()
+  let body = ''
+  if (contentType.startsWith('application/x-www-form-urlencoded')) {
+    body = await req.text()
+  } else if (contentType.startsWith('multipart/form-data;')) {
+    let form: FormData
+    try { form = await req.formData() } catch { return response(400) }
+    const fields = new URLSearchParams()
+    const seen = new Set<string>()
+    for (const [key,value] of form.entries()) {
+      if (typeof value !== 'string' || seen.has(key)) return response(400)
+      if (!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(key)) return response(400)
+      seen.add(key)
+      fields.append(key,value)
+    }
+    body = fields.toString()
+  } else {
+    console.error('[qr-itn] Unsupported ITN content type')
+    return response(415)
+  }
   if (body.length > 8192) return response(413)
   const verified = signedPayload(body, passphrase)
   if (!verified || !same(verified.signature, verified.expected)) {
