@@ -199,3 +199,21 @@ configure `PAYFAST_TRUSTED_CLIENT_IP_HEADER`,
 `PAYFAST_SOURCE_IP_GATEWAY_VERIFIED` and a verified PayFast sandbox IP
 allowlist (do not blindly copy guessed ranges). Complete actual sandbox
 checkout, ITN and payment ledger/invoice/OPPS visibility checks.
+
+## 15 November 2026 — confirmed Café return origin
+
+Operator supplied the customer storefront URL:
+`https://cafe.jointx.co.za/products/pvc-banner`.
+
+The correct payment return **origin** is:
+`QUICK_SOLUTION_RETURN_ORIGIN=https://cafe.jointx.co.za`.
+
+Do NOT include the product path. The checkout handler appends its own
+`/?qs_payment=return&order=...` or `/?qs_payment=cancel&order=...`.
+The host is supplied by the operator; an independent public fetch of the
+specific product page did not complete, so test return routing in staging.
+
+The Edge Function secret has **not** been changed via the connector. Set it
+only for staging via the Supabase dashboard. Confirm that the root landing
+page accepts payment-return query parameters and displays the correct order
+status. Do not deploy the hardened checkout to production yet.
