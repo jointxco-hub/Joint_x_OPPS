@@ -414,3 +414,49 @@ Vercel project discovered:
   with standard contact and test staff handoff from an authenticated
   staging Café admin.
 - Production remains untouched; this step was research/read-only.
+
+## 15 November 2026 — staging browser flow deployed, production unchanged
+
+Created isolated GitHub branch
+`jointxco-hub/quick-solution-cafe:feature/opps106-sandbox-browser-check`
+based on previously deployed staging feature branch
+`feature/qr-payment-eligibility-106`.
+
+- `src/lib/payfastCanaryRoute.js` resolves browser payments to
+  `quick-solution-payfast-browser-opps106-test` **only** when both
+  hostname belongs to the `quick-solution-cafe-staging*.vercel.app`
+  Vercel staging preview family AND backend hostname equals
+  `tijiamrfnxrbitafiflj.supabase.co`. Otherwise always standard slug.
+- Both checkout init and status calls use the same selected endpoint.
+- Added `tests/opps106-sandbox-browser-route.test.mjs` covering staging,
+  public Café host, wrong Supabase backend and unrelated domains.
+- A brand-new staging-only checkout function
+  `quick-solution-payfast-browser-opps106-test` v1 ACTIVE is a clone
+  of the tested hardened checkout, with enforced `PAYFAST_SANDBOX=true`,
+  a fixed HTTPS return origin of
+  `https://quick-solution-cafe-staging-git-feature-opps106-d3a1f2-joint-x.vercel.app`,
+  no caller-derived return URL, and notify endpoint
+  `quick-solution-payfast-notify-opps106-test` v8.
+- Vercel preview was built from commit
+  `bbd59fd01f84184eb3e2b52b95a539c12dbc0f22`,
+  deployment `dpl_8rAC5LZSkxYWFgMcKFapvgyuu1X2`, READY.
+- Stable branch preview URL:
+  `https://quick-solution-cafe-staging-git-feature-opps106-d3a1f2-joint-x.vercel.app`.
+- The staging Vercel preview `VITE_SUPABASE_URL` was verified to
+  target the correct staging Supabase project. Preview is Vercel
+  SSO-protected; tester must be allowed to open it.
+- The shared staging Edge Function return origin was **not changed**;
+  the dedicated browser-test checkout pins its own return origin.
+- No production deployment, public domain remapping or data mutation.
+- Regression tests added but no full `node --test` run observed;
+  Vercel Vite build completed successfully, which is not the test suite.
+
+Next manual browser checkpoint: open the stable staging branch URL while
+signed into permitted Vercel account, create a brand-new legitimate
+**staging** customer order through cart/guided ordering with proper
+contact information, pay using **PayFast sandbox wallet only**, and verify
+same-domain return, browser polling and tracking. The storefront should
+set the payment session itself, unlike the earlier PowerShell test.
+Then sign into the staging Café admin to PREVIEW and SEND the order to
+OPPS; verify exactly one OPPS order and matching finance ledger with
+read-only queries. Do not reuse the contactless synthetic orders.
