@@ -217,3 +217,32 @@ The Edge Function secret has **not** been changed via the connector. Set it
 only for staging via the Supabase dashboard. Confirm that the root landing
 page accepts payment-return query parameters and displays the correct order
 status. Do not deploy the hardened checkout to production yet.
+
+## 15 Nov 2026 — official PayFast notification source list
+
+PayFast's developer documentation currently recommends allowing *all* of
+the following source IPv4 networks/addresses for inbound ITN requests:
+
+```text
+197.97.145.144/28,41.74.179.192/27,102.216.36.0/28,102.216.36.128/28,144.126.193.139
+```
+
+Source: https://developers.payfast.co.za/documentation/ (Ports and IP addresses).
+That list is published as PayFast server IPs, not explicitly a separate,
+guaranteed sandbox-only list. Verify actual sandbox callbacks and keep the
+allowlist current as PayFast publishes changes.
+
+Given the Trinity 15 Nov gateway spoofing test, the remaining staging-only
+settings to configure after source-IP contract review are:
+
+```text
+PAYFAST_SANDBOX_SOURCE_IPS=197.97.145.144/28,41.74.179.192/27,102.216.36.0/28,102.216.36.128/28,144.126.193.139
+PAYFAST_SOURCE_IP_GATEWAY_VERIFIED=true
+```
+
+`PAYFAST_TRUSTED_CLIENT_IP_HEADER=cf-connecting-ip` was confirmed set by
+operator, and `QUICK_SOLUTION_RETURN_ORIGIN=https://cafe.jointx.co.za`
+was also confirmed set. Do not put `PAYFAST_SOURCE_IP_GATEWAY_VERIFIED=true`
+into production based on one staging ingress test. If a real sandbox
+notification's origin falls outside the published set, hold rather than
+removing the gate or widening the list without PayFast confirmation.
