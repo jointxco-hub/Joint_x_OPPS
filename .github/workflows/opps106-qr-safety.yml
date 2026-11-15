@@ -1,0 +1,27 @@
+name: OPPS-106 QR safety tests
+on:
+  push:
+    branches:
+      - feature/106-cafe-visibility-qr
+  pull_request:
+    paths:
+      - 'src/features/cafeQr/**'
+      - 'src/api/cafeCounterQr.js'
+      - 'src/pages/CafeQrSandbox.jsx'
+      - 'src/server/cafeQr/**'
+      - 'tests/issue-106-*.test.mjs'
+      - '.github/workflows/opps106-qr-safety.yml'
+permissions:
+  contents: read
+jobs:
+  qr-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: QR presentation, staff URL and PayFast correlation tests
+        run: |
+          node --version
+          node --test tests/issue-106-qr-presentation.test.mjs tests/issue-106-qr-staff-ui.test.mjs tests/issue-106-payfast-qr-correlation.test.mjs
