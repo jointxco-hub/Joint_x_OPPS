@@ -305,3 +305,25 @@ the dashboard provides it, or conduct a **new isolated sandbox checkout**.
 Inspect v7 function logs and DB status to determine whether signature,
 merchant, intent, PayFast server validation and ledger reconciliation all
 pass. No production deployment until resolved.
+
+## 15 November 2026 — sandbox retry prepared
+
+- Official PayFast developer documentation states the **sandbox only sends
+  each payment notification once**; do not assume that a 403 is retried
+  in the sandbox.
+- Updated signature parser to keep blank parameters in the signed sequence,
+  in their received order; reject trailing fields after the signature.
+  Together with the preceding PHP-compatible urlencode correction, this is
+  notification canary **v8 (ACTIVE)**.
+- New synthetic staging-only order:
+  `QS-SBX-OPPS106-B-20261115110737`;
+  `06e4bc70-ea4b-4ae0-83d6-44623fed9d5f`;
+  R350, unpaid, one PayFast-eligible item, no real contact data.
+  Token valid until 2026-11-15 14:07:37 UTC.
+- Payment token intentionally **not stored in GitHub**.
+- `commerce.qs_begin_payfast_payment` returned `ok=true`,
+  `alreadyPaid=false`, R350 inside a transaction that was ROLLED BACK;
+  the test has not yet initiated a permanent payment intent.
+- Next: initiate hosted PayFast sandbox checkout on Trinity, then verify
+  function_logs for canary v8, gateway ITN HTTP status, service order
+  ledger and order status. Do not infer payment from return URL alone.
