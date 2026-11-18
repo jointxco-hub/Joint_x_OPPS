@@ -45,3 +45,16 @@ An append-only `qr_payments.checkout_review_events` table now records `actor_use
 - The authorized staff UI provides a review form, history, reviewer identity and explicit **no payment release** label.
 - A finding or two-person review is **not backend-attested provider proof** and cannot cancel a pending PayFast intent, clear a Cash/Card hold, issue another QR, or mark an order paid. The release action is deliberately not implemented until a secure provider-verification and operator-approved reconciliation is designed and tested.
 - No review evidence was invented for `QS-261116-5F45`; it remains unresolved and unpaid pending actual provider evidence.
+
+
+## 18 November — immutable staff review state (staging)
+
+Applied `opps106_staging_qr_review_status_failclosed`, source `supabase/staging-only/20261118_opps106_qr_review_status_failclosed.sql`.
+
+- Added `qr_payments.qs106_deny_review_event_mutation` trigger. Existing `qr_payments.checkout_review_events` entries cannot be updated or deleted by ordinary DML; new records remain append-only.
+- Added staff-authorized, read-only `public.qs_opps106_get_qr_checkout_review_status` RPC. Returns a conservative state: awaiting provider verification, escalated, provider capture reported, first review recorded, two independent staff reports recorded, or payment already recorded.
+- Even when independent staff reports exist, response explicitly states `cashCardHoldReleased=false` and `gatewayNoCaptureAttested=false`. A staff-typed reference cannot count as an authenticated PayFast provider response.
+- UI under the existing staging `CafeQrSandbox` review panel displays status, event count and independent-review status while spelling out that the Cash/Card hold remains in force.
+- CI guard `tests/issue-106-review-status-failclosed.test.mjs` verifies append-only behavior, staff authorization and no released-payments side effects.
+- **Provider confirmation for no-capture is not implemented as an API**. Official PayFast `/eng/query/validate` validates an incoming ITN payload; it is NOT a separate negative-payment lookup. Authorized operators must investigate in PayFast Transaction History/support. Do not treat absence of an ITN or a staff statement alone as terminal no-capture.
+- No new checkout, payment, review event or release was fabricated; original unresolved order remains unpaid with Cash/Card hold. QR issuance controls remain OFF.
