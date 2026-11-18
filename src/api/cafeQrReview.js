@@ -56,3 +56,13 @@ export async function logCafeQrCheckoutReview({requestId,type,providerReference=
   if (data?.ok !== true) throw Error(data?.reason || "QR review could not be recorded.");
   return data;
 }
+
+export async function getCafeQrCheckoutReviewStatus(requestId) {
+  if (!QR_ID.test(requestId || "")) throw Error("Invalid QR review identifier.");
+  const data=await reviewRpc("qs_opps106_get_qr_checkout_review_status", {p_request_id:requestId});
+  if (data?.ok !== true || data.cashCardHoldReleased !== false
+      || data.gatewayNoCaptureAttested !== false) {
+    throw Error("Checkout review is unavailable; payment hold remains in force.");
+  }
+  return data;
+}
