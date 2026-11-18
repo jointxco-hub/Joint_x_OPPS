@@ -4,6 +4,7 @@ import { useWorkspace } from "@/lib/WorkspaceContext";
 import { checkCafeCounterQr, issueCafeCounterQr } from "@/api/cafeCounterQr";
 import { getCafeQrPresentation } from "@/features/cafeQr/paymentRequestView";
 import { previewCafeHandoff, sendCafeHandoff } from "@/api/cafeQrHandoff";
+import { listUnresolvedCafeQrCheckouts } from "@/api/cafeQrReview";
 
 // Isolated OPPS-106 feature-branch staff test screen. Not linked in production nav.
 // The private backend issuance switch defaults OFF, so a user cannot force
@@ -30,12 +31,22 @@ export default function CafeQrSandbox() {
   const [handoff,setHandoff] = useState(null);
   const [handoffStatus,setHandoffStatus] = useState("");
   const [confirmSend,setConfirmSend] = useState(false);
+  const [qrReviews,setQrReviews] = useState(null);
+  const [qrReviewError,setQrReviewError] = useState("");
+  const [qrReviewBusy,setQrReviewBusy] = useState(false);
   const isCafe = currentWorkspace?.slug === "quick-solution";
   // The screen is safe even when accidentally opened on a production host:
   // no user controls are displayed unless the configured Supabase project
   // is the dedicated staging project.
   const isStaging = import.meta.env.VITE_SUPABASE_URL === STAGING_SUPABASE;
   const enabled = isCafe && isStaging;
+  async function loadQrReviews() {
+    if (!enabled || qrReviewBusy) return;
+    setQrReviewBusy(true);setQrReviewError("");
+    try { setQrReviews(await listUnresolvedCafeQrCheckouts()); }
+    catch (error) {setQrReviews(null);setQrReviewError(error?.message || "QR review unavailable.");}
+    finally {setQrReviewBusy(false);}
+  }
   async function previewHandoff() {
     setBusy(true);setHandoffStatus("");setHandoff(null);setConfirmSend(false);
     try {
@@ -155,6 +166,24 @@ export default function CafeQrSandbox() {
           </div>}
         </div>}
         {handoffStatus && <p role="status" className="rounded-xl bg-secondary p-3 text-sm">{handoffStatus}</p>}
+      </div>
+      <div className="space-y-3 rounded-2xl border border-border bg-card p-5">
+        <h2 className="font-semibold text-lg">Unresolved PayFast checkouts</h2>
+        <p className="text-sm text-muted-foreground">Read-only staff review. An expired QR does not prove PayFast never charged a customer. Verify the provider and original Café receipt before accepting Cash/Card.</p>
+        <button type="button" onClick={loadQrReviews} disabled={qrReviewBusy}
+          className="rounded-xl border border-[#176c5b] px-4 py-3 text-sm font-semibold disabled:opacity-50">
+          {qrReviewBusy ? "Checking…" : "Refresh unresolved checkouts"}
+        </button>
+        {qrReviewError && <p role="alert" className="rounded-xl bg-secondary p-3 text-sm">{qrReviewError}</p>}
+        {Array.isArray(qrReviews) && <div role="status" className="space-y-3">
+          <p className="text-sm">{qrReviews.length === 0 ? "No unresolved checkouts found." : qrReviews.length + " checkout(s) require provider verification."}</p>
+          {qrReviews.map(item => <div key={item.payment_request_id} className="rounded-xl bg-secondary p-3 text-sm space-y-1">
+            <div className="flex flex-wrap justify-between gap-2"><strong>{item.order_number}</strong><strong>{money(Number(item.amount_cents))}</strong></div>
+            <p className="text-xs">QR: {item.qr_status} · Intent: {item.payment_intent_status || "unknown"}</p>
+            <p className="text-xs">Started: {item.checkout_started_at ? new Date(item.checkout_started_at).toLocaleString("en-ZA") : "unknown"}</p>
+            <p className="text-xs font-medium">Review PayFast and the canonical Café payment record before manually taking another payment.</p>
+          </div>)}
+        </div>}
       </div>
       {qr && <div className="space-y-2 rounded-2xl border border-border bg-card p-5" role="status">
         <strong>Staging scan link issued</strong>
