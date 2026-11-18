@@ -67,7 +67,14 @@ main[data-state="paid"] .status{color:#147653}
       foot.textContent='This page does not settle or change payments.';
     }
   };
-  if(args.size!==1 || !uuid.test(rid)){update('unavailable');foot.textContent='Invalid payment reference. Ask Café staff to verify the order.';return;}
+  // Preview/share links can append their own query parameters. Only the
+  // single opaque QR request ID is payment-relevant; send no extras to the API.
+  // Multiple rid values are ambiguous and must always fail closed.
+  if(args.getAll('rid').length!==1 || !uuid.test(rid)){
+    update('unavailable');
+    foot.textContent='Invalid payment reference. Ask Café staff to verify the order.';
+    return;
+  }
   let checks=0;
   let lastFailure='';
   const check=async()=>{
