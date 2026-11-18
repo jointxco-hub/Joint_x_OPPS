@@ -41,3 +41,14 @@
 ## Release discipline
 
 Keep staging-only SQL under `supabase/staging-only/`; do not copy it as a production migration. Require reviewed production-shape migration, gateway environment and merchant attestation, security tests, OPPS reporting checks, a staff-approved exception resolution process, physical POS acceptance, ready preview, and explicit deployment approval. Do not flip either `qr_payments.issuance_controls` switch as an incidental test step.
+
+
+## 18 November follow-up: isolated contract code (not wired to settlement)
+
+Added `src/server/cafeQr/gatewayEnvironmentContract.js` with `resolveVerifiedPayfastEnvironment` and `tests/issue-106-gateway-environment-contract.test.mjs`.
+
+- Pure fail-closed resolver checks an explicit backend-configured environment and merchant against server-persisted checkout intent identity, and against already-verified PayFast callback identity, amount, source, signature and remote validation booleans.
+- Returns explicit `payfast_itn_validated_sandbox` or `payfast_itn_validated_live` evidence only after all checks match.
+- Sandbox returns a force-test/exclusion reporting directive. Live returns `reporting: null`, deliberately preserving any independent staff-set QA/exclusion choices.
+- No actual callback integration, database write, deployment or production payment authorization is performed by this pure helper. It does not replace PayFast verification; its `verifiedCallback` argument **must** be constructed only after real trusted ITN verification, never directly from raw request fields.
+- CI also locks the existing sandbox-only live-mode refusal until a reviewed production implementation exists.
