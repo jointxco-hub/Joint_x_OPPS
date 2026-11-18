@@ -71,6 +71,6 @@ export function resolveVerifiedPayfastEnvironment({ serverConfig, intent, verifi
     gatewayPaymentId: verifiedCallback.gatewayPaymentId,
     reporting: mode === 'sandbox'
       ? { forceTest: true, forceExclude: true }
-      : { forceTest: false, forceExclude: false },
+      : null, // never clear a staff-set QA/exclusion flag for a live payment
   };
 }
