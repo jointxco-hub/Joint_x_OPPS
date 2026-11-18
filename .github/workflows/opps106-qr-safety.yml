@@ -24,4 +24,4 @@ jobs:
       - name: QR presentation, staff URL and PayFast correlation tests
         run: |
           node --version
-          node --test tests/issue-106-qr-presentation.test.mjs tests/issue-106-qr-staff-ui.test.mjs tests/issue-106-payfast-qr-correlation.test.mjs tests/issue-106-qr-scan-uuid.test.mjs tests/issue-106-qr-notify-uuid.test.mjs tests/issue-106-qr-return.test.mjs tests/issue-106-qr-itn-multipart.test.mjs tests/issue-106-qr-handoff-ui.test.mjs
+          node --test tests/issue-106-qr-presentation.test.mjs tests/issue-106-qr-staff-ui.test.mjs tests/issue-106-payfast-qr-correlation.test.mjs tests/issue-106-qr-scan-uuid.test.mjs tests/issue-106-qr-notify-uuid.test.mjs tests/issue-106-qr-return.test.mjs tests/issue-106-qr-return-relay.test.mjs tests/issue-106-qr-itn-multipart.test.mjs tests/issue-106-qr-handoff-ui.test.mjs
