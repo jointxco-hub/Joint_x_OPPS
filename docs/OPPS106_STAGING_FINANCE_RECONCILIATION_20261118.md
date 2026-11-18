@@ -67,3 +67,14 @@ Applied **staging-only** migration `opps106_staging_persist_verified_gateway_env
 - Added `tests/issue-106-gateway-environment-provenance.test.mjs` to the QR safety CI workflow.
 
 Production release remains **blocked** until a provider/backend-attested environment is persisted for *both* future sandbox and live settlement paths, not inferred from a staging-only endpoint. Neither the staging SQL nor its deliberate exception should be merged into general production migrations as-is. Hardware receipt printing, multi-device conflict testing, and the five unrelated Café regression failures remain open.
+
+
+## 18 November — cross-device Cash/Card versus QR server guard
+
+- Found production-safety defect in staging `public.record_quick_solution_counter_payment`: staff UI blocked manual payment during QR uncertainty but authoritative SQL did not check QR payment_requests or pending PayFast intents. Concurrent staff devices could attempt duplicate receipt recording.
+- Applied STAGING-only migration `opps106_staging_manual_counter_qr_concurrency_gate`, source at [staging-only SQL](../supabase/staging-only/20261118_opps106_manual_counter_qr_concurrency.sql).
+- The existing canonical `commerce.service_orders FOR UPDATE` row lock serializes QR issuance/checkout with Counter manual payment. Before inserting any Cash/Card receipt, the SQL now blocks if an active QR exists, if a QR checkout was ever started (even expired/revoked, because hosted checkout could notify late), or if any PayFast payment intent remains pending.
+- Repeat manual-payment idempotency replay and existing already-paid handling remain ahead of the new guard.
+- Read-only staging evidence: unpaid `QS-261116-5F45` with started PayFast QR reports QR-review=true and PayFast-pending=true; three unpaid orders with only expired, unstarted QR requests report both flags=false. No fresh payment or QR was created.
+- Added `tests/issue-106-manual-counter-concurrency.test.mjs` and wired it into OPPS-106 QR safety CI; latest branch checks passed.
+- Remaining: real parallel-client transaction testing under disposable Postgres, policy for releasing or reconciling orphaned PayFast attempts, production-safe authenticated live/sandbox provenance, and iMin physical receipt printing. Production QR issuance is OFF.
