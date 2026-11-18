@@ -33,6 +33,16 @@ export function getPayfastGatewayProfile(env,expectedMode) {
     if(env.OPPS106_LIVE_GATEWAY_APPROVED !== "true"
       || env.OPPS106_LIVE_CALLBACK_ENABLED !== "true") return error("LIVE_NOT_APPROVED");
     if(env.OPPS106_QR_MODE !== "live") return error("LIVE_CONFIG_MISMATCH");
+    if(!isValidMerchant(env.OPPS106_LIVE_MERCHANT_ID)
+      || !isValidMerchant(env.OPPS106_SANDBOX_MERCHANT_ID)
+      || env.OPPS106_LIVE_MERCHANT_ID!==env.PAYFAST_MERCHANT_ID
+      || env.OPPS106_LIVE_MERCHANT_ID===env.OPPS106_SANDBOX_MERCHANT_ID)
+      return error("LIVE_MERCHANT_ATTESTATION_REQUIRED");
+    if(!isHttpsUrl(env.OPPS106_LIVE_NOTIFY_URL)
+      || new URL(env.OPPS106_LIVE_NOTIFY_URL).pathname!==
+           "/functions/v1/quick-solution-qr-opps106-live-notify")
+      return error("LIVE_CALLBACK_ROUTE_REQUIRED");
+
     if(!isHttpsUrl(env.OPPS106_LIVE_RETURN_BASE)
       || !isHttpsUrl(env.OPPS106_LIVE_NOTIFY_URL)
       || new URL(env.OPPS106_LIVE_RETURN_BASE).hostname.endsWith(".vercel.app")
