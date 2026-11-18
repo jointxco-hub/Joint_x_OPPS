@@ -33,7 +33,9 @@ test('customer page only confirms after paid status from the server, with safe f
  assert.match(page,/Do not pay again/);
  assert.match(page,/only|browser redirect alone cannot confirm an order is paid/i);
  assert.match(page,/noindex,nofollow/);
- assert.match(page,/connect-src https:\/\/tijiamrfnxrbitafiflj\.supabase\.co/);
+ assert.match(page,/connect-src 'self'/);
+ assert.match(page,/const base='\/api\/opps106-qr-status'/);
+ assert.match(page,/mode:'same-origin'/);
  assert.doesNotMatch(page,/service.role|SUPABASE_SERVICE_ROLE_KEY|markPaid|settleCounterQr/i);
 });
 test('cancel page remains conservative and cannot claim successful payment',()=>{
