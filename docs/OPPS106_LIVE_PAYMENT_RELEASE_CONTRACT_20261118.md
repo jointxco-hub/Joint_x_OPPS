@@ -52,3 +52,15 @@ Added `src/server/cafeQr/gatewayEnvironmentContract.js` with `resolveVerifiedPay
 - Sandbox returns a force-test/exclusion reporting directive. Live returns `reporting: null`, deliberately preserving any independent staff-set QA/exclusion choices.
 - No actual callback integration, database write, deployment or production payment authorization is performed by this pure helper. It does not replace PayFast verification; its `verifiedCallback` argument **must** be constructed only after real trusted ITN verification, never directly from raw request fields.
 - CI also locks the existing sandbox-only live-mode refusal until a reviewed production implementation exists.
+
+## 18 November — staging checkout/callback integration (implemented)
+
+The sandbox-only real scanner/notification paths are now bound to persisted checkout identity:
+- `opps106_staging_bound_checkout_identity` migration added `qr_payments.payment_requests.checkout_environment`, `checkout_merchant_id`, `checkout_gateway_reference`, `checkout_contract_version`. The original unsafe one-argument checkout RPC now fails closed; the new service-role-only `qs_opps106_start_counter_qr_checkout_verified` writes the record atomically on checkout.
+- Staging scanner Edge Function **v7** reads PayFast mode/merchant from private server environment and passes it to the bound checkout RPC; it still refuses non-sandbox mode.
+- Staging PayFast notification Edge Function **v5** verifies source, signature, merchant and PayFast remote VALID, then reads the server-issued checkout identity and invokes the shared `resolveVerifiedPayfastEnvironment` contract. The SQL settlement also requires matching persisted merchant, payment reference and contract version before a new receipt.
+- `opps106_staging_verified_capture_quarantine` added service-role-only, durable exceptions for independently verified but mismatched/legacy captures; no payment is credited on mismatch.
+- Historical R60/R72 settled requests and one older unresolved checkout were intentionally **not backfilled** with guessed checkout provenance. A verified late COMPLETE for the old unbound checkout is held for Finance review, not falsely marked paid.
+- Both QR issuance switches OFF. This is not an implementation of live PayFast settlement. Production gateway attestation, migration review, end-to-end live/sandbox integration tests and iMin acceptance remain open.
+
+These changes have passed QR contract and disposable two-session PostgreSQL CI. A browser preview of the updated staff UI remains blocked by the Vercel daily deployment allowance.
