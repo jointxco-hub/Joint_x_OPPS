@@ -16,11 +16,11 @@ test('unresolved checkout queue remains staff-only and read-only',()=>{
   assert.doesNotMatch(sql,/delete\s+from\s+/i);
 });
 
-test('read-only staging UI explains expired QR cannot authorize another charge',()=>{
+test('staging review UI explains expired QR cannot authorize another charge',()=>{
   assert.match(api,/qs_opps106_list_qr_checkout_reviews/);
   assert.match(api,/VITE_SUPABASE_URL/);
   assert.match(ui,/Unresolved PayFast checkouts/);
-  assert.match(ui,/An expired QR does not prove PayFast never charged a customer/);
+  assert.match(ui,/Expired QR does not prove no charge/);
   assert.match(ui,/Refresh unresolved checkouts/);
   assert.doesNotMatch(api,/qs_opps106_issue_counter_qr|record_quick_solution_counter_payment/);
 });
