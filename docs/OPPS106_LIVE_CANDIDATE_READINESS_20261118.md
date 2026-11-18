@@ -1,0 +1,48 @@
+# OPPS-106 — live PayFast candidate deployment and acceptance
+
+**Status:** candidate implemented on feature branch; **NOT DEPLOYED / NOT APPROVED**.
+This work is deliberately separate from the existing staging sandbox callbacks.
+Do not copy staging migrations to production or toggle issuance controls.
+
+## New, isolated source
+
+- `supabase/functions/_shared/payfastGatewayProfile.js`: fail-closed private profile selector.
+- `supabase/functions/quick-solution-qr-opps106-live-scan/index.ts`: future live scanner. Signs a live PayFast checkout URL from server-locked order intent; never uses the sandbox process URL.
+- `supabase/functions/quick-solution-qr-opps106-live-notify/index.ts`: future live ITN handler. Requires configured live source-IP policy, signature/merchant/remote PayFast `VALID`, exact persisted checkout identity and live environment. Mismatch quarantines, never credits.
+- `supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql`: private disabled-by-default merchant policy; distinct live issuer/settlement/noncomplete RPCs; provenance evidence constraint extended for real live captures. **Not auto-applied.**
+- `tests/issue-106-live-gateway-profile.test.mjs` and `tests/issue-106-live-candidate-isolation.test.mjs` protect separation and deny unsafe fallback.
+- Disposable PostgreSQL CI additionally parses the candidate SQL; this does **not** prove end-to-end settlement semantics.
+
+## Server-only environment contract
+
+**Never put the following in Vite `VITE_*` variables, public Pages, or customer URLs.**
+A dedicated live project or callback deployment must supply:
+- `PAYFAST_SANDBOX=false`; `OPPS106_QR_MODE=live`.
+- `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE` — live account credentials only.
+- `OPPS106_LIVE_MERCHANT_ID` — independently approved live merchant ID, equal to configured PayFast merchant ID.
+- `OPPS106_SANDBOX_MERCHANT_ID` — known sandbox merchant ID; must differ from live.
+- `OPPS106_LIVE_GATEWAY_APPROVED=true` **and** `OPPS106_LIVE_CALLBACK_ENABLED=true` — explicit, controlled release approvals (both default absent/false).
+- `OPPS106_LIVE_RETURN_BASE` — reviewed own HTTPS OPPS return/cancel origin; never an ephemeral Vercel preview URL.
+- `OPPS106_LIVE_NOTIFY_URL` — reviewed HTTPS endpoint with the exact path `/functions/v1/quick-solution-qr-opps106-live-notify`.
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — server secret config for the **approved** project.
+- `PAYFAST_SOURCE_IP_GATEWAY_VERIFIED=true`, `PAYFAST_TRUSTED_CLIENT_IP_HEADER` and maintained `PAYFAST_LIVE_SOURCE_IPS` — only after validating that the ingress proxy strips any client-supplied matching header and injects the authentic single-hop source. No trusted proxy configuration = **reject all ITNs**.
+
+These are *requirements*, not values currently configured or verified.
+
+## Required independent release controls
+
+1. Review the production database migration and use a transactional release with backups and rollback plan. The private `qr_payments.live_gateway_policy` begins `enabled=false`; the existing `qr_payments.issuance_controls` remains OFF.
+2. Review secrets, project isolation, merchant ID, callback domain, PayFast merchant settings and HTTPS proxy ingress.
+3. Deploy the live candidate to a separately named Edge route with authorization and policy guards. **Never overwrite** `quick-solution-qr-opps106-notify` / `quick-solution-qr-opps106-scan` sandbox functions.
+4. Run signed live-mode ITN integration tests against a disposable/payment-safe fixture before enabling any live issuance. Include merchant mismatch, live/sandbox reversal, replay, duplicate gateway ID, unmatched capture, legacy QR, late ITN, failed PayFast VALID and Cash/Card race. Test full OPPS/Finance reporting classification.
+5. Confirm the iMin D4 physical receipt printing and new-sale reset when available; confirm latest OPPS review UI deployed as READY.
+6. Obtain explicit business release approval. Only then consider enabling the live policy and targeted QR issuer switch, initially for a single reviewed order and amount.
+7. **Stopping new QR issuance is not payment rollback.** Previously opened PayFast checkouts can notify late; keep the trusted live notification handler operational to reconcile or quarantine valid provider captures. Never disable the callback solely because the issuer switch was disabled.
+8. Provider terminal no-capture proof is unresolved. Staff evidence alone, absent ITN, and QR expiry are not sufficient to release a Cash/Card hold.
+
+## Known limitations and boundaries
+
+- The separate live candidates are code and a proposed SQL contract; there has been **no live checkout, no live ITN test, no live key onboarding, and no production deployment**.
+- A successful SQL parse is not equivalent to integrated money movement or security certification. Full database behavior, RLS, merchant portal validation, incident/replay drills and production migration review remain required.
+- Historical sandbox R60/R72 and unresolved R120 records remain untouched. Production and both QR issuer switches remain unchanged.
+- PayFast's published live process and validation endpoints are `https://www.payfast.co.za/eng/process` and `https://www.payfast.co.za/eng/query/validate`; sandbox uses `sandbox.payfast.co.za`. See https://developers.payfast.co.za/docs/itn-instant-transaction-notification/ .
