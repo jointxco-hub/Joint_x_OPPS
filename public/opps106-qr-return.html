@@ -67,21 +67,44 @@ main[data-state="paid"] .status{color:#147653}
       foot.textContent='This page does not settle or change payments.';
     }
   };
-  if(args.size!==1 || !uuid.test(rid)){update('unavailable');return;}
+  if(args.size!==1 || !uuid.test(rid)){update('unavailable');foot.textContent='Invalid payment reference. Ask Café staff to verify the order.';return;}
   let checks=0;
+  let lastFailure='';
   const check=async()=>{
+    let pending=false;
     try{
       const endpoint=base+'?rid='+encodeURIComponent(rid);
       const response=await fetch(endpoint,{method:'GET',mode:'same-origin',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
-      if(!response.ok)throw new Error('status unavailable');
+      if(!response.ok)throw new Error('HTTP '+response.status);
       const body=await response.json();
       if(body && body.state==='paid'){update('paid');return;}
-      if(!body || body.state!=='pending')throw new Error('status unavailable');
-    }catch{
-      update('unavailable');return;
+      if(body && body.state==='pending'){pending=true;lastFailure='';}
+      else throw new Error('Status not available');
+    }catch(error){
+      // A transient browser/network/relay failure is not a failed payment.
+      // Keep polling safely; never offer another checkout or claim settlement.
+      lastFailure=error && /^HTTP [0-9]{3}$/.test(error.message) ? error.message : 'Network or status response unavailable';
     }
     checks+=1;
-    if(checks>=30){update('delayed');return;}
+    if(checks>=30){
+      update(pending ? 'delayed' : 'unavailable');
+      if(lastFailure)foot.textContent='Status lookup: '+lastFailure+'. Café staff can check the original paid record.';
+      return;
+    }
+    if(lastFailure){
+      title.textContent='Checking your payment';
+      description.textContent='The payment-status connection is temporarily unavailable. We are retrying safely.';
+      state.textContent='Verification in progress';
+      action.textContent='Do not pay again. Café staff can check the original order while this page retries.';
+      foot.textContent='Retry '+checks+' of 30 · '+lastFailure;
+    } else {
+      root.dataset.state='pending';
+      title.textContent='Checking your payment';
+      description.textContent='Waiting for confirmation from the Café payment record.';
+      state.textContent='Confirmation pending';
+      action.textContent='Do not pay again. The secure payment notification may take a moment.';
+      foot.textContent='Payment is confirmed only after server verification.';
+    }
     window.setTimeout(check,3000);
   };
   check();
