@@ -1,3 +1,4 @@
+import { resolveVerifiedPayfastEnvironment } from '../_shared/qrGatewayEnvironmentContract.js'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4'
 import md5 from 'https://esm.sh/js-md5@0.8.3'
 
@@ -180,6 +181,64 @@ Deno.serve(async (req: Request) => {
   const amountCents = Math.round(gross * 100)
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 ||
       Math.abs(amountCents / 100 - gross) > 0.000001) return response(403)
+
+  // The original scanner bound these values under a canonical-order lock.
+  // No environment/merchant values are accepted from the browser or raw ITN.
+  // Legacy unbound requests remain review-only.
+  const { data: bound, error: boundError } = await supabase.rpc(
+    'qs_opps106_get_counter_qr_checkout_identity',{p_request_id:p.custom_str3})
+  const contextMatches = !boundError && bound?.ok === true
+    && bound.environment === 'sandbox'
+    && bound.merchantId === merchantId
+    && bound.requestId === p.custom_str3
+    && bound.orderId === p.custom_str1
+    && bound.tenantId === p.custom_str5
+    && bound.gatewayReference === p.m_payment_id
+    && Number(bound.amountCents) === amountCents
+
+  let approved = contextMatches
+  if (p.payment_status === 'COMPLETE' && approved) {
+    const proof = resolveVerifiedPayfastEnvironment({
+      serverConfig: { environment:'sandbox',merchantId },
+      intent: {
+        environment: bound.environment, merchantId: bound.merchantId,
+        requestId: bound.requestId, orderId: bound.orderId,
+        tenantId: bound.tenantId, gatewayReference: bound.gatewayReference,
+        amountCents: Number(bound.amountCents)
+      },
+      // These booleans represent completed verification steps in THIS
+      // trusted callback, never raw client or database-provided booleans.
+      verifiedCallback: {
+        environment:'sandbox', merchantId:p.merchant_id,
+        requestId:p.custom_str3, orderId:p.custom_str1,
+        tenantId:p.custom_str5, gatewayReference:p.m_payment_id,
+        gatewayPaymentId:p.pf_payment_id, amountCents,
+        signatureValid:true, trustedSource:true, remoteValidated:true,
+        status:p.payment_status
+      }
+    })
+    approved = proof.ok === true && proof.environment === 'sandbox'
+      && proof.evidence === 'payfast_itn_validated_sandbox'
+  }
+  if (!approved) {
+    // This is a verified provider notification, not a customer return URL.
+    // Persist the exception; NEVER mark paid or clear the Cash/Card hold.
+    const { data: quarantined, error: qError } = await supabase.rpc(
+      'qs_opps106_quarantine_verified_qr_capture',{
+        p_request_id:p.custom_str3,p_order_id:p.custom_str1,
+        p_tenant_id:p.custom_str5,p_amount_cents:amountCents,
+        p_pf_payment_id:p.pf_payment_id,
+        p_reason:contextMatches
+          ? 'GATEWAY_PROVENANCE_MISMATCH'
+          : 'QR_CHECKOUT_PROVENANCE_REVIEW'
+      })
+    if (qError || quarantined?.ok !== true) {
+      console.error('[qr-itn] Verified provenance mismatch could not be durably quarantined')
+      return response(503)
+    }
+    console.warn('[qr-itn] Verified capture requires provenance review')
+    return response(200)
+  }
 
   if (p.payment_status !== 'COMPLETE') {
     // Only a signed, merchant-matched, source-allowlisted and remotely
