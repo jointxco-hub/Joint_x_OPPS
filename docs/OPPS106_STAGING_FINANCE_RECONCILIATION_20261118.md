@@ -53,3 +53,17 @@ Read-only post-change verification of **QS-261118-98C6**:
 - Neither internal function is executable by anon or authenticated.
 
 **Production gating unchanged:** This is explicitly **staging-only**. The proof that a QR was sandbox-issued depends on the dedicated staging canary path. A production version must carry explicit server/provider-attested sandbox/live provenance as durable payment metadata and require independent integration/replay tests. Do **not** automatically deploy the staging-only SQL to production. Both QR issuance switches remain OFF. Staff/iMin printing, multi-device race tests, broad five-failure Café regression triage and reviewed production migration remain pending.
+
+
+## 18 November — gateway provenance persistence and second test reconciliation
+
+Applied **staging-only** migration `opps106_staging_persist_verified_gateway_environment`; source is checked in at [gateway provenance SQL](../supabase/staging-only/20261118_opps106_gateway_environment_provenance.sql).
+
+- Adds `qr_payments.payment_requests.gateway_environment` and `gateway_environment_evidence` as paired fields with an explicit constraint.
+- The dedicated **sandbox-only** trusted QR settlement RPC stamps `sandbox` / `sandbox_only_verified_itn` only on a verified settled capture; existing matched canary ITNs were backfilled.
+- OPPS internal sandbox classification now requires the persisted proof *and* matching settled QR/PayFast ITN identity. This is more precise than relying only on QR reference shape. It is still a **staging-canary-specific assertion**, not a production-safe live/sandbox resolver.
+- Read-back: settled R72 `QS-261115-9641` and R60 `QS-261118-98C6` each have stored environment/evidence and strict verifier=true. Active/expired QR requests have null environment/evidence and verifier=false. Both QR issuance switches are disabled.
+- Earlier R72 order had `is_test=true`, `excluded_from_reports=true`, but Finance had method `other`, test=false, excluded=false. Replayed the existing receipt projector with no new payment: **R72 Finance is now PayFast, ref 3520172, test=true, excluded=true**. One original Finance transaction, no duplicates. R60 remains correctly classified.
+- Added `tests/issue-106-gateway-environment-provenance.test.mjs` to the QR safety CI workflow.
+
+Production release remains **blocked** until a provider/backend-attested environment is persisted for *both* future sandbox and live settlement paths, not inferred from a staging-only endpoint. Neither the staging SQL nor its deliberate exception should be merged into general production migrations as-is. Hardware receipt printing, multi-device conflict testing, and the five unrelated Café regression failures remain open.
