@@ -98,7 +98,9 @@ Deno.serve(async req => {
     // Atomic server-side check: row lock + live amount + one QR intent.
     // This is fail-closed while qr_payments.issuance_controls is OFF.
     const { data: intent, error: intentError } = await client.rpc(
-      'qs_opps106_start_counter_qr_checkout',{p_request_id:rid})
+      'qs_opps106_start_counter_qr_checkout_verified',{
+        p_request_id:rid,p_checkout_environment:'sandbox',p_merchant_id:merchantId
+      })
     if (intentError || intent?.ok !== true) {
       return result(503,'Not available','QR payment is not available yet.','Ask Café staff for another payment method.')
     }
