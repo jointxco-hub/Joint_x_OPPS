@@ -28,6 +28,20 @@ function payfastUrl(fields: Record<string,string>, passphrase: string) {
   const signature = md5(params + '&passphrase=' + phpEncode(passphrase))
   return 'https://sandbox.payfast.co.za/eng/process?' + params + '&signature=' + signature
 }
+// Browser return pages may only read the minimal server-owned payment state.
+// A QR ID is an opaque capability: never include customer, total or provider
+// references in this public response. The signed PayFast ITN is still the
+// sole settlement path.
+const RETURN_ORIGIN = 'https://joint-x-opps-git-feature-106-cafe-visibility-qr-joint-x.vercel.app'
+function statusJson(state: 'paid' | 'pending' | 'unavailable', origin: string | null, http = 200) {
+  const headers: Record<string,string> = {
+    'content-type':'application/json; charset=utf-8','cache-control':'no-store, max-age=0',
+    'x-content-type-options':'nosniff','referrer-policy':'no-referrer',
+    'vary':'Origin'
+  }
+  if (origin === RETURN_ORIGIN) headers['access-control-allow-origin'] = RETURN_ORIGIN
+  return new Response(JSON.stringify({state}),{status:http,headers})
+}
 const safeRedirect = (location: string) =>
   new Response(null,{status:303,headers:{
     location,'cache-control':'no-store','referrer-policy':'no-referrer',
@@ -37,6 +51,23 @@ Deno.serve(async req => {
   if (req.method !== 'GET') return new Response('Method not allowed',{status:405})
   const params = new URL(req.url).searchParams
   const rid = params.get('rid') || ''
+  if (params.has('status')) {
+    // Status lookup never starts a checkout; reject ambiguous requests.
+    if (params.size !== 2 || params.get('status') !== '1' || !UUID.test(rid)) {
+      return statusJson('unavailable',req.headers.get('origin'),400)
+    }
+    const url = Deno.env.get('SUPABASE_URL') || ''
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+    if (!url || !key) return statusJson('unavailable',req.headers.get('origin'),503)
+    try {
+      const client = createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}})
+      const { data,error } = await client.rpc('qs_opps106_scan_counter_qr_status',{p_request_id:rid})
+      if (error) throw error
+      return statusJson(data === 'settled' ? 'paid' : ['awaiting_gateway','expired'].includes(data) ? 'pending' : 'unavailable',req.headers.get('origin'))
+    } catch {
+      return statusJson('unavailable',req.headers.get('origin'),503)
+    }
+  }
   if (params.has('return') || params.has('cancel')) {
     if (!UUID.test(rid)) return result(404,'Invalid request','This QR code is not available.','Please ask Café staff.')
     // Browser return is NEVER proof of payment. The signed webhook and
@@ -84,8 +115,8 @@ Deno.serve(async req => {
     const name = String(intent.customerName || '').trim().split(/\s+/)
     const fields: Record<string,string> = {
       merchant_id:merchantId,merchant_key:merchantKey,
-      return_url:stagingReturnBase + '/opps106-qr-return.html',
-      cancel_url:stagingReturnBase + '/opps106-qr-cancel.html',
+      return_url:stagingReturnBase + '/opps106-qr-return.html?rid=' + encodeURIComponent(rid),
+      cancel_url:stagingReturnBase + '/opps106-qr-cancel.html?rid=' + encodeURIComponent(rid),
       notify_url:url + '/functions/v1/quick-solution-qr-opps106-notify',
       name_first:name[0] || 'Customer',
       name_last:name.slice(1).join(' ') || '',
