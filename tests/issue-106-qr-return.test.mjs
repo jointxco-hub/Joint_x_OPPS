@@ -42,3 +42,13 @@ test('cancel page remains conservative and cannot claim successful payment',()=>
  assert.match(cancel,/Do not pay again yet/);
  assert.doesNotMatch(cancel,/Payment successful|Order paid|Payment confirmed/);
 });
+
+test('transient lookup failures retry without claiming a failed or paid payment',()=>{
+ assert.match(page,/let lastFailure=''/);
+ assert.match(page,/checks\+=1/);
+ assert.match(page,/if\(checks>=30\)/);
+ assert.match(page,/window\.setTimeout\(check,3000\)/);
+ assert.match(page,/Retry '\+checks\+' of 30/);
+ assert.match(page,/if\(body && body\.state==='paid'\)\{update\('paid'\);return;\}/);
+ assert.doesNotMatch(page,/catch\s*\{\s*update\('unavailable'\);return;/);
+});
