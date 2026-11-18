@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://tijiamrfnxrbitafiflj.supabase.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <title>Quick Solution Café · Payment Status</title>
 <style>
 *{box-sizing:border-box}
@@ -35,7 +35,7 @@ main[data-state="paid"] .status{color:#147653}
 <script>
 (() => {
   'use strict';
-  const base='https://tijiamrfnxrbitafiflj.supabase.co/functions/v1/quick-solution-qr-opps106-scan';
+  const base='/api/opps106-qr-status';
   const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const args=new URLSearchParams(location.search);
   const rid=args.get('rid')||'';
@@ -71,8 +71,8 @@ main[data-state="paid"] .status{color:#147653}
   let checks=0;
   const check=async()=>{
     try{
-      const endpoint=base+'?rid='+encodeURIComponent(rid)+'&status=1';
-      const response=await fetch(endpoint,{method:'GET',mode:'cors',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
+      const endpoint=base+'?rid='+encodeURIComponent(rid);
+      const response=await fetch(endpoint,{method:'GET',mode:'same-origin',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
       if(!response.ok)throw new Error('status unavailable');
       const body=await response.json();
       if(body && body.state==='paid'){update('paid');return;}
