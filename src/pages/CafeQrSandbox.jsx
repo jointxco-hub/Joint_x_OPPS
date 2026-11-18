@@ -4,7 +4,7 @@ import { useWorkspace } from "@/lib/WorkspaceContext";
 import { checkCafeCounterQr, issueCafeCounterQr } from "@/api/cafeCounterQr";
 import { getCafeQrPresentation } from "@/features/cafeQr/paymentRequestView";
 import { previewCafeHandoff, sendCafeHandoff } from "@/api/cafeQrHandoff";
-import { listUnresolvedCafeQrCheckouts, listCafeQrCheckoutReviewEvents, logCafeQrCheckoutReview, getCafeQrCheckoutReviewStatus } from "@/api/cafeQrReview";
+import { listUnresolvedCafeQrCheckouts, listCafeQrCheckoutReviewEvents, logCafeQrCheckoutReview, getCafeQrCheckoutReviewStatus, getCafeQrReconciliationPacket } from "@/api/cafeQrReview";
 
 // Isolated OPPS-106 feature-branch staff test screen. Not linked in production nav.
 // The private backend issuance switch defaults OFF, so a user cannot force
@@ -37,6 +37,7 @@ export default function CafeQrSandbox() {
   const [selectedQrReview,setSelectedQrReview] = useState(null);
   const [qrAuditEvents,setQrAuditEvents] = useState([]);
   const [qrAuditStatus,setQrAuditStatus] = useState(null);
+  const [qrEvidencePacket,setQrEvidencePacket] = useState(null);
   const [qrReviewType,setQrReviewType] = useState("case_opened");
   const [qrProviderRef,setQrProviderRef] = useState("");
   const [qrReviewNotes,setQrReviewNotes] = useState("");
@@ -58,7 +59,7 @@ export default function CafeQrSandbox() {
   async function openQrAudit(id) {
     if (!enabled || qrAuditBusy) return;
     setSelectedQrReview(id);setQrAuditBusy(true);setQrAuditMessage("");
-    try { const [events,status] = await Promise.all([listCafeQrCheckoutReviewEvents(id),getCafeQrCheckoutReviewStatus(id)]);setQrAuditEvents(events);setQrAuditStatus(status); }
+    try { const [events,status,packet] = await Promise.all([listCafeQrCheckoutReviewEvents(id),getCafeQrCheckoutReviewStatus(id),getCafeQrReconciliationPacket(id)]);setQrAuditEvents(events);setQrAuditStatus(status);setQrEvidencePacket(packet); }
     catch (error) { setQrAuditEvents([]);setQrAuditMessage(error?.message || "Review history unavailable."); }
     finally { setQrAuditBusy(false); }
   }
@@ -228,6 +229,24 @@ export default function CafeQrSandbox() {
           <p className="font-semibold">{String(qrAuditStatus.state || "AWAITING_PROVIDER_VERIFICATION").replaceAll("_"," ")}</p>
           <p className="text-xs">Review entries: {qrAuditStatus.reviewEventCount} · Independent review: {qrAuditStatus.independentSecondReviewRecorded ? "recorded" : "not recorded"}</p>
           <p className="text-xs font-semibold">Cash/Card hold: remains in force. Staff review does not constitute verified provider no-capture evidence.</p>
+        </div>}
+        {qrEvidencePacket && <div className="rounded-xl bg-secondary p-3 text-sm space-y-2">
+          <p className="font-semibold">PayFast reconciliation packet (read-only)</p>
+          <p className="text-xs">Match this reference and amount in PayFast Transaction History or with PayFast support before recording your finding.</p>
+          <div className="grid gap-1 text-xs">
+            <p><strong>Order:</strong> {qrEvidencePacket.orderNumber}</p>
+            <p><strong>Gateway reference:</strong> <code className="break-all">{qrEvidencePacket.gatewayReference}</code>
+              <button type="button" onClick={() => navigator.clipboard?.writeText(qrEvidencePacket.gatewayReference)}
+                className="ml-2 underline">Copy reference</button></p>
+            <p><strong>Amount:</strong> {money(Number(qrEvidencePacket.amountCents))} · {qrEvidencePacket.currency}</p>
+            <p><strong>QR:</strong> {qrEvidencePacket.qrStatus} · <strong>Order:</strong> {qrEvidencePacket.orderPaymentStatus}</p>
+            <p><strong>Checkout started:</strong> {qrEvidencePacket.checkoutStartedAt ? new Date(qrEvidencePacket.checkoutStartedAt).toLocaleString("en-ZA") : "not started"}</p>
+            <p><strong>Provenance:</strong> {qrEvidencePacket.gatewayReferenceProvenance === "server_bound" ? "Server-bound" : "Legacy reference; no bound checkout identity"}</p>
+            <p><strong>PayFast merchant:</strong> {qrEvidencePacket.merchantId || "Not stored (legacy)"}</p>
+            <p><strong>Completed PayFast receipts:</strong> {qrEvidencePacket.completedReceipts} · <strong>Pending PayFast intents:</strong> {qrEvidencePacket.pendingPayfastIntents}</p>
+            <p><strong>Exceptions:</strong> {qrEvidencePacket.exceptionEvents} · <strong>Non-complete notifications:</strong> {qrEvidencePacket.noncompleteNotifications}</p>
+          </div>
+          <p className="text-xs font-semibold">Gateway no-capture verification: not established. Cash/Card payment remains blocked.</p>
         </div>}
         <label className="grid gap-1 text-sm font-medium">Finding
           <select value={qrReviewType} onChange={e=>setQrReviewType(e.target.value)}
