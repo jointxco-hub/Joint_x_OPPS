@@ -66,3 +66,13 @@ export async function getCafeQrCheckoutReviewStatus(requestId) {
   }
   return data;
 }
+
+export async function getCafeQrReconciliationPacket(requestId) {
+  if (!QR_ID.test(requestId || "")) throw Error("Invalid QR reconciliation identifier.");
+  const data=await reviewRpc("qs_opps106_get_qr_reconciliation_packet",{p_request_id:requestId});
+  if (data?.ok !== true || data.cashCardHoldReleased !== false
+    || data.providerOutcomeVerified !== false || data.noCaptureVerified !== false) {
+    throw Error("QR reconciliation packet is unavailable. Payment hold remains.");
+  }
+  return data;
+}
