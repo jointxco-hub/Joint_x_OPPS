@@ -1,5 +1,6 @@
 -- OPPS-106 PRODUCTION CANDIDATE. REVIEW-ONLY: NEVER AUTO-APPLY.
 -- Does not enable merchant policy, issuer controls or production Edge routes.
+-- Disabling new issuance must not block verified ITNs for prior initiated checkouts.
 create table if not exists qr_payments.live_gateway_policy(
  target_type text primary key,merchant_id text,
  enabled boolean not null default false,
@@ -184,7 +185,7 @@ begin
     or p_raw_itn->>'payment_status' is distinct from 'COMPLETE'
     or not exists (
       select 1 from qr_payments.live_gateway_policy cfg
-      where cfg.target_type='cafe_order' and cfg.enabled is true
+      where cfg.target_type='cafe_order' and cfg.merchant_id is not null
         and cfg.merchant_id=v_request.checkout_merchant_id
         and cfg.approved_at is not null)
   then
@@ -307,7 +308,7 @@ begin
     or v_request.checkout_environment is distinct from 'live'
     or v_request.checkout_merchant_id is null
     or not exists(select 1 from qr_payments.live_gateway_policy cfg
-       where cfg.target_type='cafe_order' and cfg.enabled is true
+       where cfg.target_type='cafe_order' and cfg.merchant_id is not null
          and cfg.merchant_id=v_request.checkout_merchant_id
          and cfg.approved_at is not null)
     or v_request.target_id<>p_order_id
