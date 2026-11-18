@@ -35,3 +35,13 @@ Read-only query on 18 Nov 2026 identified **QS-261116-5F45**: QR status active, 
 - iMin D4 physical receipt printing and Next Sale.
 - Existing five unrelated Café test failures.
 - Release approval and QR issuance controls. Both issuance switches remain OFF.
+
+## 18 November — review evidence implementation (staging only)
+
+An append-only `qr_payments.checkout_review_events` table now records `actor_user_id`, event type, provider reference, factual note, idempotency key and timestamp. RLS is enabled; direct anonymous/authenticated access is revoked. Only a signed-in OPPS staff member with `cafe.operations.manage` can write or read through `qs_opps106_log_qr_checkout_review` and `qs_opps106_list_qr_checkout_review_events`.
+
+- Available findings: opened case, provider-reported no capture, provider-reported capture, escalated, independent second review.
+- A second review requires the same provider reference and a different actor from a prior no-capture report.
+- The authorized staff UI provides a review form, history, reviewer identity and explicit **no payment release** label.
+- A finding or two-person review is **not backend-attested provider proof** and cannot cancel a pending PayFast intent, clear a Cash/Card hold, issue another QR, or mark an order paid. The release action is deliberately not implemented until a secure provider-verification and operator-approved reconciliation is designed and tested.
+- No review evidence was invented for `QS-261116-5F45`; it remains unresolved and unpaid pending actual provider evidence.
