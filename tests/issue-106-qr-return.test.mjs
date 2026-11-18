@@ -61,7 +61,7 @@ test('preview-added query parameters cannot invalidate a unique payment referenc
  assert.equal(check(good),true);
  assert.equal(check(duplicate),false);
  assert.equal(check(new URLSearchParams('_vercel_share=preview')),false);
- assert.match(page,/args\\.getAll\\('rid'\\)\\.length!==1/);
- assert.match(page,/encodeURIComponent\\(rid\\)/);
- assert.doesNotMatch(page,/args\\.size!==1/);
+ assert.match(page,/args\.getAll\('rid'\)\.length!==1/);
+ assert.match(page,/encodeURIComponent\(rid\)/);
+ assert.doesNotMatch(page,/args\.size!==1/);
 });
