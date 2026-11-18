@@ -9,10 +9,11 @@ const sandbox=()=>({
 const live=()=>({
  PAYFAST_SANDBOX:"false",PAYFAST_MERCHANT_ID:"15000100",
  PAYFAST_MERCHANT_KEY:"live-private-key",PAYFAST_PASSPHRASE:"live-secret",
- OPPS106_QR_MODE:"live",OPPS106_LIVE_GATEWAY_APPROVED:"true",
+ OPPS106_QR_MODE:"live",OPPS106_LIVE_MERCHANT_ID:"15000100",
+ OPPS106_SANDBOX_MERCHANT_ID:"10000100",OPPS106_LIVE_GATEWAY_APPROVED:"true",
  OPPS106_LIVE_CALLBACK_ENABLED:"true",
  OPPS106_LIVE_RETURN_BASE:"https://opps.jointx.co",
- OPPS106_LIVE_NOTIFY_URL:"https://example.jointx.co/functions/v1/qr-live-notify"
+ OPPS106_LIVE_NOTIFY_URL:"https://example.jointx.co/functions/v1/quick-solution-qr-opps106-live-notify"
 });
 test("endpoint pairing is explicit, not derived from caller/browser fields",()=>{
  assert.equal(PAYFAST_ENDPOINTS.live.process,"https://www.payfast.co.za/eng/process");
@@ -32,6 +33,9 @@ test("live profile requires two approvals and distinct LIVE config",()=>{
   v=>v.OPPS106_LIVE_CALLBACK_ENABLED="false",
   v=>v.OPPS106_QR_MODE="sandbox",
   v=>v.PAYFAST_SANDBOX="true",
+  v=>v.OPPS106_LIVE_MERCHANT_ID="10000100",
+  v=>v.OPPS106_SANDBOX_MERCHANT_ID="15000100",
+  v=>v.OPPS106_LIVE_NOTIFY_URL="https://opps.jointx.co/functions/v1/sandbox-notify",
   v=>v.OPPS106_LIVE_NOTIFY_URL="http://not-secure",
   v=>v.OPPS106_LIVE_RETURN_BASE="https://joint-x-opps-git-feature.vercel.app"
  ]){const v={...e};change(v);assert.equal(getPayfastGatewayProfile(v,"live").ok,false);}
