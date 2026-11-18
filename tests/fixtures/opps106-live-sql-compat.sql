@@ -1,11 +1,11 @@
 -- Disposable Postgres compatibility shim ONLY, never run on Supabase.
 -- Supabase role compatibility in DISPOSABLE local PostgreSQL only.
-do $
+do $$
 begin
   if not exists(select 1 from pg_roles where rolname='anon') then create role anon;end if;
   if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated;end if;
   if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role;end if;
-end $;
+end $$;
 -- Extend the existing OPPS-106 race fixture so PostgreSQL can parse the
 -- review-only candidate schema and PL/pgSQL definitions.
 alter table qr_payments.payment_requests
