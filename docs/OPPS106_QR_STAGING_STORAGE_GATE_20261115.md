@@ -632,3 +632,44 @@ staging env configuration, then ask signed-in staff to preview and send.
 
 Post-work database check: R72 order remains paid, submitted,
 `opps_order_id=NULL`, handoff **ready**; no staff send occurred.
+
+## 18 Nov 2026 — Customer payment confirmation & Café counter paid state
+
+The R60 counter QR for order `QS-261118-98C6` (`7334c164-8294-4ef2-a9bd-9b87b4ee9e27`)
+successfully scanned, completed at PayFast Sandbox, settled via signed ITN,
+and was independently verified:
+- QR ID `f50bd2bf-7ee5-4389-b9d6-9867e04d8e66` status `settled`,
+  amount_cents 6000, gateway reference `3526444`.
+- Exactly **one** completed R60 receipt. Café order `paid`;
+  no OPPS handoff yet. Both QR issuance switches **OFF**.
+- Customer originally saw neutral `Payment verification in progress` after
+  browser return, because old return URL had no correlation identifier.
+- Added scoped `?rid=<opaque request UUID>` to *future* PayFast-signed
+  return/cancel URLs; the URL remains static staging Vercel host. No PII
+  included in return query.
+- Staging scan Edge Function **v6 ACTIVE**: readonly
+  `GET ?rid=<UUID>&status=1` queries service-role-only
+  `qs_opps106_scan_counter_qr_status(uuid)`, returns ONLY minimal
+  `{state:"paid"|"pending"|"unavailable"}`, with no-store caching and
+  origin-specific CORS; no checkout creation or write RPC in that path.
+  `paid` maps exclusively to server `settled`, not browser return.
+- Updated `public/opps106-qr-return.html`: bounded polling (~90s),
+  shows `Payment confirmed` only after server `paid`; otherwise
+  pending, delayed, or safe unavailable message. Instructions explicitly
+  warn not to pay twice. No customer details or payment mutation.
+- CI [run 44289150323](https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/44289150323):
+  **33/33 pass**. New OPPS staging preview READY
+  `https://joint-x-opps-o4y01r0rc-joint-x.vercel.app`.
+- Café Counter feature branch updates the server-paid order card to show
+  a prominent `Payment confirmed`, `View / Print receipt`, `Next sale`.
+  The paid view hides further payment controls even if local QR state has
+  not yet cleared. Café focused tests **63/63 pass** and Vite build pass.
+  Full suite still has 5 unrelated pre-existing storefront PayFast and
+  delivery-copy failures; keep release gated.
+- New Café staging preview READY:
+  `https://quick-solution-cafe-staging-kgxecnvop-joint-x.vercel.app/counter`.
+- **No new payments or production rollout.** Existing R60 settled QR
+  can be safely used to acceptance-test the return status page using
+  `/opps106-qr-return.html?rid=f50bd2bf-7ee5-4389-b9d6-9867e04d8e66`.
+  This GET does not start checkout. Confirm browser actually displays paid
+  before treating customer status UX as accepted.
