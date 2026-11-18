@@ -8,6 +8,10 @@ on:
       - 'src/features/cafeQr/**'
       - 'src/api/cafeCounterQr.js'
       - 'src/pages/CafeQrSandbox.jsx'
+      - 'src/api/cafeQrReview.js'
+      - 'supabase/functions/quick-solution-qr-opps106-notify/**'
+      - 'supabase/functions/quick-solution-qr-opps106-scan/**'
+      - 'supabase/functions/_shared/**'
       - 'src/server/cafeQr/**'
       - 'tests/issue-106-*.test.mjs'
       - 'tests/opps106-counter-race-postgres.sh'
@@ -60,3 +64,15 @@ jobs:
           PGPASSWORD: test-only-password
           PGDATABASE: opps106_disposable
         run: bash tests/opps106-counter-race-postgres.sh
+
+  opps-preview-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned application dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build OPPS-106 staging preview code without deploying
+        run: npm run build
