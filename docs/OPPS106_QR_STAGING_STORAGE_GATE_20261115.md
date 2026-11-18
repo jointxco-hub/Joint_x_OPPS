@@ -673,3 +673,35 @@ and was independently verified:
   `/opps106-qr-return.html?rid=f50bd2bf-7ee5-4389-b9d6-9867e04d8e66`.
   This GET does not start checkout. Confirm browser actually displays paid
   before treating customer status UX as accepted.
+
+## 18 Nov 2026 — Fixed false "Verification unavailable" on customer return
+
+Browser acceptance after the first return-page update showed
+"We could not verify the payment" even though the R60 QR request was
+already `settled`. Staging RPC directly confirmed `settled`; the
+client-to-Edge cross-origin GET was not observed in relevant Edge logs.
+The exact browser-network rejection mechanism was not independently
+captured, so do not claim a specific CORS/CSP root cause.
+
+The fix avoids cross-origin browser status lookup entirely:
+- New same-origin Vercel serverless read-only handler
+  `api/opps106-qr-status.js`; strict UUID and one-query-argument
+  validation, fixed Supabase staging origin, **always** adds `status=1`,
+  upstream redirect disabled, 6s timeout, narrow `{state}` response,
+  `no-store`, no credentials, no payment writes.
+- `vercel.json` explicitly routes `/api/opps106-qr-status`
+  before SPA fallback.
+- `public/opps106-qr-return.html` now calls that same-origin endpoint;
+  CSP uses `connect-src 'self'`.
+- [QR test run 44291729835](https://github.com/jointxco-hub/Joint_x_OPPS/actions/runs/44291729835)
+  **37/37 PASS**, including relay behavior and error handling.
+- Vercel preview with exact commit `0395c66e9ecd393d00b0ff67041d066e3fe1908b`
+  is **READY**.
+- Independently fetched real staging alias
+  `https://joint-x-opps-git-feature-106-cafe-visibility-qr-joint-x.vercel.app/api/opps106-qr-status?rid=f50bd2bf-7ee5-4389-b9d6-9867e04d8e66`:
+  **HTTP 200**, `content-type: application/json`, **`{"state":"paid"}`**.
+- Independently fetched matching static return page at that alias:
+  **HTTP 200**, `text/html`, correct same-origin JS.
+- Still need actual browser acceptance of the refreshed return page
+  (JS execution), then the mobile/iMin paid-card acceptance.
+  Production unchanged; both issuance switches OFF, no new charges.
