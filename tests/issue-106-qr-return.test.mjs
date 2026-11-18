@@ -52,3 +52,16 @@ test('transient lookup failures retry without claiming a failed or paid payment'
  assert.match(page,/if\(body && body\.state==='paid'\)\{update\('paid'\);return;\}/);
  assert.doesNotMatch(page,/catch\s*\{\s*update\('unavailable'\);return;/);
 });
+
+test('preview-added query parameters cannot invalidate a unique payment reference',()=>{
+ const rid='f50bd2bf-7ee5-4389-b9d6-9867e04d8e66';
+ const good=new URLSearchParams('rid='+rid+'&_vercel_share=preview');
+ const duplicate=new URLSearchParams('rid='+rid+'&rid='+rid);
+ const check=params=>params.getAll('rid').length===1 && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(params.get('rid')||'');
+ assert.equal(check(good),true);
+ assert.equal(check(duplicate),false);
+ assert.equal(check(new URLSearchParams('_vercel_share=preview')),false);
+ assert.match(page,/args\\.getAll\\('rid'\\)\\.length!==1/);
+ assert.match(page,/encodeURIComponent\\(rid\\)/);
+ assert.doesNotMatch(page,/args\\.size!==1/);
+});
