@@ -58,3 +58,20 @@ Applied `opps106_staging_qr_review_status_failclosed`, source `supabase/staging-
 - CI guard `tests/issue-106-review-status-failclosed.test.mjs` verifies append-only behavior, staff authorization and no released-payments side effects.
 - **Provider confirmation for no-capture is not implemented as an API**. Official PayFast `/eng/query/validate` validates an incoming ITN payload; it is NOT a separate negative-payment lookup. Authorized operators must investigate in PayFast Transaction History/support. Do not treat absence of an ITN or a staff statement alone as terminal no-capture.
 - No new checkout, payment, review event or release was fabricated; original unresolved order remains unpaid with Cash/Card hold. QR issuance controls remain OFF.
+
+
+## 18 November — staff PayFast reconciliation packet (staging)
+
+Applied `opps106_staging_qr_reconciliation_packet` and added the read-only `public.qs_opps106_get_qr_reconciliation_packet` RPC (authorized OPPS staff plus Café operations capability). Source is `supabase/staging-only/20261118_opps106_qr_reconciliation_packet.sql`.
+
+- An authorized reviewer sees the exact QR gateway reference `JXQR-<uuid>`, order number, merchant ID **only if the newer server-bound checkout stored it**, amount, currency, checkout start time, QR/order status, and counts of pending PayFast intents, completed receipts, exceptions and non-complete notifications.
+- Legacy references are labeled **legacy-derived**, not represented as proven server-bound gateway provenance. No checkout URLs, raw ITN, payment secrets, or customer personal data are returned.
+- Staging OPPS-106 review screen exposes the reconciliation packet with a copyable reference, so the operator can locate the exact transaction in PayFast Transaction History or request support investigation.
+- The packet **always** reports `providerOutcomeVerified=false`, `noCaptureVerified=false`, `cashCardHoldReleased=false`. Neither an expired QR, an absent ITN, an empty provider search, nor two staff reports is an authoritative provider no-capture attestation.
+- PayFast documentation: [ITN validation](https://developers.payfast.co.za/documentation/), [payment reconciliation](https://support.payfast.help/portal/en/kb/articles/how-do-i-reconcile-payments-20-9-2022), [merchant dashboard reconciliation reports](https://support.payfast.help/portal/en/kb/articles/navigate-your-payfast-dashboard-20-9-2022).
+- Added `tests/issue-106-reconciliation-packet.test.mjs` for access boundaries, tenant scoping, exclusion of sensitive data and hardcoded no-release semantics.
+- Staging order `QS-261116-5F45` continues to be an **unpaid unresolved checkout**; no capture outcome or manual release has been asserted, no new transaction was created. Both QR issuance switches remain OFF.
+
+### Provider outcome still required
+
+There is no verified, documented PayFast transaction-status lookup available to this implementation that independently asserts **terminal no-capture**. This stage deliberately builds review evidence and an operator workflow, not a release RPC. Before enabling release, obtain trustworthy provider support/merchant evidence and define a machine-verifiable terminal outcome with delayed ITN/replay handling, audit, conflict tests and explicit approval.
