@@ -33,3 +33,23 @@ No new receipt or second Finance transaction was created.
 - Restore production-safe database function definition and test migration as reviewed branch SQL before staging-to-production promotion. Do not assume this live staging patch is version-controlled in application migrations.
 
 No production deployment or payment was initiated in this correction.
+
+
+## 18 November — verified settled QR order metadata follow-up (completed in staging)
+
+Staging migration `opps106_staging_verified_qr_opps_order_metadata` was successfully applied and its exact source committed to [staging-only SQL](../supabase/staging-only/20261118_opps106_verified_qr_metadata.sql) (outside automatic production migration directory).
+
+- Uses `qr_payments.payment_requests` (settled status, canonical Café/tenant, PayFast gateway reference and amount) plus the matching completed Café PayFast ITN; no browser-provided sandbox flag or arbitrary customer claim.
+- Adds restricted internal helper `commerce.qs_opps106_verified_sandbox_qr_link` and idempotent classification projector `commerce.qs_opps106_classify_sandbox_handoff`, both EXECUTE revoked for PUBLIC, anon and authenticated.
+- Adds an **exact proof-constrained metadata-only exception** to the existing OPPS workspace update trigger; all other workspace permission checks, amounts, production and lifecycle transitions remain guarded.
+- Integrates projection into the existing `commerce._qs_sync_opps_payment_ledger` path for future staging handoffs, and reconciles currently settled QR orders without issuing new payments.
+- Creates an order activity audit event only when a change is actually needed.
+
+Read-only post-change verification of **QS-261118-98C6**:
+- OPPS order: `payment_method=payfast`, `payment_reference=3526444`, `payment_environment=sandbox`, `is_test=true`, `excluded_from_reports=true`, paid R60.
+- Finance: `payment_method=payfast`, reference `3526444`, `is_test=true`, `excluded_from_reports=true`, amount R60.
+- One OPPS order, one Finance transaction, one original completed Café receipt and one reconciliation audit event. Repeating the classifier left the audit count at one.
+- Negative evidence: unmatched/unpaid counter orders `QS-261118-1D59` and `QS-261118-448A` returned `verified=false`; original settled order returned `verified=true`.
+- Neither internal function is executable by anon or authenticated.
+
+**Production gating unchanged:** This is explicitly **staging-only**. The proof that a QR was sandbox-issued depends on the dedicated staging canary path. A production version must carry explicit server/provider-attested sandbox/live provenance as durable payment metadata and require independent integration/replay tests. Do **not** automatically deploy the staging-only SQL to production. Both QR issuance switches remain OFF. Staff/iMin printing, multi-device race tests, broad five-failure Café regression triage and reviewed production migration remain pending.
