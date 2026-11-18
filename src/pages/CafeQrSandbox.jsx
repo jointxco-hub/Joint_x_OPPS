@@ -4,7 +4,7 @@ import { useWorkspace } from "@/lib/WorkspaceContext";
 import { checkCafeCounterQr, issueCafeCounterQr } from "@/api/cafeCounterQr";
 import { getCafeQrPresentation } from "@/features/cafeQr/paymentRequestView";
 import { previewCafeHandoff, sendCafeHandoff } from "@/api/cafeQrHandoff";
-import { listUnresolvedCafeQrCheckouts } from "@/api/cafeQrReview";
+import { listUnresolvedCafeQrCheckouts, listCafeQrCheckoutReviewEvents, logCafeQrCheckoutReview } from "@/api/cafeQrReview";
 
 // Isolated OPPS-106 feature-branch staff test screen. Not linked in production nav.
 // The private backend issuance switch defaults OFF, so a user cannot force
@@ -34,6 +34,13 @@ export default function CafeQrSandbox() {
   const [qrReviews,setQrReviews] = useState(null);
   const [qrReviewError,setQrReviewError] = useState("");
   const [qrReviewBusy,setQrReviewBusy] = useState(false);
+  const [selectedQrReview,setSelectedQrReview] = useState(null);
+  const [qrAuditEvents,setQrAuditEvents] = useState([]);
+  const [qrReviewType,setQrReviewType] = useState("case_opened");
+  const [qrProviderRef,setQrProviderRef] = useState("");
+  const [qrReviewNotes,setQrReviewNotes] = useState("");
+  const [qrAuditMessage,setQrAuditMessage] = useState("");
+  const [qrAuditBusy,setQrAuditBusy] = useState(false);
   const isCafe = currentWorkspace?.slug === "quick-solution";
   // The screen is safe even when accidentally opened on a production host:
   // no user controls are displayed unless the configured Supabase project
@@ -46,6 +53,27 @@ export default function CafeQrSandbox() {
     try { setQrReviews(await listUnresolvedCafeQrCheckouts()); }
     catch (error) {setQrReviews(null);setQrReviewError(error?.message || "QR review unavailable.");}
     finally {setQrReviewBusy(false);}
+  }
+  async function openQrAudit(id) {
+    if (!enabled || qrAuditBusy) return;
+    setSelectedQrReview(id);setQrAuditBusy(true);setQrAuditMessage("");
+    try { setQrAuditEvents(await listCafeQrCheckoutReviewEvents(id)); }
+    catch (error) { setQrAuditEvents([]);setQrAuditMessage(error?.message || "Review history unavailable."); }
+    finally { setQrAuditBusy(false); }
+  }
+  async function submitQrReview() {
+    if (!enabled || !selectedQrReview || qrAuditBusy) return;
+    setQrAuditBusy(true);setQrAuditMessage("");
+    try {
+      await logCafeQrCheckoutReview({
+        requestId:selectedQrReview,type:qrReviewType,
+        providerReference:qrProviderRef,notes:qrReviewNotes
+      });
+      setQrAuditEvents(await listCafeQrCheckoutReviewEvents(selectedQrReview));
+      setQrReviewNotes("");
+      setQrAuditMessage("Finding recorded with your staff identity. Payment remains on hold; no release or additional charge was made.");
+    } catch (error) { setQrAuditMessage(error?.message || "Unable to save review."); }
+    finally { setQrAuditBusy(false); }
   }
   async function previewHandoff() {
     setBusy(true);setHandoffStatus("");setHandoff(null);setConfirmSend(false);
@@ -169,7 +197,7 @@ export default function CafeQrSandbox() {
       </div>
       <div className="space-y-3 rounded-2xl border border-border bg-card p-5">
         <h2 className="font-semibold text-lg">Unresolved PayFast checkouts</h2>
-        <p className="text-sm text-muted-foreground">Read-only staff review. An expired QR does not prove PayFast never charged a customer. Verify the provider and original Café receipt before accepting Cash/Card.</p>
+        <p className="text-sm text-muted-foreground">Staff-only checkout queue and append-only review history. Expired QR does not prove no charge; never accept Cash/Card until a separate authorized reconciliation.</p>
         <button type="button" onClick={loadQrReviews} disabled={qrReviewBusy}
           className="rounded-xl border border-[#176c5b] px-4 py-3 text-sm font-semibold disabled:opacity-50">
           {qrReviewBusy ? "Checking…" : "Refresh unresolved checkouts"}
@@ -182,9 +210,54 @@ export default function CafeQrSandbox() {
             <p className="text-xs">QR: {item.qr_status} · Intent: {item.payment_intent_status || "unknown"}</p>
             <p className="text-xs">Started: {item.checkout_started_at ? new Date(item.checkout_started_at).toLocaleString("en-ZA") : "unknown"}</p>
             <p className="text-xs font-medium">Review PayFast and the canonical Café payment record before manually taking another payment.</p>
+            <button type="button" onClick={() => openQrAudit(item.payment_request_id)}
+              disabled={qrAuditBusy} className="mt-2 rounded-lg border border-[#176c5b] px-3 py-2 text-xs font-semibold disabled:opacity-50">
+              View / record review
+            </button>
           </div>)}
         </div>}
       </div>
+      {selectedQrReview && <section className="space-y-3 rounded-2xl border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-semibold">PayFast review evidence</h3>
+          <button type="button" className="text-xs underline" onClick={() => {setSelectedQrReview(null);setQrAuditMessage("");}}>Close</button>
+        </div>
+        <p className="text-xs text-muted-foreground">This is an audit record, not approval to release the order. Provider findings are reported by staff and must be independently verified.</p>
+        <label className="grid gap-1 text-sm font-medium">Finding
+          <select value={qrReviewType} onChange={e=>setQrReviewType(e.target.value)}
+            className="rounded-lg border border-border bg-background px-3 py-2">
+            <option value="case_opened">Opened review</option>
+            <option value="provider_no_capture_reported">Provider reports no capture</option>
+            <option value="provider_capture_reported">Provider reports a capture</option>
+            <option value="escalated">Escalated to Finance</option>
+            <option value="second_review_confirmed">Independent second review</option>
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm font-medium">Provider case/reference
+          <input value={qrProviderRef} onChange={e=>setQrProviderRef(e.target.value)}
+            autoComplete="off" maxLength={160} placeholder="PayFast case or transaction reference"
+            className="rounded-lg border border-border bg-background px-3 py-2"/>
+        </label>
+        <label className="grid gap-1 text-sm font-medium">Factual review note
+          <textarea value={qrReviewNotes} onChange={e=>setQrReviewNotes(e.target.value)}
+            maxLength={1000} rows={3} placeholder="What did you verify with the provider, and when?"
+            className="rounded-lg border border-border bg-background px-3 py-2"/>
+        </label>
+        <button type="button" disabled={qrAuditBusy || qrReviewNotes.trim().length<12}
+          onClick={submitQrReview} className="rounded-lg bg-[#176c5b] px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">
+          {qrAuditBusy?"Saving…":"Record finding (no payment release)"}
+        </button>
+        {qrAuditMessage && <p role="status" className="rounded-xl bg-secondary p-3 text-sm">{qrAuditMessage}</p>}
+        <div className="space-y-2 border-t border-border pt-3">
+          <p className="text-sm font-semibold">Previous review entries</p>
+          {qrAuditEvents.length===0 ? <p className="text-xs text-muted-foreground">No review entries recorded.</p> :
+            qrAuditEvents.map(ev=><div key={ev.event_id} className="rounded-xl bg-secondary p-3 text-xs space-y-1">
+              <strong>{String(ev.event_type).replaceAll("_"," ")}</strong>
+              <p>{ev.notes}</p>
+              <p className="text-muted-foreground">Reference: {ev.provider_reference || "not supplied"} · Reviewer: {ev.reviewer_id} · {new Date(ev.created_at).toLocaleString("en-ZA")}</p>
+            </div>)}
+        </div>
+      </section>}
       {qr && <div className="space-y-2 rounded-2xl border border-border bg-card p-5" role="status">
         <strong>Staging scan link issued</strong>
         <p className="text-sm">Amount {money(qr.amountCents)} · Expires {new Date(qr.expiresAt).toLocaleTimeString("en-ZA")}</p>
