@@ -28,7 +28,7 @@ test('staging QR settlement does not imply support for live environment',()=>{
 test('live payment release contract prohibits default live classification and timer-based release',()=>{
   assert.match(contract,/callback environment and merchant identity equal the persisted checkout-intent environment/);
   assert.match(contract,/missing\/mismatched provenance must fail closed/i);
-  assert.match(contract,/repeat COMPLETE\/ITN returns/);
+  assert.match(contract,/repeat COMPLETE\/ITN returns/i);
   assert.match(contract,/no automatic clearing based solely on QR expiry/);
   assert.match(contract,/iMin D4 thermal receipt printing is not yet tested/);
 });
