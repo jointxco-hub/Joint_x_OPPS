@@ -4,7 +4,7 @@ import { useWorkspace } from "@/lib/WorkspaceContext";
 import { checkCafeCounterQr, issueCafeCounterQr } from "@/api/cafeCounterQr";
 import { getCafeQrPresentation } from "@/features/cafeQr/paymentRequestView";
 import { previewCafeHandoff, sendCafeHandoff } from "@/api/cafeQrHandoff";
-import { listUnresolvedCafeQrCheckouts, listCafeQrCheckoutReviewEvents, logCafeQrCheckoutReview } from "@/api/cafeQrReview";
+import { listUnresolvedCafeQrCheckouts, listCafeQrCheckoutReviewEvents, logCafeQrCheckoutReview, getCafeQrCheckoutReviewStatus } from "@/api/cafeQrReview";
 
 // Isolated OPPS-106 feature-branch staff test screen. Not linked in production nav.
 // The private backend issuance switch defaults OFF, so a user cannot force
@@ -36,6 +36,7 @@ export default function CafeQrSandbox() {
   const [qrReviewBusy,setQrReviewBusy] = useState(false);
   const [selectedQrReview,setSelectedQrReview] = useState(null);
   const [qrAuditEvents,setQrAuditEvents] = useState([]);
+  const [qrAuditStatus,setQrAuditStatus] = useState(null);
   const [qrReviewType,setQrReviewType] = useState("case_opened");
   const [qrProviderRef,setQrProviderRef] = useState("");
   const [qrReviewNotes,setQrReviewNotes] = useState("");
@@ -57,7 +58,7 @@ export default function CafeQrSandbox() {
   async function openQrAudit(id) {
     if (!enabled || qrAuditBusy) return;
     setSelectedQrReview(id);setQrAuditBusy(true);setQrAuditMessage("");
-    try { setQrAuditEvents(await listCafeQrCheckoutReviewEvents(id)); }
+    try { const [events,status] = await Promise.all([listCafeQrCheckoutReviewEvents(id),getCafeQrCheckoutReviewStatus(id)]);setQrAuditEvents(events);setQrAuditStatus(status); }
     catch (error) { setQrAuditEvents([]);setQrAuditMessage(error?.message || "Review history unavailable."); }
     finally { setQrAuditBusy(false); }
   }
@@ -69,7 +70,7 @@ export default function CafeQrSandbox() {
         requestId:selectedQrReview,type:qrReviewType,
         providerReference:qrProviderRef,notes:qrReviewNotes
       });
-      setQrAuditEvents(await listCafeQrCheckoutReviewEvents(selectedQrReview));
+      const [events,status] = await Promise.all([listCafeQrCheckoutReviewEvents(selectedQrReview),getCafeQrCheckoutReviewStatus(selectedQrReview)]);setQrAuditEvents(events);setQrAuditStatus(status);
       setQrReviewNotes("");
       setQrAuditMessage("Finding recorded with your staff identity. Payment remains on hold; no release or additional charge was made.");
     } catch (error) { setQrAuditMessage(error?.message || "Unable to save review."); }
@@ -223,6 +224,11 @@ export default function CafeQrSandbox() {
           <button type="button" className="text-xs underline" onClick={() => {setSelectedQrReview(null);setQrAuditMessage("");}}>Close</button>
         </div>
         <p className="text-xs text-muted-foreground">This is an audit record, not approval to release the order. Provider findings are reported by staff and must be independently verified.</p>
+        {qrAuditStatus && <div role="status" className="rounded-xl border border-border p-3 text-sm space-y-1">
+          <p className="font-semibold">{String(qrAuditStatus.state || "AWAITING_PROVIDER_VERIFICATION").replaceAll("_"," ")}</p>
+          <p className="text-xs">Review entries: {qrAuditStatus.reviewEventCount} · Independent review: {qrAuditStatus.independentSecondReviewRecorded ? "recorded" : "not recorded"}</p>
+          <p className="text-xs font-semibold">Cash/Card hold: remains in force. Staff review does not constitute verified provider no-capture evidence.</p>
+        </div>}
         <label className="grid gap-1 text-sm font-medium">Finding
           <select value={qrReviewType} onChange={e=>setQrReviewType(e.target.value)}
             className="rounded-lg border border-border bg-background px-3 py-2">
