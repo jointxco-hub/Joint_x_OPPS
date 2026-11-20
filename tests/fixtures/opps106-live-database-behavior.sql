@@ -87,3 +87,75 @@ begin
   raise notice 'PASS: live issue disabled, merchant mismatch quarantined/idempotent, synthetic capture rejected, late cancellation processed without enabling new issuance';
 end
 $test$;
+
+-- MOCK POSITIVE SETTLEMENT. This is not real PayFast verification!
+-- The real merchant callback independently validates source, signature and
+-- remote VALID before invoking the isolated live database RPC.
+create or replace function commerce.qs_apply_payfast_payment(
+ p_order_id uuid,p_amount numeric,p_payment_id text,p_itn jsonb
+) returns jsonb language plpgsql as $mock$
+declare v_paid uuid;
+begin
+ update commerce.service_order_payments
+ set status='completed',amount=p_amount,pf_payment_id=p_payment_id,
+     raw_itn=p_itn,completed_at=now()
+ where service_order_id=p_order_id and provider='payfast' and status='pending'
+ returning id into v_paid;
+ if v_paid is null then return jsonb_build_object('ok',false,'ignored',true);end if;
+ update commerce.service_orders set payment_status='paid' where id=p_order_id;
+ return jsonb_build_object('ok',true,'ignored',false);
+end $mock$;
+
+do $test$
+declare
+ v_tenant uuid:='11111111-1111-4111-8111-111111111111';
+ v_order uuid:='00000000-0000-4000-8000-000000000008';
+ v_request uuid:='66666666-6666-4666-8666-666666666666';
+ v_intent uuid:='77777777-7777-4777-8777-777777777777';
+ v_ref text:='JXQR-66666666-6666-4666-8666-666666666666';
+ v_itn jsonb;
+ v_result jsonb;
+ v_count integer;
+begin
+ insert into commerce.service_orders(id,tenant_id,channel,payment_status,status,total_amount,order_number)
+ values(v_order,v_tenant,'counter','unpaid','submitted',60,'QS-ISOLATED-LIVE-8');
+ insert into qr_payments.payment_requests(
+    id,tenant_id,target_type,target_id,status,checkout_started_at,checkout_intent_id,
+    checkout_environment,checkout_merchant_id,checkout_gateway_reference,checkout_contract_version,
+    expires_at,amount_cents)
+ values(v_request,v_tenant,'cafe_order',v_order,'active',now()-interval '1 minute',
+    v_intent,'live','15000100',v_ref,'jointx_qr_v2',now()+interval '1 minute',6000);
+ insert into commerce.service_order_payments(id,tenant_id,service_order_id,provider,status,amount)
+ values(v_intent,v_tenant,v_order,'payfast','pending',60);
+ v_itn:=jsonb_build_object('merchant_id','15000100','m_payment_id',v_ref,
+   'payment_status','COMPLETE','custom_str2','jointx_qr_v1');
+ -- The issuance policy remains OFF, but this checkout is already created.
+ v_result:=public.qs_opps106_settle_counter_qr_live_candidate(
+   v_request,v_order,v_tenant,6000,'fake-paid-0001',v_itn);
+ if v_result->>'status'<>'settled' then raise exception 'MOCK_SETTLEMENT_FAILED: %',v_result;end if;
+ if (select status from qr_payments.payment_requests where id=v_request)<>'settled'
+   or (select gateway_environment from qr_payments.payment_requests where id=v_request)<>'live'
+   or (select gateway_environment_evidence from qr_payments.payment_requests where id=v_request)
+     <>'payfast_itn_validated_live'
+ then raise exception 'LIVE_EVIDENCE_NOT_SAVED';end if;
+ if (select payment_status from commerce.service_orders where id=v_order)<>'paid'
+ then raise exception 'CANONICAL_ORDER_UNPAID';end if;
+ select count(*) into v_count from commerce.service_order_payments
+ where service_order_id=v_order and status='completed' and pf_payment_id='fake-paid-0001';
+ if v_count<>1 then raise exception 'EXPECTED_ONE_COMPLETED_RECEIPT';end if;
+ v_result:=public.qs_opps106_settle_counter_qr_live_candidate(
+   v_request,v_order,v_tenant,6000,'fake-paid-0001',v_itn);
+ if v_result->>'status'<>'replayed' then raise exception 'ITN_REPLAY_NOT_IDEMPOTENT: %',v_result;end if;
+ v_result:=public.qs_opps106_settle_counter_qr_live_candidate(
+   v_request,v_order,v_tenant,6000,'fake-paid-DIFFERENT',v_itn);
+ if v_result->>'status'<>'review_required' then raise exception 'SECOND_CAPTURE_NOT_QUARANTINED: %',v_result;end if;
+ if not exists(select 1 from qr_payments.payment_exceptions
+  where payment_request_id=v_request and gateway_payment_id='fake-paid-DIFFERENT'
+    and reason='ADDITIONAL_CAPTURE') then raise exception 'SECOND_CAPTURE_AUDIT_MISSING';end if;
+ if (select count(*) from commerce.service_order_payments where service_order_id=v_order and status='completed')<>1
+ then raise exception 'DUPLICATE_MOCK_RECEIPT';end if;
+ if (select enabled from qr_payments.live_gateway_policy where target_type='cafe_order')
+    is distinct from false then raise exception 'ISSUANCE_POLICY_ACCIDENTALLY_ENABLED';end if;
+ raise notice 'PASS: mock live settlement persisted, replay idempotent, different gateway ID quarantined, issuer remains OFF';
+end
+$test$;
