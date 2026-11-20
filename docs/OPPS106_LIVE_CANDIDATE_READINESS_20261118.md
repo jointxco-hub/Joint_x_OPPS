@@ -21,7 +21,7 @@ A dedicated live project or callback deployment must supply:
 - `PAYFAST_MERCHANT_ID`, `PAYFAST_MERCHANT_KEY`, `PAYFAST_PASSPHRASE` — live account credentials only.
 - `OPPS106_LIVE_MERCHANT_ID` — independently approved live merchant ID, equal to configured PayFast merchant ID.
 - `OPPS106_SANDBOX_MERCHANT_ID` — known sandbox merchant ID; must differ from live.
-- `OPPS106_LIVE_GATEWAY_APPROVED=true` **and** `OPPS106_LIVE_CALLBACK_ENABLED=true` — explicit, controlled release approvals (both default absent/false).
+- `OPPS106_LIVE_GATEWAY_APPROVED=true` gates **new live QR issuance** only. `OPPS106_LIVE_CALLBACK_ENABLED=true` independently gates the **validated live ITN receiver**. Both must be authorized before the initial checkout; pausing issuance later must not silence already-opened checkout notifications.
 - `OPPS106_LIVE_RETURN_BASE` — reviewed own HTTPS OPPS return/cancel origin; never an ephemeral Vercel preview URL.
 - `OPPS106_LIVE_NOTIFY_URL` — reviewed HTTPS endpoint with the exact path `/functions/v1/quick-solution-qr-opps106-live-notify`.
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — server secret config for the **approved** project.
@@ -77,3 +77,9 @@ The live candidate settlement RPC now retries `commerce.qs_project_manual_receip
 **Disposable PostgreSQL tests:** `tests/fixtures/opps106-finance-provenance-behavior.sql` and `tests/fixtures/opps106-opps-handoff-classification.sql` run after the live gateway candidate and synthetic provider settlement fixture. They verify live Finance inclusion, sandbox exclusion, unverified prefix rejection, QA flag preservation, OPPS order environment/reference classification and safe treatment of unresolved QR payments. **GitHub Actions #44737337388 passed all three jobs** (QR security, PostgreSQL concurrency/migration/Finance/OPPS behavior, OPPS build).
 
 **Unverified release dependencies:** integration with real PayFast live VALID and merchant credentials, production migration security review, PayFast-to-Finance end-to-end replay and exception drill, current Vercel preview, and physical iMin D4 receipt printing. Keep both QR switches OFF, live SQL undeployed, PR draft.
+
+## 20 November production preflight
+
+The connected production Supabase project contains the existing Café/Finance tables but **no** OPPS-106 QR request schema or issuance controls, and has **zero recorded OPPS-106 migrations**. Staging contains 24 named OPPS-106 migration records. This is a firm NO-GO until the baseline migration dependency plan is reviewed and tested. See [production preflight](OPPS106_PRODUCTION_PREFLIGHT_20261120.md) and the read-only `scripts/opps106-production-readiness.sql`.
+
+The live notification handler now requests the separately approved `callback` gateway profile. Tests prove new live issuance can be paused while already-started signed live notifications remain processable. **No live endpoint was deployed or enabled.**
