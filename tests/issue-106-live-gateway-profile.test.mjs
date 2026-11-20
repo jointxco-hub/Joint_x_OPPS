@@ -59,3 +59,16 @@ test("even valid gateway selection must match immutable checkout intent",()=>{
  assert.equal(matchGatewayCheckoutProfile(profile,{...intent,amountCents:0}).reason,"AMOUNT_INVALID");
  assert.equal(matchGatewayCheckoutProfile(profile,{...intent,gatewayReference:"JXQR-other"}).reason,"CHECKOUT_REFERENCE_INVALID");
 });
+
+test("disabling new live issuance does not disable previously opened verified callback",()=>{
+ const paused=live();
+ paused.OPPS106_LIVE_GATEWAY_APPROVED="false";
+ assert.equal(getPayfastGatewayProfile(paused,"live","issuance").reason,"LIVE_NOT_APPROVED");
+ const cb=getPayfastGatewayProfile(paused,"live","callback");
+ assert.equal(cb.ok,true);
+ assert.equal(cb.environment,"live");
+ assert.equal(cb.validationUrl,PAYFAST_ENDPOINTS.live.validate);
+ paused.OPPS106_LIVE_CALLBACK_ENABLED="false";
+ assert.equal(getPayfastGatewayProfile(paused,"live","callback").reason,"LIVE_CALLBACK_NOT_APPROVED");
+ assert.equal(getPayfastGatewayProfile(live(),"live","arbitrary").reason,"PURPOSE_REQUIRED");
+});
