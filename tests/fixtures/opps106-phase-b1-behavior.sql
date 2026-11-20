@@ -22,6 +22,13 @@ insert into commerce.service_order_items(order_id,tenant_id,product_id)
 select id,tenant_id,'ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid
 from commerce.service_orders;
 
+insert into commerce.service_order_payments(id,tenant_id,service_order_id,provider,status,amount)
+values
+('88882222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',
+'00000000-0000-4000-8000-000000000002','payfast','pending',60),
+('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',
+'00000000-0000-4000-8000-000000000003','payfast','pending',60);
+
 insert into qr_payments.payment_requests(id,tenant_id,target_type,target_id,operation_key,
  amount_cents,status,checkout_url,created_at,expires_at,checkout_started_at,checkout_intent_id)
 values
@@ -33,12 +40,6 @@ values
 'expired',null,now()-interval '10 minutes',now()-interval '2 minutes',now()-interval '4 minutes',
 '88882222-2222-4222-8222-222222222222');
 -- Keep active checkout pending intent and late expired checkout pending provider
-insert into commerce.service_order_payments(id,tenant_id,service_order_id,provider,status,amount)
-values
-('88882222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',
-'00000000-0000-4000-8000-000000000002','payfast','pending',60),
-('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',
-'00000000-0000-4000-8000-000000000003','payfast','pending',60);
 
 do $test$
 declare
