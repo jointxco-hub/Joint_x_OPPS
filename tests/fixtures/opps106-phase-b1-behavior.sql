@@ -23,14 +23,14 @@ select id,tenant_id,'ffffffff-ffff-4fff-8fff-ffffffffffff'::uuid
 from commerce.service_orders;
 
 insert into qr_payments.payment_requests(id,tenant_id,target_type,target_id,operation_key,
- amount_cents,status,checkout_url,expires_at,checkout_started_at,checkout_intent_id)
+ amount_cents,status,checkout_url,created_at,expires_at,checkout_started_at,checkout_intent_id)
 values
 ('aaaa0000-0000-4000-8000-000000000001','11111111-1111-4111-8111-111111111111',
 'cafe_order','00000000-0000-4000-8000-000000000001','active_test_001',6000,
-'active','https://example.invalid/unpaid',now()+interval '2 minutes',null,null),
+'active','https://example.invalid/unpaid',now()-interval '1 minute',now()+interval '2 minutes',null,null),
 ('aaaa0000-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111',
 'cafe_order','00000000-0000-4000-8000-000000000002','expired_test_002',6000,
-'expired',null,now()-interval '2 minutes',now()-interval '4 minutes',
+'expired',null,now()-interval '10 minutes',now()-interval '2 minutes',now()-interval '4 minutes',
 '88882222-2222-4222-8222-222222222222');
 -- Keep active checkout pending intent and late expired checkout pending provider
 insert into commerce.service_order_payments(id,tenant_id,service_order_id,provider,status,amount)
