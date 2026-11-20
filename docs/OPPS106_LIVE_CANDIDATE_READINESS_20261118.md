@@ -46,3 +46,18 @@ These are *requirements*, not values currently configured or verified.
 - A successful SQL parse is not equivalent to integrated money movement or security certification. Full database behavior, RLS, merchant portal validation, incident/replay drills and production migration review remain required.
 - Historical sandbox R60/R72 and unresolved R120 records remain untouched. Production and both QR issuer switches remain unchanged.
 - PayFast's published live process and validation endpoints are `https://www.payfast.co.za/eng/process` and `https://www.payfast.co.za/eng/query/validate`; sandbox uses `sandbox.payfast.co.za`. See https://developers.payfast.co.za/docs/itn-instant-transaction-notification/ .
+
+## 20 November — disposable live settlement integration test
+
+Added `tests/fixtures/opps106-live-database-behavior.sql` to the existing isolated PostgreSQL CI job, running **the actual proposed live RPCs**, not just checking that SQL parses. Run #44729669417 passed all three OPPS-106 jobs (QR security, PostgreSQL race + live behavior, OPPS build).
+
+**Verified within a disposable database with synthetic provider data:**
+- Live issuer refuses the disabled private merchant policy (no real QR issued).
+- Merchant mismatch records a `GATEWAY_PROVENANCE_MISMATCH` exception, and repeated delivery does not duplicate it.
+- A simulated payment cannot create a receipt when the test gateway projection refuses it.
+- An already-bound cancelled checkout can be closed even while new live issuance is disabled.
+- With a **mock canonical payment projector**, one synthetic COMPLETE produces one completed receipt and a settled QR with `payfast_itn_validated_live` evidence; repeating it returns `replayed`, and a different provider ID creates an `ADDITIONAL_CAPTURE` exception without a second receipt.
+
+**Critical accounting release gate found:** the current **staging-only** `commerce.qs_project_manual_receipt` classifies PayFast QR receipts as sandbox when their `raw_itn.m_payment_id` begins with `JXQR-` and `custom_str4='cafe_order'`. A real live payment uses this same reference shape, so this heuristic **must never be promoted to production**. The production projector must join the exact QR checkout/receipt to server-verified `gateway_environment` and `gateway_environment_evidence` under canonical tenant and payment identity. Sandbox captures must be marked test/excluded; verified live captures must not automatically set test/excluded, and any existing operator QA flags must be preserved unless separately audited. Confirm OPPS order, transaction and invoice receipts each link exactly once and classify correctly.
+
+These results are **not** proof of a real live PayFast interaction. The candidate has not been deployed, no live merchant keys are connected, provider remote `VALID` has not been tested against a live capture, and production accounting projection is not approved. Keep issuer switches OFF and PR DRAFT.
