@@ -94,6 +94,8 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-finance-function-snapshot.sql
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_reconciled_finance_PHASE_B3_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('authenticated','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-live-database-behavior.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-finance-provenance-behavior.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-opps-handoff-classification.sql
