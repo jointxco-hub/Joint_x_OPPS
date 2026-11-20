@@ -27,7 +27,7 @@ test('inventory is read-only and inspects RLS/trigger/function drift',()=>{
 test('release guide preserves no-go status for missing restore and costs',()=>{
  assert.match(guide,/NOT RUN/);
  assert.match(guide,/network-isolated/);
- assert.match(guide,/cost.*not yet confirmed/i);
+ assert.match(guide,/price is \*\*not yet confirmed/i);
  assert.match(guide,/not.*full restore/i);
  assert.match(guide,/No production change or live QR activation authorized/);
 });
