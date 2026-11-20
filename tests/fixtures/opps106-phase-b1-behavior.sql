@@ -2,7 +2,8 @@
 -- All identifiers are fake; no live payment, callback, or production data.
 \set ON_ERROR_STOP on
 insert into public.tenants(id,slug,status,settings)
-values('11111111-1111-4111-8111-111111111111','quick-solution','active','{}');
+values('11111111-1111-4111-8111-111111111111','quick-solution','active','{}')
+on conflict(id) do update set slug=excluded.slug,status=excluded.status,settings=excluded.settings;
 insert into public.tenant_capabilities(tenant_id,capability_key,enabled)
 values('11111111-1111-4111-8111-111111111111','quick_solution',true),
       ('11111111-1111-4111-8111-111111111111','cafe.counter.operate',true);
@@ -30,11 +31,11 @@ values
 ('aaaa0000-0000-4000-8000-000000000002','11111111-1111-4111-8111-111111111111',
 'cafe_order','00000000-0000-4000-8000-000000000002','expired_test_002',6000,
 'expired',null,now()-interval '2 minutes',now()-interval '4 minutes',
-'22222222-2222-4222-8222-222222222222');
+'88882222-2222-4222-8222-222222222222');
 -- Keep active checkout pending intent and late expired checkout pending provider
 insert into commerce.service_order_payments(id,tenant_id,service_order_id,provider,status,amount)
 values
-('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',
+('88882222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',
 '00000000-0000-4000-8000-000000000002','payfast','pending',60),
 ('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',
 '00000000-0000-4000-8000-000000000003','payfast','pending',60);
@@ -52,7 +53,7 @@ begin
  -- No issuer can run before the dedicated URL/merchant callback release.
  r:=public.qs_opps106_issue_counter_qr(o_cash,'fake_issue_key1');
  if r->>'reason'<>'QR_ISSUANCE_DISABLED' then raise exception 'ISSUER_STUB_FAILED: %',r;end if;
- if (select count(*) from qr_payments.payment_requests)<>2 then raise exception 'ISSUER_CREATED_QR';end if;
+ if (select count(*) from qr_payments.payment_requests)<>3 then raise exception 'ISSUER_CREATED_QR';end if;
  if (select count(*) from qr_payments.issuance_controls where enabled)<>0 then raise exception 'ISSUER_CHANGED_CONTROL';end if;
 
  r:=public.qs_opps106_counter_qr_preflight(o_cash);
