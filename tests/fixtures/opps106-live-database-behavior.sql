@@ -96,13 +96,32 @@ create or replace function commerce.qs_apply_payfast_payment(
 ) returns jsonb language plpgsql as $mock$
 declare v_paid uuid;
 begin
- update commerce.service_order_payments
- set status='completed',amount=p_amount,pf_payment_id=p_payment_id,
-     raw_itn=p_itn,completed_at=now()
+ -- Mirror the ACTUAL production canonical recorder: INSERT a separate
+ -- completed PayFast receipt, CANCEL the original pending QR intent.
+ if not exists(select 1 from commerce.service_order_payments
+    where service_order_id=p_order_id and provider='payfast' and status='pending')
+ then return jsonb_build_object('ok',false,'ignored',true);end if;
+ insert into commerce.service_order_payments(
+   tenant_id,service_order_id,provider,status,amount,pf_payment_id,raw_itn,completed_at)
+ select tenant_id,service_order_id,'payfast','completed',p_amount,p_payment_id,p_itn,now()
+ from commerce.service_order_payments
  where service_order_id=p_order_id and provider='payfast' and status='pending'
- returning id into v_paid;
+ limit 1 returning id into v_paid;
+ update commerce.service_order_payments set status='cancelled'
+ where service_order_id=p_order_id and provider='payfast'
+   and status='pending' and pf_payment_id is null;
  if v_paid is null then return jsonb_build_object('ok',false,'ignored',true);end if;
  update commerce.service_orders set payment_status='paid' where id=p_order_id;
+ -- Production tries Finance here (before QR gets settled), intentionally
+ -- permitted to defer and retry after the trusted checkout is marked settled.
+ begin
+  perform commerce.qs_project_manual_receipt(p_order_id);
+ exception when others then
+  update commerce.service_orders
+   set source_metadata=coalesce(source_metadata,'{}'::jsonb) ||
+       '{"paymentProjectionReview":{"required":true}}'::jsonb
+   where id=p_order_id;
+ end;
  return jsonb_build_object('ok',true,'ignored',false);
 end $mock$;
 
