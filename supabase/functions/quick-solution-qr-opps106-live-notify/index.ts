@@ -79,7 +79,7 @@ function trustedSource(req: Request, sandbox: boolean) {
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return response(405)
   if (Number(req.headers.get('content-length') || '0') > 8192) return response(413)
-  const profile=getPayfastGatewayProfile(Deno.env.toObject(),'live')
+  const profile=getPayfastGatewayProfile(Deno.env.toObject(),'live','callback')
   const supabaseUrl=Deno.env.get('SUPABASE_URL') || ''
   const roleKey=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
   if(profile.ok!==true || !supabaseUrl || !roleKey) {
