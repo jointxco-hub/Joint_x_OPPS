@@ -104,8 +104,7 @@ begin
   from commerce.service_order_payments p
   where p.service_order_id=o.id and p.tenant_id=o.tenant_id
     and p.status='completed' and p.provider='payfast'
-    and ((p.raw_itn->>'custom_str4'='cafe_order'
-          and p.raw_itn->>'m_payment_id' like 'JXQR-%')
+    and ((p.raw_itn->>'m_payment_id' like 'JXQR-%')
       or exists(select 1 from qr_payments.payment_requests q
           where q.tenant_id=p.tenant_id and q.target_type='cafe_order'
             and q.target_id=p.service_order_id and q.gateway_payment_id=p.pf_payment_id));
