@@ -9,16 +9,24 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)][string]$DestinationDirectory,
-  [Parameter(Mandatory=$true)][string]$ProductionConnectionEnvironmentVariable,
   [switch]$ConfirmProductionReadOnlyDump
 )
 $ErrorActionPreference='Stop'
 if(-not $ConfirmProductionReadOnlyDump) { throw 'Explicit -ConfirmProductionReadOnlyDump is required.' }
-if($ProductionConnectionEnvironmentVariable -notmatch '^[A-Z][A-Z0-9_]*$') { throw 'Invalid variable name' }
-$connection=[Environment]::GetEnvironmentVariable($ProductionConnectionEnvironmentVariable,'Process')
-if([string]::IsNullOrWhiteSpace($connection)) { throw 'Production connection variable was not set.' }
-if($connection -notmatch 'slhcvyeuqsduaglddqdb') { throw 'PRODUCTION_PROJECT_REFERENCE_MISMATCH' }
-if($connection -match '(?i)(localhost|127\.0\.0\.1)') { throw 'Source is local, not production.' }
+# Never pass credentials via a connection-string CLI argument (process-list leak).
+# Set PGHOST, PGUSER, PGPORT, PGDATABASE, PGSSLMODE and PGPASSWORD
+# from a trusted local credential source in this current process only.
+foreach($key in @('PGHOST','PGUSER','PGPORT','PGDATABASE','PGSSLMODE','PGPASSWORD')) {
+  if([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($key,'Process'))) {
+    throw "Missing private PostgreSQL environment variable: $key"
+  }
+}
+if($env:PGHOST -notmatch '^(db\.slhcvyeuqsduaglddqdb\.supabase\.co|[a-z0-9.-]*pooler\.supabase\.com)$'
+  -or ($env:PGHOST -match 'pooler' -and $env:PGUSER -notmatch 'slhcvyeuqsduaglddqdb')) {
+  throw 'PRODUCTION_PROJECT_REFERENCE_MISMATCH'
+}
+if($env:PGSSLMODE -notin @('require','verify-ca','verify-full')) { throw 'TLS_REQUIRED' }
+if($env:PGDATABASE -ne 'postgres') { throw 'EXPECTED_POSTGRES_DB' }
 foreach($app in @('pg_dump','pg_restore')) {
   if(-not (Get-Command $app -ErrorAction SilentlyContinue)) {
     throw "Missing PostgreSQL client command $app"
@@ -36,7 +44,7 @@ $file=Join-Path $dir "opps106_prod_$stamp.dump"
 $manifest=Join-Path $dir "opps106_prod_$stamp.manifest.txt"
 # -Fc provides a searchable archive with table data and schema. Database
 # roles/globals and Storage objects are separate and are not included.
-& pg_dump --dbname=$connection --format=custom --no-password --file=$file
+& pg_dump --format=custom --no-password --file=$file
 if($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue; throw 'pg_dump failed' }
 & pg_restore --list $file | Out-Null
 if($LASTEXITCODE -ne 0) { throw 'Archive failed pg_restore --list validation' }
