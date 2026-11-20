@@ -20,7 +20,7 @@ test('live scanner has isolated private gateway and live issuance RPC',()=>{
 });
 
 test('live notify uses live VALID endpoint and verifies merchant+bound intent before its distinct live RPC',()=>{
- assert.match(notify,/getPayfastGatewayProfile\(Deno\.env\.toObject\(\),'live'\)/);
+ assert.match(notify,/getPayfastGatewayProfile\(Deno\.env\.toObject\(\),'live','callback'\)/);
  assert.match(notify,/const validateUrl = profile\.validationUrl/);
  assert.match(notify,/trustedSource\(req, sandbox\)/);
  assert.match(notify,/same\(verified\.signature, verified\.expected\)/);
