@@ -92,3 +92,18 @@ Read-only `pg_get_functiondef` hashes from production vs staging on 20 November 
 **Important:** Existing `20261115163500_opps106_counter_qr_issuance_disabled.sql` and `20261115193000_opps106_single_order_qa_gate.sql` each embed a staging Supabase scan endpoint. Do **not** blindly promote those issuing functions. A production-safe issuer must use an explicitly reviewed return/callback domain, tenant-scoped authorization and dedicated validated live backend, and must still be disabled until acceptance.
 
 **Next**: separately test the actual production-shaped tenant/Café/OPPS function definitions in an isolated snapshot before constructing Phase B. Also ensure an up-to-date independent backup and successful restoration rehearsal before approved production Phase A installation. This new candidate is **NOT APPLIED** to production or staging.
+
+## Phase B1 — production-derived Counter/QR conflict controls (review only)
+
+Source: `supabase/production-candidate/opps106_qr_operations_PHASE_B1_REVIEW_ONLY.sql`, derived from the **actual production** `public.record_quick_solution_counter_payment(uuid,text,text)` definition (MD5 `af0dc64d91f977861a0fa0142bcd5a17` on 20 November). The migration first checks the existing function's exact hash and requires Phase A's private QR tables and **all issuer switches OFF**. Any drift causes an explicit abort before function replacement.
+
+Phase B1 intentionally installs:
+- An authenticated, tenant-member/capability-checked, **read-only** `qs_opps106_counter_qr_preflight` (never authorizes a charge by itself).
+- A narrow QR/PayFast conflict check in the **existing production Counter cash/card function**, after locking the canonical order and before a new manual payment is inserted. It blocks active QR, any previously started hosted QR checkout (including expired), and pending canonical PayFast intents; existing ordinary Cash/Card and idempotent retry logic remain the production version.
+- A stub `qs_opps106_issue_counter_qr` that always returns `QR_ISSUANCE_DISABLED`. It has **no staging/live URL**, cannot initiate PayFast or mint QR records, and does not change either issuer switch.
+
+It does **not** yet install a live/sandbox scan, verified settlement, Finance projection, exceptional-capture handler or hold-release action. Those are separate, later Phase B2/payment acceptance gates. No production migration is authorized merely because Phase B1's disposable checks pass.
+
+The `private-qr-base` CI job now first applies Phase A to a clean disposable PostgreSQL 16 database, then creates a synthetic production-shaped Café/Counter fixture and replays the exact production manual-payment function snapshot before applying Phase B1. Tests cover an eligible Counter preflight, active QR block, expired-after-checkout block, pending PayFast block, ordinary cash payment and idempotent repeat, as well as issuer always OFF.
+
+**Do not apply Phase B1 without an independently confirmed current production function hash and backup.** A new production deployment may change the hash; in that case re-review against the latest function instead of overriding.
