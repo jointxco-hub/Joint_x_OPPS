@@ -136,14 +136,15 @@ create or replace function commerce.qs_opps106_classify_verified_qr_handoff(
 as $func$
 declare
  v public.orders%rowtype;
- v_match record;
+ v_environment text;
+ v_reference text;
  v_count integer;
 begin
  select * into v from public.orders
  where id=p_opps_order_id and source='quick_solution' for update;
  if v.id is null then return;end if;
  select count(*)::integer,min(r.gateway_environment) env,min(r.gateway_payment_id) ref
- into v_count,v_match.env,v_match.ref
+ into v_count,v_environment,v_reference
  from commerce.service_orders so
  join qr_payments.payment_requests r on r.target_id=so.id
   and r.tenant_id=so.tenant_id and r.target_type='cafe_order' and r.status='settled'
@@ -165,14 +166,14 @@ begin
         and r.checkout_contract_version='jointx_qr_v2'));
  if v_count=0 then return;end if;
  if v_count<>1 then raise exception 'AMBIGUOUS_VERIFIED_QR_ORDER';end if;
- if v.payment_method='payfast' and v.payment_environment=v_match.env
-  and v.payment_reference=v_match.ref
-  and (v_match.env<>'sandbox' or (v.is_test and v.excluded_from_reports))
+ if v.payment_method='payfast' and v.payment_environment=v_environment
+  and v.payment_reference=v_reference
+  and (v_environment<>'sandbox' or (v.is_test and v.excluded_from_reports))
  then return;end if;
  update public.orders set payment_method='payfast',
-  payment_environment=v_match.env,payment_reference=v_match.ref,
-  is_test=case when v_match.env='sandbox' then true else is_test end,
-  excluded_from_reports=case when v_match.env='sandbox' then true else excluded_from_reports end,
+  payment_environment=v_environment,payment_reference=v_reference,
+  is_test=case when v_environment='sandbox' then true else is_test end,
+  excluded_from_reports=case when v_environment='sandbox' then true else excluded_from_reports end,
   updated_at=now()
  where id=v.id and tenant_id=v.tenant_id;
 end $func$;
