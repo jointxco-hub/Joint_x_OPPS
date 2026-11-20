@@ -225,6 +225,11 @@ begin
   perform commerce.qs_opps106_classify_verified_qr_handoff(p_service_order_id,p_opps_order_id);
 end $function$
 ;
+-- New internal classification helper has NO public/browser execute surface.
+revoke all on function commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)
+ from public,anon,authenticated;
+grant execute on function commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)
+ to service_role;
 -- Existing public.enforce_workspace_order_update_scope() is NOT replaced.
 -- Existing INSERT-only public._set_order_payment_environment() is NOT replaced:
 -- verified QR environment is applied later to the linked order by the helper.
