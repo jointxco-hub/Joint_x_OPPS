@@ -19,6 +19,7 @@ on:
       - 'tests/fixtures/opps106-phase-b1-runtime-bootstrap.sql'
       - 'tests/fixtures/opps106-production-manual-payment-original.sql'
       - 'tests/fixtures/opps106-phase-b1-behavior.sql'
+      - 'tests/fixtures/opps106-phase-b2-callback-foundation.sql'
       - 'scripts/opps106-production-readiness.sql'
       - 'docs/OPPS106_PRODUCTION_PREFLIGHT_20261120.md'
       - 'supabase/functions/_shared/**'
@@ -134,6 +135,8 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-manual-payment-original.sql
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_qr_operations_PHASE_B1_REVIEW_ONLY.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b1-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_verified_callback_foundation_PHASE_B2_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b2-callback-foundation.sql
           if psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql > /tmp/base-duplicate.log 2>&1; then
             echo 'FAIL: private QR base unexpectedly applied twice'
             exit 1
