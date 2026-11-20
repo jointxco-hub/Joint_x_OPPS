@@ -14,6 +14,13 @@ declare
 begin
  -- Earlier mock successful live payment, followed by post-settlement Finance
  -- reconciliation, must be included as revenue.
+ -- Diagnose the exact Finance projection failure instead of hiding it
+ -- behind the gateway's intentionally non-fatal projection review.
+ begin
+   perform commerce.qs_project_manual_receipt(o_live);
+ exception when others then
+   raise exception 'LIVE_FINANCE_PROJECTOR_ERROR: %',sqlerrm;
+ end;
  select * into v_tx from public.transactions where qs_service_order_id=o_live;
  if v_tx.id is null or v_tx.payment_method<>'payfast'
    or v_tx.reference<>'fake-paid-0001'
