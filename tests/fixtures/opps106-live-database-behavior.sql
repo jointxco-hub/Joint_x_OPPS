@@ -174,6 +174,25 @@ begin
     and reason='ADDITIONAL_CAPTURE') then raise exception 'SECOND_CAPTURE_AUDIT_MISSING';end if;
  if (select count(*) from commerce.service_order_payments where service_order_id=v_order and status='completed')<>1
  then raise exception 'DUPLICATE_MOCK_RECEIPT';end if;
+ if not exists(
+   select 1 from qr_payments.payment_requests q
+   join commerce.service_order_payments intent on intent.id=q.checkout_intent_id
+   join commerce.service_order_payments receipt on receipt.service_order_id=q.target_id
+     and receipt.tenant_id=q.tenant_id and receipt.provider='payfast'
+     and receipt.status='completed' and receipt.pf_payment_id=q.gateway_payment_id
+   where q.id=v_request and intent.status='cancelled'
+     and intent.provider='payfast' and intent.service_order_id=v_order
+     and intent.id<>receipt.id and intent.pf_payment_id is null
+ ) then raise exception 'PRODUCTION_SEPARATE_INTENT_AND_RECEIPT_MODEL_BROKEN';end if;
+ if not exists(select 1 from public.transactions tx where tx.qs_service_order_id=v_order
+      and tx.amount=60 and tx.payment_method='payfast'
+      and tx.reference='fake-paid-0001'
+      and tx.is_test=false and tx.excluded_from_reports=false)
+ then raise exception 'POST_SETTLEMENT_FINANCE_RETRY_FAILED';end if;
+ if exists(select 1 from commerce.service_orders so
+   where so.id=v_order and so.source_metadata ? 'paymentProjectionReview')
+ then raise exception 'FINANCE_REVIEW_FLAG_NOT_CLEARED';end if;
+
  if (select enabled from qr_payments.live_gateway_policy where target_type='cafe_order')
     is distinct from false then raise exception 'ISSUANCE_POLICY_ACCIDENTALLY_ENABLED';end if;
  raise notice 'PASS: mock live settlement persisted, replay idempotent, different gateway ID quarantined, issuer remains OFF';
