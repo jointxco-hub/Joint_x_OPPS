@@ -82,3 +82,12 @@ create function commerce.qs_project_invoice_receipts(p_order uuid)
 returns void language plpgsql as $mock$ begin return; end $mock$;
 create function commerce._qs_sync_opps_payment_ledger_legacy(uuid,uuid)
 returns void language plpgsql as $mock$ begin return; end $mock$;
+
+-- Test-only B2 dependency placeholder: this fixture mocks the older legacy QR
+-- schema for Finance integration tests; the full private-base CI job executes
+-- the ACTUAL Phase B2 migration with quarantines.
+create or replace function public.qs_opps106_quarantine_verified_qr_capture(
+ uuid,uuid,uuid,bigint,text,text
+) returns jsonb language sql as $mock$
+ select '{"ok":false,"reason":"TEST_ONLY_NO_QUARANTINE"}'::jsonb
+$mock$;
