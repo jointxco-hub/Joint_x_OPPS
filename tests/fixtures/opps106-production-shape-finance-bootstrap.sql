@@ -1,6 +1,9 @@
 -- OPPS-106 data-free rehearsal compatibility for Phase B3.
 -- Existing Phase A/B1/B2 and live-candidate SQL are already installed in
 -- the disposable database. No actual customer, merchant or payment data.
+-- Phase B1 fixture created a placeholder with a different argument name.
+-- Replace it with the exact production signature in the following snapshot.
+drop function commerce.qs_project_manual_receipt(uuid);
 create table public.orders(
  id uuid primary key, tenant_id uuid not null,
  source text default 'quick_solution',
