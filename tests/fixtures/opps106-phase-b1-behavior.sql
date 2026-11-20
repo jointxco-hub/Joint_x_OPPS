@@ -49,7 +49,7 @@ declare
  o_pending uuid:='00000000-0000-4000-8000-000000000003';
  o_cash uuid:='00000000-0000-4000-8000-000000000004';
  r jsonb;
- id uuid;
+ v_order_to_test uuid;
 begin
  -- No issuer can run before the dedicated URL/merchant callback release.
  r:=public.qs_opps106_issue_counter_qr(o_cash,'fake_issue_key1');
@@ -61,9 +61,9 @@ begin
  if r->>'ok' is distinct from 'true' then raise exception 'STAFF_PREFLIGHT_NOT_ELIGIBLE: %',r;end if;
  if r->>'amountCents'<>'6000' then raise exception 'INCORRECT_PREFLIGHT_AMOUNT: %',r;end if;
 
- foreach id in array array[o_active,o_expired,o_pending] loop
+ foreach v_order_to_test in array array[o_active,o_expired,o_pending] loop
   begin
-   perform public.record_quick_solution_counter_payment(id,'cash','fake-payment-key-001');
+   perform public.record_quick_solution_counter_payment(v_order_to_test,'cash','fake-payment-key-001');
    raise exception 'MANUAL_CHARGE_UNEXPECTEDLY_ALLOWED';
   exception when others then
    if sqlerrm='MANUAL_CHARGE_UNEXPECTEDLY_ALLOWED' then raise;end if;
