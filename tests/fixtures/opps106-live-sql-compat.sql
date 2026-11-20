@@ -56,3 +56,29 @@ create table qr_payments.noncomplete_events(
  unique(gateway_payment_id,event_status,claimed_request_id));
 create function commerce.qs_apply_payfast_payment(uuid,numeric,text,jsonb)
  returns jsonb language sql as $$ select '{"ok":false}'::jsonb $$;
+
+-- Production Finance projector compatibility in disposable PostgreSQL.
+create table public.orders(
+ id uuid primary key default gen_random_uuid(),tenant_id uuid not null,
+ source text default 'quick_solution',payment_method text,
+ payment_environment text,payment_reference text,
+ payment_status text default 'unpaid',total_amount numeric default 60,
+ deposit_paid numeric default 0,
+ is_test boolean not null default false,
+ excluded_from_reports boolean not null default false,
+ updated_at timestamptz default now()
+);
+-- customer_name already provided by this disposable fixture.
+create table public.transactions(
+ id uuid primary key default gen_random_uuid(),tenant_id uuid not null,
+ type text,order_id uuid,order_number text,client_name text,
+ amount numeric,payment_method text,payment_status text,payment_date date,
+ source text,qs_service_order_id uuid,notes text,reference text,
+ is_test boolean not null default false,
+ excluded_from_reports boolean not null default false
+);
+create unique index qs_one_finance on public.transactions(qs_service_order_id);
+create function commerce.qs_project_invoice_receipts(p_order uuid)
+returns void language plpgsql as $mock$ begin return; end $mock$;
+create function commerce._qs_sync_opps_payment_ledger_legacy(uuid,uuid)
+returns void language plpgsql as $mock$ begin return; end $mock$;
