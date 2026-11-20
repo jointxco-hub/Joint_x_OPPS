@@ -33,6 +33,10 @@ begin
  -- historical QR must remain for manual review rather than inferred as paid.
  insert into commerce.service_orders(id,tenant_id,channel,payment_status,status,total_amount,order_number)
  values(o_sandbox,t,'counter','paid','submitted',72,'QS-TEST-SANDBOX');
+ -- Production separates the cancelled checkout intent from the completed receipt.
+ insert into commerce.service_order_payments(
+   id,tenant_id,service_order_id,provider,status,amount)
+ values('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',t,o_sandbox,'payfast','cancelled',72);
  insert into qr_payments.payment_requests(
   id,tenant_id,target_type,target_id,status,amount_cents,checkout_started_at,
   checkout_intent_id,checkout_environment,checkout_merchant_id,
@@ -44,7 +48,7 @@ begin
   'fake-sandbox-72','sandbox','sandbox_only_verified_itn');
  insert into commerce.service_order_payments(
   id,tenant_id,service_order_id,provider,status,amount,pf_payment_id,completed_at,raw_itn)
- values('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',t,o_sandbox,'payfast','completed',72,'fake-sandbox-72',now(),
+ values('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeef',t,o_sandbox,'payfast','completed',72,'fake-sandbox-72',now(),
   jsonb_build_object('payment_status','COMPLETE','merchant_id','10000100',
     'custom_str4','cafe_order','m_payment_id','JXQR-'||r_sandbox::text));
  perform commerce.qs_project_manual_receipt(o_sandbox);
@@ -76,6 +80,9 @@ begin
  -- Existing staff-set QA flags are never cleared by a verified live receipt.
  insert into commerce.service_orders(id,tenant_id,channel,payment_status,status,total_amount,order_number)
  values(o_qa,t,'counter','paid','submitted',60,'QS-TEST-LIVE-QA');
+ insert into commerce.service_order_payments(
+   id,tenant_id,service_order_id,provider,status,amount)
+ values('ffffffff-ffff-4fff-8fff-ffffffffffff',t,o_qa,'payfast','cancelled',60);
  insert into qr_payments.payment_requests(
   id,tenant_id,target_type,target_id,status,amount_cents,checkout_started_at,
   checkout_environment,checkout_merchant_id,checkout_gateway_reference,
@@ -87,7 +94,7 @@ begin
   'fake-live-qa','live','payfast_itn_validated_live');
  insert into commerce.service_order_payments(
   id,tenant_id,service_order_id,provider,status,amount,pf_payment_id,completed_at,raw_itn)
- values('ffffffff-ffff-4fff-8fff-ffffffffffff',t,o_qa,'payfast','completed',60,'fake-live-qa',now(),
+ values('ffffffff-ffff-4fff-8fff-fffffffffff0',t,o_qa,'payfast','completed',60,'fake-live-qa',now(),
   jsonb_build_object('payment_status','COMPLETE','merchant_id','15000100',
     'custom_str4','cafe_order','m_payment_id','JXQR-'||r_qa::text));
  insert into public.transactions(tenant_id,type,amount,payment_status,source,
