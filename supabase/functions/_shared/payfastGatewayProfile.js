@@ -21,8 +21,9 @@ const isValidMerchant=(v)=>clean(v)&&/^\d{6,20}$/.test(v);
 const isHttpsUrl=(s)=>typeof s==="string"&&/^https:\/\/[a-z\d.-]+(?:\/[^\s]*)?$/.test(s);
 
 /** All inputs must come from a trusted server-only environment object. */
-export function getPayfastGatewayProfile(env,expectedMode) {
+export function getPayfastGatewayProfile(env,expectedMode,purpose="issuance") {
   if(!env || !["sandbox","live"].includes(expectedMode)) return error("MODE_REQUIRED");
+  if(!["issuance","callback"].includes(purpose)) return error("PURPOSE_REQUIRED");
   // Endpoint selection cannot be influenced by an ITN, browser or QR token.
   if(env.PAYFAST_SANDBOX !== String(expectedMode==="sandbox")) return error("MODE_MISMATCH");
   if(!isValidMerchant(env.PAYFAST_MERCHANT_ID)
@@ -30,8 +31,12 @@ export function getPayfastGatewayProfile(env,expectedMode) {
      || !clean(env.PAYFAST_PASSPHRASE)) return error("CREDENTIALS_REQUIRED");
   if(expectedMode==="live"){
     // Both gates required. These gates are *not* substitutes for DB issuer switches.
-    if(env.OPPS106_LIVE_GATEWAY_APPROVED !== "true"
-      || env.OPPS106_LIVE_CALLBACK_ENABLED !== "true") return error("LIVE_NOT_APPROVED");
+    // Issuance can be paused independently. A previously opened PayFast
+    // checkout may still send a valid delayed ITN; callback authorization
+    // must stay separate until all captures have been reconciled.
+    if(env.OPPS106_LIVE_CALLBACK_ENABLED !== "true") return error("LIVE_CALLBACK_NOT_APPROVED");
+    if(purpose==="issuance" && env.OPPS106_LIVE_GATEWAY_APPROVED !== "true")
+      return error("LIVE_NOT_APPROVED");
     if(env.OPPS106_QR_MODE !== "live") return error("LIVE_CONFIG_MISMATCH");
     if(!isValidMerchant(env.OPPS106_LIVE_MERCHANT_ID)
       || !isValidMerchant(env.OPPS106_SANDBOX_MERCHANT_ID)
