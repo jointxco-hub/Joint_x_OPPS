@@ -14,6 +14,8 @@ on:
       - 'supabase/functions/quick-solution-qr-opps106-live-scan/**'
       - 'supabase/functions/quick-solution-qr-opps106-live-notify/**'
       - 'supabase/production-candidate/**'
+      - 'scripts/opps106-production-readiness.sql'
+      - 'docs/OPPS106_PRODUCTION_PREFLIGHT_20261120.md'
       - 'supabase/functions/_shared/**'
       - 'src/server/cafeQr/**'
       - 'tests/issue-106-*.test.mjs'
@@ -38,7 +40,7 @@ jobs:
       - name: QR presentation, staff URL and PayFast correlation tests
         run: |
           node --version
-          node --test tests/issue-106-qr-presentation.test.mjs tests/issue-106-qr-staff-ui.test.mjs tests/issue-106-payfast-qr-correlation.test.mjs tests/issue-106-qr-scan-uuid.test.mjs tests/issue-106-qr-notify-uuid.test.mjs tests/issue-106-qr-return.test.mjs tests/issue-106-qr-return-relay.test.mjs tests/issue-106-qr-itn-multipart.test.mjs tests/issue-106-qr-handoff-ui.test.mjs tests/issue-106-gateway-environment-provenance.test.mjs tests/issue-106-manual-counter-concurrency.test.mjs tests/issue-106-unresolved-qr-review.test.mjs tests/issue-106-live-release-gate.test.mjs tests/issue-106-gateway-environment-contract.test.mjs tests/issue-106-bound-checkout-settlement.test.mjs tests/issue-106-qr-review-audit.test.mjs tests/issue-106-review-status-failclosed.test.mjs tests/issue-106-reconciliation-packet.test.mjs tests/issue-106-live-gateway-profile.test.mjs tests/issue-106-live-candidate-isolation.test.mjs
+          node --test tests/issue-106-qr-presentation.test.mjs tests/issue-106-qr-staff-ui.test.mjs tests/issue-106-payfast-qr-correlation.test.mjs tests/issue-106-qr-scan-uuid.test.mjs tests/issue-106-qr-notify-uuid.test.mjs tests/issue-106-qr-return.test.mjs tests/issue-106-qr-return-relay.test.mjs tests/issue-106-qr-itn-multipart.test.mjs tests/issue-106-qr-handoff-ui.test.mjs tests/issue-106-gateway-environment-provenance.test.mjs tests/issue-106-manual-counter-concurrency.test.mjs tests/issue-106-unresolved-qr-review.test.mjs tests/issue-106-live-release-gate.test.mjs tests/issue-106-gateway-environment-contract.test.mjs tests/issue-106-bound-checkout-settlement.test.mjs tests/issue-106-qr-review-audit.test.mjs tests/issue-106-review-status-failclosed.test.mjs tests/issue-106-reconciliation-packet.test.mjs tests/issue-106-live-gateway-profile.test.mjs tests/issue-106-live-candidate-isolation.test.mjs tests/issue-106-production-preflight.test.mjs
 
   postgres-counter-race:
     runs-on: ubuntu-latest
