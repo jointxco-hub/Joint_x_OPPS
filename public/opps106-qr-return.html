@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<title>Quick Solution Café · Payment Status</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f7f8f7;color:#111b19;font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{width:min(100%,480px);background:#fff;border:1px solid #e1e9e5;border-radius:24px;padding:34px;box-shadow:0 20px 60px #16392d0d}
+small{display:block;color:#147262;font-size:11px;letter-spacing:.16em;font-weight:750;text-transform:uppercase}
+h1{margin:15px 0 12px;font-size:clamp(27px,6vw,38px);letter-spacing:-.035em;line-height:1.15}
+p{color:#56665f}strong{color:#21332c}
+.notice{border-radius:14px;background:#f2f6f3;padding:15px;font-size:14px}
+.status{display:inline-flex;align-items:center;gap:8px;font-weight:650;color:#146b56}
+.status .dot{width:9px;height:9px;border-radius:50%;background:currentColor}
+main[data-state="paid"] .notice{background:#edf7f1}
+main[data-state="paid"] .status{color:#147653}
+</style>
+</head>
+<body>
+<main id="payment" data-state="pending">
+  <small>Quick Solution Café · Staging</small>
+  <h1 id="title">Checking your payment</h1>
+  <p id="description">You have returned from PayFast Sandbox. We are checking the verified Café payment record.</p>
+  <div class="notice" role="status" aria-live="polite">
+    <div class="status"><span class="dot" aria-hidden="true"></span><span id="state">Verification in progress</span></div>
+    <p id="action">Do not pay again yet. Café staff can confirm the payment against the original order.</p>
+  </div>
+  <p id="foot">A PayFast browser redirect alone cannot confirm an order is paid.</p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const base='/api/opps106-qr-status';
+  const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const args=new URLSearchParams(location.search);
+  const rid=args.get('rid')||'';
+  const root=document.getElementById('payment');
+  const title=document.getElementById('title');
+  const description=document.getElementById('description');
+  const state=document.getElementById('state');
+  const action=document.getElementById('action');
+  const foot=document.getElementById('foot');
+  const update=(result)=>{
+    root.dataset.state=result;
+    if(result==='paid'){
+      title.textContent='Payment confirmed';
+      description.textContent='Your payment was verified and recorded by Quick Solution Café.';
+      state.textContent='Paid · Confirmed by the Café server';
+      action.textContent='You can return to the Café counter. Staff can provide your receipt and continue your order.';
+      foot.textContent='Thank you for choosing Quick Solution Café.';
+    } else if(result==='unavailable'){
+      title.textContent='We could not verify the payment';
+      description.textContent='This page cannot determine the payment status right now.';
+      state.textContent='Verification unavailable';
+      action.textContent='Do not pay again. Ask Café staff to check the original order before trying another payment.';
+      foot.textContent='Your browser result is not proof of payment.';
+    } else if(result==='delayed'){
+      title.textContent='Payment verification is taking longer';
+      description.textContent='We have not yet received confirmation from the Café payment record.';
+      state.textContent='Confirmation pending';
+      action.textContent='Do not pay again. Please ask Café staff to check the order and PayFast notification.';
+      foot.textContent='This page does not settle or change payments.';
+    }
+  };
+  // Preview/share links can append their own query parameters. Only the
+  // single opaque QR request ID is payment-relevant; send no extras to the API.
+  // Multiple rid values are ambiguous and must always fail closed.
+  if(args.getAll('rid').length!==1 || !uuid.test(rid)){
+    update('unavailable');
+    foot.textContent='Invalid payment reference. Ask Café staff to verify the order.';
+    return;
+  }
+  let checks=0;
+  let lastFailure='';
+  const check=async()=>{
+    let pending=false;
+    try{
+      const endpoint=base+'?rid='+encodeURIComponent(rid);
+      const response=await fetch(endpoint,{method:'GET',mode:'same-origin',credentials:'omit',cache:'no-store',referrerPolicy:'no-referrer'});
+      if(!response.ok)throw new Error('HTTP '+response.status);
+      const body=await response.json();
+      if(body && body.state==='paid'){update('paid');return;}
+      if(body && body.state==='pending'){pending=true;lastFailure='';}
+      else throw new Error('Status not available');
+    }catch(error){
+      // A transient browser/network/relay failure is not a failed payment.
+      // Keep polling safely; never offer another checkout or claim settlement.
+      lastFailure=error && /^HTTP [0-9]{3}$/.test(error.message) ? error.message : 'Network or status response unavailable';
+    }
+    checks+=1;
+    if(checks>=30){
+      update(pending ? 'delayed' : 'unavailable');
+      if(lastFailure)foot.textContent='Status lookup: '+lastFailure+'. Café staff can check the original paid record.';
+      return;
+    }
+    if(lastFailure){
+      title.textContent='Checking your payment';
+      description.textContent='The payment-status connection is temporarily unavailable. We are retrying safely.';
+      state.textContent='Verification in progress';
+      action.textContent='Do not pay again. Café staff can check the original order while this page retries.';
+      foot.textContent='Retry '+checks+' of 30 · '+lastFailure;
+    } else {
+      root.dataset.state='pending';
+      title.textContent='Checking your payment';
+      description.textContent='Waiting for confirmation from the Café payment record.';
+      state.textContent='Confirmation pending';
+      action.textContent='Do not pay again. The secure payment notification may take a moment.';
+      foot.textContent='Payment is confirmed only after server verification.';
+    }
+    window.setTimeout(check,3000);
+  };
+  check();
+})();
+</script>
+</body>
+</html>

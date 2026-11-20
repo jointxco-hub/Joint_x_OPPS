@@ -1,0 +1,80 @@
+# OPPS-106 — 18 November 2026 staging finance reconciliation
+
+## Scope
+**Staging project ONLY**: `tijiamrfnxrbitafiflj`. QR issuance controls remain OFF, no production migration or application merge.
+
+Source paid Café order `QS-261118-98C6`:
+- `commerce.service_orders.id = 7334c164-8294-4ef2-a9bd-9b87b4ee9e27`
+- OPPS order `public.orders.id = 7a07d35e-1d51-4588-b9ce-12549d94266a`
+- Finance record `public.transactions.id = ea34f46f-f757-4596-99bc-6f4fd7bc750d`
+- One original completed PayFast payment `3526444`, R60, verified sandbox ITN
+- Handoff status `sent`, exactly one OPPS order, R60 deposit, status paid
+
+## Root cause
+The canonical `commerce.qs_project_manual_receipt` maps all providers outside cash/card/EFT to `other`, and `public.transactions.transactions_payment_method_check` did not allow `payfast`. The projection also omitted the sandbox/test/reporting flags. The OPPS handoff inserts `public.orders` with default live classification.
+
+## Changes actually applied directly to staging DB
+The following staging migration names are recorded in Supabase migration history:
+1. `opps106_staging_payfast_receipt_classification` extends the Finance method check to include `payfast`; implements provider-backed receipt method/reference and sandbox flags for verified R60 canary PayFast QR. Not a production-ready environment derivation.
+2. `opps106_staging_preserve_workspace_order_guard`: restored order mutation scope after a guarded test rejection.
+3. `opps106_staging_projection_classification_only_authorized`: same-value Finance classification refresh no longer touches ledger amount/order ID; OPPS order payment projection updates only when balance/status actually change.
+
+Existing R60 transaction was refreshed through `commerce.qs_project_manual_receipt`. Verified:
+- amount R60.00; method `payfast`; reference `3526444`;
+- `is_test=true` and `excluded_from_reports=true`.
+No new receipt or second Finance transaction was created.
+
+## Remaining blockers
+- **Existing OPPS order** still has `payment_method=NULL`, `payment_environment='live'`, `is_test=false`, `excluded_from_reports=false`. Workspace update trigger correctly refused direct updates, including a no-op status update. Do NOT bypass that trigger or set request JWT claims to service_role to force a write.
+- Existing staff-authorized UI: Orders -> matching order -> QA & reporting -> **Test / QA order** and **Exclude from reports & operations**. These use `set_order_test_classification` with staff authorization and audit event. This is necessary for the existing order until a narrowly-scoped authorized reconciliation action exists.
+- The `payment_environment` field and `payment_method` on the OPPS order need a separate **server-authorized** reconciliation that verifies sandbox gateway provenance, logs an audit trail and preserves workspace permissions.
+- For **future** handoffs, propagate an explicit trusted gateway environment from the validated payment service into the OPPS order insert, not from merchant-ref `JXQR-` prefix or a browser-provided flag. The current staging-only projection must **not** be promoted as a generic production migration.
+- QR payments for ordinary/non-sandbox tenants must never be reclassified on the basis of the merchant reference. Confirm all related report filters and cross-app projections before release.
+- Restore production-safe database function definition and test migration as reviewed branch SQL before staging-to-production promotion. Do not assume this live staging patch is version-controlled in application migrations.
+
+No production deployment or payment was initiated in this correction.
+
+
+## 18 November — verified settled QR order metadata follow-up (completed in staging)
+
+Staging migration `opps106_staging_verified_qr_opps_order_metadata` was successfully applied and its exact source committed to [staging-only SQL](../supabase/staging-only/20261118_opps106_verified_qr_metadata.sql) (outside automatic production migration directory).
+
+- Uses `qr_payments.payment_requests` (settled status, canonical Café/tenant, PayFast gateway reference and amount) plus the matching completed Café PayFast ITN; no browser-provided sandbox flag or arbitrary customer claim.
+- Adds restricted internal helper `commerce.qs_opps106_verified_sandbox_qr_link` and idempotent classification projector `commerce.qs_opps106_classify_sandbox_handoff`, both EXECUTE revoked for PUBLIC, anon and authenticated.
+- Adds an **exact proof-constrained metadata-only exception** to the existing OPPS workspace update trigger; all other workspace permission checks, amounts, production and lifecycle transitions remain guarded.
+- Integrates projection into the existing `commerce._qs_sync_opps_payment_ledger` path for future staging handoffs, and reconciles currently settled QR orders without issuing new payments.
+- Creates an order activity audit event only when a change is actually needed.
+
+Read-only post-change verification of **QS-261118-98C6**:
+- OPPS order: `payment_method=payfast`, `payment_reference=3526444`, `payment_environment=sandbox`, `is_test=true`, `excluded_from_reports=true`, paid R60.
+- Finance: `payment_method=payfast`, reference `3526444`, `is_test=true`, `excluded_from_reports=true`, amount R60.
+- One OPPS order, one Finance transaction, one original completed Café receipt and one reconciliation audit event. Repeating the classifier left the audit count at one.
+- Negative evidence: unmatched/unpaid counter orders `QS-261118-1D59` and `QS-261118-448A` returned `verified=false`; original settled order returned `verified=true`.
+- Neither internal function is executable by anon or authenticated.
+
+**Production gating unchanged:** This is explicitly **staging-only**. The proof that a QR was sandbox-issued depends on the dedicated staging canary path. A production version must carry explicit server/provider-attested sandbox/live provenance as durable payment metadata and require independent integration/replay tests. Do **not** automatically deploy the staging-only SQL to production. Both QR issuance switches remain OFF. Staff/iMin printing, multi-device race tests, broad five-failure Café regression triage and reviewed production migration remain pending.
+
+
+## 18 November — gateway provenance persistence and second test reconciliation
+
+Applied **staging-only** migration `opps106_staging_persist_verified_gateway_environment`; source is checked in at [gateway provenance SQL](../supabase/staging-only/20261118_opps106_gateway_environment_provenance.sql).
+
+- Adds `qr_payments.payment_requests.gateway_environment` and `gateway_environment_evidence` as paired fields with an explicit constraint.
+- The dedicated **sandbox-only** trusted QR settlement RPC stamps `sandbox` / `sandbox_only_verified_itn` only on a verified settled capture; existing matched canary ITNs were backfilled.
+- OPPS internal sandbox classification now requires the persisted proof *and* matching settled QR/PayFast ITN identity. This is more precise than relying only on QR reference shape. It is still a **staging-canary-specific assertion**, not a production-safe live/sandbox resolver.
+- Read-back: settled R72 `QS-261115-9641` and R60 `QS-261118-98C6` each have stored environment/evidence and strict verifier=true. Active/expired QR requests have null environment/evidence and verifier=false. Both QR issuance switches are disabled.
+- Earlier R72 order had `is_test=true`, `excluded_from_reports=true`, but Finance had method `other`, test=false, excluded=false. Replayed the existing receipt projector with no new payment: **R72 Finance is now PayFast, ref 3520172, test=true, excluded=true**. One original Finance transaction, no duplicates. R60 remains correctly classified.
+- Added `tests/issue-106-gateway-environment-provenance.test.mjs` to the QR safety CI workflow.
+
+Production release remains **blocked** until a provider/backend-attested environment is persisted for *both* future sandbox and live settlement paths, not inferred from a staging-only endpoint. Neither the staging SQL nor its deliberate exception should be merged into general production migrations as-is. Hardware receipt printing, multi-device conflict testing, and the five unrelated Café regression failures remain open.
+
+
+## 18 November — cross-device Cash/Card versus QR server guard
+
+- Found production-safety defect in staging `public.record_quick_solution_counter_payment`: staff UI blocked manual payment during QR uncertainty but authoritative SQL did not check QR payment_requests or pending PayFast intents. Concurrent staff devices could attempt duplicate receipt recording.
+- Applied STAGING-only migration `opps106_staging_manual_counter_qr_concurrency_gate`, source at [staging-only SQL](../supabase/staging-only/20261118_opps106_manual_counter_qr_concurrency.sql).
+- The existing canonical `commerce.service_orders FOR UPDATE` row lock serializes QR issuance/checkout with Counter manual payment. Before inserting any Cash/Card receipt, the SQL now blocks if an active QR exists, if a QR checkout was ever started (even expired/revoked, because hosted checkout could notify late), or if any PayFast payment intent remains pending.
+- Repeat manual-payment idempotency replay and existing already-paid handling remain ahead of the new guard.
+- Read-only staging evidence: unpaid `QS-261116-5F45` with started PayFast QR reports QR-review=true and PayFast-pending=true; three unpaid orders with only expired, unstarted QR requests report both flags=false. No fresh payment or QR was created.
+- Added `tests/issue-106-manual-counter-concurrency.test.mjs` and wired it into OPPS-106 QR safety CI; latest branch checks passed.
+- Remaining: real parallel-client transaction testing under disposable Postgres, policy for releasing or reconciling orphaned PayFast attempts, production-safe authenticated live/sandbox provenance, and iMin physical receipt printing. Production QR issuance is OFF.

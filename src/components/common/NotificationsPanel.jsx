@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { dataClient } from "@/api/dataClient";
 import { supabase } from "@/lib/supabaseClient";
@@ -102,7 +102,6 @@ function buildNotifications(inventory, tags, tasks, opsTasks, fileComments, emai
 
 export default function NotificationsPanel({ placement = "topbar" }) {
   const [open, setOpen] = useState(false);
-  const lastNotifiedRef = useRef("");
 
   const { data: me } = useQuery({
     queryKey: ["authUser", "notifications"],
@@ -191,27 +190,11 @@ export default function NotificationsPanel({ placement = "topbar" }) {
   );
   const count = notifications.length;
 
-  useEffect(() => {
-    if (!notifications.length || typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "granted") return;
-    const first = notifications[0];
-    const signature = `${first.id}:${notifications.length}`;
-    if (lastNotifiedRef.current === signature || localStorage.getItem("jx_last_notification") === signature) return;
-    lastNotifiedRef.current = signature;
-    localStorage.setItem("jx_last_notification", signature);
-    const showFallback = () => new Notification("Joint X needs attention", { body: first.title });
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.ready
-        .then((registration) => registration.showNotification("Joint X needs attention", {
-          body: first.title,
-          tag: first.id,
-          icon: "/icons/icon-192.png",
-          badge: "/icons/icon-192.png",
-        }))
-        .catch(showFallback);
-    } else {
-      showFallback();
-    }
-  }, [notifications]);
+  // Snapshot notifications (stock levels, overdue tasks) belong in the bell
+  // only. Never issue an OS notification on mount/refetch: reopening OPPS
+  // isn't a new event, and the first item is often the same low-stock item.
+  // Event-driven system alerts must originate from a durable, deduplicated
+  // push event on the server (invoice/quote/order etc.).
 
   return (
     <div className="relative">

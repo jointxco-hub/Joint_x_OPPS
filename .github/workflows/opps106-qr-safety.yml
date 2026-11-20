@@ -1,0 +1,177 @@
+name: OPPS-106 QR safety tests
+on:
+  push:
+    branches:
+      - feature/106-cafe-visibility-qr
+  pull_request:
+    paths:
+      - 'src/features/cafeQr/**'
+      - 'src/api/cafeCounterQr.js'
+      - 'src/pages/CafeQrSandbox.jsx'
+      - 'src/api/cafeQrReview.js'
+      - 'supabase/functions/quick-solution-qr-opps106-notify/**'
+      - 'supabase/functions/quick-solution-qr-opps106-scan/**'
+      - 'supabase/functions/quick-solution-qr-opps106-live-scan/**'
+      - 'supabase/functions/quick-solution-qr-opps106-live-notify/**'
+      - 'supabase/production-candidate/**'
+      - 'tests/fixtures/opps106-private-base-bootstrap.sql'
+      - 'tests/fixtures/opps106-private-base-assertions.sql'
+      - 'tests/fixtures/opps106-phase-b1-runtime-bootstrap.sql'
+      - 'tests/fixtures/opps106-production-manual-payment-original.sql'
+      - 'tests/fixtures/opps106-phase-b1-behavior.sql'
+      - 'tests/fixtures/opps106-phase-b2-callback-foundation.sql'
+      - 'tests/fixtures/opps106-phase-b2-live-settlement-compat.sql'
+      - 'tests/fixtures/opps106-phase-b2-live-settlement-behavior.sql'
+      - 'tests/fixtures/opps106-production-shape-finance-bootstrap.sql'
+      - 'tests/fixtures/opps106-production-shape-rehearsal.sql'
+      - 'tests/fixtures/opps106-production-finance-function-snapshot.sql'
+      - 'scripts/opps106-production-readiness.sql'
+      - 'scripts/opps106-backup-production-trinity.ps1'
+      - 'scripts/opps106-production-restore-inventory.sql'
+      - 'docs/OPPS106_PRODUCTION_BACKUP_RESTORE_GATE_20261120.md'
+      - 'docs/OPPS106_PRODUCTION_PREFLIGHT_20261120.md'
+      - 'supabase/functions/_shared/**'
+      - 'src/server/cafeQr/**'
+      - 'tests/issue-106-*.test.mjs'
+      - 'tests/opps106-counter-race-postgres.sh'
+      - 'tests/fixtures/opps106-counter-race-postgres.sql'
+      - 'tests/fixtures/opps106-live-sql-compat.sql'
+      - 'tests/fixtures/opps106-live-database-behavior.sql'
+      - 'tests/fixtures/opps106-finance-provenance-behavior.sql'
+      - 'tests/fixtures/opps106-opps-handoff-classification.sql'
+      - 'tests/fixtures/opps106-production-finance-function-snapshot.sql'
+      - 'supabase/staging-only/20261118_opps106_manual_counter_qr_concurrency.sql'
+      - '.github/workflows/opps106-qr-safety.yml'
+permissions:
+  contents: read
+jobs:
+  qr-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: QR presentation, staff URL and PayFast correlation tests
+        run: |
+          node --version
+          node --test tests/issue-106-qr-presentation.test.mjs tests/issue-106-qr-staff-ui.test.mjs tests/issue-106-payfast-qr-correlation.test.mjs tests/issue-106-qr-scan-uuid.test.mjs tests/issue-106-qr-notify-uuid.test.mjs tests/issue-106-qr-return.test.mjs tests/issue-106-qr-return-relay.test.mjs tests/issue-106-qr-itn-multipart.test.mjs tests/issue-106-qr-handoff-ui.test.mjs tests/issue-106-gateway-environment-provenance.test.mjs tests/issue-106-manual-counter-concurrency.test.mjs tests/issue-106-unresolved-qr-review.test.mjs tests/issue-106-live-release-gate.test.mjs tests/issue-106-gateway-environment-contract.test.mjs tests/issue-106-bound-checkout-settlement.test.mjs tests/issue-106-qr-review-audit.test.mjs tests/issue-106-review-status-failclosed.test.mjs tests/issue-106-reconciliation-packet.test.mjs tests/issue-106-live-gateway-profile.test.mjs tests/issue-106-live-candidate-isolation.test.mjs tests/issue-106-production-preflight.test.mjs tests/issue-106-backup-restore-gate.test.mjs
+
+  postgres-counter-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: opps106_disposable
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opps106_disposable"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Run two-session payment and QR lock tests (disposable only)
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: test-only-password
+          PGDATABASE: opps106_disposable
+        run: bash tests/opps106-counter-race-postgres.sh
+      - name: Parse live SQL candidate against disposable PostgreSQL (NO Supabase changes)
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: test-only-password
+          PGDATABASE: opps106_disposable
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-live-sql-compat.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-finance-function-snapshot.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_reconciled_finance_PHASE_B3_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('authenticated','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-live-database-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-finance-provenance-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-opps-handoff-classification.sql
+          psql -v ON_ERROR_STOP=1 -tAc "select case when enabled then 'UNSAFE' else 'DISABLED' end from qr_payments.live_gateway_policy where target_type='cafe_order'" | grep -x DISABLED
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','public.qs_opps106_settle_counter_qr_live_candidate(uuid,uuid,uuid,bigint,text,jsonb)','EXECUTE')" | grep -x f
+
+
+  private-qr-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: opps106_base_clean
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opps106_base_clean"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install disposable PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Install production-compatible private QR schema on fresh disposable database
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: test-only-password
+          PGDATABASE: opps106_base_clean
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-private-base-bootstrap.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-private-base-assertions.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b1-runtime-bootstrap.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-manual-payment-original.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_qr_operations_PHASE_B1_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b1-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_verified_callback_foundation_PHASE_B2_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b2-callback-foundation.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b2-live-settlement-compat.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b2-live-settlement-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-shape-finance-bootstrap.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-finance-function-snapshot.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_reconciled_finance_PHASE_B3_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-shape-rehearsal.sql
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('authenticated','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
+          if psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql > /tmp/base-duplicate.log 2>&1; then
+            echo 'FAIL: private QR base unexpectedly applied twice'
+            exit 1
+          fi
+          grep -q 'OPPS106_QR_SCHEMA_ALREADY_EXISTS_RECONCILE_FIRST' /tmp/base-duplicate.log
+
+  opps-preview-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned application dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build OPPS-106 staging preview code without deploying
+        run: npm run build
