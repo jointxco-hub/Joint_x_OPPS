@@ -26,6 +26,7 @@ create table commerce.service_orders(
 );
 create table commerce.service_order_items(order_id uuid,tenant_id uuid,product_id uuid);
 create table commerce.service_product_configs(tenant_id uuid,product_id uuid,customer_definition jsonb default '{}'::jsonb);
+alter table commerce.service_order_payments alter column id set default gen_random_uuid();
 alter table commerce.service_order_payments add column tenant_id uuid,
  add column service_order_id uuid,
  add column provider text default 'counter',
