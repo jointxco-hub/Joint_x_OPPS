@@ -33,6 +33,7 @@ on:
       - 'tests/fixtures/opps106-live-database-behavior.sql'
       - 'tests/fixtures/opps106-finance-provenance-behavior.sql'
       - 'tests/fixtures/opps106-opps-handoff-classification.sql'
+      - 'tests/fixtures/opps106-production-finance-function-snapshot.sql'
       - 'supabase/staging-only/20261118_opps106_manual_counter_qr_concurrency.sql'
       - '.github/workflows/opps106-qr-safety.yml'
 permissions:
@@ -91,7 +92,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-live-sql-compat.sql
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql
-          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_verified_finance_projector_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-finance-function-snapshot.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_reconciled_finance_PHASE_B3_REVIEW_ONLY.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-live-database-behavior.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-finance-provenance-behavior.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-opps-handoff-classification.sql
