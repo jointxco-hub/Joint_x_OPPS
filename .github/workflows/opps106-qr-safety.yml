@@ -14,6 +14,8 @@ on:
       - 'supabase/functions/quick-solution-qr-opps106-live-scan/**'
       - 'supabase/functions/quick-solution-qr-opps106-live-notify/**'
       - 'supabase/production-candidate/**'
+      - 'tests/fixtures/opps106-private-base-bootstrap.sql'
+      - 'tests/fixtures/opps106-private-base-assertions.sql'
       - 'scripts/opps106-production-readiness.sql'
       - 'docs/OPPS106_PRODUCTION_PREFLIGHT_20261120.md'
       - 'supabase/functions/_shared/**'
@@ -90,6 +92,46 @@ jobs:
           psql -v ON_ERROR_STOP=1 -tAc "select case when enabled then 'UNSAFE' else 'DISABLED' end from qr_payments.live_gateway_policy where target_type='cafe_order'" | grep -x DISABLED
           psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','public.qs_opps106_settle_counter_qr_live_candidate(uuid,uuid,uuid,bigint,text,jsonb)','EXECUTE')" | grep -x f
 
+
+  private-qr-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: opps106_base_clean
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opps106_base_clean"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install disposable PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Install production-compatible private QR schema on fresh disposable database
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: postgres
+          PGPASSWORD: test-only-password
+          PGDATABASE: opps106_base_clean
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-private-base-bootstrap.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-private-base-assertions.sql
+          if psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql > /tmp/base-duplicate.log 2>&1; then
+            echo 'FAIL: private QR base unexpectedly applied twice'
+            exit 1
+          fi
+          grep -q 'OPPS106_QR_SCHEMA_ALREADY_EXISTS_RECONCILE_FIRST' /tmp/base-duplicate.log
 
   opps-preview-build:
     runs-on: ubuntu-latest
