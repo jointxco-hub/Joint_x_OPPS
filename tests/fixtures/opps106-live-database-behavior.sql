@@ -128,7 +128,8 @@ begin
  insert into commerce.service_order_payments(id,tenant_id,service_order_id,provider,status,amount)
  values(v_intent,v_tenant,v_order,'payfast','pending',60);
  v_itn:=jsonb_build_object('merchant_id','15000100','m_payment_id',v_ref,
-   'payment_status','COMPLETE','custom_str2','jointx_qr_v1');
+   'payment_status','COMPLETE','custom_str2','jointx_qr_v1',
+   'custom_str4','cafe_order');
  -- The issuance policy remains OFF, but this checkout is already created.
  v_result:=public.qs_opps106_settle_counter_qr_live_candidate(
    v_request,v_order,v_tenant,6000,'fake-paid-0001',v_itn);
