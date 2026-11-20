@@ -63,12 +63,17 @@ begin
  from commerce.service_order_payments p
  where p.service_order_id=o.id and p.tenant_id=o.tenant_id
    and p.status='completed' and p.provider='payfast'
-   and p.raw_itn->>'custom_str4'='cafe_order'
-   and p.raw_itn->>'m_payment_id' like 'JXQR-%';
+   and (
+     (p.raw_itn->>'custom_str4'='cafe_order'
+      and p.raw_itn->>'m_payment_id' like 'JXQR-%')
+      or exists(select 1 from qr_payments.payment_requests qr
+        where qr.tenant_id=p.tenant_id and qr.target_id=p.service_order_id
+          and qr.target_type='cafe_order' and qr.gateway_payment_id=p.pf_payment_id)
+   );
  if v_all_qr_receipts>0 and (v_verified_qr_count<>1
    or v_all_qr_receipts<>v_verified_qr_count)
  then raise exception 'QR_GATEWAY_ENVIRONMENT_REVIEW_REQUIRED'; end if;
- v_sandbox_qr := v_qr_environment='sandbox';
+ v_sandbox_qr := coalesce(v_qr_environment='sandbox',false);
  if method='payfast' then
    select min(pf_payment_id) into v_provider_ref
    from commerce.service_order_payments
