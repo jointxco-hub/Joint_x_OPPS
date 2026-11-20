@@ -21,6 +21,7 @@ on:
       - 'tests/fixtures/opps106-counter-race-postgres.sql'
       - 'tests/fixtures/opps106-live-sql-compat.sql'
       - 'tests/fixtures/opps106-live-database-behavior.sql'
+      - 'tests/fixtures/opps106-finance-provenance-behavior.sql'
       - 'supabase/staging-only/20261118_opps106_manual_counter_qr_concurrency.sql'
       - '.github/workflows/opps106-qr-safety.yml'
 permissions:
@@ -81,6 +82,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_verified_finance_projector_REVIEW_ONLY.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-live-database-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-finance-provenance-behavior.sql
           psql -v ON_ERROR_STOP=1 -tAc "select case when enabled then 'UNSAFE' else 'DISABLED' end from qr_payments.live_gateway_policy where target_type='cafe_order'" | grep -x DISABLED
           psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','public.qs_opps106_settle_counter_qr_live_candidate(uuid,uuid,uuid,bigint,text,jsonb)','EXECUTE')" | grep -x f
 
