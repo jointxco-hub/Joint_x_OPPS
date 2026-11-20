@@ -22,6 +22,9 @@ on:
       - 'tests/fixtures/opps106-phase-b2-callback-foundation.sql'
       - 'tests/fixtures/opps106-phase-b2-live-settlement-compat.sql'
       - 'tests/fixtures/opps106-phase-b2-live-settlement-behavior.sql'
+      - 'tests/fixtures/opps106-production-shape-finance-bootstrap.sql'
+      - 'tests/fixtures/opps106-production-shape-rehearsal.sql'
+      - 'tests/fixtures/opps106-production-finance-function-snapshot.sql'
       - 'scripts/opps106-production-readiness.sql'
       - 'docs/OPPS106_PRODUCTION_PREFLIGHT_20261120.md'
       - 'supabase/functions/_shared/**'
@@ -146,6 +149,12 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b2-live-settlement-compat.sql
           psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_live_gateway_rpcs_REVIEW_ONLY.sql
           psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-phase-b2-live-settlement-behavior.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-shape-finance-bootstrap.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-finance-function-snapshot.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_reconciled_finance_PHASE_B3_REVIEW_ONLY.sql
+          psql -v ON_ERROR_STOP=1 -f tests/fixtures/opps106-production-shape-rehearsal.sql
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('anon','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
+          psql -v ON_ERROR_STOP=1 -tAc "select has_function_privilege('authenticated','commerce.qs_opps106_classify_verified_qr_handoff(uuid,uuid)','EXECUTE')" | grep -x f
           if psql -v ON_ERROR_STOP=1 -f supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql > /tmp/base-duplicate.log 2>&1; then
             echo 'FAIL: private QR base unexpectedly applied twice'
             exit 1
