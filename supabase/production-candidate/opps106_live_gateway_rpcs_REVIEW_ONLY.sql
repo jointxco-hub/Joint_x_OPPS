@@ -270,6 +270,27 @@ begin
     gateway_environment_evidence='payfast_itn_validated_live',
     updated_at=now()
   where id=p_request_id;
+  -- The canonical payment projector may have deferred Finance while the
+  -- QR was still active. Retry after verified environment has been persisted.
+  -- Never roll back a provider-confirmed payment because Finance needs review.
+  begin
+    perform commerce.qs_project_manual_receipt(p_order_id);
+    update commerce.service_orders
+      set source_metadata=coalesce(source_metadata,'{}'::jsonb)
+        - 'paymentProjectionReview'
+      where id=p_order_id
+        and source_metadata ? 'paymentProjectionReview';
+  exception when others then
+    update commerce.service_orders
+      set source_metadata=coalesce(source_metadata,'{}'::jsonb) ||
+        jsonb_build_object('paymentProjectionReview',
+          jsonb_build_object('required',true,
+            'reason','VERIFIED_QR_FINANCE_CLASSIFICATION_REVIEW','at',now()))
+      where id=p_order_id;
+    return jsonb_build_object('ok',true,'status','settled',
+      'projectionReviewRequired',true);
+  end;
+
   return jsonb_build_object('ok',true,'status','settled',
     'projectionReviewRequired',coalesce((v_result->>'projectionReviewRequired')::boolean,false));
 end
