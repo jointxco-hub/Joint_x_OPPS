@@ -82,5 +82,5 @@ test('no live mode accepted without explicit private approvals',()=>{
   PAYFAST_MERCHANT_KEY:'k',PAYFAST_PASSPHRASE:'p',OPPS106_QR_MODE:'live',
   OPPS106_LIVE_RETURN_BASE:'https://opps.jointx.co',
   OPPS106_LIVE_NOTIFY_URL:'https://opps.jointx.co/notify'};
- assert.equal(getPayfastGatewayProfile(env,'live').reason,'LIVE_NOT_APPROVED');
+ assert.equal(getPayfastGatewayProfile(env,'live').reason,'LIVE_CALLBACK_NOT_APPROVED');
 });
