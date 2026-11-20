@@ -64,3 +64,31 @@ After approved base schema is installed with controls OFF and independently insp
 Any incorrect amount, merchant, environment, duplicate receipt, unverified callback source, Finance QA classification, or incompatible production schema is **NO-GO**. Stop *new* issuance; **keep a secured callback available to receive and quarantine late PayFast notifications**. Reconcile every started hosted checkout and confirmed provider capture before retiring anything. Never clear Cash/Card holds solely because a QR or issuer was disabled. Rollbacks after any actual money movement require data reconciliation, not dropping QR tables.
 
 **Current decision:** production QR baseline absent, live gateway and return origin unverified, provider live integration untested, latest browser workflow not physically accepted, iMin receipt untested. **Release authorization: NOT GRANTED.**
+
+## 20 November follow-up — Phase A schema-only candidate PASSED clean install
+
+Prepared `supabase/production-candidate/opps106_private_qr_base_PHASE_A_REVIEW_ONLY.sql`. This is a **review-only** composed candidate from the inspected QR private table, unmatched capture, issuance-controls, checkout-intent and noncomplete-event source migrations. It deliberately **excludes all issuer, scan, receipt, settlement and PayFast functions** as well as the old issuer's hardcoded staging URL.
+
+- Installs five private RLS-protected tables: `payment_requests`, `payment_exceptions`, `unmatched_captures`, `issuance_controls`, `noncomplete_events`.
+- Starts both `cafe_order` and `opps_invoice` issuance controls **disabled**, with no allowed order or expiry. The future single-order `qr_issuance_requires_scope` constraint is present.
+- Adds server-bound checkout merchant/environment/reference/contract columns and verified gateway-environment evidence constraints. It does **not** backfill or infer any payment environment.
+- Requires existing `public.tenants` and `commerce.service_order_payments`, and refuses to run if the QR schema already exists (no hidden drift or accidental overwrite).
+- Does not install any public QR payment RPC, deploy a callback, send a provider request, mutate existing Finance records or change old Café orders.
+
+New GitHub Actions `private-qr-base` job uses a **fresh disposable PostgreSQL 16 database** and synthetic public tenant/commerce payment dependencies, not a live Supabase database. It applies Phase A, asserts both controls off, no public payment RPC, all five tables under RLS, private role grants and provenance fields, then checks that a duplicate run fails closed. **Run #44740530434: private-qr-base job passed.** This test proves clean schema compatibility with the mocked dependencies, **not** that production's complete app, existing policies or live credentials are ready.
+
+### Production function drift that must be reviewed before Phase B
+
+Read-only `pg_get_functiondef` hashes from production vs staging on 20 November 2026:
+
+| Existing function | Production MD5 | Staging MD5 | Decision |
+|---|---|---|---|
+| `commerce.qs_apply_payfast_payment` | `9a821331d43afcd04304afd758de163d` | same | Preserve |
+| `commerce.qs_project_invoice_receipts` | `bc3cc9f496f132462aabb1dace20db2f` | same | Preserve |
+| `commerce.qs_project_manual_receipt` | `fc235c5e150505b93b3378c05366dc5d` | `6b88dc9a40cb67a9259d05403281eef0` | Reconcile verified QR classification in separate Phase B |
+| `commerce._qs_sync_opps_payment_ledger` | `f5b31fb5508286d6e4cc44bb06f8f9c6` | `4f488b47983f9b12170cd3135ac125f6` | Reconcile linked OPPS/QA behavior |
+| `public.enforce_workspace_order_update_scope` | `cc2acde8cb7fb58f2dfbcfb07a813611` | `3fb458ca33a6d6140c13609b20ee1645` | Preserve original role controls; audit narrow change separately |
+
+**Important:** Existing `20261115163500_opps106_counter_qr_issuance_disabled.sql` and `20261115193000_opps106_single_order_qa_gate.sql` each embed a staging Supabase scan endpoint. Do **not** blindly promote those issuing functions. A production-safe issuer must use an explicitly reviewed return/callback domain, tenant-scoped authorization and dedicated validated live backend, and must still be disabled until acceptance.
+
+**Next**: separately test the actual production-shaped tenant/Café/OPPS function definitions in an isolated snapshot before constructing Phase B. Also ensure an up-to-date independent backup and successful restoration rehearsal before approved production Phase A installation. This new candidate is **NOT APPLIED** to production or staging.
