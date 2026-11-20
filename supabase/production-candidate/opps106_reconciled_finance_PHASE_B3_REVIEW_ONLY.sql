@@ -41,7 +41,13 @@ begin
  join commerce.service_order_payments p on p.tenant_id=so.tenant_id
   and p.service_order_id=so.id and p.status='completed' and p.provider='payfast'
   and p.pf_payment_id=r.gateway_payment_id
-  and p.id=r.checkout_intent_id
+  and exists(select 1 from commerce.service_order_payments intent
+    where intent.id=r.checkout_intent_id
+      and intent.tenant_id=r.tenant_id
+      and intent.service_order_id=r.target_id
+      and intent.provider='payfast'
+      and intent.status='cancelled'
+      and intent.pf_payment_id is null)
   and round(p.amount*100)::bigint=r.amount_cents
   and p.raw_itn->>'payment_status'='COMPLETE'
   and p.raw_itn->>'custom_str4'='cafe_order'
@@ -98,7 +104,8 @@ begin
   if paid<=0 then return; end if;
 
   -- A prefix alone is not payment-environment evidence.
-  -- A completed QR PayFast receipt must match exactly one SETTLED private
+  -- Canonical PayFast creates a completed receipt separately from the
+  -- cancelled pending checkout intent. The completed receipt must match a SETTLED private
   -- request, the identical service order/tenant, gateway transaction and cents.
   select count(*)::integer into v_qr_candidates
   from commerce.service_order_payments p
@@ -122,7 +129,13 @@ begin
       on q.tenant_id=p.tenant_id and q.target_type='cafe_order'
       and q.target_id=p.service_order_id and q.status='settled'
       and q.gateway_payment_id=p.pf_payment_id
-      and q.checkout_intent_id=p.id
+      and exists(select 1 from commerce.service_order_payments intent
+        where intent.id=q.checkout_intent_id
+          and intent.tenant_id=q.tenant_id
+          and intent.service_order_id=q.target_id
+          and intent.provider='payfast'
+          and intent.status='cancelled'
+          and intent.pf_payment_id is null)
       and q.amount_cents=round(p.amount*100)::bigint
       and q.checkout_started_at is not null
       and q.checkout_gateway_reference='JXQR-'||q.id::text
