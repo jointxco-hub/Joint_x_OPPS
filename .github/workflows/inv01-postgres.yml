@@ -1,0 +1,36 @@
+name: INV-01 PostgreSQL safety
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/review-only/inv01a_invoice_first_linking.sql'
+      - 'tests/fixtures/inv01-linking-postgres.sql'
+      - '.github/workflows/inv01-postgres.yml'
+permissions:
+  contents: read
+jobs:
+  fixture:
+    if: github.head_ref == 'release/inv-01-invoice-first'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: inv01_fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Execute synthetic fixture
+        env:
+          PGPASSWORD: fixture_only
+        run: psql -X -h 127.0.0.1 -U postgres -d inv01_fixture -v ON_ERROR_STOP=1 -f tests/fixtures/inv01-linking-postgres.sql
